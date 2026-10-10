@@ -356,6 +356,25 @@ Command marks:
     section lists for it.
   - A section that is just the command of its name (`frames`, `logs`)
     shows that command's help instead, which has all its options.
+- The help reads like markdown (`help-format.ts`): `##` headings,
+  `- ` bullets in the topic and command lists and in text, and
+  backticks around whatever is typed or shown as is.
+  - Commands, arguments and options are indented terms, with their
+    descriptions in a column beside them.
+  - The help text marks those with backticks itself. List terms and
+    usage lines are code too, from the renderer, but never show
+    backticks.
+  - Plain, a code span keeps its backticks only where they set it
+    apart from the prose: several words (`--lang zh-CN`), a lowercase
+    word (a command, `all`), or punctuation (`{{`). Flags, IDs,
+    numbers, paths and capitalized names read as code without them.
+  - At a terminal with color (or `FORCE_COLOR`), backticks become cyan,
+    and headings and `**bold**` spans bold. Plain, bold spans show as
+    plain text. Those are palette colors, which themes set to
+    read on their own light or dark background.
+  - Lines wrap by the width they show in each mode, so a line in color,
+    without backticks, can fit more. A code span never splits across
+    lines.
 - The same list gives each command's syntax (`commandSyntax`), the
   names Tab completes, and which commands go to a run.
   - Its flags come from its options and usage lines (`cdp [tab] --file

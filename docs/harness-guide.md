@@ -279,7 +279,7 @@ up:
 
 - The help is in sections, each a named topic: command input,
   examples, then the commands grouped by what they work on, then the
-  global and common options, and how to name scripts, tabs and the
+  flags (global and common), and how to name scripts, tabs and the
   rest.
 - `sm-dev help` (or `sm-dev --help`) lists the topics, with a line on
   each.
@@ -294,6 +294,8 @@ up:
   - `--help` on a command always gives the command, even where a
     topic shares its name (`scripts --help`).
 - It takes several names at once: `sm-dev help status tabs`.
+- At a terminal with color, commands and flags show in cyan, and
+  headings in bold. `NO_COLOR` turns that off, and `FORCE_COLOR` on.
 - `--help` (or `-h`) anywhere on a line shows the help for each command
   on it, once each, and runs none of them.
 - In a run, `help [command]` or `?` does the same.

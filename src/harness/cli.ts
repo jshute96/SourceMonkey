@@ -52,10 +52,19 @@ import {
 // After a mistake, in place of the whole help, which would bury it.
 const LIST_COMMANDS = 'Use sm-dev help commands to list the commands.';
 
+// Whether help goes to a terminal that shows color. FORCE_COLOR asks
+// for it anyway (or, as 0 or false, not), as Node reads it; NO_COLOR is
+// honored by hasColors.
+function helpInColor(): boolean {
+  const forced = process.env.FORCE_COLOR;
+  if (forced !== undefined) return forced !== '0' && forced !== 'false';
+  return process.stdout.isTTY === true && process.stdout.hasColors();
+}
+
 // `sm-dev help [topic]...`, and the help of `commands` (`scripts
 // --help`), or the mistake for a name that is none.
 function commandHelp(topics: string[], commands: string[] = []): string {
-  const { text, unknown } = helpText(topics, commands);
+  const { text, unknown } = helpText(topics, commands, helpInColor());
   // Unknown topics are named first, alone: their message covers both kinds.
   const asTopics = unknown.filter((name) => topics.includes(name));
   const asCommands = unknown.filter((name) => !topics.includes(name));
@@ -1112,7 +1121,7 @@ async function runTyped(command: { words: string[]; text: string }, client: Clie
   const help = runCommandHelp({ line: command.text });
   if (help) {
     echo();
-    print(commandsHelp([help]).text.trimEnd());
+    print(commandsHelp([help], helpInColor()).text.trimEnd());
     return 0;
   }
   if (runsHere(command.words)) {
@@ -1353,7 +1362,7 @@ async function managerVerbHere(words: string[], client: Client): Promise<number>
   const parsed = parseCommandArgs('manager', { words: words.slice(1) });
   if ('error' in parsed) throw new UsageError(parsed.error);
   if (parsed.help) {
-    print(commandsHelp(['manager']).text.trimEnd());
+    print(commandsHelp(['manager'], helpInColor()).text.trimEnd());
     return 0;
   }
   const verb = parsed.form as ManagerVerb | undefined;
@@ -1396,7 +1405,7 @@ async function managerHere(words: string[]): Promise<number> {
   const parsed = parseCommandArgs(name, { words: rest });
   if ('error' in parsed) throw new UsageError(parsed.error);
   if (parsed.help) {
-    print(commandsHelp([name]).text.trimEnd());
+    print(commandsHelp([name], helpInColor()).text.trimEnd());
     return 0;
   }
   const chosen = lineManager ?? DEFAULT_MANAGER;

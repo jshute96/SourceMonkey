@@ -13,6 +13,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const CLI = fileURLToPath(new URL('../../../lib/harness/cli.js', import.meta.url));
+// Help is checked as plain text, whatever this environment asks for.
+delete process.env.FORCE_COLOR;
 const SCRIPT = fileURLToPath(new URL('../../examples/gm-menu/gm-menu.user.js', import.meta.url));
 
 function run(...args) {
@@ -455,9 +457,10 @@ function help(...args) {
 test('--help and help list the topics by name, and no commands', () => {
   const r = spawnSync(process.execPath, [CLI, '--help'], { encoding: 'utf8' });
   assert.equal(r.status, 0);
-  assert.match(r.stdout, /^ {2}help commands +Short list of all commands$/m);
-  assert.match(r.stdout, /^ {2}runs +Run IDs, /m);
-  // A subsection under its section, bulleted.
+  assert.match(r.stdout, /^- help commands +Short list of all commands$/m);
+  assert.match(r.stdout, /^## Topics\n- input /m);
+  assert.match(r.stdout, /^- runs +Run IDs, /m);
+  // A subtopic under its topic, its bullet indented.
   assert.match(r.stdout, /^ {2}- checking +Match and validate scripts$/m);
   assert.doesNotMatch(r.stdout, /click \[tab\]/);
   assert.equal(help('help').out, r.stdout);
@@ -467,15 +470,21 @@ test('help all lists every command, in sections, and how to name things', () => 
   const r = spawnSync(process.execPath, [CLI, 'help', 'all'], { encoding: 'utf8' });
   assert.equal(r.status, 0);
   assert.equal(help('help', 'full').out, r.stdout);
-  assert.match(r.stdout, /^Global options \[help global-flags\]:$/m);
-  assert.match(r.stdout, /^Concurrent runs \[help runs\]:$/m);
-  assert.match(r.stdout, /^ {2}Checking scripts \[help checking\]:$/m);
-  assert.match(r.stdout, /^Logs \[help logs\]:$/m);
-  assert.match(r.stdout, /^ {2}click \[tab\] <selector>\n {20}Click an element\.$/m);
-  assert.match(r.stdout, /^ {4}menu \[what\] /m);
-  // Unindented, beside the commands.
-  assert.match(r.stdout, /^Specifying objects \[help objects\]:$/m);
-  assert.match(r.stdout, /^ {4}Dname {11}A user-chosen/m);
+  assert.match(r.stdout, /^## Flags \[`help flags`\]\n\n### Global options \[`help global-flags`\]$/m);
+  assert.match(r.stdout, /^## Concurrent runs \[`help runs`\]$/m);
+  assert.match(r.stdout, /^### Checking scripts \[`help checking`\]$/m);
+  assert.match(r.stdout, /^## Logs \[`help logs`\]\n\nA run tracks/m);
+  // A term too long for the column gets a line of its own.
+  assert.match(r.stdout, /^ {2}click \[tab\] <selector>\n {22}Click an element\.$/m);
+  assert.match(r.stdout, /^ {2}menu \[what\] +List the tab's menu commands/m);
+  // A command's arguments, bulleted under it.
+  assert.match(r.stdout, /^ {4}all-scripts +In a run: all loaded scripts\.$/m);
+  // Text lists wrap under their own text.
+  assert.match(r.stdout, /^ {2}- A selector looks inside F2: .*\n {4}`screenshot`/m);
+  // Example commands are a code block, as is.
+  assert.match(r.stdout, /^ {4}sm-dev status$/m);
+  assert.match(r.stdout, /^## Specifying objects \[`help objects`\]$/m);
+  assert.match(r.stdout, /^ {2}Dname +A user-chosen/m);
   // Every line fits a terminal.
   for (const line of r.stdout.split('\n')) assert.ok(line.length <= 79, line);
 });
@@ -483,27 +492,43 @@ test('help all lists every command, in sections, and how to name things', () => 
 test('help commands lists each command once, with a line on it, under its sections', () => {
   const { out, code } = help('help', 'commands');
   assert.equal(code, 0);
-  assert.match(out, /^Scripts \[help scripts\]:\n {2}scripts +List the loaded scripts/m);
-  assert.match(out, /^ {2}- Waiting \[help waiting\]:\n {4}wait +Wait for the page to settle/m);
+  assert.match(out, /^## Scripts \[`help scripts`\]\n- scripts +List the loaded scripts/m);
+  assert.match(out, /^### Waiting \[`help waiting`\]\n- wait +Wait for the page to settle/m);
   // Each command's first sentence only, and wait (of several forms) once.
-  assert.match(out, /^ {2}status +Show overall status, script list, and tab list\.$/m);
-  assert.equal(out.match(/^ +wait /gm).length, 1);
-  assert.doesNotMatch(out, /^Global options/m);
+  assert.match(out, /^- status +Show overall status, script list, and tab list\.$/m);
+  assert.equal(out.match(/^- wait/gm).length, 1);
+  assert.doesNotMatch(out, /Global options/);
   for (const line of out.split('\n')) assert.ok(line.length <= 79, line);
 });
 
 test('help <topic> shows that section; one that is just a command shows its help', () => {
   const tabs = help('help', 'tabs').out;
-  assert.match(tabs, /^Tabs \[help tabs\]:\n {2}tabs /);
-  assert.match(tabs, /^ {2}Saved pages \[help saved-pages\]:$/m);
-  assert.doesNotMatch(tabs, /^Frames/m);
-  // A subsection alone.
-  assert.match(help('help', 'waiting').out, /^Waiting \[help waiting\]:\n/);
+  assert.match(tabs, /^## Tabs \[`help tabs`\]\n {2}tabs /);
+  assert.match(tabs, /^### Saved pages \[`help saved-pages`\]$/m);
+  assert.doesNotMatch(tabs, /Frames/);
+  // A subsection alone, as a top heading.
+  assert.match(help('help', 'waiting').out, /^## Waiting \[`help waiting`\]\n/);
   // frames and logs are their command's sections: the command's help.
   assert.equal(help('help', 'frames').out, help('frames', '--help').out);
   assert.match(help('help', 'logs').out, /^Usage: sm-dev logs /);
   // --help on a command is its help, even where a section has its name.
   assert.match(help('scripts', '--help').out, /^Usage: sm-dev scripts\n/);
+});
+
+test('help in color shows code in cyan and headings bold, without backticks, laid out to fit', () => {
+  const r = spawnSync(process.execPath, [CLI, 'help', 'all'], { encoding: 'utf8', env: { ...process.env, FORCE_COLOR: '1' } });
+  assert.equal(r.status, 0);
+  assert.doesNotMatch(r.stdout, /`/);
+  assert.match(r.stdout, /^\x1b\[1m## Logs \[\x1b\[36mhelp logs\x1b\[39m\]\x1b\[22m$/m);
+  const plain = r.stdout.replace(/\x1b\[\d+m/g, '');
+  // List terms show without backticks either way, so the column is the same.
+  assert.match(plain, /^ {2}menu \[what\] +List the tab's menu commands/m);
+  assert.equal(plain.split('\n').find((line) => line.startsWith('  menu [what] ')).indexOf('List'), 22);
+  for (const line of plain.split('\n')) assert.ok(line.length <= 79, line);
+  // FORCE_COLOR=0, or output that isn't a terminal: backticks, no color.
+  const off = spawnSync(process.execPath, [CLI, 'help', 'all'], { encoding: 'utf8', env: { ...process.env, FORCE_COLOR: '0' } });
+  assert.doesNotMatch(off.stdout, /\x1b/);
+  assert.equal(off.stdout, help('help', 'all').out);
 });
 
 test('help topic names are unique, and none is a topic help has of its own', async () => {
@@ -526,7 +551,7 @@ test('help for one command shows its entry and only its flags', () => {
   assert.match(match.out, /^Arguments:\n {2}all-scripts +In a run/m);
   // Its section's note comes along.
   assert.match(match.out, /^Without a run, these check script files and URLs\./m);
-  assert.doesNotMatch(match.out, /--browser|--watch|^ {2}start /m);
+  assert.doesNotMatch(match.out, /--browser|--watch|`start /m);
   // A section's options, only for the commands that take them.
   assert.match(help('help', 'click').out, /^Common options:\n {2}--nowait /m);
   assert.doesNotMatch(help('help', 'eval').out, /--nowait/);
@@ -589,7 +614,9 @@ test('help covers a run\'s commands and aliases, and refuses unknown names', () 
   assert.match(typed.out, /^Usage: sm-dev get <key> \[options\]$/m);
   assert.doesNotMatch(typed.out, /menu \[what\]/);
   // Every form of a command of several.
-  assert.equal(help('help', 'wait').out.match(/^ {2}wait /gm).length, 5);
+  // help's own, with the row for --help after it.
+  assert.match(help('help', 'help').out, /^ {7}sm-dev <command> --help$/m);
+  assert.equal(help('help', 'wait').out.match(/^ {2}wait/gm).length, 5);
   // ? is help, and keys is key.
   assert.equal(help('?', 'keys').out, help('help', 'key').out);
   assert.deepEqual(help('help', 'nope'), { code: 2, out: 'ERROR: nope is not a command or help topic. Use sm-dev help to list the topics, or sm-dev help commands for the commands.\n' });
