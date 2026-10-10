@@ -186,7 +186,10 @@ test.describe('diagnostic location links', () => {
     const warning = logged.find((e) => /Ignoring unsupported @grant/.test(e.message));
     expect(warning, 'the unknown grant should be logged').toBeTruthy();
     // The line the offending grant is written on, read off the file the
-    // fixture rendered rather than assumed from the metadata order.
+    // fixture rendered rather than assumed from the metadata order. Waited
+    // for: the replay's Log write makes the page redraw, and a read
+    // mid-redraw finds the pane empty.
+    await expect(page.locator('#content')).toContainText('GM_notARealApi');
     const src = await page.evaluate(() => document.querySelector('#content')?.textContent ?? '');
     const grantLine = src.split('\n').findIndex((l) => l.includes('GM_notARealApi')) + 1;
     expect(grantLine).toBeGreaterThan(1);

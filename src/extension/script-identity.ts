@@ -48,12 +48,14 @@ import {
   isSingleFileInput,
 } from './directories.js';
 import {
-  getAllScriptMetas, getCollections, isScriptEnabled, isCollectionEnabled, writeEnablementFrom, type ScriptMeta, type StoredCollection,
+  getAllScriptMetas, getCollections, getScriptMeta, getScriptMetas, isScriptEnabled, isCollectionEnabled, writeEnablementFrom,
+  type ScriptMeta, type StoredCollection,
 } from './script-store.js';
 import { CONTAINER_DISPLAY_NAMES, effectiveDisplayName } from './collection-display.js';
 import { getValues, type ParsedHeader } from '../userscript-header.js';
 import { identityKey, locationKey } from './script-keys.js';
 import { startPhaseTimer } from '../phase-timing.js';
+import { relatedScriptIds } from './row-cache.js';
 
 // `identityKey` and `locationKey` live in script-keys.ts, so the store
 // can use them too; re-exported here, where the rest of the lookup is.
@@ -315,10 +317,15 @@ function inRunCollection(rel: RelatedScript): boolean {
 // A run's test collection is left out both ways, as by `enableChanges`.
 export async function turnOffOtherCopies(scriptId: string): Promise<ScriptMeta[]> {
   const timer = startPhaseTimer('turn off other copies');
-  const [scripts, collections] = await Promise.all([getAllScriptMetas(), getCollections()]);
-  timer.mark('read all', `${scripts.length} scripts, ${collections.length} collections`);
-  const copy = scripts.find((s) => s.id === scriptId);
-  const related = copy ? relatedRowsOf(scripts, collections, copy) : [];
+  const copy = await getScriptMeta(scriptId);
+  let related: RelatedScript[] = [];
+  if (copy) {
+    const ids = await relatedCopyIds([copy]);
+    timer.mark('find copies', `${ids.size} script(s)`);
+    const [scripts, collections] = await Promise.all([getScriptMetas([...ids]), getCollections()]);
+    timer.mark('read copies');
+    related = relatedRowsOf(scripts, collections, copy);
+  }
   let off: ScriptMeta[] = [];
   // Skipped when this read shows nothing to turn off, the usual case
   // after an install or a move, so it doesn't take the lock for nothing.
@@ -344,6 +351,23 @@ export async function turnOffOtherCopies(scriptId: string): Promise<ScriptMeta[]
   timer.note(`${off.length} cop${off.length === 1 ? 'y' : 'ies'} turned off`);
   timer.done();
   return off;
+}
+
+// The ids of every stored copy related to any of `scripts`, themselves
+// included: from the worker's index (row-cache.ts), or where there is
+// none, a read of every row. Exactly the related ones, either way: the
+// index keys are the ones `findRelatedVersions` compares, and a caller
+// may act on every id (`enableWithin` turns off any active one).
+export async function relatedCopyIds(scripts: readonly ScriptMeta[]): Promise<Set<string>> {
+  const indexed = await relatedScriptIds(scripts);
+  if (indexed) return indexed;
+  const [all, collections] = await Promise.all([getAllScriptMetas(), getCollections()]);
+  const ids = new Set<string>();
+  for (const script of scripts) {
+    ids.add(script.id);
+    for (const r of relatedRowsOf(all, collections, script)) ids.add(r.script.id);
+  }
+  return ids;
 }
 
 // Every copy related to `copy`, itself included. Compared by the STORED

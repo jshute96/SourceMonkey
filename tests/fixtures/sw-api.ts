@@ -78,6 +78,12 @@ export interface SmApi {
   setScriptEnabled(id: string, enabled: boolean): Promise<unknown>;
   // When each script last became active / went inactive (script-enablement.md).
   getEnablementTimes(): Promise<Record<string, { activeSince?: number; inactiveSince?: number }>>;
+  // Write rows straight into storage, under the store's write lock.
+  seedStorage(items: Record<string, unknown>): Promise<void>;
+  backfillUsesUnsafeWindow(): Promise<number>;
+  setScriptEnabledExclusive(id: string, enabled: boolean): Promise<void>;
+  getAllScriptMetas(): Promise<StoredScriptLike[]>;
+  rowCacheLoads(): Promise<number>;
   updateCollection(id: string, mode: Mode): Promise<unknown>;
   // `probe: 'force'` is what a genuine Refresh click passes. Pass it
   // when a test is modelling a click rather than a background check —
@@ -96,11 +102,12 @@ export interface SmApi {
   resetAllState(): Promise<void>;
   // Run the storage format migration again, as a worker start would.
   rerunStoreMigration(): Promise<void>;
-  // As a worker just started: the next write, or a page's message, runs it.
+  // As a worker just started: the next write runs it.
   forgetStoreMigration(): Promise<void>;
-  // One unused-blob check; `now` steps past the wait between checks.
-  sweepUnusedBlobs(now?: number): Promise<{ checked: number; removed: number; waiting: number }>;
-  // As a fresh worker: the next sync is a full one.
+  // One unused-blob check.
+  sweepUnusedBlobs(): Promise<{ checked: number; removed: number }>;
+  // Forget the record of what Chrome holds, the session copy too: the
+  // next sync is a full one.
   forgetRegistrationState(): Promise<void>;
   // Forget when each script was last checked, so the next
   // opportunistic check isn't skipped by `UPDATE_MIN_INTERVAL_MS`.
@@ -279,6 +286,8 @@ export interface StoredScriptLike {
   errorMessage?: string;
   errorLocation?: DiagnosticLocationLike;
   refreshError?: string;
+  // Whether the body uses `unsafeWindow` without granting it.
+  usesUnsafeWindow?: boolean;
   size: number | null;
   fsMtime?: number;
   loadedAt: number;

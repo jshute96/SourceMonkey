@@ -5,6 +5,8 @@ import { MAX_SITE_ICONS, representativeMatches, type MatchTarget } from '../matc
 import { renderGlyph } from './glyph.js';
 import { getValue } from '../userscript-header.js';
 import { iconRefFromHeader, isIconContentType, MAX_ICON_BYTES } from '../script-icon.js';
+import { assertWorkerContext, isPageContext } from '../run-context.js';
+import { callWorker } from './worker-client.js';
 
 // Site-icon (favicon) extraction + cache. Used by the collections page
 // and userscript viewer to show a 16x16 icon per targeted site (up to
@@ -141,6 +143,7 @@ export async function loadSiteIcons(
 }
 
 async function storeSiteIcon(origin: string, entry: SiteIconEntry): Promise<void> {
+  assertWorkerContext('write storage');
   await chrome.storage.local.set({
     [siteIconKey(origin)]: { ...entry, v: DISCOVERED_ICON_CACHE_VERSION },
   });
@@ -152,6 +155,7 @@ async function loadPathIcon(pageUrl: string): Promise<SiteIconEntry | undefined>
 }
 
 async function storePathIcon(pageUrl: string, entry: SiteIconEntry): Promise<void> {
+  assertWorkerContext('write storage');
   await chrome.storage.local.set({
     [pathIconKey(pageUrl)]: { ...entry, v: DISCOVERED_ICON_CACHE_VERSION },
   });
@@ -163,6 +167,7 @@ async function loadUrlIcon(url: string): Promise<SiteIconEntry | undefined> {
 }
 
 async function storeUrlIcon(url: string, entry: SiteIconEntry): Promise<void> {
+  assertWorkerContext('write storage');
   await chrome.storage.local.set({ [urlIconKey(url)]: entry });
 }
 
@@ -628,7 +633,7 @@ async function ensurePathIcon(pageUrl: string): Promise<string | null> {
   const racing = inflight.get(key);
   if (racing) return racing;
 
-  const p = remember(key, fetchAndCachePathIcon(pageUrl)).finally(() => {
+  const p = remember(key, fetchToCache(key)).finally(() => {
     inflight.delete(key);
   });
   inflight.set(key, p);
@@ -652,7 +657,7 @@ async function ensureOriginIcon(origin: string): Promise<string | null> {
   const racing = inflight.get(key);
   if (racing) return racing;
 
-  const p = remember(key, fetchAndCacheOriginIcon(origin)).finally(() => {
+  const p = remember(key, fetchToCache(key)).finally(() => {
     inflight.delete(key);
   });
   inflight.set(key, p);
@@ -725,7 +730,7 @@ async function ensureIconAt(url: string): Promise<string | null> {
   const racing = inflight.get(key);
   if (racing) return racing;
 
-  const p = remember(key, fetchAndCacheUrlIcon(url)).finally(() => {
+  const p = remember(key, fetchToCache(key)).finally(() => {
     inflight.delete(key);
   });
   inflight.set(key, p);
@@ -1213,30 +1218,79 @@ export async function listCachedIcons(now: number = Date.now()): Promise<CachedI
 }
 
 export async function deleteCachedIcon(storageKey: string): Promise<void> {
+  assertWorkerContext('write storage');
   await chrome.storage.local.remove(storageKey);
 }
 
 export async function deleteAllCachedIcons(): Promise<void> {
+  assertWorkerContext('write storage');
   const keys = (await chrome.storage.local.getKeys()).filter(isIconCacheKey);
   if (keys.length > 0) {
     await chrome.storage.local.remove(keys);
   }
 }
 
+// Fetch the icon a cache key names and store it under that key, in the
+// worker, which alone writes storage (docs/worker-writes.md). A page
+// asks it, and keeps its own in-flight and settled maps for painting.
+function fetchToCache(storageKey: string): Promise<string | null> {
+  if (isPageContext()) return callWorker('ensureCachedIcon', storageKey);
+  // Not `ensureCachedIcon`: the caller has already put this fetch in
+  // `inflight` under the key, which `refreshCachedIcon` would then wait on.
+  return fetchAndCacheByKey(storageKey) ?? Promise.resolve(null);
+}
+
+function fetchAndCacheByKey(storageKey: string): Promise<string | null> | null {
+  let fetchIt: (() => Promise<string | null>) | null = null;
+  if (storageKey.startsWith(KEY_PREFIX)) {
+    fetchIt = () => fetchAndCacheOriginIcon(storageKey.slice(KEY_PREFIX.length));
+  } else if (storageKey.startsWith(PATH_ICON_KEY_PREFIX)) {
+    fetchIt = () => fetchAndCachePathIcon(storageKey.slice(PATH_ICON_KEY_PREFIX.length));
+  } else if (storageKey.startsWith(URL_ICON_KEY_PREFIX)) {
+    fetchIt = () => fetchAndCacheUrlIcon(storageKey.slice(URL_ICON_KEY_PREFIX.length));
+  }
+  return fetchIt ? withFetchSlot(fetchIt) : null;
+}
+
+// At most this many icon fetches at once. A page on a cold cache asks
+// for every icon it shows, all at once.
+const MAX_ICON_FETCHES = 6;
+let iconFetches = 0;
+const iconFetchQueue: (() => void)[] = [];
+
+async function withFetchSlot<T>(run: () => Promise<T>): Promise<T> {
+  if (iconFetches >= MAX_ICON_FETCHES) await new Promise<void>((go) => iconFetchQueue.push(go));
+  else iconFetches++;
+  try {
+    return await run();
+  } finally {
+    // A waiter takes this slot over; with none, it is freed.
+    const next = iconFetchQueue.shift();
+    if (next) next();
+    else iconFetches--;
+  }
+}
+
+// Worker side of a page's lookup: the cached row when it is still
+// usable (another page may have just fetched it), else a fetch, shared
+// with one already in flight for the key.
+export async function ensureCachedIcon(storageKey: string): Promise<string | null> {
+  const version = storageKey.startsWith(URL_ICON_KEY_PREFIX) ? undefined : DISCOVERED_ICON_CACHE_VERSION;
+  const row = (await chrome.storage.local.get(storageKey))[storageKey] as SiteIconEntry | undefined;
+  const cached = usableCacheHit(row, version);
+  if (cached) return cached.dataUrl;
+  return await refreshCachedIcon(storageKey);
+}
+
+// Worker side: refetch one cache row now, sharing a fetch already in
+// flight for it. Pages reach it through `fetchToCache`, and the debug
+// icons page through worker-client.ts.
 export async function refreshCachedIcon(storageKey: string): Promise<string | null> {
   const pending = inflight.get(storageKey);
   if (pending) return pending;
 
-  let p: Promise<string | null>;
-  if (storageKey.startsWith(KEY_PREFIX)) {
-    p = fetchAndCacheOriginIcon(storageKey.slice(KEY_PREFIX.length));
-  } else if (storageKey.startsWith(PATH_ICON_KEY_PREFIX)) {
-    p = fetchAndCachePathIcon(storageKey.slice(PATH_ICON_KEY_PREFIX.length));
-  } else if (storageKey.startsWith(URL_ICON_KEY_PREFIX)) {
-    p = fetchAndCacheUrlIcon(storageKey.slice(URL_ICON_KEY_PREFIX.length));
-  } else {
-    return null;
-  }
+  const p = fetchAndCacheByKey(storageKey);
+  if (!p) return null;
 
   const wrapped = p.finally(() => {
     inflight.delete(storageKey);

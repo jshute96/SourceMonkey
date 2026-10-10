@@ -63,6 +63,31 @@ entries, banners). Full rules in [docs/diagnostics.md](docs/diagnostics.md#wordi
   file the plumbing in TODO.md.
 - **`Internal error:` prefix** when the user can't act on it.
 
+### Storage writes and the worker's row cache
+Only the service worker writes storage and places registrations. Why,
+and how it is built: [docs/worker-writes.md](docs/worker-writes.md).
+- **Pages read storage to paint, and ask the worker for any change**
+  through `src/extension/worker-client.ts`. A new write is an operation
+  in `worker-ops.ts` plus a client export of the same name.
+  - Writers call `assertWorkerContext`, and
+    `tests/unit/page-writes.test.mjs` checks what pages import.
+  - Code running in the worker calls the store directly, never
+    `worker-client.ts`.
+- **Worker reads of collection rows, script rows and active times go
+  through the row cache** (the store's reads, `sharedRows`), not a scan
+  of their own.
+  - Rows from `sharedRows` are frozen: copy one before changing it.
+- **Write script rows inside the store's lock (`mutate`)**, awaited
+  before the section returns. The blob cleanup relies on it, and the
+  worker refuses a script row written outside the lock.
+- **What crosses the port is JSON**: no Maps or Sets, and no script
+  bodies when the page only needs the row.
+- **Anything new that changes Chrome's registration set** calls
+  `markRecordStale` first and `scheduleRecordSave` after, so a new
+  worker doesn't take a stale session record.
+- Tests that seed script rows use `sm.seedStorage`, which writes under
+  the lock.
+
 ### sm-dev protocol version
 `SM_DEV_PROTOCOL` in `src/sm-dev-protocol.ts` versions what sm-dev and
 the extension exchange (the calls and events `ExtensionLink` uses),

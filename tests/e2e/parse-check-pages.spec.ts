@@ -1,18 +1,13 @@
 // The parse check has to hold on the paths a USER actually drives.
 //
-// `addCollection` / `updateCollection` / `updateScript` run wherever they were
-// called from, and the collections page and the viewer call them in the
-// PAGE — not in the service worker. Pages used to install no checker
-// and skip the check entirely. That wasn't merely "unverified": a
-// viewer Refresh CLEARED a prior `invalid` verdict and logged "loads
-// cleanly again" for a script that still didn't parse, and the next
-// background refresh flagged it right back. Install had the same hole
-// in the other direction — a broken script landed as `ok`.
-//
-// Each page now embeds its own sandbox and checks locally
-// (src/extension/parse-check-client.ts). These cases drive the real buttons,
-// because the whole bug lived in which context ran the pipeline —
-// `sm.*` helpers run in the SW and cannot see it.
+// Pages used to run `addCollection` / `updateCollection` /
+// `updateScript` themselves, with no checker installed: a viewer
+// Refresh CLEARED a prior `invalid` verdict, and Install landed a broken
+// script as `ok`. They now ask the service worker, which checks through
+// the offscreen document (docs/worker-writes.md); the install preview
+// still checks in the page (src/extension/parse-check-client.ts). These
+// cases drive the real buttons, because the bug lived in which context
+// ran the pipeline: `sm.*` helpers run in the SW and cannot see it.
 //
 // The verdict machinery itself is covered by parse-check.spec.ts, and
 // what the check reports by parse-check-install.spec.ts.

@@ -57,6 +57,12 @@ export function ensureGithubAuthTokenLoaded(): Promise<void> {
   return loadOnce;
 }
 
+// The worker's `writeSetting` publishes the token at once, so a refresh
+// it runs next doesn't wait for the change event.
+export function setGithubAuthToken(token: string): void {
+  cachedToken = token;
+}
+
 export function installGithubAuthListener(): void {
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== 'local') return;

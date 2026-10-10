@@ -20,3 +20,12 @@
 export function isPageContext(): boolean {
   return typeof document !== 'undefined';
 }
+
+// Only the service worker writes storage and places registrations
+// (docs/worker-writes.md): a page asks it, through
+// `extension/worker-client.ts`. The writers' funnels call this, so a
+// page path that reaches one fails at once rather than writing beside
+// the worker.
+export function assertWorkerContext(what: string): void {
+  if (isPageContext()) throw new Error(`Internal error: An extension page tried to ${what} itself`);
+}

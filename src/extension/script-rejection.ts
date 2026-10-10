@@ -36,6 +36,8 @@
 // read/write; the alternative would need a full session scan to find
 // the strays.
 
+import { assertWorkerContext } from '../run-context.js';
+
 // Session-storage key holding the whole `RejectionMap`.
 export const REJECTIONS_KEY = 'injector-rejections';
 
@@ -96,6 +98,7 @@ export async function readRejections(): Promise<RejectionMap> {
 // is a fact about this sync. See `registerWithFallback`.
 export async function writeRejections(prior: RejectionMap, next: RejectionMap): Promise<void> {
   if (sameRejections(prior, next)) return;
+  assertWorkerContext('write storage');
   try {
     await chrome.storage.session.set({ [REJECTIONS_KEY]: next });
   } catch { /* best-effort: the badge isn't load-bearing */ }

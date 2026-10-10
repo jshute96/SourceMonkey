@@ -15,6 +15,7 @@
 // Both directions take each body as it finds it: one already inline (a
 // format 1 row, or a full script handed to a write) stays as it is.
 
+import { assertWorkerContext } from '../run-context.js';
 import type { ScriptMeta, StoredScript } from '../script-build.js';
 import type { StoredRequire, StoredResource } from '../external-files.js';
 import { base64ToBytes, bytesToBase64, sha256Hex } from '../bytes.js';
@@ -54,9 +55,9 @@ export type ScriptRow = Omit<StoredScript, 'bodyText' | 'requires' | 'resources'
 };
 
 // Shown on a script whose row points at a blob that isn't there (or
-// that this build can't decode). The cleanup that deletes unused blobs
-// could cause it, racing a write in another context; Refresh fetches
-// the file again, as for one that failed to load.
+// that this build can't decode): a row edited by hand, or a cleanup bug
+// (see `sweepUnusedBlobs`). Refresh fetches the file again, as for one
+// that failed to load.
 export const MISSING_BLOB_MESSAGE =
   'Part of the stored copy of this script is missing. Refresh the script to load it again.';
 
@@ -383,6 +384,7 @@ export async function migrateToBlobs(): Promise<void> {
         stored.add(k);
         fresh++;
       }
+      assertWorkerContext('write storage');
       await chrome.storage.local.set(items);
       moved += batch.length;
       written += fresh;
@@ -415,62 +417,37 @@ export async function clearMigrationFailureForTests(): Promise<void> {
 
 // ---------- Cleanup ----------
 //
-// A blob no row points at goes once it's been unused on two checks at
-// least `SWEEP_GRACE_MS` apart. One check isn't enough: each context
-// has its own write lock, so a page could be saving a row that points
-// at a blob (one it found already stored, so it isn't writing it) just
-// as the worker decides that blob is unused. The wait leaves such a
-// write time to land. The service worker is the only context that
-// sweeps.
-
-export const SWEEP_GRACE_MS = 2 * 60_000;
-
-// Session storage: blob key → when a check first found it unused. Kept
-// there, not in memory, because the worker is often stopped between
-// two checks.
-const SWEEP_CANDIDATES_KEY = 'blobSweepCandidates';
+// A blob no script row points at is deleted on the first check that
+// finds it unused. The check runs inside the store's write lock
+// (`sweepUnusedBlobsLocked`), and every write of a script row does too:
+// only the worker writes (docs/worker-writes.md), and its wrapped write
+// asserts the lock (`checkScriptRowWrite` in script-store.ts). So no
+// write can land between the check reading the rows and deleting: one
+// that found a blob already stored, and so didn't write it again,
+// would otherwise be left pointing at nothing. The service worker is
+// the only context that sweeps.
 
 export interface SweepResult {
   checked: number;
   removed: number;
-  // Unused blobs not yet old enough to go: the caller checks again.
-  waiting: number;
 }
 
-export async function sweepUnusedBlobs(now = Date.now()): Promise<SweepResult> {
+// `rows`: every script row, when the caller has them (the worker's row
+// cache); read from storage otherwise.
+export async function sweepUnusedBlobs(rows?: Record<string, unknown>): Promise<SweepResult> {
   const keys = await chrome.storage.local.getKeys();
   const blobKeys = keys.filter((k) => k.startsWith(BLOB_PREFIX));
-  const prior = ((await chrome.storage.session.get(SWEEP_CANDIDATES_KEY))[SWEEP_CANDIDATES_KEY] ?? {}) as Record<string, number>;
-  if (blobKeys.length === 0) {
-    if (Object.keys(prior).length > 0) await chrome.storage.session.remove(SWEEP_CANDIDATES_KEY);
-    return { checked: 0, removed: 0, waiting: 0 };
-  }
+  if (blobKeys.length === 0) return { checked: 0, removed: 0 };
   // The small rows only: refs are all a check needs.
-  const rows = await chrome.storage.local.get(keys.filter((k) => k.startsWith(SCRIPT_PREFIX)));
-  const used = new Set(Object.values(rows).flatMap(blobKeysOf));
-  const next: Record<string, number> = {};
-  const remove: string[] = [];
-  for (const k of blobKeys) {
-    if (used.has(k)) continue;
-    const since = prior[k];
-    if (since !== undefined && now - since >= SWEEP_GRACE_MS) remove.push(k);
-    else next[k] = since ?? now;
+  const scriptRows: Record<string, unknown> = rows
+    ?? await chrome.storage.local.get<Record<string, unknown>>(keys.filter((k) => k.startsWith(SCRIPT_PREFIX)));
+  const used = new Set(Object.values(scriptRows).flatMap(blobKeysOf));
+  const remove = blobKeys.filter((k) => !used.has(k));
+  if (remove.length > 0) {
+    assertWorkerContext('write storage');
+    await chrome.storage.local.remove(remove);
   }
-  if (remove.length > 0) await chrome.storage.local.remove(remove);
-  // Unchanged most of the time; a write would still fire
-  // `storage.onChanged` in every open page.
-  const same = Object.keys(next).length === Object.keys(prior).length
-    && Object.entries(next).every(([k, t]) => prior[k] === t);
-  if (!same) await chrome.storage.session.set({ [SWEEP_CANDIDATES_KEY]: next });
-  return { checked: blobKeys.length, removed: remove.length, waiting: Object.keys(next).length };
-}
-
-// Are there unused blobs a check found that haven't been deleted yet?
-// A worker starting up sweeps only then: blobs left unused while it ran
-// are what this records, and a change since schedules its own check.
-export async function hasSweepCandidates(): Promise<boolean> {
-  const got = (await chrome.storage.session.get(SWEEP_CANDIDATES_KEY))[SWEEP_CANDIDATES_KEY];
-  return got != null && typeof got === 'object' && Object.keys(got).length > 0;
+  return { checked: blobKeys.length, removed: remove.length };
 }
 
 // Did a change to a script row leave a blob it pointed at unused by it:

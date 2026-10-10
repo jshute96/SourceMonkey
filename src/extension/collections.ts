@@ -32,12 +32,10 @@ import { setGlyphButton, setGlyphButtonBusy } from './glyph.js';
 import type { DownloadsCopiesSetting } from './local-copy.js';
 import { deletableCopyPath, readCopiesSetting } from './local-delete.js';
 import {
-  addCollection,
-  backfillCollectionDisplayNames,
   DEFAULT_COLLECTIONS,
   describeError,
+  needsDisplayName,
   getAllScriptMetas,
-  reconcileScriptMembership,
   getCollectionWithScriptMeta,
   getScriptMetas,
   getCollectionsById,
@@ -45,17 +43,17 @@ import {
   isFirstRunComplete,
   isScriptEnabled,
   isCollectionEnabled,
-  markFirstRunComplete,
-  moveCollection,
   readLocalStorageUsage,
-  removeScript,
-  removeCollection,
   localFileScope,
   STORAGE_NEARLY_FULL,
   type ScriptMeta,
   type StoredCollection,
 } from './script-store.js';
-import { setAllScriptsEnabled, setCollectionEnabledExclusive, setScriptEnabledExclusive } from './script-enablement.js';
+import {
+  addCollection, updateAllCollections, updateCollection, updateScript,
+  backfillCollectionDisplayNames, markFirstRunComplete, moveCollection, reconcileScriptMembership, removeCollection,
+  removeScript, setAllScriptsEnabled, setCollectionEnabledExclusive, setScriptEnabledExclusive,
+} from './worker-client.js';
 import { identityKey } from './script-identity.js';
 import { watchSoloModifier } from './solo-click.js';
 import {
@@ -79,11 +77,6 @@ import { getValue } from '../userscript-header.js';
 import { describeDiagnostic } from '../diagnostic-location.js';
 import { installDebugLoggingListener, isDebugLoggingEnabled, loadDebugLoggingFlag } from '../debug-log.js';
 import { startPhaseTimer, type PhaseTimer } from '../phase-timing.js';
-import {
-  updateAllCollections,
-  updateCollection,
-  updateScript,
-} from './script-updater.js';
 import {
   appendWithSlashBreaks,
   compareScriptNames,
@@ -161,21 +154,10 @@ import {
   isFileSchemeAccessAllowed,
   renderFileAccessBanner,
 } from './file-access.js';
-import { installPageParseChecker } from './parse-check-client.js';
 
-// Add / Refresh / Refresh All run the load pipeline here in the page,
-// so this page needs its own parse checker — without one, a
-// page-driven refresh would clear an `invalid` verdict it never
-// re-derived. See src/extension/parse-check-client.ts.
-installPageParseChecker();
-
-// The page needs its own copy of the cached GitHub token — the SW's
-// cached value isn't reachable from here, and the page still decides
-// whether a URL is GitHub-authed (for the log-line suffix) and still
-// fetches locally when the read can't be handed to the worker. Listen
-// synchronously; bootstrap() awaits the initial load before any
-// refresh can fire so a `?refresh` query-param can't race against
-// hydration and run unauthenticated.
+// The page needs its own copy of the cached GitHub token for the reads
+// it still makes itself (the collection dialog's location probe).
+// Refreshes run in the worker, which waits for its own copy.
 installGithubAuthListener();
 const githubTokenReady = loadGithubAuthToken();
 
@@ -565,9 +547,9 @@ function writtenSinceRead(key: string): boolean {
 // off elsewhere on the page as well as the one clicked, together, so
 // two copies never both show as on while the repaint catches up.
 //
-// Applied under another click's spinner too. Writes on this page run in
-// order (the store's lock), and their handlers resume in that order, so
-// the last result applied is the last write.
+// Applied under another click's spinner too. The worker runs the writes
+// in order (the store's lock) and answers each as it finishes, so the
+// last result applied is the last write.
 //
 // `also` is other rows the handler drew itself (the clicked one, a
 // collection's toggle), noted as written with these.
@@ -1137,9 +1119,7 @@ function forgetScriptsExcept(keep: ReadonlySet<string>): void {
 // Lets the docs/redirect-page.md deep link route here from anywhere
 // on the web (see docs/deep-link.md).
 async function bootstrap(): Promise<void> {
-  // Ensure the GitHub auth token is hydrated before any refresh fires.
-  // Otherwise a `?refresh` query-param can race the chrome.storage.local
-  // read and the first refresh-on-load runs unauthenticated.
+  // The GitHub auth token hydrated before anything here reads GitHub.
   // Released even if anything above the render throws: every repaint
   // waits on this, and the flow handlers await a repaint inside a `try`
   // whose `finally` resets their button — so a deferred left unresolved
@@ -1235,7 +1215,13 @@ async function seedDefaultCollectionsViaUi(): Promise<void> {
     // failed add leaves the last attempted path sitting there.
     addInput.value = '';
     console.log('[SourceMonkey] first run: seeding complete; marking firstRunComplete=true');
-    await markFirstRunComplete();
+    // Caught here so a failure can't replace the outcome of the seeding
+    // above. With the flag unset, a later install event opens the page
+    // with `?first_run` again, and the add dedupes what is already
+    // there.
+    await markFirstRunComplete().catch((err: unknown) => {
+      console.info('[SourceMonkey] could not record that first-run seeding is done:', describeError(err));
+    });
   }
 }
 
@@ -1375,11 +1361,6 @@ async function render(): Promise<void> {
   // in another tab can be what created the setting.
   currentCopiesSetting = await readCopiesSetting();
 
-  // One-shot backfill so older collection rows (pre-displayName) pick
-  // up an inferred label on first view after upgrade. Cheap no-op once
-  // every row carries a name.
-  await backfillCollectionDisplayNames();
-
   // Surface the file:// access state up-front. Without the toggle on
   // chrome://extensions, every fetch we try will fail.
   if (!(await isFileSchemeAccessAllowed())) {
@@ -1396,7 +1377,19 @@ async function render(): Promise<void> {
     bannerSlot.appendChild(renderUserScriptsBanner(userScriptsState.error));
   }
 
-  const collections = await getCollections();
+  let collections = await getCollections();
+  // One-shot backfill so older collection rows (pre-displayName) pick
+  // up an inferred label on first view after upgrade. Asked of the
+  // worker only when a row has none.
+  if (collections.some(needsDisplayName)) {
+    try {
+      await backfillCollectionDisplayNames();
+      collections = await getCollections();
+    } catch (err) {
+      // Cosmetic: the sections draw with the names they have.
+      console.info('[SourceMonkey] display-name backfill failed', describeError(err));
+    }
+  }
 
   // Last of the three banners, because it is the most situational: it
   // appears only once a refresh has actually failed to save, where the
@@ -1408,16 +1401,14 @@ async function render(): Promise<void> {
 
   const allScripts = await getAllScriptMetas();
   // Repair any collection whose `scriptIds` disagrees with the script
-  // rows themselves, off this scan — this is
-  // the page where the damage shows (a script that runs but is listed
-  // nowhere), and the only surface that already reads every row. The
-  // sections below re-read each collection, so they paint the repaired
-  // lists; failing is not worth abandoning the render over.
-  try {
-    await reconcileScriptMembership({ collections, scripts: allScripts });
-  } catch (err) {
+  // rows themselves. This is the page where the damage shows (a script
+  // that runs but is listed nowhere). The worker does it from its own
+  // read of the rows, and isn't waited for: a repair it writes repaints
+  // this page like any other change, and failing is not worth
+  // abandoning the render over.
+  reconcileScriptMembership().catch((err: unknown) => {
     console.info('[SourceMonkey] membership reconcile failed', err);
-  }
+  });
   if (collections.length === 0) {
     collectionsEl.appendChild(emptyPlaceholder());
     return;
@@ -1463,7 +1454,7 @@ async function renderCollectionSection(collection: StoredCollection): Promise<HT
   const enableLabel = makeToggle(
     collectionOn,
     false,
-    (next, label, solo) => void onToggleCollection(collection.id, next, label, solo),
+    (next, label, solo) => void onToggleCollection(collection.id, next, label, solo).catch(onEnableFailure),
     'Enable scripts under this collection',
   );
   enableLabel.classList.add('collection-toggle');
@@ -1499,7 +1490,11 @@ async function renderCollectionSection(collection: StoredCollection): Promise<HT
   setDeleteIcon(removeBtn, 'record');
   removeBtn.title = 'Remove this collection';
   removeBtn.setAttribute('aria-label', 'Remove this collection');
-  removeBtn.addEventListener('click', () => void onRemoveCollection(collection.id, section, removeBtn));
+  removeBtn.addEventListener('click', () => {
+    onRemoveCollection(collection.id, section, removeBtn).catch((err: unknown) => {
+      console.info('[SourceMonkey] remove collection failed', describeError(err));
+    });
+  });
   buttons.appendChild(removeBtn);
 
   // None for an sm-dev test collection, which its run names.
@@ -1597,7 +1592,7 @@ async function renderScriptTable(collection: StoredCollection, collectionOn: boo
   const bulkBtn = makeBulkToggle(
     allOn,
     !collectionOn,
-    (solo) => void onBulkToggleScripts(collection.id, bulkBtn, solo),
+    (solo) => void onBulkToggleScripts(collection.id, bulkBtn, solo).catch(onEnableFailure),
     bulkTitle(collectionOn, allOn),
   );
   bulkHead.appendChild(bulkBtn);
@@ -1669,7 +1664,7 @@ function renderScriptRow(
   toggleCell.appendChild(makeToggle(
     scriptOn,
     !collectionOn,    // disabled (greyed out) when the parent collection is off
-    (next, label, solo) => void onToggleScript(script.id, next, label, solo),
+    (next, label, solo) => void onToggleScript(script.id, next, label, solo).catch(onEnableFailure),
     collectionOn ? ENABLE_TITLE : COLLECTION_OFF_TITLE,
   ));
   tr.appendChild(toggleCell);
@@ -2226,14 +2221,16 @@ async function onRemoveCollection(id: string, section: HTMLElement, btn: HTMLBut
   btn.disabled = true;
   try {
     await removeCollection(id);
-    // The repaint drops the section and, if that was the last collection,
-    // puts the empty placeholder back.
-    await repaintPage();
   } catch (err) {
     section.classList.remove('removing');
     btn.disabled = false;
-    throw err;
+    // On the page, where the user is looking, rather than the console.
+    showPageError(`Could not remove the collection: ${describeError(err)}`);
+    return;
   }
+  // The repaint drops the section and, if that was the last collection,
+  // puts the empty placeholder back.
+  await repaintPage();
 }
 
 // Snapshot / refresh / repaint / highlight — the shape every refresh
@@ -2694,6 +2691,14 @@ async function onToggleCollection(
   } finally {
     setToggleBusy(label, false);
   }
+}
+
+// An enable write that failed (in the worker, or reaching it): the
+// boxes go back to what is stored. Logged, not thrown: a rejection the
+// click handler drops would land in the extension's Errors panel.
+function onEnableFailure(err: unknown): void {
+  console.info('[SourceMonkey] could not change what is enabled:', describeError(err));
+  void repaintPage();
 }
 
 // Turning a script on turns its other running copies off, unless

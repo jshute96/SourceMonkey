@@ -23,6 +23,7 @@
 import { scriptBasename } from '../script-display.js';
 import { numberMap, numbersFrom, SCRIPT_NUMBERS_KEY } from './sticky-numbers.js';
 import { scanStorageRows } from './storage-scan.js';
+import { sharedRows } from './row-cache.js';
 import type { StoredScript } from '../script-build.js';
 
 export interface LogIdInput {
@@ -84,8 +85,12 @@ export function ensureLogIdsLoaded(): Promise<void> {
 }
 
 async function loadAll(): Promise<void> {
-  const all = await scanStorageRows('log id table', (k) =>
-    k.startsWith(SCRIPT_PREFIX) || k === SCRIPT_NUMBERS_KEY);
+  // From the worker's row cache when it's on (frozen rows, read only),
+  // with the numbers row, which it doesn't keep, read beside it.
+  const cached = await sharedRows((k) => k.startsWith(SCRIPT_PREFIX));
+  const all = cached
+    ? { ...cached, ...await chrome.storage.local.get(SCRIPT_NUMBERS_KEY) }
+    : await scanStorageRows('log id table', (k) => k.startsWith(SCRIPT_PREFIX) || k === SCRIPT_NUMBERS_KEY);
   const next = new Map<string, LogIdInput>();
   for (const [key, value] of Object.entries(all)) {
     if (!key.startsWith(SCRIPT_PREFIX)) continue;

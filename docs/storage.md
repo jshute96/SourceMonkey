@@ -158,30 +158,29 @@ The rows' `contentHash` fields stay change-detection tokens; the
     so an unchanged body isn't hashed on every refresh.
 - **Unused blobs** (after a remove, or a refresh that replaced a body)
   are deleted by the service worker only (`sweepUnusedBlobs`):
-  - A blob goes once it's unused on two checks at least
-    `SWEEP_GRACE_MS` (2 minutes) apart. Each context has its own write
-    lock (see [The lock is per context](#the-lock-is-per-context)), so
-    a single check could race a page saving a row that points at a
-    blob it found already stored.
-  - A check runs inside the worker's write lock
-    (`sweepUnusedBlobsLocked`), so no write in the worker lands between
-    it reading the rows and deleting. That closes the race for most
-    writes, since most run in the worker; the wait covers the pages'.
-  - When each blob was first found unused is kept in session storage,
-    since the worker is often stopped between checks.
-  - **When it runs**: an alarm, set half a minute after a change that
-    leaves a row's blob unused by it (`droppedBlobRefs`). A check that
-    finds unused blobs not old enough yet sets another for when they
-    will be.
-    - At worker start, only if a check is pending (`hasSweepCandidates`).
-      An alarm on every start would buy each start, including the
-      alarm's own wake, another wake half a minute later.
-    - Not in tests: `resetAllState` pauses the alarm's checks, and tests
-      run them at simulated times through the test surface.
-  - A check reads the keys and the small rows, never a blob.
+  - A blob goes on the first check that finds no script row using it.
+  - A check runs inside the write lock (`sweepUnusedBlobsLocked`), and
+    so does every write of a script row: the worker's wrapped `set`
+    refuses one made outside it (`checkScriptRowWrite`), apart from the
+    migrations, which the check waits for anyway. So no write lands
+    between a check reading the rows and deleting: one that found a
+    blob already stored, and so didn't write it again, would otherwise
+    be left pointing at nothing.
+    - The guard sees whether some section of the lock is running, not
+      whether the write is in it, so it catches most mistakes, not all.
+  - **When it runs**: at once, after a change that leaves a row's blob
+    unused by it (`droppedBlobRefs`), so a removal frees its space
+    right away. That matters most near the storage quota.
+    - Changes that land while a check waits for the lock share it.
+    - An alarm set at the same time (half a minute) is the backstop for
+      a worker stopped before the check ran; a check that finishes
+      clears it.
+    - Not in tests: `resetAllState` pauses them, and tests run checks
+      through the test surface.
+  - A check reads the keys and the small rows (from the row cache when
+    it's loaded), never a blob.
   - **Logging**: a removal is always logged (`removed N stored file(s)
-    no script uses`); each check's counts, and when the next one runs,
-    only with debug logging on.
+    no script uses`); each check's counts only with debug logging on.
 - **A row whose blob is missing**, or in an encoding this build
   doesn't know, reads as an `invalid` script (`MISSING_BLOB_MESSAGE`),
   never a crash.
@@ -212,9 +211,12 @@ The rows' `contentHash` fields stay change-detection tokens; the
   probes, moves and removals work on rows this way.
 - **Reading every row** lists the keys and reads only the wanted ones
   (`scanStorageRows`), rather than a `get(null)` that returns every
-  blob and GM value too. The match index, the log label table, the
-  registration sync, the enable toggles' search for related copies,
-  and the collections page do this.
+  blob and GM value too. The collections page does this, and so does
+  the worker's row cache when it loads.
+- **In the worker**, the store, the registration sync, the match index,
+  the log label table and sticky numbers read collection and script
+  rows, and the active times, from the row cache, and related copies
+  come from its indexes ([worker-writes.md](worker-writes.md#the-row-cache)).
 - **Who reads bodies**:
   - The viewer, for the script on screen, and the compare page.
   - Refresh, for the copy it starts from, whose bodies it reuses when
@@ -243,16 +245,10 @@ them to blobs.
   migration below. Then it sets `storeFormat` to `2`.
 - **Reads don't wait**: they accept either format, so a format 1 row
   reads as it is.
-- **Writes and removes wait**, in every context. Otherwise a page could
-  save a row (an enable toggle, say) that the migration then overwrites
-  with the converted copy of what it read earlier.
-  - In the worker, they await the migration itself.
-  - A page finds `storeFormat` already `2`, or else sends
-    `sm:storeFormatReady` and waits for the worker's answer. The
-    message also wakes the worker, which migrates as it starts.
-  - The page asks twice before giving up: a worker stopped
-    mid-migration leaves the first message unanswered, and the second
-    wakes a new one.
+- **Writes and removes wait** for it. Otherwise a write (an enable
+  toggle, say) could be overwritten by the converted copy of the row
+  the migration read earlier. Only the worker writes, so they await the
+  migration itself.
 - **Batches**: rows convert in `set`s of a few dozen. Each `set`
   replaces its rows' inline bodies with blobs, so storage use barely
   moves within a call, and blobs ride in the same call as their rows.
@@ -273,10 +269,10 @@ them to blobs.
   - Skipping a retry after a failure this session is always logged.
   - Finding nothing to move (format 2 already in place at a worker
     start, or a new profile) only with debug logging on.
-- **Format 1 rows after format 2**: the key-rename migration below runs
-  in every context and writes rows as it read them, so it could put
-  back a format 1 row after `storeFormat` is `2`. Tests write such rows
-  too. Readers handle them, and the next write of the row converts it.
+- **Format 1 rows after format 2**: the key-rename migration below
+  writes rows as it read them, so it could put back a format 1 row
+  after `storeFormat` is `2`. Tests write such rows too. Readers handle
+  them, and the next write of the row converts it.
   - The blobs the migration wrote for such a row are then unused, and
     cleanup deletes them.
 - **No way back**: an older build can't read format 2.
@@ -294,6 +290,9 @@ keys would look like a wiped profile.
   on the first storage read in each JS context, memoized. A cheap
   `get("sources")` probe gates the full `get(null)`, so a migrated
   profile pays one small read per context and no more.
+  - Only the worker moves rows. A page whose probe finds the old index
+    asks it (`migrateCollectionKeysForPage`) and waits; that re-checks
+    once in case the worker's memo predates the rows.
 - **Ordering**: new rows are written before the old ones are removed, so
   an interrupted run leaves both spellings and the retry is a no-op over
   what it already moved. A failed run clears the memo instead of wedging
@@ -1234,32 +1233,31 @@ silently reverting the user's choice.
     at, and a departed row is either already deleted or now owned by
     somewhere else.
 
-#### The lock is per context
+#### One lock, in the worker
 
-`mutateChain` is module state, so each JS context has its own: the
-service worker, the collections page, and the viewer.
+`mutateChain` is module state, so the lock covers one JS context. Only
+the service worker writes ([worker-writes.md](worker-writes.md)): the
+pages ask it, and `writeLocal` throws in a page. So the structural
+read-modify-writes all run under the same lock, with the exceptions
+under "Still unguarded" below.
 
-- Pages call the mutators directly — a Remove click, a move, an enable
-  toggle — while the worker refreshes in the background. So a section is
-  atomic against other mutators **in the same context only**.
-- What actually survives a writer in the other context is **re-reading
-  inside the lock and merging**, not the lock itself: the
-  `preserveConcurrentEdits` fields, and the joined/departed reconcile
-  in `writeRefreshedCollection`.
-- Widening a critical section therefore buys nothing and costs
-  something — it can't exclude the other context, only give it a longer
-  window to interleave in.
+- Re-reading inside the lock and merging still matters: a refresh
+  fetches outside the lock, so the `preserveConcurrentEdits` fields and
+  the joined/departed reconcile in `writeRefreshedCollection` are what
+  keep a change made during the fetch.
+- Keep sections short: every write in the worker waits on them.
 
-Still unguarded, each needing an interleave inside one storage
-round-trip. Narrow enough to leave, written down so nobody widens them:
+Still unguarded:
 
-- A page's `removeCollection` racing the worker's refresh write, which
-  would leave the collection's rows behind, referenced by nothing.
-- Two contexts both passing the same `addCollection` / `installScript`
-  dedup check.
-- An enable toggle landing between a refresh's re-read and its write.
-- Two contexts rewriting `enablementTimes` at once, which drops one's
-  stamps (see [script-enablement.md](script-enablement.md#limitations)).
+- A copy installed between an enable's pre-lock read and its lock is
+  not among the copies it considers (`writeEnablementFrom`).
+- The legacy-key migration a page requests mid-session
+  (`migrateCollectionKeysForPage`) runs outside the lock. It writes
+  script rows as its scan read them, so a `removeScript` landing in
+  between gets its row written back.
+  - Rare: it needs old rows restored into a running profile.
+  - Not moved under the lock: reads inside the lock await the
+    migration, so it would deadlock.
 
 ### Membership disagreements
 
@@ -1278,11 +1276,11 @@ means to represent. Two kinds:
 `reconcileScriptMembership()` repairs both, taking the script row's own
 `collectionId` as the authority: append where missing, drop where stale.
 
-- Finding a row nothing points at needs a whole-storage scan, so it has
-  no schedule of its own. The collections page runs it on every full
-  render, off the `getAllScripts()` scan it already makes for log IDs —
-  no extra reads, and it repairs the profile on the page where an
-  unlisted row is missing.
+- Finding a row nothing points at needs every row, so it has no
+  schedule of its own. The collections page asks the worker for it on
+  every full render, without waiting, so it repairs the profile on the
+  page where an unlisted row is missing. The worker reads the rows from
+  its row cache ([worker-writes.md](worker-writes.md#the-row-cache)).
 - A row whose collection is **gone** is reported, not repaired:
   `removeCollection` drops both together, so it shouldn't arise, and
   there is nowhere to put such a row back. (`script-identity.md` calls
@@ -1311,7 +1309,7 @@ materialising silently.
     a user naming a collection and wrong for seeding: a fresh install
     would put up a modal per default and wait. `seedCollection` is the
     plain route — no dialog, no preview hand-off, no scroll.
-- **Run-once.** The page writes `"firstRunComplete"` after seeding;
+- **Run-once.** The page asks the worker to set `"firstRunComplete"` after seeding;
   once set, neither the SW open nor the page seed fires again —
   including after the user deletes the seeded collections.
 - **Reset behavior.** The test-surface `resetAllState()` sets
@@ -1878,9 +1876,10 @@ have to be.
 
 #### Coordination with the page's own handlers
 
-`chrome.storage` fires in the writing context too, so a page-driven Add
-/ Remove / Refresh echoes back as a repaint. That echo is harmless: a
-repaint only ever converges the DOM onto storage.
+The worker does the writes for a page's Add / Remove / Refresh, and
+`chrome.storage` fires in every other context, so each one echoes back
+to the page as a repaint. That echo is harmless: a repaint only ever
+converges the DOM onto storage.
 
 The handlers therefore don't defend against it — they use the repaint
 themselves rather than hand-rendering their result:

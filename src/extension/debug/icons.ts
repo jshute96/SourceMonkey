@@ -7,13 +7,11 @@ import { formatLogTimestamp } from '../log-format.js';
 import { installHomeLinkHandler } from '../page-links.js';
 import { formatBytes } from '../../script-display.js';
 import {
-  deleteAllCachedIcons,
-  deleteCachedIcon,
   isIconCacheKey,
   listCachedIcons,
-  refreshCachedIcon,
   type CachedIconRow,
 } from '../site-icon.js';
+import { deleteAllCachedIcons, deleteCachedIcon, refreshCachedIcon } from '../worker-client.js';
 
 const summaryEl = document.getElementById('icons-summary') as HTMLParagraphElement;
 const emptyEl = document.getElementById('icons-empty') as HTMLDivElement;

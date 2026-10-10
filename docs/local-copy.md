@@ -251,8 +251,11 @@ Make a local copy of this script
 2. Each file is downloaded in turn and waited on.
 3. The Downloads folder is confirmed from the first saved path; every
    later file must have landed under it too.
-4. The collection is created, adopted, or found; then refreshed, which
-   scans the copy in.
+4. The page hands over to the service worker, which writes all storage
+   ([worker-writes.md](worker-writes.md)): `registerLocalCopy` runs
+   steps 4 and 5 there. The page keeps the downloads, which need a blob
+   URL the worker lacks. The collection is created, adopted, or found;
+   then refreshed, which scans the copy in.
 5. The copy's row is **enabled** if it isn't already. Replacing a file
    inherits the row it replaced, and `rebuildCollection` preserves a
    prior `enabled: false` across a refresh — so replacing a copy the

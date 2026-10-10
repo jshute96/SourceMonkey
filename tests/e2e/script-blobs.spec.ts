@@ -86,7 +86,7 @@ test.describe('script blobs', () => {
     await sw.evaluate(async (scripts: Raw[]) => {
       const keys = await chrome.storage.local.getKeys();
       await chrome.storage.local.remove([...keys.filter((k) => k.startsWith('blob:')), 'storeFormat']);
-      await chrome.storage.local.set(Object.fromEntries(scripts.map((s) => [`script:${s.id}`, s])));
+      await (self as unknown as { SourceMonkey: { seedStorage(items: Record<string, unknown>): Promise<void> } }).SourceMonkey.seedStorage(Object.fromEntries(scripts.map((s) => [`script:${s.id}`, s])));
     }, full as unknown as Raw[]);
 
     await sm.rerunStoreMigration();
@@ -121,7 +121,7 @@ test.describe('script blobs', () => {
     await sw.evaluate(async (scripts: Raw[]) => {
       const keys = await chrome.storage.local.getKeys();
       await chrome.storage.local.remove([...keys.filter((k) => k.startsWith('blob:')), 'storeFormat']);
-      await chrome.storage.local.set(Object.fromEntries(scripts.map((s) => [`script:${s.id}`, s])));
+      await (self as unknown as { SourceMonkey: { seedStorage(items: Record<string, unknown>): Promise<void> } }).SourceMonkey.seedStorage(Object.fromEntries(scripts.map((s) => [`script:${s.id}`, s])));
     }, full as unknown as Raw[]);
     await sm.forgetStoreMigration();
 
@@ -163,7 +163,7 @@ test.describe('script blobs', () => {
     await sm.updateCollection(collection!.id, 'manual');
     expect(await blobKeys()).toHaveLength(3);
     // Nothing unused yet.
-    expect(await sm.sweepUnusedBlobs()).toEqual({ checked: 3, removed: 0, waiting: 0 });
+    expect(await sm.sweepUnusedBlobs()).toEqual({ checked: 3, removed: 0 });
 
     // Now the second copy too: the old body is unused.
     scriptsDir.write({
@@ -172,9 +172,8 @@ test.describe('script blobs', () => {
       body: 'void "new body";',
     });
     await sm.updateCollection(collection!.id, 'manual');
-    const now = Date.now();
-    expect(await sm.sweepUnusedBlobs(now)).toEqual({ checked: 3, removed: 0, waiting: 1 });
-    expect(await sm.sweepUnusedBlobs(now + 2 * 60_000)).toEqual({ checked: 3, removed: 1, waiting: 0 });
+    // Deleted on the first check that finds it unused.
+    expect(await sm.sweepUnusedBlobs()).toEqual({ checked: 3, removed: 1 });
 
     // The new shared body and the library are left, and read back.
     expect(await blobKeys()).toHaveLength(2);

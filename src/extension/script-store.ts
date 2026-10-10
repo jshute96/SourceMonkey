@@ -92,6 +92,9 @@ import {
 } from '../external-files.js';
 import { type LocalFileScope } from '../local-file-overrides.js';
 import { scanAllStorage, scanStorageRows } from './storage-scan.js';
+import { cachedRows, cachedScriptRows, allCachedRows } from './row-cache.js';
+import { callWorker } from './worker-client.js';
+import { assertWorkerContext, isPageContext } from '../run-context.js';
 import {
   blobKeysOf,
   clearMigrationFailureForTests,
@@ -135,7 +138,9 @@ import {
   PARSE_RECHECK_CONCURRENCY,
 } from './concurrency.js';
 import { dlog } from '../debug-log.js';
-import { COLLECTIONS_INDEX_KEY, COLLECTION_PREFIX, SCRIPT_PREFIX, collectionKey, scriptKey } from './structural-keys.js';
+import {
+  COLLECTIONS_INDEX_KEY, COLLECTION_PREFIX, ENABLEMENT_TIMES_KEY, SCRIPT_PREFIX, collectionKey, scriptKey,
+} from './structural-keys.js';
 import { startPhaseTimer, storageSize, timePhase, formatMs, timingNow, type PhaseTimer } from '../phase-timing.js';
 import {
   applyFetchError,
@@ -507,7 +512,7 @@ async function runOwnParseChecks(
     const toSet: Record<string, unknown> = {};
     for (const [id, next] of verdicts) {
       // Re-read rather than trusting the copy we checked: the check is
-      // a round trip to another context, and a refresh could have
+      // a round trip to the offscreen document, and a refresh could have
       // rewritten the row while it was out. A row whose fingerprint
       // inputs moved is one our verdict is no longer about.
       const current = got[scriptKey(id)] as StoredScript | undefined;
@@ -599,11 +604,8 @@ export async function recordMissingBlobs(ids: readonly string[]): Promise<void> 
 // Keyed on the fingerprint as well as the id because a row that moved
 // again is different work, not the same work twice.
 //
-// Per JS context, like every other module-level table here: the viewer
-// and the collections page import this module into their own contexts
-// and get their own map. Nothing is wrong with that — each context has
-// its own checker and its own sandbox — it just means the dedupe is
-// within a context, not across the extension.
+// Per JS context, like every other module-level table here. Only the
+// worker runs checks now, so in practice this is the worker's map.
 interface InFlightCheck {
   id: string;
   resolve: (row: StoredScript | null) => void;
@@ -930,27 +932,36 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
 // never call another mutator (refreshCollection / addCollection / a set*),
 // since this mutex is non-reentrant — keep orchestrator calls outside.
 //
-// SCOPE: `mutateChain` is module state, so the lock is PER JS CONTEXT.
-// The service worker, the collections page, and the viewer each hold
-// their own — and pages call these mutators directly (a Remove click, a
-// move, an enable toggle) while the worker refreshes in the background.
-// So a section is atomic against other mutators in the SAME context
-// only. Two rules follow:
+// SCOPE: `mutateChain` is module state, so the lock covers one JS
+// context. Only the service worker writes (docs/worker-writes.md): pages
+// ask it, and `writeLocal` throws in a page. So every mutator is under
+// this one lock. Two rules still hold:
 //
 //   - Re-read inside the lock and merge, rather than writing values
-//     captured before it. That is what actually survives a writer in
-//     another context — see `preserveConcurrentEdits` and the
-//     joined/departed reconcile in `writeRefreshedCollection`.
-//   - Keep sections short for the same reason. A wide section doesn't
-//     buy exclusion against the other context; it only widens the
-//     window in which that context can interleave.
+//     captured before it: a refresh fetches outside the lock, and an
+//     edit made meanwhile has to survive its write. See
+//     `preserveConcurrentEdits` and the joined/departed reconcile in
+//     `writeRefreshedCollection`.
+//   - Keep sections short: every write in the worker waits on them.
 //
-// See docs/storage.md#write-serialization-mutate for what remains
-// unguarded across contexts.
+// See docs/storage.md#one-lock-in-the-worker.
+// A section's writes must be awaited before it returns: the blob cleanup
+// relies on no script row landing outside a section
+// (`checkScriptRowWrite`), and a write left running would land after.
 let mutateChain: Promise<unknown> = Promise.resolve();
+// Whether a section is running: what `checkScriptRowWrite` asks.
+let sectionsRunning = 0;
 function mutate<T>(fn: () => Promise<T>): Promise<T> {
+  const section = async (): Promise<T> => {
+    sectionsRunning++;
+    try {
+      return await fn();
+    } finally {
+      sectionsRunning--;
+    }
+  };
   // Run after the prior section settles, regardless of its outcome.
-  const run = mutateChain.then(fn, fn);
+  const run = mutateChain.then(section, section);
   // Advance the chain, swallowing the result so one section's rejection
   // doesn't reject the next waiter's gate (the rejection still
   // propagates to THIS caller via `run`).
@@ -993,8 +1004,12 @@ let migrationPromise: Promise<void> | null = null;
 // `injector.ts`) rather than through here. `script-log-id.ts` reads
 // `script:*` rows directly too and deliberately does NOT await: script
 // keys don't move, and it reads only `relativePath`.
+//
+// Only the worker writes (docs/worker-writes.md): a page that finds the
+// old rows asks it to move them, and waits.
 export function ensureCollectionKeysMigrated(): Promise<void> {
-  migrationPromise ??= migrateLegacyCollectionKeys().catch((err: unknown) => {
+  const migrate = isPageContext() ? migrateViaWorker : () => asMigration(migrateLegacyCollectionKeys);
+  migrationPromise ??= migrate().catch((err: unknown) => {
     // Never let a failed migration wedge every read behind it: clear the
     // memo so the next reader retries, and leave the old rows in place.
     console.info('[SourceMonkey] collection-key migration failed', err);
@@ -1015,12 +1030,35 @@ export function resetCollectionKeyMigrationForTests(): void {
   migrationPromise = null;
 }
 
+async function migrateViaWorker(): Promise<void> {
+  if (await hasLegacyRows()) await callWorker('migrateCollectionKeys');
+}
+
+async function hasLegacyRows(): Promise<boolean> {
+  return LEGACY_INDEX_KEY in await chrome.storage.local.get(LEGACY_INDEX_KEY);
+}
+
+// The worker's answer to a page that found the old rows: the
+// migration, then a failure if the rows are still there, so the page
+// forgets its own memo and asks again on its next read.
+export async function migrateCollectionKeysForPage(): Promise<void> {
+  const first = ensureCollectionKeysMigrated();
+  await first;
+  // This worker's memo may predate the rows (old data restored since it
+  // checked): look again, once. Only the first page to ask resets it;
+  // another one asking meanwhile shares the new run.
+  if (await hasLegacyRows()) {
+    if (migrationPromise === first) migrationPromise = null;
+    await ensureCollectionKeysMigrated();
+  }
+  if (await hasLegacyRows()) throw new Error('Internal error: Could not move the collections to their current storage keys');
+}
+
 async function migrateLegacyCollectionKeys(): Promise<void> {
   // Cheap gate first. A profile with any collection at all has the old
   // index row, so its absence means there is nothing to move. The memo
-  // means this runs at most once per context — but that is still once
-  // per service-worker wake and once per page load, and the `get(null)`
-  // below drags back every script body and the whole favicon cache.
+  // means this runs at most once per worker wake (a page's request can
+  // re-run it), and the full scan below reads every row.
   const probe = await chrome.storage.local.get(LEGACY_INDEX_KEY);
   if (!(LEGACY_INDEX_KEY in probe)) return;
 
@@ -1028,7 +1066,7 @@ async function migrateLegacyCollectionKeys(): Promise<void> {
   const toSet: Record<string, unknown> = {};
   const toRemove: string[] = [LEGACY_INDEX_KEY];
   // Seed the index ONLY when the new spelling isn't there yet. This runs
-  // outside `mutate()`, so a context that read `all` before another one
+  // outside `mutate()`, so a run that read `all` before an earlier run
   // finished migrating would otherwise write the stale legacy id list
   // over an index a later add had already extended — orphaning that
   // collection's row from the index.
@@ -1077,10 +1115,15 @@ async function getMany(keys: string[]): Promise<Record<string, unknown>> {
 // Rows as stored. A script row written back from here with a field
 // changed keeps its bodies (its blob refs) as they are, and the write
 // hashes nothing.
+//
+// In the worker, from its row cache when that is loaded (row-cache.ts).
 async function getRows(keys: string[]): Promise<Record<string, unknown>> {
   if (keys.length === 0) return {};
   await ensureCollectionKeysMigrated();
-  return await chrome.storage.local.get(keys);
+  const cached = cachedRows(keys);
+  if (!cached) return await chrome.storage.local.get(keys);
+  if (cached.rest.length === 0) return cached.found;
+  return { ...await chrome.storage.local.get(cached.rest), ...cached.found };
 }
 
 async function getRow<T>(key: string): Promise<T | undefined> {
@@ -1092,70 +1135,81 @@ async function getRow<T>(key: string): Promise<T | undefined> {
 // Format 2 keeps bodies out of the script rows (docs/storage.md#content-blobs).
 // The service worker moves format 1 rows over once, at startup
 // (`migrateToBlobs`). Reads take either format, so only writes wait for
-// it: a page's write made while the worker is still converting could
-// otherwise be overwritten by the converted copy of the row it read.
+// it; only the worker writes.
 
 let storeFormatPromise: Promise<void> | null = null;
 
-// Message a page sends to wait for the worker's migration.
-export const STORE_FORMAT_READY_MESSAGE = 'sm:storeFormatReady';
-
-function isServiceWorker(): boolean {
-  return 'ServiceWorkerGlobalScope' in globalThis;
-}
-
-// Resolves once this context may write script rows. Never rejects, so
-// a failure can't wedge every write behind it:
-//   - The worker's failed migration is logged and tried again in the
-//     next browser session (`migrateToBlobs`). Writes carry on
-//     meanwhile, in format 2, as they always do.
-//   - A page that couldn't get an answer from the worker asks again
-//     before its next write.
+// Resolves once script rows may be written. Never rejects, so a failure
+// can't wedge every write behind it: a failed migration is logged and
+// tried again in the next browser session (`migrateToBlobs`). Writes
+// carry on meanwhile, in format 2, as they always do.
 export function storeFormatReady(): Promise<void> {
-  if (storeFormatPromise) return storeFormatPromise;
-  const worker = isServiceWorker();
-  const ready = (worker ? migrateStore() : waitForWorker()).catch((err: unknown) => {
-    if (worker) {
-      console.info('[SourceMonkey] storage format migration failed:', describeError(err));
-    } else {
-      console.info('[SourceMonkey] could not confirm the storage format with the service worker:', describeError(err));
-      if (storeFormatPromise === ready) storeFormatPromise = null;
-    }
+  storeFormatPromise ??= migrateStore().catch((err: unknown) => {
+    console.info('[SourceMonkey] storage format migration failed:', describeError(err));
   });
-  storeFormatPromise = ready;
-  return ready;
+  return storeFormatPromise;
 }
 
 async function migrateStore(): Promise<void> {
   // The old key spelling first: it moves rows the blob migration reads.
   await ensureCollectionKeysMigrated();
-  await migrateToBlobs();
+  await asMigration(migrateToBlobs);
 }
 
-async function waitForWorker(): Promise<void> {
-  const format = (await chrome.storage.local.get(STORE_FORMAT_KEY))[STORE_FORMAT_KEY];
-  if (typeof format === 'number' && format >= STORE_FORMAT) return;
-  // Waking the worker is part of the point: it migrates as it starts.
-  // Asked twice: a worker stopped mid-migration closes the first
-  // message's channel unanswered, and the second wakes a new one, which
-  // finishes the migration before answering.
+// One unused-blob check (`sweepUnusedBlobs`), inside the write lock. A
+// write of a script row can't land between the check reading the rows
+// and deleting what they don't use: every one takes the lock too
+// (`checkScriptRowWrite`). One that found a blob still stored, and so
+// didn't write it again, would otherwise be left pointing at nothing.
+//
+// `started`: called once the check holds the lock; false skips the check
+// (null result).
+export function sweepUnusedBlobsLocked(started?: () => boolean): Promise<SweepResult | null> {
+  return mutate(async () => {
+    if (started && !started()) return null;
+    await storeFormatReady();
+    return await sweepUnusedBlobs((await cachedScriptRows()) ?? undefined);
+  });
+}
+
+// For the test surface: rows a test writes straight into storage, under
+// the lock like every other write of a script row
+// (`checkScriptRowWrite`).
+export function seedStorageForTests(items: Record<string, unknown>): Promise<void> {
+  return mutate(() => chrome.storage.local.set(items));
+}
+
+// The migrations write script rows outside the lock: they run before
+// any write that takes it (`storeFormatReady`), and the cleanup waits
+// for them the same way. While one runs, every script-row write is let
+// through, so a legacy-key migration started mid-session (a page found
+// old rows) widens the check for its length. Rare: old rows restored
+// into a running profile.
+//
+// That mid-session run is also unguarded: it writes the script rows as
+// its scan read them, so a `removeScript` landing between the scan and
+// the write gets its row written back (its blobs possibly already
+// swept). It isn't moved under the lock because reads inside the lock
+// await this migration, so a section waiting on it would deadlock.
+let migrationsRunning = 0;
+async function asMigration<T>(run: () => Promise<T>): Promise<T> {
+  migrationsRunning++;
   try {
-    await chrome.runtime.sendMessage({ type: STORE_FORMAT_READY_MESSAGE });
-  } catch {
-    await chrome.runtime.sendMessage({ type: STORE_FORMAT_READY_MESSAGE });
+    return await run();
+  } finally {
+    migrationsRunning--;
   }
 }
 
-// One unused-blob check (`sweepUnusedBlobs`), inside this context's
-// write lock. A write here then can't land between the check reading
-// the rows and deleting what they don't use: one that found a blob
-// still stored, and so didn't write it again, would be left pointing at
-// nothing. Only the service worker sweeps, and most writes run there.
-export function sweepUnusedBlobsLocked(now?: number): Promise<SweepResult> {
-  return mutate(async () => {
-    await storeFormatReady();
-    return await sweepUnusedBlobs(now);
-  });
+// The worker's wrapped write calls this before every write (row-cache.ts):
+// a script row written outside the lock could race the blob cleanup.
+// A bug, so it throws. It sees whether SOME section is running, not
+// whether this write is in it: a write outside the lock made while a
+// section runs passes, so this catches most mistakes, not all.
+export function checkScriptRowWrite(keys: readonly string[]): void {
+  if (sectionsRunning > 0 || migrationsRunning > 0) return;
+  const row = keys.find((k) => k.startsWith(SCRIPT_PREFIX));
+  if (row) throw new Error(`Internal error: ${row} was written outside the store's write lock`);
 }
 
 // Test-only: run the migration again, as a worker start would. For
@@ -1166,15 +1220,16 @@ export async function rerunStoreMigrationForTests(): Promise<void> {
 }
 
 // Test-only: as a worker just started, before anything asked for the
-// format. The next write here, or a page's message, runs the migration.
+// format. The next write here runs the migration.
 export async function forgetStoreMigrationForTests(): Promise<void> {
   storeFormatPromise = null;
   await clearMigrationFailureForTests();
 }
 
 // Only for the test surface's `resetAllState`, which wipes storage: the
-// worker records the empty profile as format 2 again, so pages opened
-// afterwards needn't ask it.
+// worker records the empty profile as format 2 again, as a fresh
+// profile's migration would, so a worker started later in the test
+// doesn't scan for format 1 rows.
 export async function markStoreFormatForTests(): Promise<void> {
   await chrome.storage.local.set({ [STORE_FORMAT_KEY]: STORE_FORMAT });
 }
@@ -1275,6 +1330,17 @@ export async function getScript(scriptId: string): Promise<StoredScript | undefi
   return await getRaw<StoredScript>(scriptKey(scriptId));
 }
 
+// A full script as its row would read without the bodies, for a caller
+// that holds one and needs only the rest (an answer sent to a page).
+export function withoutBodies(script: StoredScript): ScriptMeta {
+  const { bodyText, requires, resources, ...rest } = script;
+  return {
+    ...rest,
+    ...(requires ? { requires: requires.map(({ source, ...r }) => r) } : {}),
+    ...(resources ? { resources: resources.map(({ bytesBase64, ...r }) => r) } : {}),
+  };
+}
+
 export async function getScriptMeta(scriptId: string): Promise<ScriptMeta | undefined> {
   return await getRow<ScriptMeta>(scriptKey(scriptId));
 }
@@ -1290,9 +1356,12 @@ export async function getScriptMetas(scriptIds: readonly string[]): Promise<Scri
 
 // Every stored script without its bodies (across all collections,
 // regardless of status): only the script rows are read.
+//
+// In the worker, from its row cache, which this loads (row-cache.ts).
 export async function getAllScriptMetas(reason = 'all script rows'): Promise<ScriptMeta[]> {
   await ensureCollectionKeysMigrated();
-  const rows = await scanStorageRows(reason, (k) => k.startsWith(SCRIPT_PREFIX));
+  const rows = await cachedScriptRows()
+    ?? await scanStorageRows(reason, (k) => k.startsWith(SCRIPT_PREFIX));
   return Object.values(rows) as ScriptMeta[];
 }
 
@@ -1997,23 +2066,33 @@ async function emitInitialLoadLog(script: StoredScript): Promise<void> {
   await appendScriptLog(script.id, { ...entry, source: 'add' });
 }
 
+// A row with no name that one can be inferred for: a user-created
+// container infers none, so is left as it is.
+export function needsDisplayName(collection: StoredCollection): boolean {
+  return !collection.displayName?.trim() && inferDisplayName(collection.path) !== '';
+}
+
 // Fill in `displayName` on any collection row that doesn't have one
-// yet. Runs at collections-page boot (and at any other entry point that
-// wants stable display labels for older rows). Cheap — one read of the
-// collection index plus one bulk write iff anything was missing. The
-// pure-inference rules live in `collection-display.ts`; that module
-// only imports a TYPE from this file so the cycle is compile-time only.
+// yet. The collections page asks for it at boot when a row needs one.
+// Cheap: one read of the collection index plus one bulk write iff
+// anything was missing. The pure-inference rules live in
+// `collection-display.ts`; that module only imports a TYPE from this
+// file so the cycle is compile-time only.
 export async function backfillCollectionDisplayNames(): Promise<void> {
-  const collections = await getCollections();
-  const toSet: Record<string, unknown> = {};
-  for (const s of collections) {
-    if (s.displayName && s.displayName.trim()) continue;
-    const next: StoredCollection = { ...s, displayName: inferDisplayName(s.path) };
-    toSet[collectionKey(s.id)] = next;
-  }
-  if (Object.keys(toSet).length > 0) {
-    await writeLocal(toSet);
-  }
+  // Read and written under the lock: a removal or refresh landing in
+  // between would otherwise be written over with the rows read before.
+  await mutate(async () => {
+    const collections = await getCollections();
+    const toSet: Record<string, unknown> = {};
+    for (const s of collections) {
+      if (!needsDisplayName(s)) continue;
+      const next: StoredCollection = { ...s, displayName: inferDisplayName(s.path) };
+      toSet[collectionKey(s.id)] = next;
+    }
+    if (Object.keys(toSet).length > 0) {
+      await writeLocal(toSet);
+    }
+  });
 }
 
 // One-time pass over stored script rows to fill `usesUnsafeWindow` for
@@ -2031,21 +2110,29 @@ export async function backfillCollectionDisplayNames(): Promise<void> {
 // and error rows (which never run), are skipped. `startupLogs` is
 // re-derived for the rows that change so the row stays self-consistent
 // with what the injector will do with it.
+//
+// The backfills read and write inside the write lock, as every write of
+// a script row must (`checkScriptRowWrite`): a row removed between the
+// read and the write would otherwise come back, pointing at blobs the
+// cleanup has deleted. They run once per extension update, so holding
+// the lock for a full read costs nothing that matters.
 export async function backfillUsesUnsafeWindow(): Promise<number> {
-  const scripts = await getAllScripts();
-  const toSet: Record<string, unknown> = {};
-  for (const script of scripts) {
-    if (script.status !== 'ok' || script.usesUnsafeWindow === true) continue;
-    if (!sourceUsesUnsafeWindow(script.bodyText)) continue;
-    const next: StoredScript = { ...script, usesUnsafeWindow: true };
-    const logs = rederivedStartupLogs(script, true);
-    if (logs.length > 0) next.startupLogs = logs;
-    else delete next.startupLogs;
-    toSet[scriptKey(script.id)] = next;
-  }
-  const changed = Object.keys(toSet).length;
-  if (changed > 0) await writeLocal(toSet);
-  return changed;
+  return mutate(async () => {
+    const scripts = await getAllScripts();
+    const toSet: Record<string, unknown> = {};
+    for (const script of scripts) {
+      if (script.status !== 'ok' || script.usesUnsafeWindow === true) continue;
+      if (!sourceUsesUnsafeWindow(script.bodyText)) continue;
+      const next: StoredScript = { ...script, usesUnsafeWindow: true };
+      const logs = rederivedStartupLogs(script, true);
+      if (logs.length > 0) next.startupLogs = logs;
+      else delete next.startupLogs;
+      toSet[scriptKey(script.id)] = next;
+    }
+    const changed = Object.keys(toSet).length;
+    if (changed > 0) await writeLocal(toSet);
+    return changed;
+  });
 }
 
 // Re-derive `startupLogs` on stored rows, so a new parse-time check
@@ -2054,20 +2141,22 @@ export async function backfillUsesUnsafeWindow(): Promise<number> {
 // is never rebuilt. Runs after that backfill, so `usesUnsafeWindow` is
 // current. Writes only rows whose logs changed; returns how many.
 export async function backfillStartupLogs(): Promise<number> {
-  const scripts = await getAllScriptMetas('startup log backfill');
-  const toSet: Record<string, unknown> = {};
-  for (const script of scripts) {
-    if (script.status !== 'ok') continue;
-    const logs = rederivedStartupLogs(script, script.usesUnsafeWindow === true);
-    if (JSON.stringify(logs) === JSON.stringify(script.startupLogs ?? [])) continue;
-    const next: ScriptMeta = { ...script };
-    if (logs.length > 0) next.startupLogs = logs;
-    else delete next.startupLogs;
-    toSet[scriptKey(script.id)] = next;
-  }
-  const changed = Object.keys(toSet).length;
-  if (changed > 0) await writeLocal(toSet);
-  return changed;
+  return mutate(async () => {
+    const scripts = await getAllScriptMetas('startup log backfill');
+    const toSet: Record<string, unknown> = {};
+    for (const script of scripts) {
+      if (script.status !== 'ok') continue;
+      const logs = rederivedStartupLogs(script, script.usesUnsafeWindow === true);
+      if (JSON.stringify(logs) === JSON.stringify(script.startupLogs ?? [])) continue;
+      const next: ScriptMeta = { ...script };
+      if (logs.length > 0) next.startupLogs = logs;
+      else delete next.startupLogs;
+      toSet[scriptKey(script.id)] = next;
+    }
+    const changed = Object.keys(toSet).length;
+    if (changed > 0) await writeLocal(toSet);
+    return changed;
+  });
 }
 
 // Re-run all of `validateHeader` on stored `ok` rows, so a header
@@ -2080,25 +2169,29 @@ export async function backfillStartupLogs(): Promise<number> {
 // runs on the same wake and may have read the row while it was still
 // `ok`, which would leave an INVALID badge over a Log that says nothing.
 export async function backfillHeaderProblems(): Promise<number> {
-  const scripts = await getAllScriptMetas('header check backfill');
-  const toSet: Record<string, unknown> = {};
-  for (const script of scripts) {
-    if (script.status !== 'ok') continue;
-    const problem = validateHeader(script.header);
-    if (!problem) continue;
-    const next: ScriptMeta = { ...script, status: 'invalid' };
-    setScriptError(next, problem.message, locationIn(script.relativePath, problem.line));
-    // Same shape as a freshly built invalid row (see
-    // `buildScriptFromText`): no startup logs, parse verdict or world
-    // flag, and no stale refresh failure competing with the error.
-    delete next.startupLogs;
-    delete next.parseCheckedHash;
-    delete next.usesUnsafeWindow;
-    delete next.refreshError;
-    toSet[scriptKey(script.id)] = next;
-  }
-  const flipped = Object.values(toSet) as ScriptMeta[];
-  if (flipped.length > 0) await writeLocal(toSet);
+  const flipped = await mutate(async () => {
+    const scripts = await getAllScriptMetas('header check backfill');
+    const toSet: Record<string, unknown> = {};
+    for (const script of scripts) {
+      if (script.status !== 'ok') continue;
+      const problem = validateHeader(script.header);
+      if (!problem) continue;
+      const next: ScriptMeta = { ...script, status: 'invalid' };
+      setScriptError(next, problem.message, locationIn(script.relativePath, problem.line));
+      // Same shape as a freshly built invalid row (see
+      // `buildScriptFromText`): no startup logs, parse verdict or world
+      // flag, and no stale refresh failure competing with the error.
+      delete next.startupLogs;
+      delete next.parseCheckedHash;
+      delete next.usesUnsafeWindow;
+      delete next.refreshError;
+      toSet[scriptKey(script.id)] = next;
+    }
+    const rows = Object.values(toSet) as ScriptMeta[];
+    if (rows.length > 0) await writeLocal(toSet);
+    return rows;
+  });
+  // Outside the lock: the Log has its own queue.
   for (const row of flipped) {
     const entry = loadStateLogEntry(row);
     if (entry) await appendScriptLog(row.id, { ...entry, source: 'extension-update' });
@@ -2242,7 +2335,7 @@ async function unreferencedScratchKeys(removed: readonly ScriptMeta[]): Promise<
 async function scanMembershipRows(): Promise<{
   collections: StoredCollection[]; scripts: ScriptMeta[];
 }> {
-  const all = await scanStorageRows('membership reconcile', (k) =>
+  const all = await allCachedRows() ?? await scanStorageRows('membership reconcile', (k) =>
     k === COLLECTIONS_INDEX_KEY || k.startsWith(COLLECTION_PREFIX) || k.startsWith(SCRIPT_PREFIX));
   // Out of the scan rather than a second read, so the index and the rows
   // it filters are one snapshot. `ensureCollectionKeysMigrated` already
@@ -2277,23 +2370,19 @@ async function scanMembershipRows(): Promise<{
 // never refreshed again, and one listed by a collection it doesn't name
 // shows up under a collection it doesn't belong to.
 //
-// Finding a row nothing points at needs a whole-storage scan, so this
-// does not run on a schedule of its own. The collections page — the
-// surface where an unlisted row is missing, and the one the user is
-// looking at when they notice — already scans the whole store on every
-// full render, and hands what it read to `prescanned` so this costs it
-// no extra reads.
+// Finding a row nothing points at needs every row, so this does not run
+// on a schedule of its own. The collections page (the surface where an
+// unlisted row is missing, and the one the user is looking at when they
+// notice) asks the worker for it on every full render, which reads the
+// rows from its row cache.
 //
 // A row whose collection is GONE is left alone: `removeCollection`
 // drops both together so it shouldn't arise, there is nowhere to put
 // such a row back, and quietly deleting a user's script on a hunch is
 // worse than leaving an inert row.
-export async function reconcileScriptMembership(
-  prescanned?: { collections: readonly StoredCollection[]; scripts: readonly ScriptMeta[] },
-): Promise<number> {
+export async function reconcileScriptMembership(): Promise<number> {
   await ensureCollectionKeysMigrated();
-  // Only the caller that has no rows in hand pays for the scan.
-  const rows = prescanned ?? await scanMembershipRows();
+  const rows = await scanMembershipRows();
 
   // {script id → the collections currently listing it}. Built over
   // every collection row rather than a flat "is listed" set, so a row
@@ -3412,6 +3501,7 @@ export function storageFullMessage(): string {
 // Script rows are written in format 2: a full script splits into its
 // small row plus the blobs it points at, in this same `set`.
 async function writeLocal(items: Record<string, unknown>): Promise<void> {
+  assertWorkerContext('write storage');
   await storeFormatReady();
   await setLocal(await withBlobs(items));
 }
@@ -3420,6 +3510,7 @@ async function writeLocal(items: Record<string, unknown>): Promise<void> {
 // migration, which runs before the format migration and writes rows as
 // it read them.
 async function setLocal(items: Record<string, unknown>): Promise<void> {
+  assertWorkerContext('write storage');
   try {
     await chrome.storage.local.set(items);
   } catch (err) {
@@ -3431,6 +3522,7 @@ async function setLocal(items: Record<string, unknown>): Promise<void> {
 // worker is still converting rows (a converted copy would bring the row
 // back). The blobs stay; see docs/storage.md#writing-and-cleanup.
 async function removeLocal(keys: string | string[]): Promise<void> {
+  assertWorkerContext('write storage');
   await storeFormatReady();
   await chrome.storage.local.remove(keys);
 }
@@ -3474,7 +3566,7 @@ export interface EnablementWrite {
 // changes the times of every copy under it, and stamping them on the
 // rows would rewrite each full row (bodies and all). See
 // [docs/script-enablement.md](../../docs/script-enablement.md#active-times).
-export const ENABLEMENT_TIMES_KEY = 'enablementTimes';
+export { ENABLEMENT_TIMES_KEY };
 
 export interface EnablementTimes {
   activeSince?: number;
@@ -3518,9 +3610,10 @@ function stampTimes(
   return false;
 }
 
-// Drop active times kept for scripts that no longer exist: entries a
-// removal in another context raced back in (the key is shared by every
-// context, and each one's lock covers only itself). `live` is a scan of
+// Drop active times kept for scripts that no longer exist. A removal
+// drops its rows' times in the same write, so these are left from
+// before only the worker wrote, when a removal in a page could race
+// another context's write of the times back in. `live` is a scan of
 // the script rows; an id missing from it is re-checked inside the lock,
 // so a row added since the scan keeps its times.
 async function pruneEnablementTimes(live: ReadonlySet<string>): Promise<void> {
@@ -3597,8 +3690,8 @@ export interface EnablementRows {
 // The caller picks the ids from a read made before the lock, and only
 // those are re-read: a full read here would hold the lock (and every
 // other write in this context) for as long as it takes. A copy that
-// appears between the two reads is missed, which needs an install in
-// another context at that moment.
+// appears between the two reads is missed, which needs an install to
+// land at that moment.
 //
 // `plan` returning null writes nothing.
 export async function writeEnablementFrom(
