@@ -214,10 +214,10 @@ async function track(entries: [string, string][], write: () => Promise<void>): P
 }
 
 // Wrap this context's writes, and watch for others'. Called once, by the
-// service worker at startup, before anything writes: its change listener
-// then runs before the worker's others, so they read the cache as
-// storage now is. Nothing else turns the cache on, so pages and unit
-// tests read storage as before.
+// service worker at startup, before anything writes. Its change listener
+// runs before every listener installed after it (one installed at module
+// load, the popup's script cache, only drops entries). Nothing else
+// turns the cache on, so pages and unit tests read storage as before.
 //
 // `checkWrite` sees the keys of every `set` first, and throws to refuse
 // it: the store's check that script rows are written under its lock
@@ -280,8 +280,10 @@ export function installRowCache(checkWrite: (keys: readonly string[]) => void = 
 }
 
 // Every cached row, loaded first when needed. Null when the cache isn't
-// on in this context, or a write kept landing during the load: the
-// caller reads storage itself then.
+// on in this context, or a write kept landing during the load (three
+// tries): the caller reads storage itself then, and the next read tries
+// to load again. Under constant writes (a Refresh All) that is a scan
+// per read until the writes pause.
 async function loaded(): Promise<Map<string, unknown> | null> {
   if (!installed) return null;
   if (rows) return rows;

@@ -118,20 +118,19 @@ export const LOG_LEVEL_KEY_PREFIX = 'loglevel:';
 // accumulate dead Promises.
 //
 // The map is module state, so the chain only orders writes made in THIS
-// context — and both contexts write: the worker logs every injection
-// and refresh event, while a page logs through the same `script-store`
-// code it shares (an install's first-load line) and clears the log from
-// the viewer's button. Two chains would interleave on one key and lose
-// entries, or resurrect ones a clear had just removed. So every MUTATION
-// from a page hops to the worker (`writeViaWorker`) and the worker's
-// chain is the only one that touches the key. Reads don't hop: they
-// aren't read-modify-write.
+// context. Only the worker writes the log today: it logs every
+// injection and refresh event, and the viewer's Clear button goes
+// through the worker's ops port. Pages share `script-store` code with
+// the worker, though, and a page that logged through it would run a
+// second chain on the same key, losing entries or resurrecting ones a
+// clear had just removed. So, as a guard, a MUTATION made in a page
+// hops to the worker (`writeViaWorker`) and the worker's chain stays
+// the only one that touches the key. Reads don't hop: they aren't
+// read-modify-write.
 //
 // What that guarantees is "the worker's chain orders everything that
 // reaches it", NOT "a page's appends are ordered": two writes from one
-// page are two messages, ordered by the IPC rather than by a chain, and
-// a write that fell back to the local chain (see `writeViaWorker`) isn't
-// ordered against the relayed ones at all.
+// page are two messages, ordered by the IPC rather than by a chain.
 const queues = new Map<string, Promise<unknown>>();
 function enqueue<T>(scriptId: string, task: () => Promise<T>): Promise<T> {
   const prev = queues.get(scriptId) ?? Promise.resolve();
@@ -204,6 +203,8 @@ export async function handleScriptLogWrite(req: ScriptLogWriteRequest): Promise<
 }
 
 // Page side. Only the worker writes storage (docs/worker-writes.md).
+// No page code logs today; this is the guard for one that does, through
+// code it shares with the worker (see `queues` above).
 // An entry the worker didn't ACKNOWLEDGE is sent once more: a worker
 // stopped mid-message closes the channel unanswered, and the second
 // message wakes a new one. Then it is dropped, and said so in this

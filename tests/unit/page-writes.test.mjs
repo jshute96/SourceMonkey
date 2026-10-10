@@ -52,6 +52,10 @@ const WRITERS = {
   'script-log': ['clearScriptLog'],
   'site-icon': ['ensureCachedIcon', 'refreshCachedIcon', 'deleteCachedIcon', 'deleteAllCachedIcons'],
   'local-copy': ['registerLocalCopy'],
+  'sticky-numbers': ['assignNumbers'],
+  'refresh-error': ['setRefreshError', 'pruneRefreshErrors'],
+  'script-rejection': ['writeRejections'],
+  'gm-values': ['applyBatchValues', 'wipeScriptValues'],
   'injector': ['syncRegistrations', 'retryRejectedRegistrations', 'unregisterAllRegistrations', 'registerWithFallback'],
 };
 

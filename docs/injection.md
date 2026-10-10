@@ -86,9 +86,12 @@ fails.
 
 `src/extension/injector.ts` owns Chrome's registration set.
 
-- **On SW startup** — `syncRegistrations()` runs with no scope, in
-  parallel with the match-index load. See
-  [Startup: the record, or a full reconcile](#startup-the-record-or-a-full-reconcile).
+- **On SW startup** — the claims load starts the first sync: its first
+  `setMustAskForDecision` runs `syncRegistrations()` with no scope, in
+  parallel with the match-index load.
+  - That is also the first sync that may take the last worker's record,
+    since the record is only taken once the claims are known. See
+    [Startup: the record, or a full reconcile](#startup-the-record-or-a-full-reconcile).
 - **On every cache change** — the match-index already fires
   `onCacheChanged` for `script:*` / `collection:*` mutations, naming
   the rows that moved. The SW subscribes a second listener that
@@ -145,8 +148,8 @@ registered is **updated in place**.
    applies a batch all-or-nothing, so a rejected batch falls back to
    per-spec calls and one bad script can't take down every other one.
 6. `unregister([...])` for the rest of the scripts that left the set,
-   which Chrome may hold though this worker's record says not, and for any script Chrome
-   just refused that it already held (see
+   which Chrome may hold though this worker's record says not, and for
+   any script Chrome just refused that it already held (see
    [Update, never unregister-then-register](#update-never-unregister-then-register)).
    Usually Chrome holds none of the former, which fails the batch call
    and falls back to one call per id, so they wait until after
@@ -208,7 +211,7 @@ nothing: that would strand stale registrations.
     appeared or went away, is in the scope.
     - A script's fingerprint leaves out `versionProbes`, which a probe
       rewrites without a sync; a collection's is only whether it is
-      enabled, the one field the sync reads.
+      enabled, the one field the sync reads, to keep the record small.
   - Taken only when made by this extension version, with the "must ask"
     setting the specs were built with (so not before the claims load),
     and when Chrome still holds our helpers with the patterns the
@@ -221,8 +224,6 @@ nothing: that would strand stale registrations.
   - A script row's fingerprint is its JSON, keys in the order the row
     cache and storage keep them (sorted). A row read in another order
     would only be synced again.
-  - Collections are kept as their enabled flag only, the one field the
-    sync reads, to keep the record small.
   - Removed when it's dropped on purpose (`forgetRegistrationState`,
     `unregisterAllRegistrations`).
   - Its own timing line, `registration record`, says whether it was
@@ -256,13 +257,20 @@ nothing: that would strand stale registrations.
     (`sameCode`). For our helpers that is a pattern change; a user
     script's code carries its own patterns, so its code changes with
     them.
-- The record is dropped whenever it stops being trustworthy: a sync
-  that throws part-way, and `unregisterAllRegistrations` (the test
-  surface's teardown). The next sync then reconciles fully, which also
-  covers whatever ids the failed sync consumed.
-- A full reconcile also re-places the bridge and GM-runtime
-  registrations, whose code ships with the extension and changes on
-  update. The same code comparison applies to them.
+- The record in memory is dropped whenever it stops being trustworthy.
+  The next sync then reconciles fully, which also covers whatever ids
+  a failed sync consumed. It is dropped by:
+  - a sync that throws part-way;
+  - `forgetRegistrationState` (the parse checker turned back on). A
+    sync already running when it is called drops its result too;
+  - a sync that finds the `chrome.userScripts` API unavailable;
+  - `unregisterAllRegistrations` (the test surface's teardown).
+- All but the throwing sync remove the session copy too. A sync that
+  throws leaves it, but if it had changed Chrome's set it wrote the
+  stale marker first, so the next worker reconciles in full.
+- A full reconcile also covers the bridge and GM-runtime registrations,
+  whose code ships with the extension and changes on update. The same
+  comparison applies to them: one Chrome holds exactly gets no call.
 
 #### What an incremental sync must not disturb
 
@@ -1154,6 +1162,9 @@ Mechanics:
     user scripts. A full sync that finds one there places everything
     again, helpers first (`helpersFirst`); otherwise it skips what
     Chrome already holds.
+  - A full sync that has to send a helper re-sends the user scripts
+    too (`keepHelpersFirst`). Skipping them would leave the updated
+    helper behind them.
 
 Trust model:
 

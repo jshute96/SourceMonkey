@@ -62,11 +62,10 @@ onNamedTabFocus('options', () => {
 // an unset key reads back as — capture is opt-out, debug logging is
 // opt-in.
 initBooleanSetting('capture-userjs', INSTALL_CAPTURE_KEY, true);
-// This page both sets the flag AND runs refreshes (`updateCollection`
-// on a search-roots save), so it needs to observe it like any other
-// context — each one reads the flag for itself. Without this a refresh
-// started from Options produces no timing output while the identical
-// refresh from the collections page does.
+// This page both sets the flag AND reads storage through shared code
+// that logs under it (the storage-read timings in `storage-scan`), so
+// it observes the flag like any other context: each one reads it for
+// itself. Refreshes it asks for run in the worker, which has its own.
 installDebugLoggingListener();
 void loadDebugLoggingFlag();
 

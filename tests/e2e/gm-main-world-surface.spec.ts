@@ -124,7 +124,10 @@ test.describe('GM_* surfaces in MAIN world', () => {
     await expect(page.locator('body')).toHaveAttribute('data-native-focus', 'false');
 
     const closed = page.waitForEvent('close', { timeout: 10_000 });
-    await page.locator('#sm-close-now').click();
+    // The click closes the page, sometimes before Playwright has finished
+    // the click, which then reports the page gone. The close event is
+    // what's under test.
+    await page.locator('#sm-close-now').click().catch(() => undefined);
     await closed;
     expect(page.isClosed()).toBe(true);
   });

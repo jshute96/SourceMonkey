@@ -2934,13 +2934,13 @@ test('syncRegistrations: dropping the last @exclude really drops it', async (t) 
   assert.deepEqual(chrome_.calls, ['unregister:a', 'register:a']);
 });
 
-test('syncRegistrations: a registration another context placed can still be dropped', async (t) => {
-  // `state.registered` is this context's belief, and the collections
-  // page and the viewer place registrations in theirs. A removal that
-  // consulted the belief would leave a script the page-side retry
-  // placed injecting after the user disabled it — and unlike a wrong
-  // belief about presence, that one never self-corrects, because
-  // removal has no second call to disagree with it.
+test('syncRegistrations: a registration the record has lost can still be dropped', async (t) => {
+  // `state.registered` is this worker's belief about Chrome's set, and
+  // it can be wrong (a reset, a record lost with a stopped worker). A
+  // removal that consulted the belief would leave such a script
+  // injecting after the user disabled it — and unlike a wrong belief
+  // about presence, that one never self-corrects, because removal has
+  // no second call to disagree with it.
   t.after(resetUserScriptStubs);
   sessionStore.clear();
   localStore.clear();
@@ -2950,9 +2950,7 @@ test('syncRegistrations: a registration another context placed can still be drop
   const chrome_ = fakeRegistrationSet();
   await syncRegistrations();
 
-  // Simulate the other context: drop `b` from OUR record while leaving
-  // it registered, exactly as a page-side `retryRejectedRegistrations`
-  // that the worker never heard about would.
+  // Drop `b` from OUR record while leaving it registered.
   _forgetRegistrationForTests('b');
   chrome_.reset();
 
@@ -3180,8 +3178,13 @@ test('syncRegistrations: a full sync sends nothing for what Chrome holds, and le
   });
   chrome_.reset();
   await syncRegistrations();
-  assert.equal(chrome_.sentUpdate('a'), undefined, 'held exactly as specified: no call');
-  assert.equal(chrome_.sentUpdate(BRIDGE_SCRIPT_ID), undefined, 'nor for our own');
+  // The runtime is sent, so `a` is too, though Chrome holds it: sent
+  // after the runtime, it stays behind it in Chrome's order. Its code
+  // is left out.
+  assert.equal('js' in chrome_.sentUpdate('a'), false, 'helpers stay first; no code');
+  assert.equal(chrome_.sentUpdate(BRIDGE_SCRIPT_ID), undefined, 'a helper held as specified: no call');
+  const order = (await userScripts.getScripts()).map((s) => s.id);
+  assert.ok(order.indexOf(GM_RUNTIME_SCRIPT_ID) < order.indexOf('a'), 'the runtime still before a');
   assert.ok(chrome_.sentUpdate('b').js.some((c) => c.code.includes('changed();')), 'changed code is sent');
   assert.equal('js' in chrome_.sentUpdate(GM_RUNTIME_SCRIPT_ID), false, 'new patterns, same code: no code');
   assert.ok(chrome_.spec(GM_RUNTIME_SCRIPT_ID).matches.includes('https://f/*'));
@@ -3336,6 +3339,48 @@ test('syncRegistrations: a collection turned off while no worker ran drops its s
   assert.equal(lastSyncKindForTests(), 'incremental');
   const ids = (await userScripts.getScripts()).map((s) => s.id);
   assert.ok(!ids.includes('a') && !ids.includes('b'), 'both unregistered');
+});
+
+test('syncRegistrations: a record built to ask differently is not taken', async (t) => {
+  t.after(resetUserScriptStubs);
+  _setMustAskForTests(true);
+  t.after(() => _setMustAskForTests(null));
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a');
+  fakeRegistrationSet();
+  await syncRegistrations();
+  await forgetRegistrationStateAsNewWorkerForTests();
+  // The claims loaded with no live claim: specs must stop asking.
+  _setMustAskForTests(false);
+  await syncRegistrations();
+  assert.equal(lastSyncKindForTests(), 'full');
+});
+
+test('syncRegistrations: fingerprints stay current across two restarts', async (t) => {
+  t.after(resetUserScriptStubs);
+  _setMustAskForTests(false);
+  t.after(() => _setMustAskForTests(null));
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a');
+  seedStore('b');
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+  await forgetRegistrationStateAsNewWorkerForTests();
+  localStore.set('script:b', { ...localStore.get('script:b'), bodyText: 'changed();' });
+  await syncRegistrations();
+  assert.equal(lastSyncKindForTests(), 'incremental');
+
+  // Nothing changed since: the next worker sends Chrome nothing.
+  await forgetRegistrationStateAsNewWorkerForTests();
+  chrome_.reset();
+  await syncRegistrations();
+  assert.equal(lastSyncKindForTests(), 'incremental');
+  assert.equal(chrome_.sentUpdate('a'), undefined);
+  assert.equal(chrome_.sentUpdate('b'), undefined);
 });
 
 test('syncRegistrations: a record is not taken after the state was forgotten on purpose', async (t) => {

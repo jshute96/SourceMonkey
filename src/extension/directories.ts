@@ -33,8 +33,8 @@ export type { FoundScript } from '../collection-scan.js';
 import { type FoundScript, MAX_SCAN_DEPTH, MANIFEST_FILENAME } from '../collection-scan.js';
 import { mapWithConcurrency, SCAN_DIRS_CONCURRENCY } from './concurrency.js';
 // Page-only API under the hood, but the wrapper answers "allowed" from
-// any context that can't ask — and only `classifyLocation`, which is
-// page-only anyway, calls it.
+// any context that can't ask — and only `classifyLocation`, which only
+// the collection dialog calls, uses it.
 import { isFileSchemeAccessAllowed } from './file-access.js';
 export { MAX_SCAN_DEPTH } from '../collection-scan.js';
 
@@ -125,9 +125,10 @@ function isFilesystemRoot(path: string): boolean {
 // at arbitrary origins. Their readability is checked when the
 // collection is created.
 //
-// Only for page contexts (the collection dialog). A service worker has
-// no XMLHttpRequest, and its `fetch` of a file:// directory answers
-// opaquely — see the module header.
+// Called from the collection dialog, a page. The reads would work from
+// the worker too (docs/worker-writes.md#checked-what-the-worker-can-do),
+// but its file-access check (`isFileSchemeAccessAllowed`) can only ask
+// from a page.
 export async function classifyLocation(input: string): Promise<LocationVerdict> {
   const value = input.trim();
   if (!isValidLocationShape(value)) {

@@ -271,7 +271,8 @@ them to blobs.
     start, or a new profile) only with debug logging on.
 - **Format 1 rows after format 2**: the key-rename migration below
   writes rows as it read them, so it could put back a format 1 row
-  after `storeFormat` is `2`. Tests write such rows too. Readers handle them, and the next write of the row converts it.
+  after `storeFormat` is `2`. Tests write such rows too. Readers handle
+  them, and the next write of the row converts it.
   - The blobs the migration wrote for such a row are then unused, and
     cleanup deletes them.
 - **No way back**: an older build can't read format 2.
@@ -1236,8 +1237,9 @@ silently reverting the user's choice.
 
 `mutateChain` is module state, so the lock covers one JS context. Only
 the service worker writes ([worker-writes.md](worker-writes.md)): the
-pages ask it, and `writeLocal` throws in a page. So every structural
-read-modify-write is under the same lock.
+pages ask it, and `writeLocal` throws in a page. So the structural
+read-modify-writes all run under the same lock, with the exceptions
+under "Still unguarded" below.
 
 - Re-reading inside the lock and merging still matters: a refresh
   fetches outside the lock, so the `preserveConcurrentEdits` fields and
@@ -1245,9 +1247,17 @@ read-modify-write is under the same lock.
   keep a change made during the fetch.
 - Keep sections short: every write in the worker waits on them.
 
-Still unguarded: a copy installed between an enable's pre-lock read
-and its lock is not among the copies it considers
-(`writeEnablementFrom`).
+Still unguarded:
+
+- A copy installed between an enable's pre-lock read and its lock is
+  not among the copies it considers (`writeEnablementFrom`).
+- The legacy-key migration a page requests mid-session
+  (`migrateCollectionKeysForPage`) runs outside the lock. It writes
+  script rows as its scan read them, so a `removeScript` landing in
+  between gets its row written back.
+  - Rare: it needs old rows restored into a running profile.
+  - Not moved under the lock: reads inside the lock await the
+    migration, so it would deadlock.
 
 ### Membership disagreements
 
@@ -1866,9 +1876,10 @@ have to be.
 
 #### Coordination with the page's own handlers
 
-`chrome.storage` fires in the writing context too, so a page-driven Add
-/ Remove / Refresh echoes back as a repaint. That echo is harmless: a
-repaint only ever converges the DOM onto storage.
+The worker does the writes for a page's Add / Remove / Refresh, and
+`chrome.storage` fires in every other context, so each one echoes back
+to the page as a repaint. That echo is harmless: a repaint only ever
+converges the DOM onto storage.
 
 The handlers therefore don't defend against it — they use the repaint
 themselves rather than hand-rendering their result:

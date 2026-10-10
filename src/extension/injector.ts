@@ -4,8 +4,9 @@
 // job is to keep its registration set in sync with our "effectively
 // enabled ok scripts" view of the world. Whenever the script-store
 // cache changes we re-sync just the rows that moved, updating their
-// registrations in place; a full rebuild happens only when this context
-// has no record of what it last registered (service-worker startup).
+// registrations in place; a full rebuild happens only when this worker
+// has no record of what it last registered: at startup, when it can't
+// take the last worker's record from session storage.
 // See docs/injection.md#lifecycle.
 //
 // ---------- Injection shape (concatenated user program) ----------
@@ -1392,7 +1393,9 @@ async function withBodies(
 // change while it's dead, so a fresh worker's first sync is a full
 // reconcile against `chrome.userScripts.getScripts()`, unless it takes
 // the last worker's record (`restoreRecord`). A sync that fails part-way
-// drops the state for the same reason.
+// drops the state for the same reason. The record itself is
+// `RegistrationState`, below.
+
 // What we last placed under one registration id.
 interface Placement {
   world: InjectionWorld;
@@ -1449,11 +1452,9 @@ let syncState: RegistrationState | null = null;
 // Registrations are global, so this slows `document-start` scripts in
 // every tab while a run is active, not just in the run's own tabs.
 //
-// `null` until the SW has loaded the claims, and in any extension page
-// (which never does), and read as `true` then: a registration built
-// without knowing must not let a claimed tab's script through. A page's
-// retry of a rejected script then asks until the SW next re-registers
-// it, which is only slower.
+// `null` until the SW has loaded the claims, and read as `true` then: a
+// registration built without knowing must not let a claimed tab's script
+// through.
 let mustAskForDecision: boolean | null = null;
 // The sync that applies the latest change, for a caller asking for the
 // value already set to wait on too.
@@ -1489,7 +1490,11 @@ export function setMustAskForDecision(on: boolean): Promise<void> {
 // Unit tests use it between cases too — the state is module-level and
 // outlives a storage wipe, which is exactly the cross-test bleed the
 // retry gate beside it also has to be reset for.
+// Bumped by `forgetRegistrationState`, which a sync in flight checks.
+let stateGeneration = 0;
+
 export function forgetRegistrationState(): void {
+  stateGeneration++;
   syncState = null;
   lastSyncKind = null;
   // The next sync reconciles in full, in this worker or the next: the
@@ -1515,6 +1520,7 @@ export async function forgetRegistrationStateAsNewWorkerForTests(): Promise<void
   lastSyncKind = null;
   mayRestoreRecord = true;
   recordMarkedStale = false;
+  recordUnsaved = false;
 }
 
 // Which path the last sync took. Test-only, and the only way to tell
@@ -1527,9 +1533,8 @@ export function lastSyncKindForTests(): 'full' | 'incremental' | null {
 }
 
 // Forget ONE id from the record while leaving Chrome's set alone. Unit
-// tests use it to reproduce the divergence a page-side
-// `retryRejectedRegistrations` creates: it places a registration in its
-// own JS context, and the worker's record never hears about it.
+// tests use it to reproduce a record that is wrong about what Chrome
+// holds (a reset, a record lost with a stopped worker).
 export function _forgetRegistrationForTests(id: string): void {
   syncState?.registered.delete(id);
 }
@@ -1907,7 +1912,10 @@ async function unregisterAll(): Promise<void> {
 // waiting for the storage-change sync. Exported so that teardown is
 // ordered against any sync already in flight rather than racing it.
 export async function unregisterAllRegistrations(): Promise<void> {
-  if (!isUserScriptsAvailable()) return;
+  if (!isUserScriptsAvailable()) {
+    dropRecord();
+    return;
+  }
   await withRegistrationLock(async () => {
     await unregisterAll();
     // Our record of Chrome's set is now a lie, and an incremental sync
@@ -1979,7 +1987,8 @@ async function revalidateCandidates(
 // — see the lock above for what the overlap used to cost.
 // Run at the start of each sync, before anything is read: the service
 // worker numbers new scripts here (`assignNumbers`), so a script
-// is registered under its numbered label from the start. Unset in pages.
+// is registered under its numbered label from the start. Unset in unit
+// tests that don't number scripts.
 //
 // Resolves to the script numbers by id, as just assigned, so the sync
 // takes them from here rather than reading them again. The worker is the
@@ -2064,6 +2073,9 @@ let mayRestoreRecord = true;
 // Whether the session marker says the saved record may be stale: set
 // before this worker changes Chrome's set, cleared when it saves.
 let recordMarkedStale = false;
+// Whether this worker's record has something the saved one lacks: it
+// changed Chrome's set, or it was built by a full sync.
+let recordUnsaved = false;
 let recordSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
 function noteFingerprint(state: RegistrationState, key: string, fingerprint: string | undefined): void {
@@ -2107,6 +2119,7 @@ function hashText(text: string): string {
 // fails too, a worker stopped before the next save may take a stale one.
 async function markRecordStale(): Promise<void> {
   if (recordMarkedStale) return;
+  recordUnsaved = true;
   try {
     await chrome.storage.session.set({ [SYNC_DIRTY_KEY]: true });
     recordMarkedStale = true;
@@ -2130,7 +2143,7 @@ function scheduleRecordSave(): void {
 
 async function saveRecord(): Promise<void> {
   const state = syncState;
-  if (!state || !recordMarkedStale) return;
+  if (!state || !recordUnsaved) return;
   const record: SyncRecord = {
     version: chrome.runtime.getManifest().version,
     mustAsk: state.mustAsk,
@@ -2142,8 +2155,9 @@ async function saveRecord(): Promise<void> {
     fingerprints: [...state.fingerprints],
   };
   await chrome.storage.session.set({ [SYNC_RECORD_KEY]: record });
-  await chrome.storage.session.remove(SYNC_DIRTY_KEY);
+  if (recordMarkedStale) await chrome.storage.session.remove(SYNC_DIRTY_KEY);
   recordMarkedStale = false;
+  recordUnsaved = false;
 }
 
 // When this worker can't vouch for the saved record any more.
@@ -2152,6 +2166,7 @@ function dropRecord(): void {
   // Written again before the next change: the marker may have gone with
   // the storage it was in (a test reset).
   recordMarkedStale = false;
+  recordUnsaved = false;
   if (recordSaveTimer !== null) clearTimeout(recordSaveTimer);
   recordSaveTimer = null;
   void chrome.storage.session.remove(SYNC_RECORD_KEY).catch(() => undefined);
@@ -2266,6 +2281,9 @@ async function runSync(scope: SyncScope | undefined): Promise<void> {
   }
   let state = fullSyncNeeded ? null : syncState;
   fullSyncNeeded = false;
+  // A `forgetRegistrationState` while this runs (it doesn't take the
+  // lock) means its result mustn't be kept.
+  const generation = stateGeneration;
   try {
     const numbers = (await beforeSync?.()) ?? null;
     await ensureWorldConfigured();
@@ -2285,7 +2303,6 @@ async function runSync(scope: SyncScope | undefined): Promise<void> {
       }
     }
     if (mustAskForDecision !== null) mayRestoreRecord = false;
-    await markRecordStale();
     // A scope is only actionable against a record of what we last left
     // registered. Without one — a fresh service worker, or a sync that
     // failed part-way and dropped it — the only safe answer is to
@@ -2296,8 +2313,16 @@ async function runSync(scope: SyncScope | undefined): Promise<void> {
     } else {
       syncState = await runFullSync(numbers);
       lastSyncKind = 'full';
+      // Built from scratch: saved even if it sent Chrome nothing, or a
+      // worker after a browser start would never find one.
+      recordUnsaved = true;
     }
-    scheduleRecordSave();
+    // Saved when this sync changed something (`applyPlan` marks the
+    // record stale first), built it afresh, or an earlier one did.
+    if (generation !== stateGeneration) {
+      syncState = null;
+      dropRecord();
+    } else if (recordUnsaved) scheduleRecordSave();
   } catch (err) {
     console.info('[SourceMonkey] userScripts sync failed:', describeError(err));
     // We no longer know what Chrome holds, so the next sync starts over
@@ -2365,7 +2390,7 @@ async function runFullSync(assigned: ReadonlyMap<string, number> | null): Promis
   // Unless Chrome's order has a helper behind a user script: then
   // everything is placed again, helpers first, which restores it (see
   // `retryRefusedOwnSpecs`).
-  const inPlace = helpersFirst(held) ? sameRegistrations(specs, held) : new Set<string>();
+  const inPlace = keepHelpersFirst(specs, held);
   const codeInPlace = sameCode(specs, held);
   const removeIds = [...present.keys()].filter((id) => !wanted.has(id));
   timer.mark('compare');
@@ -2416,8 +2441,8 @@ async function runFullSync(assigned: ReadonlyMap<string, number> | null): Promis
 // Mutates `state` in place as it goes; the caller drops the whole record
 // if this throws.
 //
-// `assigned`: the script numbers `beforeSync` just assigned, or null in
-// a page, which reads them.
+// `assigned`: the script numbers `beforeSync` just assigned, or null
+// where nothing assigns them (unit tests), which reads them.
 async function runIncrementalSync(
   scope: SyncScope,
   state: RegistrationState,
@@ -2743,10 +2768,13 @@ function reportSyncResult(
   const sent = held.size > 0
     ? ` (${placed.filter((id) => !held.has(id)).length} registration(s) sent, ${held.size} already held)`
     : '';
+  // A full sync states the whole set; an incremental one, what it
+  // registered.
+  const verb = held.size > 0 ? 'in place' : 'registered';
   if (problems.length > 0) {
-    console.info(`[SourceMonkey] in place: ${what}${sent}; ${problems.join('; ')}`);
+    console.info(`[SourceMonkey] ${verb}: ${what}${sent}; ${problems.join('; ')}`);
   } else {
-    console.log(`[SourceMonkey] in place with chrome.userScripts: ${what}${sent}`);
+    console.log(`[SourceMonkey] ${verb} with chrome.userScripts: ${what}${sent}`);
   }
 }
 
@@ -3019,6 +3047,23 @@ function sameJs(a: RegistrationSpec['js'] | undefined, b: RegistrationSpec['js']
   return x.length === y.length && x.every((part, i) => part.code === y[i].code && part.file === y[i].file);
 }
 
+// The specs to count as placed without a call, keeping our helpers ahead
+// of the user scripts in Chrome's order. Chrome moves an updated
+// registration to the end of its list, so:
+//   - if a helper is behind a user script already, nothing is skipped:
+//     everything is placed again, helpers first;
+//   - if a helper is about to be sent, no user script is skipped either,
+//     or the helper would land behind the skipped ones.
+function keepHelpersFirst(
+  specs: readonly RegistrationSpec[],
+  held: readonly chrome.userScripts.RegisteredUserScript[],
+): Set<string> {
+  if (!helpersFirst(held)) return new Set();
+  const same = sameRegistrations(specs, held);
+  const helperSent = specs.some((s) => !isUserScriptId(s.id) && !same.has(s.id));
+  return helperSent ? new Set([...same].filter((id) => !isUserScriptId(id))) : same;
+}
+
 // Whether every one of our own registrations comes before every user
 // script in Chrome's list, the order the sync places them in.
 function helpersFirst(held: readonly chrome.userScripts.RegisteredUserScript[]): boolean {
@@ -3225,6 +3270,10 @@ async function applyPlan(plan: RegistrationPlan, timer?: PhaseTimer): Promise<Ap
   // the one-at-a-time fallback in `unregisterIds` would hold up the
   // registering.
   const [held, unsure] = partition(plan.removeIds, (id) => plan.present.has(id));
+  // Before the first change to Chrome's set, and only when there is one:
+  // a sync with nothing to do leaves the saved record as it is.
+  const inPlaceIds = plan.inPlace ?? new Set<string>();
+  if (plan.removeIds.length > 0 || plan.specs.some((s) => !inPlaceIds.has(s.id))) await markRecordStale();
   await unregisterIds(held);
   timer?.mark('unregister');
   const inPlace = plan.inPlace ?? new Set<string>();
@@ -3303,11 +3352,10 @@ async function reregisterScripts(ids: readonly string[]): Promise<void> {
   //
   // `present` is empty because a rejected script is by definition not
   // registered. When that's wrong, `placeSpec`'s fallback covers it.
-  await markRecordStale();
   const applied = await applyPlan({
     specs, removeIds: [], present: new Map(), owned: wanted,
   });
-  scheduleRecordSave();
+  if (recordUnsaved) scheduleRecordSave();
   for (const id of applied.placed) {
     dlog(`[SourceMonkey] script ${id} registered on retry`);
     // Keep this context's record of the registration set honest, so a
@@ -3375,6 +3423,7 @@ export async function registerWithFallback(specs: RegistrationSpec[]): Promise<n
   const applied = await applyPlan({
     specs, removeIds: [], present: new Map(), owned: 'all',
   });
+  if (recordUnsaved) scheduleRecordSave();
   return applied.placed.length;
 }
 

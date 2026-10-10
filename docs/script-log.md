@@ -195,9 +195,10 @@ made in one JS context.
   for.
 - Two chains on one key would lose entries, and let an append that was
   already in flight resurrect a log the user just cleared.
-- A page that does log (through code it shares with the worker) hands
-  the entry to the worker (`SCRIPT_LOG_WRITE_MESSAGE`, handled in
-  `background.ts`). Reads don't hop: they aren't read-modify-write.
+- A guard for pages: no page code logs today, but a page that logs
+  through code it shares with the worker hands the entry to the worker
+  (`SCRIPT_LOG_WRITE_MESSAGE`, handled in `background.ts`). Reads don't
+  hop: they aren't read-modify-write.
   - The worker answers `true` once it has written the entry. A handler
     that threw resolves the message rather than rejecting it, so the
     ack has to be read, not just awaited.

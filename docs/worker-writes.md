@@ -116,9 +116,13 @@ log labels keep tables derived from them.
 
 - **Loaded** by the first read that wants every row. At a worker start
   that is the match index, the log labels, sticky numbers or the
-  registration sync,
-  which load it with one scan between them instead of a scan each.
-  Until then, point reads go to storage.
+  registration sync, which load it with one scan between them instead
+  of a scan each. Until then, point reads go to storage.
+  - A load that a write overlaps tries again, up to three times, then
+    gives up: the caller reads storage itself, and the next read tries
+    to load again.
+  - So under constant writes (a Refresh All) each full read may cost a
+    scan until the writes pause.
 - **Read** by:
   - the store's row reads (`getRows`) for those keys; other keys in the
     same read still come from storage;
@@ -126,10 +130,12 @@ log labels keep tables derived from them.
     sticky numbers (`sharedRows`), which used to scan storage
     themselves. They get the cached rows themselves, frozen, not
     copies: they only read, and a change would throw.
-- **Indexes**: script ids by canonical location and by `@namespace` +
-  `@name`, updated with the rows. Finding a copy's related copies
-  (`relatedCopyIds`) is a lookup, so an enable reads only those copies'
-  rows, not every row.
+- **Indexes**, updated with the rows, so an enable reads only the rows
+  it needs, not every row:
+  - script ids by canonical location and by `@namespace` + `@name`:
+    finding a copy's related copies (`relatedCopyIds`) is a lookup;
+  - script ids by collection (`scriptIdsInCollection`), for collection
+    toggles and Enable all.
 - **Derived tables stay separate**: the match index and the log labels
   keep their own tables, updated from change events as before.
 - **Kept current** by wrapping this context's `chrome.storage.local`
@@ -137,7 +143,7 @@ log labels keep tables derived from them.
   storage does.
   - Each write to a cached key gets a number. It lands in the cache at
     its change event or when the call returns, whichever is first, so
-    the worker's other change listeners already read it.
+    the worker's change listeners installed after it already read it.
   - An older write never replaces a newer one.
   - A load waits until no write to a cached key is in flight, so every
     write numbered before it is in what it reads.
@@ -147,7 +153,7 @@ log labels keep tables derived from them.
     key order (Chrome sorts an object's keys).
   - A write that changes nothing gets no event, so what is waiting for
     one expires after 30 s.
-  - A load that overlapped another context's write tries again.
+  - A load that overlapped a write tries again (see **Loaded**).
 - **Copies out**: the store's reads return copies, so a caller that
   changes a row can't change the cache; `sharedRows` returns the frozen
   rows.
@@ -163,11 +169,11 @@ log labels keep tables derived from them.
 | Connect grants | viewer revoke / forget | Request |
 | Settings | Options booleans, local roots, GitHub token, downloads folder | Request; low risk, moved for one rule |
 | Refresh | collections Refresh, Refresh All, subsets, `?refresh_file`; viewer Refresh and versions update; Options local-roots Save | Port. Includes version probes and the rejection retry |
-| Add / install | collections Add field, first-run seeding, `?add=`, collection dialog; viewer preview Install | Port. Still without the rejection retry and probes, which the direct `refreshCollection` path skips (see [Open](#open)) |
+| Add / install | collections Add field, first-run seeding, `?add=`, collection dialog; viewer preview Install | Port. Without the rejection retry; a single-script install probes, a whole-collection add doesn't (see [Open](#open)) |
 | Local copy | viewer Make a copy | Page does the downloads (blob URLs), then `registerLocalCopy`: create or find the collection, refresh, enable |
 | Repairs on load | collections `render`: display-name backfill, membership repair | Request: the backfill only when a row lacks a name, the repair without waiting |
 | Legacy key migration | first store read in any context | A page that finds the old index asks the worker, and waits |
-| Site icon cache | icon rendering on collections, viewer, compare; debug icons page | Request to fetch-and-cache (`refreshCachedIcon`); pages read cached rows themselves |
+| Site icon cache | icon rendering on collections, viewer, compare; debug icons page | Request to fetch-and-cache (`ensureCachedIcon`; the debug icons page's `refreshCachedIcon` always fetches); pages read cached rows themselves |
 
 The preview's parse check of a file not yet installed stays in the
 page: it writes nothing.
@@ -175,8 +181,8 @@ page: it writes nothing.
 ## Costs
 
 - **Parse checks move to the offscreen document** for refreshes the
-  worker now runs. Pages compile in their own sandbox today, which
-  docs/parse-check.md credits with no worker wake, no copy of big
+  worker now runs. Pages used to compile in their own sandbox, which
+  docs/parse-check.md credited with no worker wake, no copy of big
   scripts across contexts, and parallel compiles.
 - **A message per write**, and a port per long operation. Small next to
   the reads they replace.
@@ -254,8 +260,6 @@ worker is still asynchronous to the page's repaint.
 5. **Done.** Enforce it ([Enforcement](#enforcement)), then remove
    what [What got simpler](#what-got-simpler) lists, and update
    storage.md, injection.md, script-log.md and architecture.md.
-
-Each stage leaves both kinds of writer working, so it can ship alone.
 
 ## Open
 

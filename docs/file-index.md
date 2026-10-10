@@ -144,7 +144,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/parse-sandbox-host.ts` | Drives a sandboxed parse frame over postMessage: readiness, timeouts, verdict validation, circuit breaker |
 | `src/extension/parse-sandbox.ts` | Sandboxed-page compile probe — `new Function` per source, plus the `<script>` probes that locate the error |
 | `src/extension/offscreen.ts` | Offscreen-document relay: the DOM the service worker lacks, hosting a sandboxed parse frame |
-| `src/extension/background.ts` | Service worker entrypoint; per-tab badge, toolbar click / double click / right-click items and the popup's view + requests, sm:* listener, focus-triggered local refresh, the pages' http-read and log-write relays, injector + match-index bootstrap, first-run collections-page open |
+| `src/extension/background.ts` | Service worker entrypoint; per-tab badge, toolbar click / double click / right-click items and the popup's view + requests, sm:* listener, the pages' `sm:op` worker-ops port, focus-triggered local refresh, the pages' http-read and log-write relays, injector + match-index bootstrap, first-run collections-page open |
 | `src/extension/deep-link.ts` | `webNavigation` listener: rewrites the GitHub `redirect-page.md` URL to the matching `chrome-extension://…` page |
 | `src/extension/install-capture.ts` | Captures http(s) + file:// navigations to `*.user.js` and redirects them to the viewer's preview mode |
 | `src/extension/collections.ts` | Collections page controller — Add-field routing into the dialog, options gear, render, membership repair, in-place updates, refresh highlights + dropped-row ghosts, repaint-from-storage on change, `?refresh`/`?refresh_local`/`?refresh_file`/`?add`/`?first_run` triggers |
@@ -213,10 +213,10 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/managed-changes.ts` | sm-dev's changes to collections and installed scripts, and the details `script show` and `print` read |
 | `src/extension/managed-items.ts` | The collections and installed scripts in the shapes sm-dev's `collection list` and `script list` read |
 | `src/extension/sticky-numbers.ts` | Script and collection numbers (sm-dev's `E4`, `C3`): handing them out, and holding removed ones back before reuse |
-| `src/extension/script-log.ts` | Per-script event log store: chrome.storage.session keyed by script ID, serialized appends with a fixed cap, a sibling `loglevel:` sentinel, and the page→worker write relay |
+| `src/extension/script-log.ts` | Per-script event log store: chrome.storage.session keyed by script ID, serialized appends with a fixed cap, a sibling `loglevel:` sentinel, and a page→worker write relay kept as a guard |
 | `src/extension/log-format.ts` | Log cell formatting (time, status/level, source, message) shared by the viewer's table and its CSV export, plus the export's filename |
 | `src/extension/script-rejection.ts` | Session-storage record of registrations `chrome.userScripts` refused, plus the one sentence every surface reports it with |
-| `src/extension/site-icon.ts` | Site-favicon discovery, `@icon`-header override (incl. local file stand-ins), and the one-icon-per-site slot renderer for collections page + viewer |
+| `src/extension/site-icon.ts` | Site-favicon discovery, `@icon`-header override (incl. local file stand-ins), fetch-and-cache (in the worker, a few at a time), and the one-icon-per-site slot renderer |
 | `src/extension/gm-bindings.ts` | Per-script `GM_*` / `GM.*` binding emitter — generates compile-in `const GM_X = ...` source spliced into the wrapper |
 | `src/extension/gm-values.ts` | SW-side persistent storage for `GM_*` values — `gmval:<scriptId>:<key>` rows in `chrome.storage.local`, batched writes |
 | `src/extension/gm-xhr.ts` | SW-side `GM_xmlhttpRequest` runner — fetch + AbortController, the body streamed to the page in pieces, cookies, timeout |
@@ -354,7 +354,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/file-changes.spec.ts` | The deleted / modified chips on the viewer's rows, the versions table and the collections page, the "refresh pending" chip, and their removal on refresh |
 | `tests/e2e/local-delete.spec.ts` | Deleting a local copy: own dependencies go, shared ones are kept, an untracked file blocks until deleted by hand, files gone from disk, from every trash can that offers it, control placement |
 | `tests/e2e/local-copy.spec.ts` | Local copies: first copy creates the Downloads collection and takes over, Replace for files and installed scripts, name rules, dependency files, cleanup after a refused write, a copy refusing its own name |
-| `tests/e2e/script-log-relay.spec.ts` | The page→worker Log-write relay end to end: the viewer's Clear log is performed by the worker |
+| `tests/e2e/script-log-relay.spec.ts` | The viewer's Clear log is performed by the worker, through its `sm:op` `clearScriptLog` request |
 | `tests/e2e/membership.spec.ts` | Collection membership vs. the script rows: moves and removals that land mid-refresh, and the repair sweep |
 | `tests/e2e/manifest.spec.ts` | Manifest collection refresh: vanished-entry deletion, unreadable-manifest preservation |
 | `tests/e2e/options.spec.ts` | Options-page UI flows: add-directory form, collection removal, per-script toggle |
@@ -382,7 +382,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/github-provider.test.mjs` | Unit tests for the GitHub provider: URL parsing, blob→raw rewrite, default-branch resolution, Contents-API directory scanner |
 | `tests/unit/github-auth.test.mjs` | Unit tests for the GitHub auth helper: host-gated `Authorization` header, no token → no header, never leaks to non-GitHub hosts |
 | `tests/unit/storage-usage.test.mjs` | Storage-usage breakdown: blobs counted once by kind, format 1 rows split, key grouping, remainder, whole-KB rounding |
-| `tests/unit/script-blobs.test.mjs` | Storage format 2: rows to blobs and back, shared bytes, missing blobs, writes skipping stored blobs, the migration and its retries, cleanup timing |
+| `tests/unit/script-blobs.test.mjs` | Storage format 2: rows to blobs and back, shared bytes, missing blobs, writes skipping stored blobs, the migration and its retries, the unused-blob cleanup |
 | `tests/unit/userscript-header.test.mjs` | Unit tests for the metadata-block parser + header/body splitter |
 | `tests/unit/script-store.test.mjs` | Unit tests for the pure helpers in the script store (merge, validate, build, compare) |
 | `tests/unit/script-updater.test.mjs` | Unit tests for the updater's rate-limit / concurrency gate, its Log-tab outcome entries, and the startup replay |

@@ -183,9 +183,11 @@ test.describe('GM_xmlhttpRequest @connect gating', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await choose(await prompted, 'deny');
-    await expect(page.locator('body')).toHaveAttribute('data-sm-done', '3');
+    // Three requests, each refused in turn: slower than the default wait
+    // on a loaded machine, and the count below is what's under test.
+    await expect(page.locator('body')).toHaveAttribute('data-sm-done', '3', { timeout: 15_000 });
     await page.reload();
-    await expect(page.locator('body')).toHaveAttribute('data-sm-done', '3');
+    await expect(page.locator('body')).toHaveAttribute('data-sm-done', '3', { timeout: 15_000 });
     const scriptId = (await allScripts(sm))[0].id;
     const warnings = (await sm.getScriptLog(scriptId))
       .filter((e) => e.source === 'gm-xhr' && e.message.startsWith('Blocked a request'));

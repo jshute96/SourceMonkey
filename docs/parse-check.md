@@ -132,8 +132,9 @@ missed here is still reported exactly as it was before.
 
 The load pipeline (`script-build.ts`) doesn't pick the checker, because
 what compiles the text depends on the context. Instead
-`setParseChecker` takes the implementation, and each context installs
-one at startup.
+`setParseChecker` takes the implementation, and the service worker
+installs one at startup. Pages install none: they don't run the store's
+check (below).
 
 ### The service worker
 

@@ -1154,7 +1154,8 @@ during cumulative review of the GM_* phases:
 ## Concurrency — accepted races
 
 The write mutex in `script-store.ts` covers every write of a script row
-(`checkScriptRowWrite`); only the service worker writes at all. What it still leaves open is catalogued in
+(`checkScriptRowWrite`); only the service worker writes at all. What it
+still leaves open is catalogued in
 [docs/storage.md](docs/storage.md#one-lock-in-the-worker) rather than
 here: those are decisions, not proposals.
 
@@ -1182,12 +1183,14 @@ Set aside while moving every write into the service worker
 ([docs/worker-writes.md](docs/worker-writes.md#open)), from timings on a
 326-script profile.
 
-- **Row-cache reads copy every row.** Each read returns copies so a
-  caller can't change the cache; a full read of 326 rows costs 10–30 ms
-  of each enable's `read all`. Freezing the cached rows and handing them
-  out would cost nothing, but every caller that edits a row it read has
-  to be checked first. Indexes over the cache would make most full
-  reads unnecessary anyway.
+- **Full row-cache reads still copy every row.** Enables no longer
+  read every row (they use the indexes and the frozen shared rows), but
+  `allCachedRows` / `cachedScriptRows` still copy the whole cache, at
+  10–30 ms for 326 rows.
+  - Their callers: the membership reconcile, the blob sweep, and
+    `getAllScriptMetas`.
+  - Each would need checking for edits to the rows it reads before it
+    could take the frozen rows instead.
 - **Cache recently used script bodies in the worker.** The sync's `read
   bodies` takes ~5 ms alone but 60–180 ms while other storage work runs,
   and it is part of what makes enables wait during a sync. A size-capped

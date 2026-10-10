@@ -2106,8 +2106,12 @@ async function buildTabView(
   }
   const injectable = INJECTABLE_SCHEME.test(url);
   if (keepUrl !== url) keepIds = [];
-  const state = !injectable ? null
+  const recorded = !injectable ? null
     : stateIn !== undefined ? stateIn : getCurrentState(await getTabRecord(tabId));
+  // A state for another URL is the previous page's, read before the new
+  // one's commit was recorded (slow on a busy worker): its rows aren't
+  // this page's. What matches the URL stands in until the state lands.
+  const state = recorded && stateIn === undefined && recorded.url !== url ? null : recorded;
   const rejected = await readRejections();
   const badgeRows = state ? computeBadge(state, new Set(Object.keys(rejected))).rows : [];
   const matching = injectable ? findAllMatchingIds(url) : [];
@@ -5228,11 +5232,11 @@ function installPageFetchListener(): void {
 }
 
 // Write a per-script Log entry on behalf of an extension PAGE, so the
-// worker's per-script queue is the only one touching that key. The
-// pages share `script-store` / `script-log` with the worker, so both
-// would otherwise run their own read-modify-write chains on one
-// `log:<id>` row and drop entries — or resurrect ones the viewer's
-// Clear log button had just removed. See src/extension/script-log.ts.
+// worker's per-script queue is the only one touching that key. A guard:
+// no page code logs today, but the pages share `script-store` /
+// `script-log` with the worker, and a page that logged through them
+// would otherwise run its own read-modify-write chain on one
+// `log:<id>` row and drop entries. See src/extension/script-log.ts.
 //
 // Same sender check as the fetch relay, for the same reason.
 function installPageLogWriteListener(): void {

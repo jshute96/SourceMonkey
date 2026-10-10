@@ -24,8 +24,8 @@ import type { ProbePolicy } from '../version-probe.js';
 import { forgetDeniedHost, revokeConnectHost } from './connect-grants.js';
 import { clearScriptLog } from './script-log.js';
 import { DEBUG_LOGGING_KEY } from '../debug-log.js';
-import { GITHUB_AUTH_TOKEN_KEY } from '../github-auth.js';
-import { LOCAL_ROOTS_KEY } from '../local-file-overrides.js';
+import { GITHUB_AUTH_TOKEN_KEY, setGithubAuthToken } from '../github-auth.js';
+import { LOCAL_ROOTS_KEY, readRootsSetting, setConfiguredLocalRoots } from '../local-file-overrides.js';
 import { INSTALL_CAPTURE_KEY } from './install-capture.js';
 import { DOWNLOADS_COPIES_KEY, registerLocalCopy } from './local-copy.js';
 import { deleteAllCachedIcons, deleteCachedIcon, ensureCachedIcon, refreshCachedIcon } from './site-icon.js';
@@ -77,6 +77,11 @@ const WORKER_OPS = {
     if (!SETTING_KEYS.includes(key)) throw new Error(`Internal error: ${key} is not a setting a page may change`);
     if (value === null) await chrome.storage.local.remove(key);
     else await chrome.storage.local.set({ [key]: value });
+    // Settings the worker keeps in memory take the new value now, not
+    // when the change event arrives: a page saving the roots refreshes
+    // straight after.
+    if (key === LOCAL_ROOTS_KEY) setConfiguredLocalRoots(readRootsSetting(value));
+    if (key === GITHUB_AUTH_TOKEN_KEY) setGithubAuthToken(typeof value === 'string' ? value : '');
   },
 
   // ---------- Repairs the collections page asks for ----------

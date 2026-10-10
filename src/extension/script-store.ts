@@ -604,11 +604,8 @@ export async function recordMissingBlobs(ids: readonly string[]): Promise<void> 
 // Keyed on the fingerprint as well as the id because a row that moved
 // again is different work, not the same work twice.
 //
-// Per JS context, like every other module-level table here: the viewer
-// and the collections page import this module into their own contexts
-// and get their own map. Nothing is wrong with that — each context has
-// its own checker and its own sandbox — it just means the dedupe is
-// within a context, not across the extension.
+// Per JS context, like every other module-level table here. Only the
+// worker runs checks now, so in practice this is the worker's map.
 interface InFlightCheck {
   id: string;
   resolve: (row: StoredScript | null) => void;
@@ -1060,9 +1057,8 @@ export async function migrateCollectionKeysForPage(): Promise<void> {
 async function migrateLegacyCollectionKeys(): Promise<void> {
   // Cheap gate first. A profile with any collection at all has the old
   // index row, so its absence means there is nothing to move. The memo
-  // means this runs at most once per context — but that is still once
-  // per service-worker wake and once per page load, and the `get(null)`
-  // below drags back every script body and the whole favicon cache.
+  // means this runs at most once per worker wake (a page's request can
+  // re-run it), and the full scan below reads every row.
   const probe = await chrome.storage.local.get(LEGACY_INDEX_KEY);
   if (!(LEGACY_INDEX_KEY in probe)) return;
 
@@ -1070,7 +1066,7 @@ async function migrateLegacyCollectionKeys(): Promise<void> {
   const toSet: Record<string, unknown> = {};
   const toRemove: string[] = [LEGACY_INDEX_KEY];
   // Seed the index ONLY when the new spelling isn't there yet. This runs
-  // outside `mutate()`, so a context that read `all` before another one
+  // outside `mutate()`, so a run that read `all` before an earlier run
   // finished migrating would otherwise write the stale legacy id list
   // over an index a later add had already extended — orphaning that
   // collection's row from the index.
@@ -1189,6 +1185,12 @@ export function seedStorageForTests(items: Record<string, unknown>): Promise<voi
 // through, so a legacy-key migration started mid-session (a page found
 // old rows) widens the check for its length. Rare: old rows restored
 // into a running profile.
+//
+// That mid-session run is also unguarded: it writes the script rows as
+// its scan read them, so a `removeScript` landing between the scan and
+// the write gets its row written back (its blobs possibly already
+// swept). It isn't moved under the lock because reads inside the lock
+// await this migration, so a section waiting on it would deadlock.
 let migrationsRunning = 0;
 async function asMigration<T>(run: () => Promise<T>): Promise<T> {
   migrationsRunning++;
@@ -1218,15 +1220,16 @@ export async function rerunStoreMigrationForTests(): Promise<void> {
 }
 
 // Test-only: as a worker just started, before anything asked for the
-// format. The next write here, or a page's message, runs the migration.
+// format. The next write here runs the migration.
 export async function forgetStoreMigrationForTests(): Promise<void> {
   storeFormatPromise = null;
   await clearMigrationFailureForTests();
 }
 
 // Only for the test surface's `resetAllState`, which wipes storage: the
-// worker records the empty profile as format 2 again, so pages opened
-// afterwards needn't ask it.
+// worker records the empty profile as format 2 again, as a fresh
+// profile's migration would, so a worker started later in the test
+// doesn't scan for format 1 rows.
 export async function markStoreFormatForTests(): Promise<void> {
   await chrome.storage.local.set({ [STORE_FORMAT_KEY]: STORE_FORMAT });
 }
@@ -2076,16 +2079,20 @@ export function needsDisplayName(collection: StoredCollection): boolean {
 // `collection-display.ts`; that module only imports a TYPE from this
 // file so the cycle is compile-time only.
 export async function backfillCollectionDisplayNames(): Promise<void> {
-  const collections = await getCollections();
-  const toSet: Record<string, unknown> = {};
-  for (const s of collections) {
-    if (!needsDisplayName(s)) continue;
-    const next: StoredCollection = { ...s, displayName: inferDisplayName(s.path) };
-    toSet[collectionKey(s.id)] = next;
-  }
-  if (Object.keys(toSet).length > 0) {
-    await writeLocal(toSet);
-  }
+  // Read and written under the lock: a removal or refresh landing in
+  // between would otherwise be written over with the rows read before.
+  await mutate(async () => {
+    const collections = await getCollections();
+    const toSet: Record<string, unknown> = {};
+    for (const s of collections) {
+      if (!needsDisplayName(s)) continue;
+      const next: StoredCollection = { ...s, displayName: inferDisplayName(s.path) };
+      toSet[collectionKey(s.id)] = next;
+    }
+    if (Object.keys(toSet).length > 0) {
+      await writeLocal(toSet);
+    }
+  });
 }
 
 // One-time pass over stored script rows to fill `usesUnsafeWindow` for
@@ -2367,19 +2374,15 @@ async function scanMembershipRows(): Promise<{
 // on a schedule of its own. The collections page (the surface where an
 // unlisted row is missing, and the one the user is looking at when they
 // notice) asks the worker for it on every full render, which reads the
-// rows from its row cache. `prescanned` is for a caller that already
-// has them.
+// rows from its row cache.
 //
 // A row whose collection is GONE is left alone: `removeCollection`
 // drops both together so it shouldn't arise, there is nowhere to put
 // such a row back, and quietly deleting a user's script on a hunch is
 // worse than leaving an inert row.
-export async function reconcileScriptMembership(
-  prescanned?: { collections: readonly StoredCollection[]; scripts: readonly ScriptMeta[] },
-): Promise<number> {
+export async function reconcileScriptMembership(): Promise<number> {
   await ensureCollectionKeysMigrated();
-  // Only the caller that has no rows in hand pays for the scan.
-  const rows = prescanned ?? await scanMembershipRows();
+  const rows = await scanMembershipRows();
 
   // {script id → the collections currently listing it}. Built over
   // every collection row rather than a flat "is listed" set, so a row

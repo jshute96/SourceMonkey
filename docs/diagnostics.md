@@ -575,8 +575,7 @@ The `registration sync` line that follows has these steps:
   - Rows come from the worker's row cache once it's loaded; bodies
     still come from storage.
   - The labels use the script numbers the worker assigned just before
-    the sync. A sync in an extension page reads them instead, shown as
-    `read numbers`.
+    the sync.
   - A full sync reads rows and bodies under `read`. Its note says how
     many specs Chrome already held exactly (no call), how many more went
     without their code, and how many registrations it dropped.
@@ -708,13 +707,18 @@ rows, so measuring it costs this thread nothing.
 - The line names the caller, because that is the part a reader needs:
   `all scripts`, `key migration`, `blob migration`, `gm value wipe`.
 - The same line also reports the narrow reads of every script row
-  (`scanStorageRows`): `row cache` (the worker's, which the match index,
-  log labels, numbers, registration sync and membership repair read
-  once loaded), `new copies`, `all script rows` (pages, and the worker
-  before its cache is on), and the extension-update backfills
-  (`startup log backfill`, `header check backfill`,
-  `retired header check`). These list the keys and read only the rows, so
-  they skip the bodies and GM values.
+  (`scanStorageRows`). These list the keys and read only the rows, so
+  they skip the bodies and GM values:
+  - `row cache`: the worker's, which the match index, log labels,
+    numbers, registration sync, registration record and membership
+    repair read once loaded.
+  - Those readers' own scans, when the cache isn't loaded: `match
+    index`, `log id table`, `registration sync`, `registration record`,
+    `membership reconcile`.
+  - `new copies`, and `all script rows` (pages, and the worker before
+    its cache is on).
+  - The extension-update backfills: `startup log backfill`, `header
+    check backfill`, `retired header check`.
 - Measured on a 266-row profile, a scan costs **129–193 ms** whoever
   asks. That is the unit to price any new one against.
 
