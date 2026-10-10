@@ -179,10 +179,32 @@ of a 500 ms budget, the decision lands at ~243 ms. What remains:
   inside the window by every storage-granting script. A per-script
   in-memory value cache in the SW (invalidated by `gmval:` writes)
   would remove it — see the GM storage note below.
-- **The script-row scans are narrow now** — `match index`,
-  `registration sync`, `log id table` list the keys and read only the
-  rows, without bodies (storage format 2). They measured 129–193 ms
-  each as `get(null)` scans on a 266-row profile; worth re-measuring.
+- **The script-row scans are gone from the worker**: the match index,
+  registration sync, log labels and sticky numbers read the row cache,
+  loaded once per worker start (77–93 ms for 344 rows).
+- **Local stand-ins for dependencies can blow the budget.** A script in
+  a collection with local files on, whose `@require`/`@resource` files
+  have local copies under the Options roots, spent 317 ms of a reload
+  check in the dependency pass (`local-standin 316ms/2` in the reload
+  fast-path line) and missed the window: `update not detected within
+  500ms … running prior version`. Opportunistic checks pay it too
+  (116–242 ms of `rebuild`), off the user's path. Each dependency:
+  - lists the root folders (shared within one check), reads the local
+    copy, then lists its folder for the modified time; every one a
+    `file://` fetch, and Chrome's directory listings are slow;
+  - is looked up one after another: the two lookups sum to the whole
+    `rebuild`, so they appear not to overlap. Worth running in
+    parallel;
+  - searches the roots again every check, rather than starting from the
+    local path it found last time (still confirming nothing nearer
+    appeared, which is why listings aren't kept between checks);
+  - reads the whole file before stating it. A size + modified-time
+    check first, as the main script file gets (`fetchOrSkipInParallel`),
+    would reuse the stored bytes when nothing changed.
+  - The same check also showed `read-script 125ms` and `write 84ms` on
+    a reload (13 ms and 12 ms on a focus check of the same script),
+    probably the reload's other storage work competing; worth a look
+    alongside.
 - **`build-specs` costs ~320 ms on the sync right after a swap**, 2 ms
   on the next. That is the deferred parse check landing in
   `revalidateCandidates` — expected, and off the user-visible path, but
