@@ -416,8 +416,9 @@ keys would look like a wiped profile.
   [change detection](#change-detection-the-last-change-token) below.
   Absent only on rows that have never successfully loaded.
 - `fsMtime?` — modification time as reported by Chrome's directory
-  listing on the last successful scan. Opaque integer used only for
-  equality. Combined with `size` it lets refresh skip refetching files
+  listing on the last successful scan, or by a direct read's
+  `Last-Modified` on a page-load check (the same number: whole
+  seconds). Used only for equality. Combined with `size` it lets refresh skip refetching files
   whose listing-reported size+mtime are unchanged. (file:// collections
   only.)
 - `httpEtag?`, `httpLastModified?` — HTTP validators captured from
@@ -434,7 +435,8 @@ keys would look like a wiped profile.
 - `header` — `ParsedHeader | null` (see [script-viewer.md](script-viewer.md)).
 - `matching` — `{matches, excludes, includes}` distilled from the
   header (used eventually by injection).
-- `loadedAt` — epoch ms; bumped whenever fresh content lands.
+- `loadedAt` — epoch ms; bumped whenever fresh content lands, including
+  a changed `@require` / `@resource`.
 - `enabled` — user-controlled per-script toggle. Preserved across
   refreshes; a script's effective enabled state is
   `collection.enabled && script.enabled`.
@@ -613,6 +615,9 @@ each one supports, and then has a universal fallback:
    Match → `loadedAt` is preserved (the row is logically unchanged,
    so the collections page's "row updated" highlight doesn't fire).
    Mismatch → `loadedAt` is bumped to now.
+   - A dependency whose content hash changed bumps it too, even when
+     the script's own bytes match (`dependenciesChanged` in
+     `applyFiles`).
 
 This makes the **outcome** uniform across every combination of
 {directory, single-file, manifest} × {raw path, file://, http(s)}:
@@ -770,6 +775,9 @@ Every load path goes through the same pipeline:
      stored entry is `status: 'ok'` AND the listing's size+mtime
      match the prior `size` and `fsMtime`. Every local file whose
      folder listed has these; one whose folder wouldn't list fetches.
+     A page-load check takes them from a direct read instead (see
+     [local-file-overrides.md](local-file-overrides.md#page-load-checks)),
+     so a match skips the rebuild rather than the read.
    - **http skip** (also `{ unchanged: true }`) when the server
      answers `304` to a conditional GET driven by the prior row's
      `httpEtag` / `httpLastModified`.
@@ -856,11 +864,18 @@ write only the difference:
 - **`refreshScript`** — the opportunistic per-navigation path, where
   this matters most — runs its single merged row through the same
   helper.
+  - First, outside the lock, it compares against the row as stored now
+    (from the row cache), and when nothing would change it takes
+    neither the lock nor a storage call (`unchangedAsStored`). Not
+    writing is safe without the lock: a write by someone else meanwhile
+    stands either way.
+  - Not when the copy it started from found a body missing: that case
+    goes through the lock, which writes the missing blob back.
 
 Why it's shaped this way:
 
-- **The comparison uses the rows read inside the write lock**, never the
-  pre-fetch snapshot. Comparing against a stale read would skip a write
+- **The comparison that decides a write uses the rows read inside the
+  write lock**, never the pre-fetch snapshot. Comparing against a stale read would skip a write
   that a concurrent edit had made necessary.
 - **The collection row is always written.** `lastRefreshedAt` moved, and
   that timestamp is the record of the check having happened at all.

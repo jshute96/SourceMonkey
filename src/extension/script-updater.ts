@@ -701,6 +701,10 @@ function logScriptOutcome(
   if (!prior || prior.loadedAt !== next.loadedAt) {
     // loadedAt bumps iff the load pipeline actually built from fresh
     // content. Same loadedAt means the size+mtime skip caught it.
+    if (dependenciesOnlyChange(prior, next)) {
+      console.log(`[SourceMonkey] loaded new content for its @require or @resource files: ${label}`);
+      return;
+    }
     const size = next.size != null ? ` (${formatBytes(next.size)})` : '';
     console.log(`[SourceMonkey] loaded new content: ${label}${size}`);
   } else {
@@ -710,6 +714,13 @@ function logScriptOutcome(
     const outcomeLog = mode === 'manual' ? console.log : dlog;
     outcomeLog(`[SourceMonkey] no change: ${label}`);
   }
+}
+
+// A new `loadedAt` that came from a `@require` / `@resource` alone: the
+// script's own content hash is the same (see `dependenciesChanged` in
+// src/script-build.ts).
+function dependenciesOnlyChange(prior: ScriptMeta | undefined, next: ScriptMeta): boolean {
+  return prior?.contentHash !== undefined && prior.contentHash === next.contentHash;
 }
 
 // Write a check's whole story into the per-script Log, mirroring the
@@ -795,11 +806,16 @@ export function emitScriptOutcomeLog(
     // uneventful line below would read as a contradiction when the
     // recovery didn't come with new bytes (a dependency host that
     // starts answering again clears the failure without touching the
-    // script's own content, so `loadedAt` is preserved).
+    // script's own content, so `loadedAt` is preserved unless the
+    // dependency's bytes changed meanwhile).
     if (prior.loadedAt === next.loadedAt) return;
   }
   if (!prior || prior.loadedAt !== next.loadedAt) {
-    const size = next.size != null ? ` (${formatBytes(next.size)})` : '';
+    // The script's own file is the same, so its size is too. The changed
+    // files have their own lines when they are local copies
+    // (`localFileLogMessages`).
+    const dependenciesOnly = dependenciesOnlyChange(prior, next);
+    const size = next.size != null && !dependenciesOnly ? ` (${formatBytes(next.size)})` : '';
     // A new version is a clean slate for the WARNING / ERROR badge: the
     // old version's runtime errors say nothing about this one, and a
     // developer who just fixed one needs the badge to reflect only what
@@ -810,7 +826,7 @@ export function emitScriptOutcomeLog(
       state: 'ok',
       resetsLogLevel: true,
       source,
-      message: `Loaded new content${size}`,
+      message: dependenciesOnly ? 'Loaded new content for its @require or @resource files' : `Loaded new content${size}`,
     });
     // The new content's `@version` caught up with a probe that had been
     // ahead of us. The probes ride along unchanged on the refreshed row
@@ -821,7 +837,10 @@ export function emitScriptOutcomeLog(
     }
     // Replay parse-time diagnostics whenever a new version lands. They
     // appear AFTER the "Loaded new content" line so it's clear which
-    // version the warning belongs to.
+    // version the warning belongs to. A dependency-only change too: the
+    // line above starts the badge over, and the header's warnings still
+    // hold (a row that was invalid on a failed `@require` never logged
+    // them at all).
     for (const entry of next.startupLogs ?? []) {
       logScriptEvent(scriptId, startupLogEntry(entry));
     }
@@ -1120,7 +1139,7 @@ function describe(err: unknown): string {
 // **This is a fan-out over one page's script set, so it always gets a
 // batch** — the caller's when they have one (the same navigation's
 // reload fast path, so the two halves of one commit share a single
-// collection read and a single listing rather than one each), otherwise
+// collection read and their file reads rather than one each), otherwise
 // its own. The rule is uniform on purpose: making it depend on which
 // call reached `gate()` first is exactly the ordering-sensitive shape
 // `parseCheck` had to be fixed out of. See `updateScript`.

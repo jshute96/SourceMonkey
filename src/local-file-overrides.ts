@@ -289,7 +289,14 @@ export interface LocalFileScope {
   // The collection's stored `path`. Optional: the viewer's preview has
   // no collection row at all, and neither does the corpus validator.
   collectionPath?: string;
+  // How this check looks for a stand-in the last check found: 'known'
+  // reads that path first, 'search' (the default) searches the roots.
+  // Per check rather than per collection: the page-load checks pass
+  // 'known'. See `readLocalStandIn` in src/external-files.ts.
+  lookup?: LocalLookup;
 }
+
+export type LocalLookup = 'known' | 'search';
 
 // The directory a collection is rooted at, as a search root — or null
 // when it has no single tree to search:
@@ -397,9 +404,10 @@ export function collectionSupportsLocalFiles(collectionPath: string): boolean {
 }
 
 // Every local file that could stand in for `declaredUrl`, in the order
-// they should be tried. Readers go through `presentLocalFileCandidates`
-// below, which drops the ones that can't exist before fetching each in
-// turn and taking the first that reads.
+// they should be tried. Readers gate each on its root's listing
+// (`localCandidateMayExist`, or `presentLocalFileCandidates` for the
+// whole list), which drops the ones that can't exist, then fetch each
+// in turn and take the first that reads.
 //
 // Suffixes run longest-first so a deliberate layout (`lib/util.js` under
 // the root) beats an incidental basename collision (`util.js` sitting
@@ -536,9 +544,20 @@ export async function presentLocalFileCandidates(
 ): Promise<string[]> {
   const out: string[] = [];
   for (const c of localFileCandidatesDetailed(declaredUrl, roots)) {
-    if (mayExist(c, await listRoot(c.root, listings))) out.push(c.url);
+    if (await localCandidateMayExist(c, listings)) out.push(c.url);
   }
   return out;
+}
+
+// The same gate for one candidate, for a reader that tries candidates
+// in order and stops at the first that reads: it lists a root only
+// when the search reaches it, so a hit in an early root costs no
+// listings of the later ones.
+export async function localCandidateMayExist(
+  c: LocalFileCandidate,
+  listings: DirectoryListingCache,
+): Promise<boolean> {
+  return mayExist(c, await listRoot(c.root, listings));
 }
 
 // Roots whose listing failed, per listing cache. `DirectoryListingCache`

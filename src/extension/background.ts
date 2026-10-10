@@ -2738,11 +2738,13 @@ function installNavigationListeners(): void {
     if (d.frameId !== 0) return;
     // ONE batch for this commit, shared by both fan-outs it starts. The
     // reload fast path and the opportunistic sweep check the same
-    // script set from the same navigation, so a batch each would leave
-    // the page listing its folder twice — better than once per script,
-    // but not the intent. Created here, referenced only by these two
-    // calls, so it dies with the navigation. See `RefreshBatch`.
-    const batch = createRefreshBatch();
+    // script set from the same navigation, so a batch each would read
+    // the collection row twice — better than once per script, but not
+    // the intent. Created here, referenced only by these two calls, so
+    // it dies with the navigation. 'known': a page load's checks read
+    // the files they already know rather than listing folders. See
+    // `RefreshBatch`.
+    const batch = createRefreshBatch('known');
     // Reload fast-path: when the user explicitly reloads (Ctrl-R, toolbar
     // reload, location.reload) Chrome sets
     // transitionType to "reload". We use that to opportunistically check

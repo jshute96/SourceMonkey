@@ -213,6 +213,7 @@ import {
   parentDir,
   pathToFileUrl,
   readFileUrlText,
+  readFileUrlWithStat,
   statFromListing,
   urlPathname,
 } from '../file-locations.js';
@@ -259,7 +260,21 @@ export function fetchFileUrlText(url: string): Promise<string> {
 // file that got the suffix by mistake. The `file://` legs often report
 // no Content-Type at all, so the body test is the only one available.
 export async function fetchScriptFileUrlText(url: string): Promise<string> {
-  const text = await fetchFileUrlText(url);
+  return refuseMarkup(url, await fetchFileUrlText(url));
+}
+
+// `fetchScriptFileUrlText` for a `file://` script, with the size and
+// modified time a listing of its folder would give. See
+// `readFileUrlWithStat`.
+export async function fetchScriptFileWithStat(
+  url: string,
+): Promise<{ text: string; size: number; fsMtime?: number }> {
+  const read = await readFileUrlWithStat(url);
+  refuseMarkup(url, read.text);
+  return read;
+}
+
+function refuseMarkup(url: string, text: string): string {
   if (looksLikeMarkup(text)) {
     // No `Could not read ${url}: ` prefix, unlike its siblings here:
     // the local wording already names the file, and the prefix would

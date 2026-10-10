@@ -50,6 +50,7 @@ import {
   containerKindForSingleFileInput,
   containerPath,
   fetchScriptFileUrlText,
+  fetchScriptFileWithStat,
   fetchHttpText,
   isContainerCollection,
   isHttpUrl,
@@ -87,10 +88,11 @@ import {
 } from '../userscript-header.js';
 import {
   bindListingCache,
+  prefetchKnownStandIns,
   type FileFetchCache,
   type PushedFile,
 } from '../external-files.js';
-import { type LocalFileScope } from '../local-file-overrides.js';
+import { type LocalFileScope, type LocalLookup } from '../local-file-overrides.js';
 import { scanAllStorage, scanStorageRows } from './storage-scan.js';
 import { cachedRows, cachedScriptRows, allCachedRows } from './row-cache.js';
 import { callWorker } from './worker-client.js';
@@ -101,6 +103,7 @@ import {
   fromStorage,
   hydrateScriptRows,
   carryBodyRef,
+  MISSING_BLOB_MESSAGE,
   markMissingBlobs,
   newBlobItems,
   storedForm,
@@ -2922,13 +2925,22 @@ export interface RefreshBatch {
   // `@require` / `@resource` bodies by URL — the same sharing
   // `refreshAllCollections` already threads through its collections.
   fileFetchCache: FileFetchCache;
+  // 'known' for a page load's checks: a `file://` script and the
+  // stand-ins its last check found are read at their known paths, with
+  // no folder listed while they still read. A listing costs more than
+  // the rest of such a check, and the reload fast path has 500 ms. The
+  // searching checks (a focus check past the rate limit, Refresh) find
+  // a stand-in that appeared since. See
+  // docs/local-file-overrides.md#page-load-checks and, for the budget,
+  // docs/injection.md#reload-fast-path.
+  localLookup: LocalLookup;
 }
 
-export function createRefreshBatch(): RefreshBatch {
+export function createRefreshBatch(localLookup: LocalLookup = 'search'): RefreshBatch {
   const listings: DirectoryListingCache = new Map();
   const fileFetchCache: FileFetchCache = new Map();
   bindListingCache(fileFetchCache, listings);
-  return { collectionRows: new Map(), listings, fileFetchCache };
+  return { collectionRows: new Map(), listings, fileFetchCache, localLookup };
 }
 
 // How many collection rows `refreshScript` has actually read from
@@ -3014,15 +3026,18 @@ export interface ScriptRefreshOptions extends RefreshOptions {
 // the directory-level Refresh (fetchOrSkipInParallel →
 // rebuildCollection) so the two paths can't drift — same skip rules,
 // same fsMtime handling, same enabled-preservation, same error shape.
-// The single- file path additionally lists the file's parent dir once
-// so it has the size+mtime needed by the skip check.
+// The single-file path additionally gets the size+mtime the skip check
+// needs: by listing the file's parent dir, or, on a page-load check
+// (`localLookup: 'known'`), from a direct read of the file, listing only
+// if that read fails.
 //
 // A local-directory script whose file the parent listing no longer
 // shows, and whose read then fails, is dropped here, the same as the
 // directory-level Refresh would drop it: the listing is the directory
-// saying what it holds now, and this path lists it anyway for the
-// size+mtime skip. Only a listing that was read — a failed listing
-// leaves the scan bare and the row alone — and only in a directory
+// saying what it holds now, and this path lists it for the size+mtime
+// skip (a page-load check only once its direct read has failed). Only a
+// listing that was read — a failed listing leaves the scan bare and the
+// row alone — and only in a directory
 // collection: a manifest entry or a single file is listed for the
 // skip too, but its row is the manifest's or the user's to drop, so a
 // vanished one fails its fetch and keeps running from the cached body
@@ -3040,12 +3055,18 @@ export async function refreshScript(
   opts: ScriptRefreshOptions = {},
 ): Promise<StoredScript | null> {
   const timer = startPhaseTimer('script check');
-  // Two point reads, necessarily in series: the collection key comes
-  // out of the script row. Measured at ~150-190ms combined on the
-  // reload fast path — by far its largest fixed cost, and paid by
-  // unchanged scripts too — so they are marked separately. The script
-  // row carries the whole source; the collection row is a few fields,
-  // and it used to read SLOWER — which was never about either row. A
+  // The script's row (from the worker's row cache, so usually no
+  // storage call) and its collection's row, necessarily in series: the
+  // collection key comes out of the script row. The script's stored
+  // code is read separately, alongside the file reads below
+  // (`bodies` in the `gets:` note).
+  //
+  // History: these were two storage reads, measured at ~150-190ms
+  // combined on the reload fast path — by far its largest fixed cost,
+  // and paid by unchanged scripts too — so they are marked separately.
+  // The script row then carried the whole source; the collection row is
+  // a few fields, and it used to read SLOWER — which was never about
+  // either row. A
   // full-namespace storage scan elsewhere in the worker was holding
   // the only thread, so the read's callback couldn't run. Neither
   // payload nor the batch's duplicate reads explained it; both were
@@ -3063,34 +3084,76 @@ export async function refreshScript(
   // attributes the migration probe to `gets: script`, and on an
   // unmigrated profile the whole migration scan with it.
   const scriptReadStarted = timingNow();
-  const prior = await getScript(scriptId);
+  const meta = await getScriptMeta(scriptId);
   const scriptReadMs = timingNow() - scriptReadStarted;
-  if (!prior) return null;
+  if (!meta) return null;
   timer.mark('read-script');
+  // The bodies (one storage call for the script's blobs), in flight
+  // while the collection row and the files are read. Nothing before
+  // `read-bodies` below needs them.
+  let bodiesReadMs = 0;
+  const priorRead = (async () => {
+    const started = timingNow();
+    try {
+      return await getScript(scriptId);
+    } finally {
+      bodiesReadMs = timingNow() - started;
+    }
+  })();
+  // Settled below in every path; this keeps an early return from
+  // leaving a rejection unhandled.
+  priorRead.catch(() => {});
   // Shared across the batch when there is one: the scripts a page
   // matches are usually all in the same collection, so this row is read
   // once for the group instead of once per script.
-  const collection = await batchCollectionRow(opts.batch, prior.collectionId);
+  const collection = await batchCollectionRow(opts.batch, meta.collectionId);
   const collectionRow = collection.row;
   if (!collectionRow) return null;
   timer.mark('read-collection');
   if (collection.shared) timer.note('collection row shared with batch');
   else timer.note(() => `gets: script ${formatMs(scriptReadMs)}, collection ${formatMs(collection.ownReadMs)}`);
-  timer.note(prior.relativePath);
-  timer.note(() => `${Math.round((prior.size ?? 0) / 1024)} KB row`);
+  timer.note(meta.relativePath);
+  timer.note(() => `${Math.round((meta.size ?? 0) / 1024)} KB row`);
 
-  // Build a single-entry scan. Any `file://` script gets the targeted
-  // size+mtime listing lookup, the same stat its collection's refresh
-  // would give it; HTTP entries rely on the conditional GET inside
-  // fetchOrSkipInParallel.
-  const scan: { relativePath: string; size?: number; mtime?: number }[] = [
-    { relativePath: prior.relativePath },
-  ];
-  const fileUrl = scriptFileUrl(collectionRow.path, prior.relativePath);
+  // Build a single-entry scan. Any `file://` script gets the size+mtime
+  // its collection's refresh would give it, from a listing of its
+  // folder or a direct read; HTTP entries rely on the conditional GET
+  // inside fetchOrSkipInParallel.
+  const scan: ScannedFile[] = [{ relativePath: meta.relativePath }];
+  const fileUrl = scriptFileUrl(collectionRow.path, meta.relativePath);
   const usesListingStat = isFileUrl(fileUrl);
+  const knownPaths = opts.batch?.localLookup === 'known';
   // The parent listing was read and does not show the file.
   let unlisted = false;
-  if (usesListingStat) {
+  const localFiles: LocalFileScope = {
+    ...localFileScope(collectionRow),
+    ...(knownPaths ? { lookup: 'known' as const } : {}),
+  };
+  if (knownPaths && opts.batch && usesListingStat && localFiles.enabled) {
+    // Read in parallel with the script file below, rather than after
+    // it: which files to load comes from the script's header, but the
+    // stand-ins the last check found are the likely answer. Only a
+    // `file://` script with local files on can have stand-ins; a
+    // scratch script's `localUrl`s name files sm-dev pushed, which are
+    // read from storage instead.
+    prefetchKnownStandIns(opts.fileFetchCache ?? opts.batch.fileFetchCache, meta);
+  }
+  // A page-load check reads the file itself rather than listing its
+  // folder: the read reports the same size and modified time, and the
+  // body comes with it. Only a read that fails lists the folder, below,
+  // to tell a deleted file from one that wouldn't read.
+  if (usesListingStat && knownPaths) {
+    try {
+      const read = await fetchScriptFileWithStat(fileUrl);
+      scan[0].size = read.size;
+      if (read.fsMtime !== undefined) scan[0].mtime = read.fsMtime;
+      scan[0].text = read.text;
+      timer.note('read directly');
+    } catch {
+      timer.note('direct read failed; listed the folder');
+    }
+  }
+  if (usesListingStat && scan[0].text === undefined) {
     const fsPath = locationFsPath(fileUrl);
     const dirAbs = parentDir(fsPath);
     // Read BEFORE the call, which is what populates the cache.
@@ -3113,10 +3176,24 @@ export async function refreshScript(
       if (stat.mtime !== undefined) scan[0].mtime = stat.mtime;
     }
   }
-  // One `file://` directory listing, shared across the batch when there
-  // is one — so N scripts in the same folder list it once between them
-  // rather than N times. Unbatched callers still list per script.
+  // A direct read on a page-load check, else one `file://` directory
+  // listing, shared across the batch when there is one — so N scripts
+  // in the same folder list it once between them rather than N times.
+  // Unbatched callers still list per script.
   timer.mark('stat');
+  const prior = await priorRead;
+  if (!prior) return null;
+  // Moved to another file or collection between the two reads: the
+  // file read above was of where it used to be. Rare (a move takes the
+  // store's lock); start again from where it is now.
+  if (prior.relativePath !== meta.relativePath || prior.collectionId !== meta.collectionId) {
+    timer.note('moved during the check; checking again');
+    timer.done();
+    return await refreshScript(scriptId, opts);
+  }
+  // Usually 0: the bodies arrived while the file was read.
+  timer.mark('read-bodies');
+  timer.note(() => `bodies ${formatMs(bodiesReadMs)}`);
 
   const fetchResults = await fetchOrSkipInParallel(collectionRow.path, scan, [prior]);
   // Cheap when size+mtime match the stored row (no body read at all),
@@ -3158,7 +3235,7 @@ export async function refreshScript(
     // only reflects that `fileFetchCache` is part of the inherited
     // `RefreshOptions`; no caller of `refreshScript` sets it today.
     fileFetchCache: opts.fileFetchCache ?? opts.batch?.fileFetchCache,
-    localFiles: localFileScope(collectionRow),
+    localFiles,
     parseCheck: opts.parseCheck,
   });
   const next = result[0];
@@ -3167,6 +3244,17 @@ export async function refreshScript(
   // reaches the network in `recheckFiles: 'all'` mode), the source
   // hash, and the parse check.
   timer.mark('rebuild');
+  // Nothing to write, the common case: answered from the worker's copy
+  // of the row, without the store's lock or a storage call. Only when
+  // nothing would be written, so it's no write outside the lock.
+  const unchanged = await unchangedAsStored(scriptId, next, prior);
+  if (unchanged) {
+    timer.note('nothing to write');
+    timer.mark('write');
+    timer.done();
+    if (opts.parseCheck === 'defer') checkParsesInBackground(unchanged);
+    return unchanged;
+  }
   // Re-read inside the lock and write atomically so edits that landed
   // during the fetch (an enable toggle, an update probe) aren't
   // reverted by values captured before them.
@@ -3218,6 +3306,36 @@ export async function refreshScript(
   if (!written) return null;
   if (opts.parseCheck === 'defer') checkParsesInBackground(written);
   return written;
+}
+
+// A refresh's result merged onto the stored row, when writing it would
+// change nothing; else null, and the caller takes the lock and writes.
+//
+// Checked outside the lock against the row as stored now (the row
+// cache, so no storage call in the worker), as `changedScriptRows`
+// would inside it. A write by someone else after this doesn't make it
+// wrong: not writing leaves their row, as a later write of ours would
+// have been compared against it anyway.
+//
+// Only when the bodies the row points at are known to be there: the
+// read of `prior` found them all (a missing one makes it a
+// `MISSING_BLOB_MESSAGE` row). The locked path's key listing is what
+// restores a missing one, so that case goes there.
+async function unchangedAsStored(
+  scriptId: string,
+  next: StoredScript,
+  prior: StoredScript,
+): Promise<StoredScript | null> {
+  if (prior.errorMessage === MISSING_BLOB_MESSAGE) return null;
+  const cur = await getRow<ScriptMeta>(scriptKey(scriptId));
+  if (!cur) return null;
+  // New content always moves one of these, so a write is known without
+  // hashing the bodies here, which the locked path would do again.
+  if (next.loadedAt !== cur.loadedAt || next.contentHash !== cur.contentHash) return null;
+  const merged = preserveConcurrentEdits(next, prior, cur);
+  carryBodyRef(prior, merged);
+  const form = await storedForm(merged);
+  return sameStoredValue(form.row, cur) ? merged : null;
 }
 
 // Re-apply the parts of a script row that a refresh doesn't own, onto
@@ -3280,7 +3398,8 @@ function preserveConcurrentEdits(
 //
 // Takes the rows as read inside the write lock, never the pre-fetch
 // snapshot — comparing against a stale read would skip a write that a
-// concurrent edit had made necessary.
+// concurrent edit had made necessary. (`refreshScript` asks first,
+// outside the lock, against the row as stored now: `unchangedAsStored`.)
 //
 // `priorOf` gives the copy each refresh started from, read with its
 // bodies: a body unchanged from it reuses its hash (`carryBodyRef`).
@@ -3304,6 +3423,25 @@ async function changedScriptRows(
     count++;
   }
   return { count, items };
+}
+
+// The fields a `script:*` write can move without touching anything
+// downstream of the match index's change listener: the registration,
+// the match index, the tab badges. See `onlyAnnotationsChanged`.
+//   - `versionProbes`: an update check's result (`setVersionProbes`).
+//   - `parseCheckedHash`: the parse check's verdict, when it passed. It
+//     lands just after the change it checked, whose own write started
+//     a sync then; the registration built from the row is the same
+//     either way. A failed one changes `status` too, which does count.
+const ANNOTATION_FIELDS = ['versionProbes', 'parseCheckedHash'] as const;
+
+// A row without its annotations, for comparing two rows apart from them.
+// `sameStoredValue` treats an undefined-valued key as absent, so that's
+// how a field is left out.
+export function withoutAnnotations<T extends object>(row: T): T {
+  const out = { ...row } as Record<string, unknown>;
+  for (const field of ANNOTATION_FIELDS) out[field] = undefined;
+  return out as T;
 }
 
 // Structural equality over the JSON shapes `chrome.storage.local` round-
@@ -3345,6 +3483,17 @@ export function sameStoredValue(a: unknown, b: unknown): boolean {
   );
 }
 
+// A file a refresh looks at, with the size and modified time its
+// folder's listing gave (or a direct read did), and the body when the
+// read already happened. `text` is what that read returned, so a
+// changed file isn't read twice.
+interface ScannedFile {
+  relativePath: string;
+  size?: number;
+  mtime?: number;
+  text?: string;
+}
+
 // Fetch each scanned file, at most
 // FETCH_SCRIPTS_PER_COLLECTION_CONCURRENCY at a time.
 //
@@ -3366,7 +3515,7 @@ export function sameStoredValue(a: unknown, b: unknown): boolean {
 // a chance to recover.
 export async function fetchOrSkipInParallel(
   collectionPath: string,
-  scan: { relativePath: string; size?: number; mtime?: number }[],
+  scan: ScannedFile[],
   existing: StoredScript[],
 ): Promise<Map<string, FetchResult>> {
   const byPath = new Map(existing.map((s) => [s.relativePath, s]));
@@ -3405,6 +3554,7 @@ export async function fetchOrSkipInParallel(
       if (canSkip) {
         return [found.relativePath, { unchanged: true }];
       }
+      if (found.text !== undefined) return [found.relativePath, { ok: true, text: found.text }];
       try {
         const text = await fetchScriptFileUrlText(url);
         return [found.relativePath, { ok: true, text }];

@@ -547,7 +547,7 @@ test.describe('update probes', () => {
   // Both halves are asserted together on purpose. The suppression is
   // only correct if it is narrow, and "we stopped re-registering" is a
   // bug, not a fix, if a real edit stops re-registering too.
-  test('a probe-only write does not re-register, but a body change still does', async ({ sm, getServiceWorker }) => {
+  test('a probe-only or verdict-only write does not re-register, but a body change still does', async ({ sm, getServiceWorker }) => {
     server.setRoute('/thing.user.js', versionedScript({ version: '1.0' }));
     const collection = await sm.addCollection(`${server.baseUrl}/thing.user.js`);
     await sm.syncNow();
@@ -591,6 +591,19 @@ test.describe('update probes', () => {
             checkedAt: 123, version: '9.9',
           }],
         },
+      });
+    }, scriptId);
+    await settle();
+    expect(await regCalls()).toBe(0);
+
+    // The parse check's passing verdict landing on its own, the write
+    // that follows a deferred check: no sync either.
+    await sw.evaluate(async (id: string) => {
+      const key = `script:${id}`;
+      const got = await chrome.storage.local.get(key);
+      const row = got[key] as Record<string, unknown>;
+      await (self as unknown as { SourceMonkey: { seedStorage(items: Record<string, unknown>): Promise<void> } }).SourceMonkey.seedStorage({
+        [key]: { ...row, parseCheckedHash: 'verdict-key' },
       });
     }, scriptId);
     await settle();

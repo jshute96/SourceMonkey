@@ -139,13 +139,26 @@ registered is **updated in place**.
    bodies.
 4. `unregister([...])` for scripts that left the set and that this
    worker believes Chrome holds.
-5. `chrome.userScripts.update([...])` for ids Chrome already holds,
+5. Nothing for a script whose rebuilt registration, code and settings,
+   hashes the same as the one an incremental sync placed (`specHash`
+   on the record). A row change the registration doesn't show, such as
+   a refresh that only moved the file's modified time, then costs
+   Chrome nothing.
+   - Only incremental syncs hash, for the few scripts they rebuild; a
+     full sync doesn't stringify every script's code for it. So the
+     first incremental sync of a script after a full one sends it.
+   - Not when one of our own registrations is sent too: an updated
+     helper can move behind the user scripts in Chrome's order, and
+     sending these again keeps them after it.
+   - It trusts the record, as the rest of an incremental sync does; a
+     full reconcile corrects a wrong one.
+6. `chrome.userScripts.update([...])` for ids Chrome already holds,
    `register([...])` for genuinely new ones, and unregister+register for
    the narrow case `update` cannot express (see
    [What `update` cannot change](#what-update-cannot-change)). Chrome
    applies a batch all-or-nothing, so a rejected batch falls back to
    per-spec calls and one bad script can't take down every other one.
-6. `unregister([...])` for the rest of the scripts that left the set,
+7. `unregister([...])` for the rest of the scripts that left the set,
    which Chrome may hold though this worker's record says not, and for
    any script Chrome just refused that it already held (see
    [Update, never unregister-then-register](#update-never-unregister-then-register)).
@@ -270,14 +283,20 @@ nothing: that would strand stale registrations.
 
 #### What an incremental sync must not disturb
 
-- **Probe-only writes.** `versionProbes` is a display annotation no
-  spec reads, and a Refresh All writes one probe result per script — so
-  counting those as cache changes cost a re-registration per probed
-  script. `onlyProbesChanged` in `src/extension/match-index.ts` keeps them out of
-  `onCacheChanged` entirely, and suppresses nothing wider: the check
-  diffs the whole stored row, because a spec reads far more of it than
-  matching does. See
-  [Measuring](diagnostics.md#measuring-where-a-refreshs-time-goes).
+- **Annotation-only writes.** Two fields no spec reads are written on
+  their own:
+  - `versionProbes`, an update check's result. A Refresh All writes one
+    per script, so counting those as cache changes cost a
+    re-registration per probed script. See
+    [Measuring](diagnostics.md#measuring-where-a-refreshs-time-goes).
+  - `parseCheckedHash`, a passing parse check's verdict, which lands
+    just after the change it checked was synced. Counting it cost a
+    second sync per edit. A failing verdict changes `status` too, and
+    does count.
+  - `onlyAnnotationsChanged` in `src/extension/match-index.ts` keeps
+    them out of `onCacheChanged` entirely, and suppresses nothing
+    wider: the check diffs the whole stored row, because a spec reads
+    far more of it than matching does.
 - **Ordinary collection-row writes.** A collection row is rewritten on
   every scan; only the enabled flag and the row going away are
   reported, or every refresh would re-register every script under it.
@@ -1667,6 +1686,9 @@ Otherwise the SW:
      wrapper.loadedAt` → reply `run` (no change to apply).
    - Refresh wins with a strictly-newer `ok` row → reply `run-new`
      with `bodyText` and the new `loadedAt`.
+   - `loadedAt` also moves when only a `@require` / `@resource`
+     changed, and the swapped body is composed with the requires, so an
+     edited library swaps in on the same reload as an edited script.
 
 There is no separate 5s loading phase. The current updater does
 detection + fetch + parse + storage write in one `updateScript` call,
@@ -1776,7 +1798,11 @@ two batches. Harmless, since the second sweep is rate-limited out.
 The batch caches what those checks would otherwise each do separately:
 
 - the **collection row**, read once per collection id;
-- the **`file://` directory listing**, fetched once per directory;
+- the **`file://` directory listing**, fetched once per directory. A
+  page load's checks list no folder while their files read (the batch's
+  `localLookup: 'known'`, see
+  [local-file-overrides.md](local-file-overrides.md#page-load-checks)),
+  so this is only for a read that failed;
 - the **`@require` / `@resource` bodies**, via the same `fileFetchCache`
   `refreshAllCollections` already threads across collections.
 
@@ -1795,6 +1821,8 @@ Rules it lives by:
     landing in that window looks unchanged and waits for the next
     check. One navigation late — the same lateness a non-reload
     navigation has always had.
+    - Now that page-load checks read each file directly, only a check
+      whose read failed uses a shared listing.
   - A cache outliving the commit would make that window unbounded, and
     would need invalidation to be safe at all.
 - **Single-script path only.** `refreshCollection` /
@@ -1818,7 +1846,8 @@ Rules it lives by:
     one collection read and one listing per script.
 - **The phase timer still reports the phases**, annotated
   `collection row shared with batch` / `listing shared with batch` — a
-  shared read reads as shared rather than as a phase that vanished. See
+  shared read reads as shared rather than as a phase that vanished. A
+  script file read directly is annotated `read directly`. See
   [diagnostics.md](diagnostics.md#measuring-a-missed-reload-swap).
 - **Its benefit was invisible until a bigger cost was removed.** On a
   real 192-script profile the annotations confirmed one read and one

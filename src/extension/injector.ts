@@ -75,6 +75,7 @@ import {
   isCollectionEnabled,
   recordMissingBlobs,
   verifyParseChecks,
+  withoutAnnotations,
   type ScriptMeta,
   type StartupLog,
   type StoredScript,
@@ -1406,6 +1407,13 @@ interface Placement {
   // `__SM_GM__` runtime; null when it doesn't. The runtime's scope is
   // the union of these. Always null for our own registrations.
   gmRuntime: GmRuntimePatterns | null;
+  // A user script's registration as placed, code and settings
+  // (`specHash`), so an incremental sync can leave one alone that it
+  // rebuilt the same: a row change the registration doesn't show costs
+  // Chrome nothing. Set by incremental syncs only; absent for our own
+  // registrations, for one a full sync placed, and in a record from an
+  // older build.
+  specHash?: string;
 }
 
 interface RegistrationState {
@@ -1682,6 +1690,24 @@ function placementsForSpecs(
     injectsOn: injectsOnOf(spec),
     gmRuntime: gmRuntime.get(spec.id) ?? null,
   }));
+}
+
+// What a registration says, hashed: everything Chrome is given for it.
+// A spec is built by the same code each sync, so equal registrations
+// serialize alike. Memoized per spec object: a sync asks twice.
+//
+// Only an incremental sync computes it, for the few scripts it rebuilds:
+// it stringifies the whole code, which a full sync of every script
+// shouldn't pay on a worker start. A script a full sync placed has no
+// hash, so the first incremental sync of it sends it, as before.
+const specHashes = new WeakMap<RegistrationSpec, string>();
+function specHash(spec: RegistrationSpec): string {
+  let hash = specHashes.get(spec);
+  if (hash === undefined) {
+    hash = hashText(JSON.stringify(spec));
+    specHashes.set(spec, hash);
+  }
+  return hash;
 }
 
 // A stable identity for one runtime registration's pattern union, so an
@@ -1984,9 +2010,8 @@ export function syncRegistrations(scope?: SyncScope): Promise<void> {
 //   - So a burst of syncs costs one marker write and one record write,
 //     not a record write each. Every session write reaches every open
 //     extension page's listener.
-// - Taken only when made by this extension version, with the "must ask"
-//   setting the specs were built with, and when Chrome still holds our
-//   helpers as it last placed them (`stillHeld`).
+// - Taken only when made by this extension version, and when Chrome
+//   still holds our helpers as it last placed them (`stillHeld`).
 // - The changed rows: those whose fingerprint differs from the one the
 //   record kept, or that appeared or went away.
 
@@ -2032,8 +2057,8 @@ function noteFingerprint(state: RegistrationState, key: string, fingerprint: str
   else state.fingerprints.set(key, fingerprint);
 }
 
-// What a sync reads of a script row: all of it except `versionProbes`,
-// which a probe rewrites without the sync (`onlyProbesChanged`).
+// What a sync reads of a script row: all of it except the annotations
+// a write can move without a sync (`onlyAnnotationsChanged`).
 //
 // Plain JSON, without sorting keys: rows come from the row cache or from
 // storage, both of which keep an object's keys sorted (they can differ
@@ -2041,7 +2066,7 @@ function noteFingerprint(state: RegistrationState, key: string, fingerprint: str
 // keys came in another order would only read as changed, and be synced
 // again.
 function scriptFingerprint(row: ScriptMeta): string {
-  return hashText(JSON.stringify({ ...row, versionProbes: undefined }));
+  return hashText(JSON.stringify(withoutAnnotations(row)));
 }
 
 // What a sync reads of a collection row: whether it is enabled. A
@@ -2528,10 +2553,24 @@ async function runIncrementalSync(
   };
   const specs = orderWithOwnSpecs(userSpecs, ownSpecs, alreadyPlaced);
   state.gmRuntimeScopes = nextScopes;
+  // Rebuilt exactly as placed: nothing to send. A row change the
+  // registration doesn't carry, such as a refresh that only moved the
+  // file's modified time. Trusts the record, as the rest of an
+  // incremental sync does; a full reconcile corrects a wrong one.
+  //
+  // None when one of our own registrations is sent: an updated helper
+  // can move behind the user scripts in Chrome's order, and sending
+  // these again puts them after it, as `keepHelpersFirst` does for a
+  // full sync.
+  const helperSent = specs.some((spec) => !isUserScriptId(spec.id));
+  const inPlace = helperSent ? new Set<string>() : new Set(userSpecs
+    .filter((spec) => state.registered.get(spec.id)?.specHash === specHash(spec))
+    .map((spec) => spec.id));
   const applied = await applyPlan({
     specs,
     removeIds,
     present,
+    inPlace,
     // An own spec offered here that Chrome holds is one whose patterns
     // moved. Its code is fixed when the extension is built, and this
     // worker's first sync placed it with this code: a full one did, and
@@ -2544,16 +2583,21 @@ async function runIncrementalSync(
     // rewriting them wholesale would resurrect ones already cleared.
     owned: affected,
   }, timer);
-  timer.note(`incremental; ${specs.length} specs, ${removeIds.length} dropped`);
+  timer.note(`incremental; ${specs.length} specs (${inPlace.size} in place), ${removeIds.length} dropped`);
   timer.done();
   for (const id of removeIds) state.registered.delete(id);
+  const specsById = new Map(specs.map((spec) => [spec.id, spec] as const));
   for (const [id, placement] of placementsOf(specs, applied, active.gmRuntime)) {
-    state.registered.set(id, placement);
+    const spec = specsById.get(id);
+    state.registered.set(id, spec && isUserScriptId(id) ? { ...placement, specHash: specHash(spec) } : placement);
   }
   for (const id of applied.refused) state.registered.delete(id);
   await retryRefusedOwnSpecs(applied, state.registered, state.gmRuntimeScopes, present);
   state.labels = nextLabels;
-  reportSyncResult(specs, applied.placed);
+  // A sync that sent nothing has nothing to say.
+  if (inPlace.size < specs.length || removeIds.length > 0) {
+    reportSyncResult(specs, applied.placed, inPlace, 'incremental');
+  }
 }
 
 // Prepend our own GM-runtime / bridge specs to the user specs, when
@@ -2677,6 +2721,7 @@ function reportSyncResult(
   specs: readonly RegistrationSpec[],
   placed: readonly string[],
   held: ReadonlySet<string> = new Set(),
+  kind: 'full' | 'incremental' = 'full',
 ): void {
   // A sync whose scope turned out to hold nothing offered nothing, and
   // "registered 0 userscript(s)" would read as though it had emptied
@@ -2708,8 +2753,8 @@ function reportSyncResult(
     ? ` (${placed.filter((id) => !held.has(id)).length} registration(s) sent, ${held.size} already held)`
     : '';
   // A full sync states the whole set; an incremental one, what it
-  // registered.
-  const verb = held.size > 0 ? 'in place' : 'registered';
+  // registered (its `held` are only the scripts it rebuilt).
+  const verb = held.size > 0 && kind === 'full' ? 'in place' : 'registered';
   if (problems.length > 0) {
     console.info(`[SourceMonkey] ${verb}: ${what}${sent}; ${problems.join('; ')}`);
   } else {

@@ -52,7 +52,7 @@
 // record — works uniformly for file://, http(s)://, and entries
 // reached via a manifest.
 
-import { isFileUrl, isHttpUrl } from './file-locations.js';
+import { fsMtimeFromLastModified, isFileUrl, isHttpUrl } from './file-locations.js';
 import { githubAuthHeaders } from './github-auth.js';
 import { mustHopToWorker, readHttpViaWorker, replyBytes } from './http-read.js';
 
@@ -207,6 +207,11 @@ export interface FetchedBytes {
   // Absent for file:// and for servers that send neither.
   etag?: string;
   lastModified?: string;
+  // A `file://` read's modified time, in the units of Chrome's
+  // directory listing (whole seconds), so it compares equal to a
+  // listing's `mtime`. Absent for http(s), or when Chrome sent no
+  // `Last-Modified`.
+  fsMtime?: number;
 }
 
 // The server confirmed the caller's copy is current. Only ever returned
@@ -458,7 +463,10 @@ function fetchFileBytesXhr(
         finish(fetchFailed('wrong-content-type'));
         return;
       }
-      finish({ body, contentType: ct, finalUrl: url });
+      finish({
+        body, contentType: ct, finalUrl: url,
+        ...fsMtimeField(xhr.getResponseHeader('last-modified')),
+      });
     };
     // A file:// XHR carries no HTTP layer, so a file that isn't there
     // and one we're not allowed to read arrive identically — hence one
@@ -519,7 +527,15 @@ async function fetchFileBytesFetch(
   if (body.byteLength === 0) return fetchFailed('empty');
   if (body.byteLength > opts.maxBytes) return fetchFailed('oversize');
 
-  return { body, contentType, finalUrl: response.url || url };
+  return {
+    body, contentType, finalUrl: response.url || url,
+    ...fsMtimeField(response.headers.get('last-modified')),
+  };
+}
+
+function fsMtimeField(header: string | null): { fsMtime?: number } {
+  const fsMtime = fsMtimeFromLastModified(header);
+  return fsMtime !== undefined ? { fsMtime } : {};
 }
 
 // ---------- Text + suffix helpers ----------

@@ -28,7 +28,7 @@
 // src/manifest.json, src/glyph-sprite.svg, or any HTML/CSS asset,
 // re-run `pnpm run build`.
 
-import { rm, mkdir, cp, readdir, readFile, writeFile, rename } from 'node:fs/promises';
+import { rm, mkdir, cp, readdir, readFile, writeFile, rename, utimes } from 'node:fs/promises';
 import { rmSync } from 'node:fs';
 import { constants } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
@@ -39,6 +39,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
 const src = resolve(root, 'src');
 const watch = process.argv.includes('--watch');
+const buildStart = new Date();
 
 // 1. Build into a temporary directory of our own. It sits in the repo
 //    root rather than the system temp dir because the swap is a rename,
@@ -89,6 +90,7 @@ await cp(
 // 3. Copy the manifest into dist/ so Chrome can find it when loading
 //    unpacked from dist/. The package gets a copy too: the harness
 //    derives the extension id from its `key` (extension-backend.ts).
+//    dist/manifest.json gets its mtime set before the swap (step 5).
 await cp(resolve(src, 'manifest.json'), resolve(dist, 'manifest.json'));
 await mkdir(lib, { recursive: true });
 await cp(resolve(src, 'manifest.json'), resolve(lib, 'manifest.json'));
@@ -232,6 +234,13 @@ for (const args of compiles) {
 // Where lib/ was built from, so sm-dev can say how to rebuild it
 // (src/harness/rebuild-advice.ts), including in an installed copy.
 if (!watch) await writeFile(resolve(lib, 'build-info.json'), JSON.stringify({ source: root }) + '\n');
+// Date dist/manifest.json to when the build started, so an install
+// script can treat dist/ as up to date when no input is newer than it,
+// and an edit made during the build still counts as newer. Watch mode
+// dates it 1970: its output carries on past type errors, so it never
+// counts as an up-to-date build.
+const manifestTime = watch ? new Date(0) : buildStart;
+await utimes(resolve(dist, 'manifest.json'), manifestTime, manifestTime);
 await swapIn(dist, resolve(root, 'dist'));
 if (!watch) await swapIn(lib, resolve(root, 'lib'));
 await rm(buildDir, { recursive: true, force: true });

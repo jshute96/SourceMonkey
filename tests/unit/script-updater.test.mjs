@@ -482,6 +482,22 @@ test('framing: new content is announced, then reported', async () => {
   assert.match(log[1], /^Loaded new content/);
 });
 
+test('framing: a dependency-only change says so, without the size, and restates the header warnings', async () => {
+  // The script's own file is unchanged (same contentHash); only a
+  // `@require` moved its `loadedAt`. Its size is the same, so it isn't
+  // restated. Its header warnings are, since the new-content line
+  // starts the badge over and they still hold.
+  const warned = {
+    ...OK_ROW, contentHash: 'h1',
+    startupLogs: [{ level: 'warn', message: 'header warning' }],
+  };
+  const fresh = { ...warned, loadedAt: OK_ROW.loadedAt + 1 };
+  assert.deepEqual(
+    await framing(warned, fresh),
+    ['Checking for updates', 'Loaded new content for its @require or @resource files', 'header warning'],
+  );
+});
+
 test('emitScriptOutcomeLog: a manual no-change check restates parse-time diagnostics', async () => {
   // A parse-time warning is a property of the installed content, not an
   // event: it stays true until the content changes. Logging it only on

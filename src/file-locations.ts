@@ -252,6 +252,55 @@ export function readFileUrlText(url: string): Promise<string> {
   return fetchFileUrlTextFetch(url);
 }
 
+// `readFileUrlText`, plus what a listing of the file's folder would
+// report for it: its size in bytes and its modified time. One read
+// instead of a listing and a read, for a check that knows the file's
+// path. `fsMtime` is absent when Chrome sent no `Last-Modified`.
+export async function readFileUrlWithStat(
+  url: string,
+): Promise<{ text: string; size: number; fsMtime?: number }> {
+  const { bytes, lastModified } = typeof XMLHttpRequest !== 'undefined'
+    ? await fetchFileUrlBytesXhr(url)
+    : await fetchFileUrlBytesFetch(url);
+  // Decoded as the worker's `response.text()` does: UTF-8, a UTF-8 BOM
+  // dropped, bad bytes replaced rather than thrown on. (A page's
+  // `responseText` would also detect a UTF-16 BOM; nothing here reads
+  // one, and no page calls this today.)
+  const text = new TextDecoder().decode(bytes);
+  const fsMtime = fsMtimeFromLastModified(lastModified);
+  return { text, size: bytes.byteLength, ...(fsMtime !== undefined ? { fsMtime } : {}) };
+}
+
+// Chrome gives a `file://` response the file's modified time as
+// `Last-Modified`. Its directory listing reports the same time in whole
+// seconds, which `Last-Modified` can't be finer than, so dividing gives
+// the listing's number exactly. That lets a direct read stand in for
+// listing the folder.
+export function fsMtimeFromLastModified(header: string | null): number | undefined {
+  if (!header) return undefined;
+  const ms = Date.parse(header);
+  return Number.isFinite(ms) ? Math.floor(ms / 1000) : undefined;
+}
+
+function fetchFileUrlBytesXhr(url: string): Promise<{ bytes: ArrayBuffer; lastModified: string | null }> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', url);
+    xhr.responseType = 'arraybuffer';
+    xhr.onload = () => resolve({
+      bytes: (xhr.response as ArrayBuffer | null) ?? new ArrayBuffer(0),
+      lastModified: xhr.getResponseHeader('last-modified'),
+    });
+    xhr.onerror = () => reject(new Error(`Could not read ${url}`));
+    xhr.send();
+  });
+}
+
+async function fetchFileUrlBytesFetch(url: string): Promise<{ bytes: ArrayBuffer; lastModified: string | null }> {
+  const response = await fetchFileUrlResponse(url);
+  return { bytes: await response.arrayBuffer(), lastModified: response.headers.get('last-modified') };
+}
+
 function fetchFileUrlTextXhr(url: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -274,6 +323,15 @@ function fetchFileUrlTextXhr(url: string): Promise<string> {
 // not a thrown exception with a specific status code, so we have to
 // inspect both.
 async function fetchFileUrlTextFetch(url: string): Promise<string> {
+  // An empty body here is a 0-byte file, not an error — keep it
+  // distinct from "missing" so the row renders Size=0 Status=ERROR
+  // (no metadata block) rather than getting flagged as gone.
+  return await (await fetchFileUrlResponse(url)).text();
+}
+
+// The worker's `file://` response, once it is known to have read. Shared
+// by the text and byte readers, so a failure reads the same from both.
+async function fetchFileUrlResponse(url: string): Promise<Response> {
   let response: Response;
   try {
     response = await fetch(url);
@@ -293,10 +351,7 @@ async function fetchFileUrlTextFetch(url: string): Promise<string> {
       `Try Refresh from the script page.`,
     );
   }
-  // An empty body here is a 0-byte file, not an error — keep it
-  // distinct from "missing" so the row renders Size=0 Status=ERROR
-  // (no metadata block) rather than getting flagged as gone.
-  return await response.text();
+  return response;
 }
 
 // ---------- Directory listing parser ----------

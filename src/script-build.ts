@@ -28,7 +28,7 @@ import {
   type StoredRequire,
   type StoredResource,
 } from './external-files.js';
-import { localSearchRoots, localRootsReady, type LocalFileScope } from './local-file-overrides.js';
+import { localSearchRoots, localRootsReady, type LocalFileScope, type LocalLookup } from './local-file-overrides.js';
 import { iconDeclFromHeader } from './script-icon.js';
 import { canonicalizeGrant, findApi, resolveGrants } from './gm-api-catalog.js';
 import { hasNoConnectRules } from './gm-connect.js';
@@ -160,7 +160,7 @@ export interface StoredScript {
   bodyText: string;
   header: ParsedHeader | null;
   matching: ScriptMatching;
-  loadedAt: number;      // epoch ms — bumped each time fresh content lands
+  loadedAt: number;      // epoch ms — bumped each time fresh content lands, a dependency's included
   enabled: boolean;      // per-script toggle; defaults true on first load
   // Prefetched `@require` bodies, in declaration order, deduped by
   // canonical URL. Optional because pre-`@require`-era stored rows
@@ -772,7 +772,7 @@ export async function applyFiles(
   // own rule for when to look again. Not for a scratch script: sm-dev
   // pushes its `@require` / `@resource` files but not its icon, and
   // has already checked the icon on disk itself.
-  if (!pushedFiles) await applyIconCheck(built, prior, recheck, fetchCache, localRoots);
+  if (!pushedFiles) await applyIconCheck(built, prior, recheck, fetchCache, localRoots, localFiles.lookup);
   // `recheck: 'preserve'` short-circuits when both lists are identical
   // to the prior's: no resolve work, no fetch, just keep what we had.
   // This is the hot path on opportunistic refresh.
@@ -817,6 +817,7 @@ export async function applyFiles(
     fetchCache,
     now,
     localRoots,
+    ...(localFiles.lookup ? { localLookup: localFiles.lookup } : {}),
     ...(pushedFiles ? { pushedFiles } : {}),
   }));
   if (result.errorMessage) {
@@ -854,7 +855,25 @@ export async function applyFiles(
   else delete built.requires;
   if (result.resources.length > 0) built.resources = result.resources;
   else delete built.resources;
+  // A dependency whose content changed is fresh content for the script
+  // too: what runs is the composed body. Everything that asks "is there
+  // a newer copy than the page ran" compares `loadedAt` (the reload
+  // swap, marking open tabs for a reload, an old wrapper's report), so
+  // without this a library edit reached none of them until the next
+  // reload after the re-registration.
+  if (prior && dependenciesChanged(prior, built)) built.loadedAt = Math.max(built.loadedAt, now);
   return timePhase('parse-check', () => applyParseCheck(built, prior, parseCheck));
+}
+
+// Whether the `@require` / `@resource` content differs between two rows.
+// Compared on the content hashes, so a re-read of the same bytes, or the
+// same bytes from another place, is no change.
+function dependenciesChanged(a: StoredScript, b: StoredScript): boolean {
+  const key = (s: StoredScript) => JSON.stringify([
+    (s.requires ?? []).map((r) => [r.url, r.contentHash]),
+    (s.resources ?? []).map((r) => [r.name, r.url, r.contentHash]),
+  ]);
+  return key(a) !== key(b);
 }
 
 // Record the `@icon` check on `built`, and a problem it found as a
@@ -865,6 +884,7 @@ async function applyIconCheck(
   recheck: 'all' | 'preserve',
   fetchCache: FileFetchCache,
   localRoots: readonly string[],
+  localLookup: LocalLookup | undefined,
 ): Promise<void> {
   // A row reused whole (the "unchanged" refresh path starts from a copy
   // of the prior) already carries the last check's warning, so drop it
@@ -885,6 +905,7 @@ async function applyIconCheck(
     recheck,
     fetchCache,
     localRoots,
+    ...(localLookup ? { localLookup } : {}),
   }));
   if (!check) return;
   built.iconCheck = check;

@@ -229,6 +229,10 @@ still drives the Log-tab mirror.
   fixing a typo'd `@grant` and saving silences both the page console
   (on next sync) and the Log tab (on the next "Loaded new content"
   event — see below).
+  - A change to only a `@require` / `@resource` bumps `loadedAt` too,
+    and logs `Loaded new content for its @require or @resource files`,
+    without the script's size. Its warnings are replayed as for any new
+    version: that line starts the badge over.
 
 ### Mirror to the Log tab
 

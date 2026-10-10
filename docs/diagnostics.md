@@ -495,7 +495,7 @@ collection check cumulative (concurrent, sums past wall clock):
 
 `registration sync` should appear **once or twice** per Refresh All, not
 once per collection and never once per script. A long run of them is the
-symptom that led to `onlyProbesChanged` (see
+symptom that led to `onlyAnnotationsChanged` (see
 [injection.md](injection.md#lifecycle)): probe results are written one
 row at a time, and each write used to schedule its own re-registration.
 If they come back, that suppression is the first place to look.
@@ -579,6 +579,8 @@ The `registration sync` line that follows has these steps:
   - A full sync reads rows and bodies under `read`. Its note says how
     many specs Chrome already held exactly (no call), how many more went
     without their code, and how many registrations it dropped.
+  - An incremental sync's note says how many specs it rebuilt the same
+    as it last placed them (`in place`, no call).
 - **list** (full syncs only): asking Chrome which registrations it
   holds.
 - **compare** (full syncs only): which of them Chrome already holds
@@ -600,7 +602,9 @@ Around the steps:
   taken, and if not, why.
 - The console line after a sync names what is in place with
   `chrome.userScripts`; after a full sync, how many registrations were
-  sent and how many Chrome already held.
+  sent and how many Chrome already held. An incremental sync that
+  rebuilt some the same says how many it sent and how many it left; one
+  that sent nothing and dropped nothing prints no line.
 
 ## Measuring a missed reload swap
 
@@ -658,14 +662,29 @@ timing: reload fast-path cumulative: parse-check 448ms/3, build 2.8ms/1, deps 0.
     something else held the thread.** Look for a storage scan next.
 - **stat** — the `file://` directory listing that supplies the
   size+mtime the skip check needs.
+  - **`read directly`**: a page-load check read the file itself instead,
+    which gives the same size+mtime and the body with it (see
+    [local-file-overrides.md](local-file-overrides.md#page-load-checks)).
+    `stat` then covers that read, and `fetch` costs nothing.
+- **`local-standin` / `dep-fetch`** in the cumulative line — the
+  stand-in lookups, and the file reads inside them. A script's lookups
+  run at once, so their sum can pass `deps`; on a page-load check the
+  known stand-ins' reads start with the script read, overlapping `stat`
+  too.
 - **`collection row shared with batch` / `listing shared with batch`** —
   the navigation-triggered checks for one page share both (see
   [injection.md](injection.md#shared-work-across-the-batch)), so only
   the first of a batch pays. The phases are still marked on the
   sharers: what they measure there is the wait for the batch's single
   read, which on one thread still queues behind the siblings' own work.
+- **read-bodies** — waiting for the script's stored code (its blobs),
+  whose read starts with the check and runs alongside `stat`. Usually
+  0; the read's own time is the `bodies` note. `read-script` itself is
+  the row from the worker's row cache, so usually no storage call.
 - **fetch** — `unchanged` means the size+mtime skip hit and no body was
   read; `refetched` means it missed.
+- **`nothing to write`** — the rebuilt row matched the stored one, so
+  `write` took neither the store's lock nor a storage call.
 - **rebuild** — header parse, hashing, the parse check, and the
   `@require` / `@resource` pass. The cumulative line says which:
   measured on a real 3-script page, `parse-check` was 448 of 450 ms and

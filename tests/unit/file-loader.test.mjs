@@ -432,3 +432,13 @@ test('fetchResourceBytes: a scheme we do not fetch says so', async () => {
   assert.deepEqual(res, { failed: true, reason: 'unsupported-scheme' });
 });
 
+
+// A `file://` read's `Last-Modified`, in the units of Chrome's directory
+// listing: whole seconds, so a direct read and a listing agree.
+test('fsMtimeFromLastModified: whole seconds, or nothing for a missing or bad header', async () => {
+  const { fsMtimeFromLastModified } = await import('../../dist/file-locations.js');
+  assert.equal(fsMtimeFromLastModified('Mon, 05 Oct 2026 05:46:16 GMT'), 1791179176);
+  assert.equal(fsMtimeFromLastModified(null), undefined);
+  assert.equal(fsMtimeFromLastModified(''), undefined);
+  assert.equal(fsMtimeFromLastModified('not a date'), undefined);
+});

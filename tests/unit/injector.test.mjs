@@ -2636,11 +2636,40 @@ test('syncRegistrations: a scoped sync re-registers only the scripts that moved'
   const reads = countFullReads();
   t.after(reads.restore);
   // Only `b` was edited.
+  localStore.set('script:b', { ...localStore.get('script:b'), bodyText: 'y', loadedAt: 2 });
   await syncRegistrations({ scriptIds: ['b'], collectionIds: [] });
 
   assert.deepEqual(chrome_.calls, ['update:b'], 'only the edited script is re-offered');
   assert.deepEqual(chrome_.ids(), ['a', 'b', BRIDGE_SCRIPT_ID].sort(), 'the set is unchanged');
   assert.equal(reads.full, 0, 'a scoped sync must not read every row');
+});
+
+test('syncRegistrations: a scoped sync sends nothing for a row change its registration does not show', async (t) => {
+  // A refresh that only moved the file's modified time rewrites the
+  // row, but the registration built from it is the same, so Chrome gets
+  // no call.
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a');
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+  // A full sync records no registration hash, so the first scoped sync
+  // of a script sends it. That one records it.
+  localStore.set('script:a', { ...localStore.get('script:a'), bodyText: 'y', loadedAt: 2 });
+  await syncRegistrations({ scriptIds: ['a'], collectionIds: [] });
+
+  chrome_.reset();
+  localStore.set('script:a', { ...localStore.get('script:a'), fsMtime: 123 });
+  await syncRegistrations({ scriptIds: ['a'], collectionIds: [] });
+  assert.deepEqual(chrome_.calls, [], 'nothing sent for an unchanged registration');
+  assert.deepEqual(chrome_.ids(), ['a', BRIDGE_SCRIPT_ID].sort(), 'the set is unchanged');
+
+  // And a real change after it is still sent.
+  localStore.set('script:a', { ...localStore.get('script:a'), bodyText: 'z', loadedAt: 3 });
+  await syncRegistrations({ scriptIds: ['a'], collectionIds: [] });
+  assert.deepEqual(chrome_.calls, ['update:a']);
 });
 
 test('syncRegistrations: our own specs go in first, runtimes before the bridge', async (t) => {
@@ -2691,6 +2720,7 @@ test('syncRegistrations: a scoped sync re-offers the MAIN runtime and the bridge
 
   // An edit that doesn't move the union re-offers neither.
   chrome_.reset();
+  localStore.set('script:b', { ...localStore.get('script:b'), bodyText: 'y', loadedAt: 2 });
   await syncRegistrations({ scriptIds: ['b'], collectionIds: [] });
   assert.deepEqual(chrome_.calls, ['update:b']);
 

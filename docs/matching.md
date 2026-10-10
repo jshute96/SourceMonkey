@@ -702,6 +702,9 @@ Why match by `loadedAt` rather than `bodyText`:
 - `loadedAt` bumps iff the load pipeline built from fresh fetched
   content. The size+mtime skip path preserves the prior row's
   `loadedAt`, so a no-op refresh produces no badge flap.
+- A changed `@require` / `@resource` bumps it too, since what runs is
+  the composed body: an edited library marks open tabs for a reload,
+  as an edited script does.
 - `bodyText` comparison would also fire for byte-identical re-saves
   triggered by the unchanged-skip-not-applying corner case (e.g. when
   a directory listing doesn't include mtime).

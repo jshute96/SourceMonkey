@@ -78,8 +78,9 @@ page would describe the file as it was last read, so it checks.
     refresh (the manifest and container refreshes list each file's
     folder once for it — which also lets the refresh skip an unchanged
     file rather than always re-reading it).
-  - A stand-in records its listing mtime beside `localUrl` when it is
-    read (`fsMtime` on the entry), so the Local overrides row reports
+  - A stand-in records its modified time beside `localUrl` when it is
+    read (`fsMtime` on the entry, from the read's `Last-Modified`, which
+    equals the listing's mtime), so the Local overrides row reports
     edits the same way — until the next refresh, the row is still
     claiming to load the bytes it holds.
 - **Conservative by construction.** A file is reported gone only when

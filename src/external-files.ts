@@ -41,14 +41,12 @@ import {
   type FetchFailure,
   type ResolveFailure,
 } from './file-loader.js';
-import { presentLocalFileCandidates } from './local-file-overrides.js';
 import {
-  baseName,
-  locationFsPath,
-  parentDir,
-  statFromListing,
-  type DirectoryListingCache,
-} from './file-locations.js';
+  localCandidateMayExist,
+  localFileCandidatesDetailed,
+  type LocalLookup,
+} from './local-file-overrides.js';
+import { type DirectoryListingCache } from './file-locations.js';
 import { splitResourceValue } from './script-links.js';
 import { sha256Hex, bytesToBase64, base64ToBytes } from './bytes.js';
 import { timePhase } from './phase-timing.js';
@@ -285,6 +283,9 @@ export interface FetchedFile {
   // keeping beyond what we already stored.
   etag?: string;
   lastModified?: string;
+  // A `file://` read's modified time, in listing units. See
+  // `fsMtimeFromLastModified`.
+  fsMtime?: number;
 }
 
 // What a caller already holds for a URL, so the fetch can be made
@@ -399,6 +400,11 @@ export interface AttachFilesArgs {
   // default) restores the pre-feature behavior exactly: no candidate
   // generation, no probe reads.
   localRoots?: readonly string[];
+  // How a stand-in found by the last check is looked for. 'known'
+  // reads its stored path first and lists nothing when it still reads;
+  // 'search' (the default) searches the roots in order. See
+  // `readLocalStandIn`.
+  localLookup?: LocalLookup;
   // A scratch script's pushed bodies, by ref; see `PushedFile`.
   pushedFiles?: Readonly<Record<string, PushedFile>>;
 }
@@ -451,20 +457,46 @@ export async function attachFiles(args: AttachFilesArgs): Promise<AttachFilesRes
   // @resource dedup is at NAME granularity, handled in distillResources —
   // two names pointing at the same URL produce two distinct entries.
   const seenRequireUrls = new Set<string>();
+  const localRoots = args.localRoots ?? [];
+  const localLookup = args.localLookup ?? 'search';
 
-  for (const ref of requireRefs) {
-    const res = await loadRequire({
-      ref,
-      scriptFileUrl: args.scriptFileUrl,
-      prior: args.priorRequires,
-      recheck: args.recheck,
-      fetchCache: args.fetchCache,
-      now: args.now,
-      seenUrls: seenRequireUrls,
-      localRoots: args.localRoots ?? [],
-      pushed: args.pushedFiles?.[ref],
-    });
+  // All files load at once, rather than one after another: each is a
+  // round trip of its own (a stand-in read, a network fetch), and on a
+  // page-load check they decide whether the reload's window is met.
+  // Started in declaration order, and `loadRequire` claims its URL in
+  // `seenUrls` before its first await, so the first of two refs to one
+  // URL is still the one that loads. Failures are reported for the
+  // first failing declaration, as the serial loop did.
+  const requireLoads = requireRefs.map((ref) => loadRequire({
+    ref,
+    scriptFileUrl: args.scriptFileUrl,
+    prior: args.priorRequires,
+    recheck: args.recheck,
+    fetchCache: args.fetchCache,
+    now: args.now,
+    seenUrls: seenRequireUrls,
+    localRoots,
+    localLookup,
+    pushed: args.pushedFiles?.[ref],
+  }));
+  const resourceLoads = resourceDecls.map((decl) => loadResource({
+    decl,
+    scriptFileUrl: args.scriptFileUrl,
+    prior: args.priorResources,
+    recheck: args.recheck,
+    fetchCache: args.fetchCache,
+    now: args.now,
+    localRoots,
+    localLookup,
+    pushed: args.pushedFiles?.[decl.ref],
+  }));
+  const [requireResults, resourceResults] = await Promise.all([
+    Promise.all(requireLoads), Promise.all(resourceLoads),
+  ]);
+
+  for (const [i, res] of requireResults.entries()) {
     if (res.errorMessage) {
+      const ref = requireRefs[i];
       return {
         requires: [],
         resources: [],
@@ -475,18 +507,9 @@ export async function attachFiles(args: AttachFilesArgs): Promise<AttachFilesRes
     if (res.entry) requires.push(res.entry);
   }
 
-  for (const decl of resourceDecls) {
-    const res = await loadResource({
-      decl,
-      scriptFileUrl: args.scriptFileUrl,
-      prior: args.priorResources,
-      recheck: args.recheck,
-      fetchCache: args.fetchCache,
-      now: args.now,
-      localRoots: args.localRoots ?? [],
-      pushed: args.pushedFiles?.[decl.ref],
-    });
+  for (const [i, res] of resourceResults.entries()) {
     if (res.errorMessage) {
+      const decl = resourceDecls[i];
       return {
         requires: [],
         resources: [],
@@ -516,8 +539,11 @@ export interface IconCheck {
   // ref resolves elsewhere once the script's own URL changes.
   ref: string;
   url?: string;
-  // Set when a local stand-in was checked rather than the declared URL.
+  // Set when a local stand-in was checked rather than the declared URL,
+  // with the stand-in's own URL (absent on rows written before it was
+  // recorded).
   local?: true;
+  localUrl?: string;
   // Why the icon can't be shown, as a load-time warning. Absent when
   // it can.
   message?: string;
@@ -533,6 +559,8 @@ export interface CheckIconArgs {
   recheck: 'all' | 'preserve';
   fetchCache: FileFetchCache;
   localRoots: readonly string[];
+  // As for the dependencies; see `readLocalStandIn`.
+  localLookup?: LocalLookup;
 }
 
 // Check that the script's `@icon` can be shown: that it resolves,
@@ -563,15 +591,20 @@ export async function checkScriptIcon(args: CheckIconArgs): Promise<IconCheck | 
   // an image) is skipped, as the page skips it for the declared URL.
   // Read through the shared fetch, which has no icon rules, so they
   // are applied to the bytes here.
-  const local = await readLocalStandIn(url, args.localRoots, args.fetchCache);
+  const prior = args.prior;
+  // A 'known' lookup goes by what the last check of this same reference
+  // found. A row that recorded a stand-in without its URL is searched.
+  const last = args.localLookup === 'known' && prior?.ref === ref && prior.url === url &&
+    (!prior.local || prior.localUrl)
+    ? { localUrl: prior.localUrl } : undefined;
+  const local = await readLocalStandIn(url, args.localRoots, args.fetchCache, last);
   if (
-    local && !isFailure(local.got) &&
+    local?.localUrl && !isFailure(local.got) &&
     local.got.bytes.byteLength <= MAX_ICON_BYTES &&
     (!local.got.contentType || isIconContentType(local.got.contentType))
   ) {
-    return { ref, url, local: true };
+    return { ref, url, local: true, localUrl: local.localUrl };
   }
-  const prior = args.prior;
   if (
     args.recheck === 'preserve' && prior?.ref === ref && prior.url === url &&
     !prior.local && !prior.retry
@@ -618,6 +651,7 @@ export async function fetchRequireForPreview(
     fetchCache,
     now,
     localRoots,
+    localLookup: 'search',
     // Fresh per call: dedup across refs is the batch loader's job, and
     // the preview shows one tab per declared ref.
     seenUrls: new Set(),
@@ -644,7 +678,8 @@ interface LoadedBytes {
   // declared URL, so callers can record it without re-deriving the
   // comparison. Absent means "the declared URL was fetched".
   localUrl?: string;
-  // The stand-in's listing mtime, when its folder listed.
+  // The stand-in's modified time, in listing units, when the read
+  // reported one.
   fsMtime?: number;
   got: FetchedFile | FileFailure;
 }
@@ -673,10 +708,20 @@ function pushedBytes(pushed: PushedFile): LoadedBytes {
 //
 // Candidates are tried in order and the first that READS wins — the
 // probe and the real read are the same fetch, so a hit costs nothing
-// extra. A total miss costs one listing per root plus one local read
-// per candidate the listing couldn't rule out (see
-// `presentLocalFileCandidates`). `ensureFetch` caches the reads for
-// the rest of the pass, misses included.
+// extra. A root is listed only when the search reaches it, to rule out
+// candidates under it that can't exist (see `localCandidateMayExist`),
+// so a hit in an early root never lists the later ones. `ensureFetch`
+// caches the reads for the rest of the pass, misses included.
+//
+// `last` is what the last check found, passed by the page-load checks
+// (a listing per root costs more than the whole rest of such a check):
+//   - its stand-in, when still a candidate under these roots, is read
+//     first and no root is listed. A path that no longer reads falls
+//     through to the search.
+//   - no stand-in last time means none is looked for: one appearing is
+//     rare, and searching would list every root on every page load.
+// Either can miss a copy that appeared since, nearer or at all; the
+// searching checks (focus, Refresh) find it.
 //
 // Returns `null` when no stand-in was found, so the caller can take its
 // `recheck: 'preserve'` shortcut on the declared URL. That ordering is
@@ -693,30 +738,34 @@ async function readLocalStandIn(
   declaredUrl: string,
   localRoots: readonly string[],
   fetchCache: FileFetchCache,
+  last?: { localUrl?: string },
 ): Promise<LoadedBytes | null> {
-  const candidates = await presentLocalFileCandidates(declaredUrl, localRoots, listingsFor(fetchCache));
+  const candidates = localFileCandidatesDetailed(declaredUrl, localRoots);
+  if (last && !last.localUrl) return null;
+  const known = last?.localUrl;
+  if (known && candidates.some((c) => c.url === known)) {
+    const got = await ensureFetch(fetchCache, known);
+    if (!isFailure(got)) return standInRead(known, got);
+  }
+  const listings = listingsFor(fetchCache);
   for (const candidate of candidates) {
-    const got = await ensureFetch(fetchCache, candidate);
+    if (!await localCandidateMayExist(candidate, listings)) continue;
+    const got = await ensureFetch(fetchCache, candidate.url);
     // A candidate that doesn't read isn't a failure — it just isn't
     // there. Only an actual hit ends the search.
-    if (!isFailure(got)) {
-      // Its listing stat too, for the "modified" chip: one listing per
-      // folder per pass, shared through the same cache the candidate
-      // gate used. A listing that fails just leaves the stat off.
-      const fsPath = locationFsPath(candidate);
-      let fsMtime: number | undefined;
-      try {
-        fsMtime = (await statFromListing(parentDir(fsPath), baseName(fsPath), listingsFor(fetchCache)))?.mtime;
-      } catch {
-        /* no stat; the entry can still be reported deleted, not modified */
-      }
-      return { localUrl: candidate, got, ...(fsMtime !== undefined ? { fsMtime } : {}) };
-    }
+    if (!isFailure(got)) return standInRead(candidate.url, got);
   }
   return null;
 }
 
-// The root-directory listings `presentLocalFileCandidates` gates on,
+// A stand-in that read, with its modified time for the "modified" chip.
+// The time comes from the read itself (`Last-Modified`), in the units a
+// listing of its folder would give.
+function standInRead(localUrl: string, got: FetchedFile): LoadedBytes {
+  return { localUrl, got, ...(got.fsMtime !== undefined ? { fsMtime: got.fsMtime } : {}) };
+}
+
+// The root-directory listings the stand-in search gates on,
 // given the same lifetime as the fetch cache they sit beside: one
 // refresh pass, or the page for the install preview's page-lifetime
 // cache, which memoizes misses for that long anyway. Keyed off the fetch cache
@@ -752,7 +801,28 @@ interface LoadRequireArgs {
   now: number;
   seenUrls: Set<string>;
   localRoots: readonly string[];
+  localLookup: LocalLookup;
   pushed?: PushedFile;
+}
+
+// What the last check found for this file, under a 'known' lookup. A
+// file the last check didn't load (newly declared) has nothing known,
+// so it is searched for.
+function lastLookup(lookup: LocalLookup, prior: { localUrl?: string } | undefined): { localUrl?: string } | undefined {
+  return lookup === 'known' ? prior : undefined;
+}
+
+// Start reading the stand-ins a script's last check found, into the
+// pass's fetch cache, so a check can overlap them with reading the
+// script itself. The loaders then take them from the cache. Only for a
+// 'known' lookup, which reads these paths first anyway.
+export function prefetchKnownStandIns(
+  fetchCache: FileFetchCache,
+  prior: { requires?: readonly { localUrl?: string }[]; resources?: readonly { localUrl?: string }[] },
+): void {
+  for (const entry of [...(prior.requires ?? []), ...(prior.resources ?? [])]) {
+    if (entry.localUrl) void ensureFetch(fetchCache, entry.localUrl);
+  }
 }
 
 // Where a ref resolves: the pushed body's URL when there is one, which
@@ -783,7 +853,8 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
   // `readLocalStandIn` for why an overridden file is never cached past
   // a refresh. A pushed body is read every time for the same reason.
   const local = args.pushed ? pushedBytes(args.pushed)
-    : await timePhase('local-standin', () => readLocalStandIn(resolved.url, args.localRoots, args.fetchCache));
+    : await timePhase('local-standin', () => readLocalStandIn(
+      resolved.url, args.localRoots, args.fetchCache, lastLookup(args.localLookup, prior)));
   if (!local && !args.pushed && args.recheck === 'preserve' && prior && !prior.localUrl) {
     return { entry: prior };
   }
@@ -952,6 +1023,7 @@ interface LoadResourceArgs {
   fetchCache: FileFetchCache;
   now: number;
   localRoots: readonly string[];
+  localLookup: LocalLookup;
   pushed?: PushedFile;
 }
 
@@ -977,7 +1049,8 @@ async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredRe
   // Local stand-in first, and before the preserve shortcut — same rule
   // and same reasoning as `@require`; see `readLocalStandIn`.
   const local = args.pushed ? pushedBytes(args.pushed)
-    : await timePhase('local-standin', () => readLocalStandIn(resolved.url, args.localRoots, args.fetchCache));
+    : await timePhase('local-standin', () => readLocalStandIn(
+      resolved.url, args.localRoots, args.fetchCache, lastLookup(args.localLookup, prior)));
   if (
     !local && args.recheck === 'preserve' &&
     prior && prior.name === args.decl.name && !prior.localUrl
@@ -1097,6 +1170,7 @@ async function fetchFileBytes(
     const out: FetchedFile = { bytes: res.body, contentType: res.contentType };
     if (res.etag) out.etag = res.etag;
     if (res.lastModified) out.lastModified = res.lastModified;
+    if (res.fsMtime !== undefined) out.fsMtime = res.fsMtime;
     return out;
   } catch (err) {
     return {

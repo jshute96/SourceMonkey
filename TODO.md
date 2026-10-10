@@ -184,29 +184,33 @@ of a 500 ms budget, the decision lands at ~243 ms. What remains:
 - **The script-row scans are gone from the worker**: the match index,
   registration sync, log labels and sticky numbers read the row cache,
   loaded once per worker start (77–93 ms for 344 rows).
-- **Local stand-ins for dependencies can blow the budget.** A script in
-  a collection with local files on, whose `@require`/`@resource` files
-  have local copies under the Options roots, spent 317 ms of a reload
-  check in the dependency pass (`local-standin 316ms/2` in the reload
-  fast-path line) and missed the window: `update not detected within
-  500ms … running prior version`. Opportunistic checks pay it too
-  (116–242 ms of `rebuild`), off the user's path. Each dependency:
-  - lists the root folders (shared within one check), reads the local
-    copy, then lists its folder for the modified time; every one a
-    `file://` fetch, and Chrome's directory listings are slow;
-  - is looked up one after another: the two lookups sum to the whole
-    `rebuild`, so they appear not to overlap. Worth running in
-    parallel;
-  - searches the roots again every check, rather than starting from the
-    local path it found last time (still confirming nothing nearer
-    appeared, which is why listings aren't kept between checks);
-  - reads the whole file before stating it. A size + modified-time
-    check first, as the main script file gets (`fetchOrSkipInParallel`),
-    would reuse the stored bytes when nothing changed.
-  - The same check also showed `read-script 125ms` and `write 84ms` on
-    a reload (13 ms and 12 ms on a focus check of the same script),
-    probably the reload's other storage work competing; worth a look
-    alongside.
+- **Reload checks were slower in a real profile than in the test
+  browser.** Before page-load checks read known paths, one reload check
+  of a script with two stand-ins measured `stat 38ms` for a 2-file
+  folder and `read-script 22ms`, against about 5 ms and 2 ms in the test
+  browser, with nothing else running in the worker. The same reads from
+  the worker's console took 2 ms. Not explained yet:
+  - an earlier check measured `read-script 125ms` and `write 84ms` on a
+    reload, against 13 ms and 12 ms on a focus check of the same
+    script; `write` there is mostly waiting for the store's lock;
+  - worth re-measuring now that a page load lists no folders.
+- **Known stand-ins are read and hashed on every page load.** Checking
+  size + modified time first (a `HEAD` gives `Last-Modified`, not the
+  size) could reuse the stored bytes, as the script file's skip does.
+  Each read is about 2 ms, so only worth it for large libraries.
+- **A script with a UTF-8 BOM never takes the size+mtime skip.** The
+  stored `size` is the decoded text's byte length (BOM dropped), the
+  listing and the direct read report the file's, so they differ by 3
+  and every check rebuilds. Recording the file's byte length on the
+  rebuild path would fix it.
+- **A script's `@require` / `@resource` loads all start at once.**
+  Unbounded per script (the entries around them are bounded), and they
+  keep going after one fails. Fine for local files; a script with many
+  CDN requires would fetch them all at once.
+- **The searching checks still list roots one after another.** Focus
+  checks and Refresh stop at the first root with the file, but a miss
+  lists each root in turn. Listing them all at once would cost more
+  reads on a hit; only worth it if a miss shows up in measurements.
 - **`build-specs` costs ~320 ms on the sync right after a swap**, 2 ms
   on the next. That is the deferred parse check landing in
   `revalidateCandidates` — expected, and off the user-visible path, but
