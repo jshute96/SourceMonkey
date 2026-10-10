@@ -157,17 +157,23 @@ anyway; the de-dupe is about the list, not the probing.)
   only change what the *next* refresh resolves to. http(s) collections and
   the web / GitHub containers are skipped — they resolve over the
   network, so a root cannot change their outcome.
-- Cached in a module variable in each context that resolves — service
-  worker, collections page, viewer.
-  - Loaded once at startup, then kept current via `storage.onChanged`,
-    the same shape as `debug-log.ts`.
-  - `localSearchRoots` is synchronous because render paths call it, so
-    ordering is the caller's job: the resolve path and both page
-    bootstraps `await localRootsReady()` first.
-  - Without that await, a refresh racing SW startup would resolve as
-    though no roots were set — and persist the result.
+- Cached in a module variable in each context that reads the roots.
+  - The service worker resolves with them: refreshes and installs run
+    there.
+  - Extension pages read them for display (icons, the preview), but
+    no longer refresh.
+- Loaded once at startup, then kept current via `storage.onChanged`,
+  the same shape as `debug-log.ts`.
+  - The worker's `writeSetting` also sets the worker's copy at once, so
+    the refreshes Save starts straight after see the new roots without
+    waiting for the change event.
   - An initial read still in flight will not overwrite a newer value
     that landed while it waited.
+- `localSearchRoots` is synchronous because render paths call it, so
+  ordering is the caller's job: the resolve path and the pages
+  that read them `await localRootsReady()` first.
+  - Without that await, a refresh racing SW startup would resolve as
+    though no roots were set, and persist the result.
 
 #### Validation
 

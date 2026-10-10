@@ -16,7 +16,9 @@
 // extension via `serviceWorker.evaluate(...)` — MV3 service workers
 // can't be triggered from a Playwright toolbar click.
 
-import { droppedBlobRefs, hasSweepCandidates, SWEEP_GRACE_MS, type SweepResult } from './script-blobs.js';
+import { installRowCache, rowCacheLoadsForTests } from './row-cache.js';
+import { installWorkerOps } from './worker-ops.js';
+import { droppedBlobRefs, type SweepResult } from './script-blobs.js';
 import { describeDiagnostic } from '../diagnostic-location.js';
 import {
   debugDumpCache,
@@ -165,8 +167,9 @@ import {
   rerunStoreMigrationForTests,
   forgetStoreMigrationForTests,
   sweepUnusedBlobsLocked,
+  checkScriptRowWrite,
+  seedStorageForTests,
   storeFormatReady,
-  STORE_FORMAT_READY_MESSAGE,
   _setCollectionWriteFailureForTests,
   markFirstRunComplete,
   removeCollection,
@@ -453,6 +456,11 @@ interface SourceMonkeyApi {
   setLocalRoots: (paths: string[]) => Promise<void>;
   setScriptEnabled: (id: string, enabled: boolean) => Promise<ScriptMeta | null>;
   getEnablementTimes: () => Promise<Record<string, { activeSince?: number; inactiveSince?: number }>>;
+  // Every script row without bodies, from the worker's row cache once
+  // it is loaded (row-cache.ts); loads it.
+  getAllScriptMetas: () => Promise<ScriptMeta[]>;
+  // How many times the row cache was read from storage.
+  rowCacheLoads: () => number;
   updateCollection: (id: string, mode: 'manual' | 'opportunistic') => Promise<unknown>;
   // `probe` mirrors the production signature: `'force'` is what a real
   // Refresh click passes, and several behaviors key off it (upstream
@@ -489,12 +497,18 @@ interface SourceMonkeyApi {
   // Run the storage format migration again, as a worker start would,
   // for a test that seeded format 1 rows.
   rerunStoreMigration: () => Promise<void>;
-  // As a worker just started: the next write, or a page's message, runs
-  // the migration.
+  // As a worker just started: the next write runs the migration.
   forgetStoreMigration: () => Promise<void>;
-  // One unused-blob check, as the cleanup alarm runs it; `now` lets a
-  // test step past the wait between checks.
-  sweepUnusedBlobs: (now?: number) => Promise<SweepResult>;
+  // One unused-blob check, as a change that drops a blob runs it.
+  sweepUnusedBlobs: () => Promise<SweepResult>;
+  // Write rows straight into storage, under the store's lock: script rows
+  // written outside it are refused (`checkScriptRowWrite`).
+  seedStorage: (items: Record<string, unknown>) => Promise<void>;
+  // The extension-update backfill of `usesUnsafeWindow`; how many rows
+  // it changed.
+  backfillUsesUnsafeWindow: () => Promise<number>;
+  // An enable click: turning a copy on turns its other active copies off.
+  setScriptEnabledExclusive: (id: string, enabled: boolean) => Promise<void>;
   // Drop this worker's record of the registration set, as a fresh
   // worker has none: the next sync is a full one.
   forgetRegistrationState: () => void;
@@ -730,6 +744,8 @@ const api: SourceMonkeyApi = {
   },
   setScriptEnabled,
   getEnablementTimes,
+  getAllScriptMetas: () => getAllScriptMetas(),
+  rowCacheLoads: rowCacheLoadsForTests,
   updateCollection,
   updateScript,
   updateAllCollections,
@@ -914,7 +930,10 @@ const api: SourceMonkeyApi = {
   rerunStoreMigration: () => rerunStoreMigrationForTests(),
   forgetRegistrationState,
   forgetStoreMigration: () => forgetStoreMigrationForTests(),
-  sweepUnusedBlobs: (now?: number) => sweepUnusedBlobsLocked(now),
+  sweepUnusedBlobs: async () => (await sweepUnusedBlobsLocked())!,
+  seedStorage: seedStorageForTests,
+  backfillUsesUnsafeWindow,
+  setScriptEnabledExclusive: async (id, enabled) => { await setScriptEnabledExclusive(id, enabled); },
   resetAllState: async () => {
     // The parse check re-enables itself: its off-switch lives in the
     // session storage cleared below, precisely so no context has to
@@ -2079,8 +2098,12 @@ async function buildTabView(
   }
   const injectable = INJECTABLE_SCHEME.test(url);
   if (keepUrl !== url) keepIds = [];
-  const state = !injectable ? null
+  const recorded = !injectable ? null
     : stateIn !== undefined ? stateIn : getCurrentState(await getTabRecord(tabId));
+  // A state for another URL is the previous page's, read before the new
+  // one's commit was recorded (slow on a busy worker): its rows aren't
+  // this page's. What matches the URL stands in until the state lands.
+  const state = recorded && stateIn === undefined && recorded.url !== url ? null : recorded;
   const rejected = await readRejections();
   const badgeRows = state ? computeBadge(state, new Set(Object.keys(rejected))).rows : [];
   const matching = injectable ? findAllMatchingIds(url) : [];
@@ -2304,48 +2327,50 @@ async function reloadNoScriptsFromMenu(tabId: number | null): Promise<void> {
   await reloadTabWithMode(tabId, { kind: 'none' });
 }
 
-// A page's writes wait for the storage format migration, which only
-// this worker runs (`storeFormatReady` in script-store.ts).
-function installStoreFormatListener(): void {
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    const msg = message as { type?: unknown } | null;
-    if (msg?.type !== STORE_FORMAT_READY_MESSAGE || !fromExtensionPage(sender)) return undefined;
-    void storeFormatReady().then(() => { try { sendResponse(true); } catch { /* page gone */ } });
-    return true;
-  });
-}
-
 // ---------- Unused blob cleanup ----------
 // See docs/storage.md#writing-and-cleanup. A change that leaves a blob
-// unused starts a check soon; a check that finds unused blobs not yet
-// old enough to delete runs another once they are.
+// unused runs a check at once, so a removal frees its space right away
+// (which matters most near the storage quota). An alarm set at the same
+// time is the backstop for a worker stopped before the check ran; a
+// check that finishes clears it.
 const BLOB_SWEEP_ALARM = 'sm-blob-sweep';
-const BLOB_SWEEP_SOON_MINUTES = 0.5;
+const BLOB_SWEEP_BACKSTOP_MINUTES = 0.5;
 
-// Set by `resetAllState`: tests run the checks themselves, at simulated
-// times (`sweepUnusedBlobs` on the test surface), and a real one firing
-// mid-test would record or delete blobs under them.
+// Set by `resetAllState`: tests run the checks themselves
+// (`sweepUnusedBlobs` on the test surface), and a real one running
+// mid-test would delete blobs under them.
 let realBlobSweepsPaused = false;
 
-// An alarm already set stands: whichever check it runs sees this change
-// too.
-function scheduleBlobSweep(delayInMinutes: number): void {
-  void (async () => {
-    if (await chrome.alarms.get(BLOB_SWEEP_ALARM)) return;
-    await chrome.alarms.create(BLOB_SWEEP_ALARM, { delayInMinutes });
-  })().catch((err: unknown) => {
+// A check queued and not yet started: a burst of changes needs one.
+let blobSweepQueued = false;
+
+function requestBlobSweep(): void {
+  if (realBlobSweepsPaused || blobSweepQueued) return;
+  blobSweepQueued = true;
+  void chrome.alarms.create(BLOB_SWEEP_ALARM, { delayInMinutes: BLOB_SWEEP_BACKSTOP_MINUTES }).catch((err: unknown) => {
     console.info('[SourceMonkey] could not schedule removing unused stored files:', describeError(err));
+  });
+  runBlobSweep().catch((err: unknown) => {
+    console.info('[SourceMonkey] could not remove unused stored files:', describeError(err));
   });
 }
 
 // A removal is always logged; the check itself only with debug logging on.
 async function runBlobSweep(): Promise<void> {
   if (realBlobSweepsPaused) return;
-  const { checked, removed, waiting } = await sweepUnusedBlobsLocked();
+  // Taken inside the lock, so a change that lands while this one waits
+  // for it queues its own check, which then sees that change. Paused
+  // checked again there: a test reset may have come in between.
+  const result = await sweepUnusedBlobsLocked(() => {
+    blobSweepQueued = false;
+    return !realBlobSweepsPaused;
+  });
+  if (!result) return;
+  const { checked, removed } = result;
   if (removed > 0) console.info(`[SourceMonkey] removed ${removed} stored file(s) no script uses`);
-  const next = waiting > 0 ? ` (next check in ${SWEEP_GRACE_MS / 60_000} min)` : '';
-  dlog(`[SourceMonkey] unused stored files: checked ${checked}, removed ${removed}, ${waiting} waiting${next}`);
-  if (waiting > 0) scheduleBlobSweep(SWEEP_GRACE_MS / 60_000);
+  dlog(`[SourceMonkey] unused stored files: checked ${checked}, removed ${removed}`);
+  // Not while another check is queued: its backstop is the same alarm.
+  if (!blobSweepQueued) await chrome.alarms.clear(BLOB_SWEEP_ALARM);
 }
 
 function installBlobSweep(): void {
@@ -2353,7 +2378,7 @@ function installBlobSweep(): void {
     if (areaName !== 'local') return;
     for (const [key, change] of Object.entries(changes)) {
       if (key.startsWith(SCRIPT_PREFIX) && droppedBlobRefs(change.oldValue, change.newValue)) {
-        scheduleBlobSweep(BLOB_SWEEP_SOON_MINUTES);
+        requestBlobSweep();
         return;
       }
     }
@@ -2364,14 +2389,6 @@ function installBlobSweep(): void {
       console.info('[SourceMonkey] could not remove unused stored files:', describeError(err));
     });
   });
-  // At startup only if a check is pending (blobs an earlier check found
-  // unused), in case its alarm is gone. Usually it isn't, and the alarm
-  // already set stands. Setting one
-  // on every start would make each start (or the alarm's own wake) buy
-  // another wake half a minute later.
-  void hasSweepCandidates().then((pending) => {
-    if (pending) scheduleBlobSweep(BLOB_SWEEP_SOON_MINUTES);
-  }, () => undefined);
 }
 
 // The popup's requests. Only from our own pages, like the other page
@@ -5207,11 +5224,11 @@ function installPageFetchListener(): void {
 }
 
 // Write a per-script Log entry on behalf of an extension PAGE, so the
-// worker's per-script queue is the only one touching that key. The
-// pages share `script-store` / `script-log` with the worker, so both
-// would otherwise run their own read-modify-write chains on one
-// `log:<id>` row and drop entries — or resurrect ones the viewer's
-// Clear log button had just removed. See src/extension/script-log.ts.
+// worker's per-script queue is the only one touching that key. A guard:
+// no page code logs today, but the pages share `script-store` /
+// `script-log` with the worker, and a page that logged through them
+// would otherwise run its own read-modify-write chain on one
+// `log:<id>` row and drop entries. See src/extension/script-log.ts.
 //
 // Same sender check as the fetch relay, for the same reason.
 function installPageLogWriteListener(): void {
@@ -5222,8 +5239,7 @@ function installPageLogWriteListener(): void {
     void handleScriptLogWrite(msg as unknown as ScriptLogWriteRequest).then(
       () => { try { sendResponse(true); } catch { /* page gone */ } },
       (err) => {
-        // Anything but `true` sends the page to its own local write, so
-        // this failure costs the entry its ordering, not its existence.
+        // Anything but `true` tells the page the entry wasn't saved.
         console.info('[SourceMonkey] page log-write handler threw:', describeError(err));
         try { sendResponse(undefined); } catch { /* page gone */ }
       },
@@ -5529,6 +5545,14 @@ async function recordScriptReport(
 // First, so the startup reads below can't leak a teardown rejection
 // into the Errors panel if the SW is killed while they're in flight.
 installSwTeardownHandler();
+// Before anything writes: the row cache sees this worker's writes by
+// wrapping them (row-cache.ts), and the store checks each one writes
+// script rows under its lock.
+installRowCache(checkScriptRowWrite);
+// The debug-logging setting, read before anything is timed: a read
+// started before it is requested isn't timed at all
+// (`timeStorageRead`).
+void loadDebugLoggingFlag();
 // Log-ID listener and its initial load come first so subsequent
 // startup paths (sm:start arriving from a pre-existing wrapper, the
 // first navigation-driven log line) can hit the populated map. The
@@ -5561,9 +5585,8 @@ const compileParseChecker: ParseChecker = async (script) => {
 setParseChecker(compileParseChecker);
 
 // Move format 1 script rows to blobs, once (docs/storage.md#format-2-migration).
-// Writes in this worker wait for it; pages ask through the message below.
+// Writes wait for it.
 void storeFormatReady();
-installStoreFormatListener();
 installBlobSweep();
 void ensureLogIdsLoaded();
 // Number new scripts and collections before each registration sync
@@ -5597,14 +5620,15 @@ installGithubAuthListener();
 installNotificationListeners();
 installDownloadListeners();
 installPopupListener();
+installWorkerOps(fromExtensionPage);
 // Kick off the initial cache load so the very first navigation doesn't
 // pay the read-everything cost on the critical path. The injector sync
 // runs in parallel so registrations are in place ASAP after SW startup.
 void ensureLoaded();
-// A fresh worker has no record of what it registered, so this first
-// sync reconciles against Chrome's own list.
+// The first sync takes the last worker's registration record if it
+// can (`restoreRecord` in injector.ts), and otherwise reconciles
+// against Chrome's own list.
 void syncRegistrations();
-void loadDebugLoggingFlag();
 // Kicked off here so the read is already in flight by the time the
 // first refresh awaits `localRootsReady()`.
 void loadLocalRootsSetting();

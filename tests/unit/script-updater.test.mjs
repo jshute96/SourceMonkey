@@ -103,6 +103,23 @@ test('gate: concurrent callers share the in-flight promise (single fetch)', asyn
   assert.equal(r3, 'shared');
 });
 
+test('gate: an own call waits for the running check, then runs, and later callers join it', async () => {
+  freezeTime(1000);
+  const state = new Map();
+  const first = defer();
+  const second = defer();
+  let calls = 0;
+  const p1 = gate(state, 'a', 'manual', async () => { calls++; return first.promise; }, 'skipped');
+  const p2 = gate(state, 'a', 'manual', async () => { calls++; return second.promise; }, 'skipped', 'a', true);
+  const p3 = gate(state, 'a', 'opportunistic', async () => { calls++; return 'unused'; }, 'skipped');
+  first.resolve('first');
+  assert.equal(await p1, 'first');
+  second.resolve('own');
+  assert.equal(await p2, 'own', 'its own run, not the running one');
+  assert.equal(await p3, 'own', 'joined the own run');
+  assert.equal(calls, 2);
+});
+
 test('gate: different keys run independently', async () => {
   freezeTime(1000);
   const state = new Map();

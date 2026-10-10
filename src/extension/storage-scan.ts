@@ -23,7 +23,7 @@
 // Gated on the same debug-logging toggle as the phase timers, and the
 // wrapper is a plain pass-through when it's off.
 
-import { isDebugLoggingEnabled } from '../debug-log.js';
+import { debugLoggingPending, debugLoggingSettled, isDebugLoggingEnabled } from '../debug-log.js';
 // Same rounding as the phase timers on purpose: these lines are read
 // against phase numbers on the same console, and two formats that
 // drift would make that comparison quietly wrong.
@@ -59,15 +59,30 @@ export async function scanStorageRows(
 // A `null` result means the read didn't happen (the caller fell back to
 // something else) and nothing is logged — a line reporting `0 row(s)`
 // for a read that never ran would be worse than silence.
+//
+// A read made at a worker's start, before the debug setting has been
+// read, is timed anyway, and its line printed once the setting turns
+// out to be on: the row cache's load is one of those. That line can
+// then come after lines for work that started later.
 export async function timeStorageRead<T extends Record<string, unknown> | null>(
   reason: string,
   read: () => Promise<T>,
 ): Promise<T> {
-  if (!isDebugLoggingEnabled()) return await read();
+  const pending = debugLoggingPending();
+  if (!isDebugLoggingEnabled() && !pending) return await read();
   const start = performance.now();
   const rows = await read();
   const ms = performance.now() - start;
   if (rows === null) return rows;
+  if (pending) {
+    void debugLoggingSettled().then((on) => { if (on) logStorageRead(reason, ms, rows); });
+    return rows;
+  }
+  logStorageRead(reason, ms, rows);
+  return rows;
+}
+
+function logStorageRead(reason: string, ms: number, rows: Record<string, unknown>): void {
   const keys = Object.keys(rows);
   const head = `[SourceMonkey] timing: storage scan (${reason}): ${formatMs(ms)}, ${keys.length} keys`;
   // The size comes from Chrome, which keeps it for each stored value,
@@ -79,5 +94,4 @@ export async function timeStorageRead<T extends Record<string, unknown> | null>(
     (bytes) => console.log(`${head}, ${formatBytes(bytes)}`),
     () => console.log(head),
   );
-  return rows;
 }

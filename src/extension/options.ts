@@ -21,6 +21,7 @@ import {
 } from '../local-file-overrides.js';
 import { fetchFileUrlText } from './directories.js';
 import { describeError, getCollections } from './script-store.js';
+import { updateCollection, writeSetting } from './worker-client.js';
 import { timeStorageRead } from './storage-scan.js';
 import { formatQuota, formatStorageUsage } from '../script-display.js';
 import {
@@ -30,13 +31,11 @@ import {
   type UsageRow,
 } from './storage-usage.js';
 import { collectionSupportsLocalFiles } from '../local-file-overrides.js';
-import { updateCollection } from './script-updater.js';
 import { isFileSchemeAccessAllowed, renderFileAccessBanner } from './file-access.js';
 import {
   DOWNLOADS_COPIES_KEY,
   parseDownloadsCopiesSetting,
   readDownloadsCopiesSetting,
-  writeDownloadsCopiesSetting,
   type DownloadsCopiesSetting,
 } from './local-copy.js';
 import { installHomeLinkHandler, onNamedTabFocus, openNamedTab } from './page-links.js';
@@ -63,11 +62,10 @@ onNamedTabFocus('options', () => {
 // an unset key reads back as — capture is opt-out, debug logging is
 // opt-in.
 initBooleanSetting('capture-userjs', INSTALL_CAPTURE_KEY, true);
-// This page both sets the flag AND runs refreshes (`updateCollection`
-// on a search-roots save), so it needs to observe it like any other
-// context — each one reads the flag for itself. Without this a refresh
-// started from Options produces no timing output while the identical
-// refresh from the collections page does.
+// This page both sets the flag AND reads storage through shared code
+// that logs under it (the storage-read timings in `storage-scan`), so
+// it observes the flag like any other context: each one reads it for
+// itself. Refreshes it asks for run in the worker, which has its own.
 installDebugLoggingListener();
 void loadDebugLoggingFlag();
 
@@ -198,7 +196,7 @@ function initDownloadsDirControls(): void {
       status.className = 'token-status err';
       return;
     }
-    void writeDownloadsCopiesSetting({ downloadsDir: dir, collectionId: saved?.collectionId ?? null })
+    void writeSetting(DOWNLOADS_COPIES_KEY, { downloadsDir: dir, collectionId: saved?.collectionId ?? null })
       .then(() => {
         status.textContent = 'Saved';
         status.className = 'token-status ok';
@@ -226,7 +224,12 @@ function initBooleanSetting(elementId: string, key: string, defaultValue: boolea
     cb.checked = read(change.newValue);
   });
   cb.addEventListener('change', () => {
-    void chrome.storage.local.set({ [key]: cb.checked });
+    const wanted = cb.checked;
+    writeSetting(key, wanted).catch((err: unknown) => {
+      console.info(`[SourceMonkey] could not save ${key}:`, describeError(err));
+      // Back to what is stored, unless another change has moved it since.
+      if (cb.checked === wanted) cb.checked = !wanted;
+    });
   });
 }
 
@@ -301,7 +304,7 @@ function initLocalRootControls(): void {
     box!.value = savedText;
     saveBtn!.disabled = true;
     try {
-      await chrome.storage.local.set({ [LOCAL_ROOTS_KEY]: roots });
+      await writeSetting(LOCAL_ROOTS_KEY, roots);
       // The roots only change what the NEXT refresh resolves to, so the
       // refresh is part of the save — same reasoning as the collection
       // dialog's local-overrides option, which refreshes its collection
@@ -479,7 +482,7 @@ function initGithubTokenControls(): void {
       setStatus('Enter a token, or use Clear to remove the saved one.', 'err');
       return;
     }
-    void chrome.storage.local.set({ [GITHUB_AUTH_TOKEN_KEY]: next }).then(() => {
+    void writeSetting(GITHUB_AUTH_TOKEN_KEY, next).then(() => {
       input.value = '';
       input.type = 'password';
       revealBtn.textContent = 'Show';
@@ -491,11 +494,11 @@ function initGithubTokenControls(): void {
       // but the explicit call here keeps the UI immediate.)
       storedToken = next;
       renderStatus();
-    });
+    }, (err: unknown) => setStatus(`Could not save the token: ${describeError(err)}`, 'err'));
   });
 
   clearBtn.addEventListener('click', () => {
-    void chrome.storage.local.remove(GITHUB_AUTH_TOKEN_KEY).then(() => {
+    void writeSetting(GITHUB_AUTH_TOKEN_KEY, null).then(() => {
       input.value = '';
       // Mirror Save's input reset so Show→Clear doesn't leave the
       // (now empty) field stuck in text mode with a "Hide" button.
@@ -503,7 +506,7 @@ function initGithubTokenControls(): void {
       revealBtn.textContent = 'Show';
       storedToken = '';
       renderStatus();
-    });
+    }, (err: unknown) => setStatus(`Could not remove the token: ${describeError(err)}`, 'err'));
   });
 
   // Allow Enter inside the input to save, so users don't have to mouse

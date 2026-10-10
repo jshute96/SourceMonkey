@@ -87,8 +87,9 @@ fails.
 `src/extension/injector.ts` owns Chrome's registration set.
 
 - **On SW startup** — `syncRegistrations()` runs with no scope, in
-  parallel with the match-index load. See
-  [Startup is a full reconcile](#startup-is-a-full-reconcile).
+  parallel with the match-index load.
+  - That first sync may take the last worker's record. See
+    [Startup: the record, or a full reconcile](#startup-the-record-or-a-full-reconcile).
 - **On every cache change** — the match-index already fires
   `onCacheChanged` for `script:*` / `collection:*` mutations, naming
   the rows that moved. The SW subscribes a second listener that
@@ -137,7 +138,7 @@ registered is **updated in place**.
    removes registrations (a script or collection turned off) reads no
    bodies.
 4. `unregister([...])` for scripts that left the set and that this
-   context believes Chrome holds.
+   worker believes Chrome holds.
 5. `chrome.userScripts.update([...])` for ids Chrome already holds,
    `register([...])` for genuinely new ones, and unregister+register for
    the narrow case `update` cannot express (see
@@ -145,8 +146,8 @@ registered is **updated in place**.
    applies a batch all-or-nothing, so a rejected batch falls back to
    per-spec calls and one bad script can't take down every other one.
 6. `unregister([...])` for the rest of the scripts that left the set,
-   which another context may have placed, and for any script Chrome
-   just refused that it already held (see
+   which Chrome may hold though this worker's record says not, and for
+   any script Chrome just refused that it already held (see
    [Update, never unregister-then-register](#update-never-unregister-then-register)).
    Usually Chrome holds none of the former, which fails the batch call
    and falls back to one call per id, so they wait until after
@@ -163,8 +164,9 @@ their code** when only their patterns moved.
 - `update` keeps any property it isn't given, and the GM runtime's code
   is over 100 KB.
 - Their code is fixed when the extension is built.
-- Each context's first sync is a full one, which places them with code
-  (see [Startup is a full reconcile](#startup-is-a-full-reconcile)).
+- A worker's first sync places them with code: a full one does, and a
+  record is taken only from a worker of the same version, whose first
+  sync did (see [Startup: the record, or a full reconcile](#startup-the-record-or-a-full-reconcile)).
 
 #### Why wipe-and-replace was wrong, not just slow
 
@@ -186,13 +188,45 @@ their code** when only their patterns moved.
   cannot express. See
   [Update, never unregister-then-register](#update-never-unregister-then-register).
 
-#### Startup is a full reconcile
+#### Startup: the record, or a full reconcile
 
 Chrome retains registrations across service-worker restarts, and rows
-change while the worker is dead — so a fresh worker has nothing to diff
-against and a pure diff would strand stale registrations.
+change while the worker is dead — so a fresh worker can't diff against
+nothing: that would strand stale registrations.
 
-- A sync is incremental only when this JS context holds a record of
+- **The last worker's record, when it left one.** The sync's record is
+  saved in session storage, which outlives a stopped worker but not a
+  browser or extension restart. A new worker's first sync takes it, and
+  syncs incrementally only the rows that changed since (`restoreRecord`
+  in `src/extension/injector.ts`):
+  - Saved once syncs have been quiet for two seconds, not after each
+    one: every session write reaches every open extension page. A small
+    marker written before a sync changes Chrome's set says the saved
+    record may be stale until then; a worker that finds it reconciles
+    in full.
+  - The record also keeps a fingerprint of each script and collection
+    row as the syncs read it. A row whose fingerprint differs, or that
+    appeared or went away, is in the scope.
+    - A script's fingerprint leaves out `versionProbes`, which a probe
+      rewrites without a sync; a collection's is only whether it is
+      enabled, the one field the sync reads, to keep the record small.
+  - Taken only when made by this extension version, and when Chrome
+    still holds our helpers with the patterns the record last gave them
+    (`stillHeld`). Only the helpers: there is no ids-only call, and
+    asking for every registration returns all their code. A wipe of the set takes the helpers too. With no helpers, one
+    user script is checked instead.
+    - Not caught: a single user script dropped while the helpers stay.
+      Only our own syncs drop one, and they save the record after.
+  - A script row's fingerprint is its JSON, keys in the order the row
+    cache and storage keep them (sorted). A row read in another order
+    would only be synced again.
+  - Removed when it's dropped on purpose (`forgetRegistrationState`,
+    `unregisterAllRegistrations`).
+  - Its own timing line, `registration record`, says whether it was
+    taken and, if not, why.
+- **Otherwise, a full reconcile**, below.
+
+- A sync is incremental only when this worker holds a record of
   what it last registered. `src/extension/injector.ts` keeps one — ids, worlds
   and pattern shapes, every script's basename, log label and
   collection, and the collection rows. No script bodies, so it stays
@@ -209,18 +243,30 @@ against and a pure diff would strand stale registrations.
   dropped. **Still not a wipe** — a script that survives the restart is
   never unregistered.
   - Bodies are read only for the scripts it registers.
-  - `getScripts()` returns each registration's code too. An update
-    whose code is exactly what Chrome holds leaves it out
-    (`sameCode`), so a worker start re-sends only code that changed
-    while it was gone. Chrome stores code it's sent and passes it on to
-    renderers, which was most of a sync's register time.
-- The record is dropped whenever it stops being trustworthy: a sync
-  that throws part-way, and `unregisterAllRegistrations` (the test
-  surface's teardown). The next sync then reconciles fully, which also
-  covers whatever ids the failed sync consumed.
-- A full reconcile also re-places the bridge and GM-runtime
-  registrations, whose code ships with the extension and changes on
-  update. The same code comparison applies to them.
+  - `getScripts()` returns each registration's code and settings too.
+    A spec Chrome already holds exactly (code, patterns, world, run
+    time: `sameRegistrations`) gets no call at all, so a worker start
+    with nothing changed sends Chrome nothing. Every call costs about
+    the same however little it carries (Chrome saves the set and sends
+    it to every renderer), so skipping them is most of a start's sync.
+  - An update whose code alone is what Chrome holds leaves the code out
+    (`sameCode`). For our helpers that is a pattern change; a user
+    script's code carries its own patterns, so its code changes with
+    them.
+- The record in memory is dropped whenever it stops being trustworthy.
+  The next sync then reconciles fully, which also covers whatever ids
+  a failed sync consumed. It is dropped by:
+  - a sync that throws part-way;
+  - `forgetRegistrationState` (the parse checker turned back on). A
+    sync already running when it is called drops its result too;
+  - a sync that finds the `chrome.userScripts` API unavailable;
+  - `unregisterAllRegistrations` (the test surface's teardown).
+- All but the throwing sync remove the session copy too. A sync that
+  throws leaves it, but if it had changed Chrome's set it wrote the
+  stale marker first, so the next worker reconciles in full.
+- A full reconcile also covers the bridge and GM-runtime registrations,
+  whose code ships with the extension and changes on update. The same
+  comparison applies to them: one Chrome holds exactly gets no call.
 
 #### What an incremental sync must not disturb
 
@@ -381,13 +427,11 @@ A registration that is *staying* is replaced with
   above, or a pattern field `update` cannot apply.
 - **Removals do not consult our record of the set.** Every affected
   script that no longer wants a registration is dropped, whether or not
-  this context believes it has one — the collections page and the viewer
-  place registrations in *their* contexts, so a script the page-side
-  retry placed is one the worker's record has never heard of. Every
-  other wrong belief self-corrects because `placeSpec` has a second call
-  to disagree with it; removal has none, so it doesn't get to guess. An
-  unregister for an id nothing holds costs one refused call and is
-  swallowed.
+  this worker believes Chrome holds it: the record can be wrong (a
+  reset, a record lost with a stopped worker). Every other wrong belief
+  self-corrects because `placeSpec` has a second call to disagree with
+  it; removal has none, so it doesn't get to guess. An unregister for an
+  id nothing holds costs one refused call and is swallowed.
 
 ### One registration operation at a time
 
@@ -398,7 +442,9 @@ Two of them interleaving produces `Duplicate script ID '<id>'` against
 a script that is registered and *running*: one attempt listed the set,
 a second placed the script, and the first then offered the id again.
 
-- **Serialized per context.** Every operation that touches
+- **Serialized in the worker**, the only context that places
+  registrations ([worker-writes.md](worker-writes.md)); the lock throws
+  in a page. Every operation that touches
   `chrome.userScripts` — the sync, the targeted retry, the test
   surface's teardown — runs through one promise-chain lock in
   `src/extension/injector.ts`. Overlap used to be easy to hit: the SW-startup
@@ -413,17 +459,9 @@ a second placed the script, and the first then offered the id again.
   full. Callers arriving while one is *running* don't join it — that
   one's read already happened — but they still share a single new
   queued sync between them.
-- **Cross-context placement is still possible.** The lock is
-  per-JS-context and the collections page and viewer run the retry in
-  theirs, so a page-side registration can land mid-sync. Which spec is
-  newer isn't knowable from there and doesn't need to be — every
-  `script:*` / `collection:*` write schedules its own sync, so the set
-  converges on the last write. What matters is that the duplicate is
-  our sequencing and not something to badge the script for; `placeSpec`
-  is what absorbs it.
 - **A failed batch `unregister` falls back to one id at a time.**
   Chrome fails the whole call if any id in the list is unknown, which
-  usually means another context already dropped that one. Giving up
+  usually means the worker's record was wrong about that one. Giving up
   would leave scripts that are *not* wanted — disabled, deleted, newly
   INVALID — still injecting, since nothing replaces them any more.
 
@@ -496,13 +534,8 @@ rules and why it carries no location.
   - The floor limits **attempts**, not reporting. Every attempt that is
     refused still writes its row; the answer to a burst is to try less
     often, not to hide what happened.
-  - It's module state, and **per JS context**: the collections page and the
-    viewer import `script-updater.ts` directly, so their Refresh runs
-    the retry — and its own copy of the floor — in the page rather than
-    the worker. Each context rate-limits its own automatic retries.
-    Harmless, because a click bypasses the floor anyway and the
-    rejection map they all read is shared, but it is not one global
-    counter.
+  - It's module state in the worker, which runs every refresh, so it
+    is one counter for all of them.
   - `resetAllState` clears the worker's copy
     (`resetRejectionRetryGate`) — otherwise one e2e test's retry
     silently suppresses the next one's.
@@ -1120,6 +1153,14 @@ Mechanics:
   which exclude the refused script, whose row reads REJECTED — and
   offered again (`retryRefusedOwnSpecs`). Not `<all_urls>`: a bad
   pattern in one script must not put our code on every page.
+  - Chrome moves an updated registration to the end of its list, so a
+    helper updated alone (a retry, a pattern change) lands behind the
+    user scripts. A full sync that finds one there places everything
+    again, helpers first (`helpersFirst`); otherwise it skips what
+    Chrome already holds.
+  - A full sync that has to send a helper re-sends the user scripts
+    too (`keepHelpersFirst`). Skipping them would leave the updated
+    helper behind them.
 
 Trust model:
 

@@ -37,6 +37,8 @@
 // is small, the readers want all of it, and a single key means one
 // `storage.onChanged` event rather than a fan-out.
 
+import { assertWorkerContext } from '../run-context.js';
+
 // Session-storage key holding the whole `RefreshErrorMap`.
 export const REFRESH_ERRORS_KEY = 'refresh-errors';
 
@@ -101,6 +103,7 @@ export async function setRefreshError(
   collectionId: string,
   reason: string | null,
 ): Promise<void> {
+  assertWorkerContext('write storage');
   try {
     const prior = await readRefreshErrors();
     if (reason === null && !(collectionId in prior)) return;
@@ -119,6 +122,7 @@ export async function setRefreshError(
 // page. Called after a removal rather than on a timer; `liveIds` is the
 // authoritative set.
 export async function pruneRefreshErrors(liveIds: Iterable<string>): Promise<void> {
+  assertWorkerContext('write storage');
   try {
     const prior = await readRefreshErrors();
     const live = new Set(liveIds);

@@ -182,10 +182,14 @@ it.
 ### When it runs
 
 Straight after a refresh, against the rows it produced, for `ok` rows
-only. How hard it tries is a `ProbePolicy`, passed explicitly:
+only. Also straight after a single script is installed
+(`probeInstalledScript`), so an install of an outdated copy says so
+without a Refresh; not awaited by the install. A whole collection added
+at once waits for its first Refresh. How hard it tries is a
+`ProbePolicy`, passed explicitly:
 
-- **`force`** — an actual Refresh / Refresh All / viewer-Update click.
-  Ignores the interval; the user asked.
+- **`force`** — an actual Refresh / Refresh All / viewer-Update click,
+  and the check after an install. Ignores the interval; the user asked.
 - **`if-stale`** (the default) — everything else, including the
   opportunistic navigation check *and the reload fast path*. Probes
   only when the stored answer has aged past `PROBE_MIN_INTERVAL_MS`

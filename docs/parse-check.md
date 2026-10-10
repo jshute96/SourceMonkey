@@ -52,7 +52,7 @@ that may.
 | Context | Has | Lacks | Reaches the sandbox by |
 |---------|-----|-------|------------------------|
 | Sandboxed iframe (`parse-sandbox.ts`) | `eval`, DOM | `chrome.*`, any caller but its embedder | — it *is* the sandbox |
-| Extension page (`parse-check-client.ts`) | `chrome.*`, DOM | `eval` | embedding its own frame |
+| Extension page (`parse-check-client.ts`, the install preview) | `chrome.*`, DOM | `eval` | embedding its own frame |
 | Offscreen document (`offscreen.ts`) | `chrome.*`, DOM | `eval` | embedding its own frame |
 | Service worker (`parse-check.ts`) | `chrome.*` | DOM, `eval` | messaging the offscreen document |
 
@@ -132,8 +132,9 @@ missed here is still reported exactly as it was before.
 
 The load pipeline (`script-build.ts`) doesn't pick the checker, because
 what compiles the text depends on the context. Instead
-`setParseChecker` takes the implementation, and each context installs
-one at startup.
+`setParseChecker` takes the implementation, and the service worker
+installs one at startup. Pages install none: they don't run the store's
+check (below).
 
 ### The service worker
 
@@ -142,27 +143,18 @@ source and drives the offscreen document.
 
 ### Extension pages
 
-The load pipeline runs **wherever it was called from**. The collections
-page (Add, Refresh, Refresh All) and the viewer (Install,
-Refresh) call `addCollection` / `updateCollection` / `updateScript` in the
-*page*, not in the service worker.
+Pages run no part of the load pipeline: Add, Refresh, Refresh All and
+Install run in the service worker ([worker-writes.md](worker-writes.md)),
+so every stored row is checked through the offscreen document.
 
-`parse-check-client.ts` installs a checker there. The page has a DOM,
-so it embeds its own `parse-sandbox.html` and compiles locally. The
-service worker is not involved, which buys:
-
-- no SW wake on the path behind an Install click;
-- no structured clone of the whole script — bodies, `@require` bodies,
-  base64 `@resource` blobs — to every extension context;
-- no dependency on the SW surviving the round trip;
-- **parallelism**: one single-threaded worker with one shared sandbox
-  is a queue; per-page frames are not;
-- a circuit breaker per page, so one wedged sandbox doesn't turn the
-  feature off everywhere.
-
-Only the transport differs from the SW's checker. Both compose the
-checked text with `buildParseCheckSource`, so both judge the same
-program.
+- `parse-check-client.ts` is the page's own checker, for the install
+  preview only (below). The page has a DOM, so it embeds its own
+  `parse-sandbox.html` and compiles locally: no worker wake and no
+  copy of the script across contexts before the user has chosen to
+  install.
+- Only the transport differs from the worker's checker. Both compose
+  the checked text with `buildParseCheckSource`, so both judge the same
+  program.
 
 ### The install preview
 

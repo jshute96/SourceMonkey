@@ -260,11 +260,11 @@ export function readRootsSetting(raw: unknown): string[] {
   return raw.filter((r): r is string => typeof r === 'string');
 }
 
-// Set the configured roots directly, bypassing storage. Production
-// callers write the storage key and let the listener above pick it up;
-// this is for the two contexts with no `chrome.storage` at all — unit
-// tests, and the development harness (`src/harness/`), which runs the
-// same resolve pipeline under Node with roots the caller names.
+// Set the configured roots directly, bypassing storage. For the contexts
+// with no `chrome.storage` at all (unit tests, and the development
+// harness, which runs the same resolve pipeline under Node with roots
+// the caller names), and for the worker's own `writeSetting`, so a
+// refresh it runs next doesn't wait for the change event.
 export function setConfiguredLocalRoots(roots: readonly string[]): void {
   configuredRoots = roots.slice();
   loadGeneration++;

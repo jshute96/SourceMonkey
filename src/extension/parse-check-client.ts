@@ -1,24 +1,17 @@
-// Page-side half of the compile-only parse check.
+// Page-side compile-only parse check, for the install preview: it
+// compiles a script it hasn't added yet, before the user decides, so
+// there's no stored row for the store's checker to run on.
 //
-// The load pipeline runs wherever it was called from: `addCollection` /
-// `updateCollection` / `updateScript` invoked from the collections page
-// or the viewer execute in that PAGE, not in the service worker. A page
-// with no checker installed silently skipped the check — which didn't
-// merely leave the row unverified, it CLEARED a previous `invalid`
-// verdict and reported "Loads cleanly again" for a script that still
-// doesn't parse.
+// Every stored row is checked in the service worker, which runs every
+// refresh, add and install (docs/worker-writes.md), through the
+// offscreen document.
 //
 // A page has a DOM, so it embeds its own `parse-sandbox.html` and
 // compiles locally — `parse-sandbox-host.ts` does the driving, exactly
 // as it does for the offscreen document on the service worker's
-// behalf. The service worker is not involved:
-//
-//   - no SW wake on the path behind an Install click;
-//   - no structured clone of the whole script (bodies, `@require`
-//     bodies, base64 `@resource` blobs) to every extension context;
-//   - no dependency on the SW surviving the round trip;
-//   - and pages check in parallel rather than queueing behind one
-//     single-threaded worker and its one shared sandbox.
+// behalf. The service worker is not involved: no wake, and no copy of
+// the script across contexts, before the user has even chosen to
+// install.
 //
 // Only the transport differs from the service worker's checker. Both
 // compose the checked text with `buildParseCheckSource`, so both judge
@@ -27,28 +20,15 @@
 // Fails open like every other leg of this feature (see
 // [docs/parse-check.md]): a sandbox that won't load, a timeout, a
 // verdict in an unrecognised shape, or a throw anywhere in between all
-// resolve to `null` = "couldn't check", never to "didn't parse". A row
-// left unchecked carries no `parseCheckedHash`, so the next
-// service-worker refresh performs the check.
+// resolve to `null` = "couldn't check", never to "didn't parse".
 
 import { buildParseCheckSource } from '../composed-source.js';
 import { dlog } from '../debug-log.js';
 import { attachParseLocation } from '../parse-location.js';
 import { isParseCheckDisabled } from '../parse-check-protocol.js';
 import { createParseSandboxHost, type ParseSandboxHost } from './parse-sandbox-host.js';
-import { setParseChecker, type ParseChecker } from '../script-build.js';
+import type { ParseChecker } from '../script-build.js';
 
-// Call once at page startup, before anything can touch the store.
-// Every extension page that mutates the store needs this — see the
-// `addCollection` / `updateCollection` / `updateScript` callers in
-// `collections.ts` and `userscript.ts`.
-export function installPageParseChecker(): void {
-  setParseChecker(checkScriptParses);
-}
-
-// The same check, for a caller that isn't the store: the install
-// preview compiles a script it hasn't added yet, so there's no row for
-// the store hook to fire on.
 export const checkScriptParses: ParseChecker = async (script) => {
   if (await isParseCheckDisabled()) return null;
   try {

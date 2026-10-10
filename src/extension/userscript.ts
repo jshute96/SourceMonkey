@@ -27,9 +27,7 @@
 // See [docs/script-viewer.md] and [docs/install-capture.md].
 
 import {
-  addCollection,
   ALREADY_INSTALLED_IN_TARGET,
-  installScript,
   type InstallTarget,
   buildScriptFromText,
   describeError,
@@ -42,8 +40,6 @@ import {
   hashSource,
   isScriptEnabled,
   isCollectionEnabled,
-  removeScript,
-  setScriptsEnabled,
   validateHeader,
   type ScriptMeta,
   type StoredScript,
@@ -58,7 +54,6 @@ import {
   installOptionsFor,
   locationKey,
   otherActiveCopies,
-  turnOffOtherCopies,
   type InstallOption,
   type RelatedScript,
   type RelatedVersions,
@@ -93,7 +88,6 @@ import {
   type StoredResource,
 } from '../external-files.js';
 import {
-  clearScriptLog,
   getAllMaxLogLevels,
   getMaxLogLevel,
   getScriptLog,
@@ -118,7 +112,6 @@ import {
   readRejections,
   type RejectionMap,
 } from './script-rejection.js';
-import { updateScript } from './script-updater.js';
 import {
   appendWithSlashBreaks,
   compareUrl,
@@ -186,7 +179,7 @@ import {
 } from '../github-auth.js';
 import { CAPTURED_PARAM, markInstallBypass } from './install-capture.js';
 import { isFileSchemeAccessAllowed, renderFileAccessBanner } from './file-access.js';
-import { checkScriptParses, installPageParseChecker } from './parse-check-client.js';
+import { checkScriptParses } from './parse-check-client.js';
 import {
   describeDiagnostic,
   locationLabel,
@@ -199,31 +192,27 @@ import { displayRefText, parseStackRefs } from '../stack-link.js';
 import { remapStackRef, type MappedSegment, type StackRef } from '../source-map.js';
 import { stackLayout } from '../composed-source.js';
 import { buildRequireSourceUrl, buildSourceUrl } from '../script-source-url.js';
-import { startPhaseTimer, type PhaseTimer } from '../phase-timing.js';
-import { enableWithin } from './script-enablement.js';
+import { startPhaseTimer } from '../phase-timing.js';
+import {
+  addCollection, installScript, updateScript,
+  clearScriptLog, enableWithin, forgetDeniedHost, removeScript, revokeConnectHost, setScriptEnabledExclusive,
+  setScriptsEnabled, turnOffOtherCopies,
+} from './worker-client.js';
 import { CodeTabsView, type CodeTab } from './code-tabs.js';
 import { makeCopyButton } from './copy-button.js';
 import { markFileChanges, missingFiles, scriptFileTag } from './file-changes.js';
 import { renderDetails } from './script-details.js';
 import {
   connectGrantsKey,
-  forgetDeniedHost,
   getConnectGrants,
-  revokeConnectHost,
   type ConnectGrants,
 } from './connect-grants.js';
 import { installSelectAll } from './select-all.js';
 
-// Install and Refresh run the load pipeline here in the page, so this
-// page needs its own parse checker — without one, Install would store
-// an unparsable script as `ok` and Refresh would clear an `invalid`
-// verdict it never re-derived. See src/extension/parse-check-client.ts.
-installPageParseChecker();
-
-// Refresh (installed) and the preview fetch both run in the page
-// context, so the page needs its own copy of the cached GitHub token.
-// Both handlers await it before issuing a fetch so an early click
-// can't go out unauthenticated.
+// The preview's fetch runs in the page, so the page needs its own copy
+// of the cached GitHub token, and awaits it before fetching so an early
+// load can't go out unauthenticated. Refresh runs in the worker, which
+// waits for its own copy.
 installGithubAuthListener();
 const githubTokenReady = loadGithubAuthToken();
 
@@ -283,7 +272,14 @@ refreshBtn.addEventListener('click', () => void onRefresh());
 // Same modifier wiring as a panel row's checkbox, from the same helper:
 // ctrl/cmd-click opts out of the exclusive sweep here too.
 const takeControlsRowSolo = watchSoloModifier(enableCheckboxEl);
-enableCheckboxEl.addEventListener('change', () => void onToggleEnabled(enableCheckboxEl.checked));
+enableCheckboxEl.addEventListener('change', () => {
+  onToggleEnabled(enableCheckboxEl.checked).catch((err: unknown) => {
+    // Logged, not thrown: a dropped rejection lands in the extension's
+    // Errors panel. The boxes go back to what is stored.
+    console.info('[SourceMonkey] could not change whether this script is enabled:', describeError(err));
+    rehydrateAfterStorageChange().catch(() => undefined);
+  });
+});
 
 // The Location row's copy button. One long-lived element, appendChild'd
 // into the dl on each render (appendChild moves it, so no duplication),
@@ -663,10 +659,6 @@ async function onRefresh(): Promise<void> {
 // and the page swapped to its successor), or has been rehydrated into
 // the not-found state.
 async function refreshShownScript(wanted: string): Promise<StoredScript | null> {
-  // Wait for the GitHub token cache to hydrate first; otherwise a
-  // very fast Refresh click can fire before chrome.storage.local
-  // has resolved and the fetch goes out unauthenticated.
-  await githubTokenReady;
   // Routed through the shared updater: if a background opportunistic
   // check is already in flight for this script, we wait for it
   // instead of starting a second fetch.
@@ -674,9 +666,9 @@ async function refreshShownScript(wanted: string): Promise<StoredScript | null> 
   // rather than waiting out the probe interval.
   // A local script's check can find its file gone and drop the row
   // itself (docs/file-changes.md) — the outcome the `deleted`
-  // chip's tooltip promised. The storage event for that removal
-  // reaches `rehydrateAfterStorageChange` before `updateScript`
-  // returns, so the wording it should paint is set in advance rather
+  // chip's tooltip promised. The storage event for that removal can
+  // reach `rehydrateAfterStorageChange` before or after the worker's
+  // answer, so the wording it should paint is set in advance rather
   // than after: otherwise the generic not-found line lands first,
   // and reads as a storage fault. `render` clears it again the
   // moment the check comes back with a row, which is the usual case.
@@ -698,7 +690,9 @@ async function refreshShownScript(wanted: string): Promise<StoredScript | null> 
   if (successor) swappingAfterRemoval = true;
   let next: StoredScript | null;
   try {
-    next = await updateScript(wanted, 'manual', 'force');
+    // The worker says whether the row is still there; the page reads it
+    // itself, bodies and all, rather than have them sent back.
+    next = await updateScript(wanted, 'manual', 'force') ? (await getScript(wanted)) ?? null : null;
   } catch (err) {
     // No verdict, so no claim: a later removal by someone else must
     // not be painted as this refresh's doing.
@@ -734,42 +728,28 @@ async function refreshShownScript(wanted: string): Promise<StoredScript | null> 
   return next;
 }
 
+// A connection grant the worker couldn't change. The Connections list
+// redraws from storage, so it still shows what is saved.
+function logGrantFailure(err: unknown): void {
+  console.info('[SourceMonkey] could not change a connection permission:', describeError(err));
+}
+
 // The controls-row toggle. Same radio-button rule as the panel's rows:
 // enabling this copy turns off every other copy that is running, since
 // two enabled copies of one script both register and both run.
 //
-// It has to read the related rows itself — unlike a panel row, this
-// checkbox has no table around it to take them from — but the rule
-// applied to them is the shared one, so the two controls can't drift.
+// The worker finds the related copies and applies the rule
+// (`setScriptEnabledExclusive`), from its row cache. The panel's rows,
+// as last drawn, only say which boxes to flip before the write lands.
 async function onToggleEnabled(enabled: boolean): Promise<void> {
   if (!scriptId) return;
   const solo = takeControlsRowSolo();
-  let changes = enableChanges(scriptId, enabled, []);
-  let related: string[] | null = null;
-  if (enabled && !solo) {
-    try {
-      const snapshot = await readStoreSnapshot();
-      const script = snapshot.scripts.find((s) => s.id === scriptId);
-      const rows = allRelatedRows(findRelatedVersions({
-        ...snapshot,
-        location: script?.fileUrl ?? '',
-        header: script?.header ?? null,
-      }));
-      changes = enableChanges(scriptId, enabled, rows);
-      related = rows.map((r) => r.script.id);
-    } catch (err) {
-      // Fails open: the copy the user actually clicked still gets
-      // written, and the panel still shows whatever else is on.
-      // Blocking the toggle on a lookup it only needs for the OTHER
-      // rows would be worse than under-applying the sweep.
-      dlog(`[SourceMonkey] exclusive-enable lookup skipped: ${describeError(err)}`);
-    }
-  }
+  const changes = enableChanges(scriptId, enabled, enabled && !solo ? lastRelatedRows : []);
   // Before the awaits: both checkboxes are showing an intent, and a
   // radio-button pair that flips one now and the other after a round
   // trip through storage reads as a bug.
   paintEnabledOptimistically(changes);
-  await applyEnableChanges(changes, related);
+  await setScriptEnabledExclusive(scriptId, enabled, solo);
   const next = await getScript(scriptId);
   if (next) {
     render(next);
@@ -777,7 +757,7 @@ async function onToggleEnabled(enabled: boolean): Promise<void> {
   }
 }
 
-// Write one click's worth of enable changes.
+// Write one click's worth of enable changes from the versions table.
 //
 // `setScriptsEnabled`, not a loop of `setScriptEnabled`: the bulk call
 // lands as ONE `chrome.storage.local.set`, so it fires one
@@ -793,16 +773,13 @@ async function onToggleEnabled(enabled: boolean): Promise<void> {
 async function applyEnableChanges(
   changes: readonly ScriptEnableChange[],
   related: readonly string[] | null,
-  timer?: PhaseTimer,
 ): Promise<void> {
   const clicked = changes[0];
   if (related && clicked?.enabled) {
-    const t = timer ?? startPhaseTimer('enable script');
-    await enableWithin(clicked.scriptId, [clicked.scriptId, ...related], t);
-    if (!timer) t.done();
+    await enableWithin(clicked.scriptId, [clicked.scriptId, ...related]);
     return;
   }
-  await setScriptsEnabled(changes.map((c) => ({ id: c.scriptId, enabled: c.enabled })), timer);
+  await setScriptsEnabled(changes.map((c) => ({ id: c.scriptId, enabled: c.enabled })));
 }
 
 // One write, so one failure — there is no half-applied batch to
@@ -938,8 +915,8 @@ function render(script: StoredScript, snapshot?: StoreSnapshot): void {
       connect: {
         grants: currentConnectAnswers,
         // The storage change repaints the row.
-        revoke: (host: string | null) => void revokeConnectHost(script.id, host),
-        forgetDenied: (host: string) => void forgetDeniedHost(script.id, host),
+        revoke: (host: string | null) => void revokeConnectHost(script.id, host).catch(logGrantFailure),
+        forgetDenied: (host: string) => void forgetDeniedHost(script.id, host).catch(logGrantFailure),
       },
     } : {}),
   });
@@ -1361,7 +1338,8 @@ async function paintRelatedVersions(args: RelatedVersionsPaint, given?: StoreSna
       const timer = startPhaseTimer('versions table enable');
       let failure: unknown;
       try {
-        await applyEnableChanges(changes, related, timer);
+        await applyEnableChanges(changes, related);
+        timer.mark('write');
       } catch (err) {
         failure = err;
         timer.mark('write failed');
@@ -3645,7 +3623,13 @@ function paintLog(entries: LogEntry[]): void {
   const clearBtn = document.createElement('button');
   clearBtn.type = 'button';
   clearBtn.textContent = 'Clear log';
-  clearBtn.addEventListener('click', () => void onClearLog());
+  clearBtn.addEventListener('click', () => {
+    onClearLog().catch((err: unknown) => {
+      // Logged, not thrown: a dropped rejection lands in the extension's
+      // Errors panel. The log stays as it was, and so does the pane.
+      console.info('[SourceMonkey] could not clear the log:', describeError(err));
+    });
+  });
 
   toolbar.append(saveBtn, copyBtn, clearBtn);
   logPaneEl.appendChild(toolbar);

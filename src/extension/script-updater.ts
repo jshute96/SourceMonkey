@@ -45,6 +45,7 @@ import {
   refreshCollection,
   createRefreshBatch,
   setVersionProbes,
+  type AddCollectionResult,
   type ParseCheckMode,
   type RefreshBatch,
   type ScriptMeta,
@@ -60,6 +61,7 @@ import {
   type ProbePolicy,
   type VersionProbe,
 } from '../version-probe.js';
+import { isContainerCollection } from './directories.js';
 import { probeVersions } from './version-probe-fetch.js';
 import { mapWithConcurrency, PROBE_SCRIPTS_CONCURRENCY } from './concurrency.js';
 import { describeRefreshError, readRefreshErrors } from './refresh-error.js';
@@ -113,6 +115,10 @@ export function gate<T>(
   // all-collections sentinel, and only a script has a readable label —
   // so the naming is passed in rather than guessed from the key.
   label: string = String(key),
+  // A caller that needs its own run's result (a Refresh click: forced
+  // probe, awaited parse check) rather than a running check's. It waits
+  // for that check, then runs, and later callers join it instead.
+  own = false,
 ): Promise<T> {
   let slot = state.get(key);
   if (!slot) {
@@ -120,9 +126,11 @@ export function gate<T>(
     state.set(key, slot);
   }
   // Coalesce onto any in-flight work for this resource regardless of
-  // mode. A manual click during a background check shouldn't start a
-  // second fetch; it should wait for the running one.
-  if (slot.inFlight) return slot.inFlight.promise;
+  // mode, unless the caller needs its own run (`own`). A manual check
+  // during a background one shouldn't start a second fetch; it should
+  // wait for the running one.
+  const running = slot.inFlight?.promise;
+  if (running && !own) return running;
   if (mode === 'opportunistic') {
     const last = slot.lastCompletedAt ?? 0;
     const since = nowMsImpl() - last;
@@ -137,19 +145,23 @@ export function gate<T>(
       return Promise.resolve(skipResult);
     }
   }
-  const promise = (async () => {
+  // The slot entry first: its cleanup compares the slot against it.
+  const entry = {} as { promise: Promise<T> };
+  entry.promise = (async () => {
+    if (running) await running.catch(() => undefined);
     try {
       return await task();
     } finally {
       const s = state.get(key);
       if (s) {
-        s.inFlight = undefined;
+        // Only its own entry: an `own` run may have taken the slot since.
+        if (s.inFlight === entry) s.inFlight = undefined;
         s.lastCompletedAt = nowMsImpl();
       }
     }
   })();
-  slot.inFlight = { promise };
-  return promise;
+  slot.inFlight = entry;
+  return entry.promise;
 }
 
 // Separate maps per result type so type inference stays clean.
@@ -185,14 +197,9 @@ const ALL_COLLECTIONS_KEY = '*';
 // idle gap, which is the ordinary edit-save-reload loop.
 //
 // The same coalescing would let a user-initiated check inherit a
-// verdict-less row. For the pages' Refresh buttons, context stops it,
-// not the gate: they check in the page that clicked (see
-// docs/parse-check.md on where checkers are installed), and that page
-// has its own `scriptState` map. sm-dev's `script refresh` is the one
-// user-initiated check in the worker, so it can inherit one: the
-// verdict still lands on the row a moment later, and sm-dev reports
-// the row as it was. A caller that must have the verdict would need it
-// enforced here rather than assumed.
+// verdict-less row, and miss its forced probe. So a check that forces
+// the probe (a Refresh click, from a page or from sm-dev) doesn't join a
+// running one: it waits for it, then runs its own (`own` in `gate`).
 // `batch` shares the reads a group of checks started together would
 // otherwise each do (see `RefreshBatch`). Every navigation-triggered
 // fan-out passes one — the reload fast path and the opportunistic
@@ -216,6 +223,7 @@ export function updateScript(
     scriptState, scriptId, mode,
     () => runScriptCheck(scriptId, mode, probe, parseCheck, batch), null,
     getScriptLogLabel(scriptId),
+    probe === 'force',
   );
 }
 
@@ -527,7 +535,7 @@ async function runAllCollectionsCheck(
 // current when it stops) but not by the per-script one, which sits on
 // the navigation hot path — see runScriptCheck.
 async function runVersionProbes(
-  scripts: readonly StoredScript[],
+  scripts: readonly ScriptMeta[],
   probe: ProbePolicy,
 ): Promise<void> {
   // Bounded for the same reason the refresh fan-out is (see
@@ -542,8 +550,26 @@ async function runVersionProbes(
     }));
 }
 
+// After a single-script install: check for a newer version at once, so
+// an install of an already-outdated copy says so without waiting for a
+// Refresh. Not awaited by the install, like the per-script refresh's:
+// the result lands on the row, and the pages repaint from it. A whole
+// collection added at once isn't probed here; its first Refresh does.
+export function probeInstalledScript(result: AddCollectionResult): void {
+  const id = result?.kind === 'existingContainer' ? result.scriptId
+    : result && isContainerCollection(result.collection.path) ? result.collection.scriptIds[0]
+      : undefined;
+  if (!id) return;
+  void (async () => {
+    const script = await getScriptMeta(id);
+    if (script) await runVersionProbes([script], 'force');
+  })().catch(() => {
+    // An annotation, as in `runVersionProbes`: the install stands.
+  });
+}
+
 async function probeOneScript(
-  script: StoredScript,
+  script: ScriptMeta,
   policy: ProbePolicy,
 ): Promise<void> {
   // Only rows that are actually running get probed. An `invalid` row's

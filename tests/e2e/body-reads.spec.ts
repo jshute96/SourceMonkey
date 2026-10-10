@@ -3,8 +3,8 @@
 //
 //   - Turning a script off, and the sync after it, read no bodies.
 //   - Turning it back on reads its own bodies only, to register it.
-//   - A full sync (a fresh worker's) leaves out of its updates the code
-//     Chrome already holds, and the script still runs.
+//   - A full sync (a fresh worker's) sends nothing for a script Chrome
+//     already holds exactly as specified, and the script still runs.
 //   - A refresh that finds nothing new reads each body once, for the
 //     copy it started from, and writes no script row or blob.
 //   - A refresh puts back a body or a `@require` whose blob went
@@ -134,7 +134,7 @@ test.describe('body reads', () => {
     expect(reads.every((k) => refsOf(aRow).includes(k))).toBe(true);
   });
 
-  test('a full sync leaves out the code Chrome already holds', async ({
+  test('a full sync sends nothing for what Chrome already holds', async ({
     sm, getServiceWorker, fixtureServer, extensionContext,
   }) => {
     writeScripts(`${fixtureServer.baseUrl}/target.html`);
@@ -160,7 +160,7 @@ test.describe('body reads', () => {
     expect(sync.kind).toBe('full');
     const updates = await sw.evaluate(() => self.__smUpdates ?? []);
     for (const id of [a.id, b.id]) {
-      expect(updates.filter((u) => u.id === id)).toEqual([{ id, withCode: false }]);
+      expect(updates.filter((u) => u.id === id)).toEqual([]);
     }
 
     const page = await extensionContext.newPage();

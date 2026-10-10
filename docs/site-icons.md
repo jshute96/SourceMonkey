@@ -165,6 +165,13 @@ is reported when the script loads instead (`checkScriptIcon` in
     already merged, with no globe first and no change of width.
   - Answers are also remembered for the life of the page, so a repaint
     reuses them.
+- **Fetching runs in the service worker**, which writes all storage
+  ([worker-writes.md](worker-writes.md)). A page that misses its own
+  read asks it (`ensureCachedIcon`): the worker answers from a row
+  another page just fetched, else fetches and caches it.
+  - At most six icon fetches run at once there; the rest wait.
+  - Local stand-ins for `@icon` (local file overrides) are read by the
+    page and never cached, so they stay in the page.
 
 ### Layout
 

@@ -22,14 +22,13 @@ import {
   COLLECTION_GONE,
   COLLECTION_NAME_REQUIRED,
   collectionNameInUseMessage,
-  createCollection,
   collectionUsesLocalFiles,
   describeError,
   getCollections,
   probeCollectionLocation,
-  setCollectionOptions,
   type StoredCollection,
 } from './script-store.js';
+import { createCollection, setCollectionOptions } from './worker-client.js';
 import {
   canonicalCollectionInput,
   classifyLocation,

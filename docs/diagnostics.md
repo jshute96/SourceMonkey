@@ -503,40 +503,46 @@ If they come back, that suppression is the first place to look.
 ## Measuring an enable click
 
 With **Options → Debug logging** on, each enable or disable prints one
-line in the console of the context that saved it: the page for the
-collections page and the viewer, the service worker for the popup and
-sm-dev. The service worker's `registration sync` line follows.
+line in the service worker's console, which saves them all
+([worker-writes.md](worker-writes.md)). The `registration sync` line
+follows. The viewer's versions table prints its own line in the page
+too.
 
 | Line | Printed by |
 |------|------------|
-| `enable script` / `disable script` | a script checkbox (collections page, popup, sm-dev) |
+| `enable script` / `disable script` | a script checkbox (collections page, viewer, popup, sm-dev), and an enable in the viewer's versions table |
 | `enable collection` / `disable collection` | a collection checkbox |
 | `enable all` / `disable all` | the collections page's bulk toggle |
-| `versions table enable` | a checkbox in the viewer's versions table |
+| `versions table enable` | a checkbox in the viewer's versions table, in the page: the round trip to the worker (`write`), then the redraw |
 | `turn off other copies` | an install or move that displaces other copies |
 | `enablement write` | any other enable write (only the write's own steps) |
 
 The shape of a line (numbers illustrative):
 
 ```
-timing: enable script: total 480ms (read all 410 [12 scripts,
-  3 collections], plan 0.4, lock wait 0.1, read rows 6.1
-  [3 keys, 41.0 KB], read collections 1.2 [1 key, 0.4 KB], write 9.8
-  [3 keys, 40.6 KB]); 2 change(s)
+timing: enable script: total 24ms (find copies 0.3 [3 script(s)],
+  lock wait 0.1, re-read 0.5 [4 keys, 9 KB], plan 0.4, read rows 0.3
+  [3 keys, 9 KB], read collections 0.1 [1 key, 0.4 KB], write 9.8
+  [3 keys, 9 KB]); 2 change(s)
 ```
 
-- **read all**: every script, collection and active time, which
-  enabling needs to find a script's other copies. The scripts come
-  from a full scan, whose `storage scan` line has the size.
+- **find copies**: which copies are related to the ones being changed
+  (the same location, or `@namespace` + `@name`). From the worker's
+  index over its row cache ([worker-writes.md](worker-writes.md#the-row-cache));
+  where there is none, a read of every row.
+- **read collection** (collection toggles and Enable all): the
+  collection and its scripts' rows.
 - **plan**: working out which copies to change.
-- **lock wait**: waiting behind other storage writes in the same page
-  or worker.
+- **lock wait**: waiting behind other storage writes in the worker.
+- **re-read**: the related copies, their collections and the active
+  times, read inside the lock to plan from. From the worker's row
+  cache, so it stays small even while a sync is reading storage.
 - **read rows / read collections**: the rows the write changes,
   re-read inside the lock. `read collection` is the toggled collection.
 - **write**: the one storage write. Every changed script row is
-  written whole, body included.
-- **repaint** (`versions table enable` only): the table redraw the
-  checkbox stays grey for.
+  written whole; its bodies stay in their blobs.
+- **repaint** (`versions table enable`, in the page): the table redraw
+  the checkbox stays grey for.
 - Sizes are JSON lengths, roughly what Chrome stores and copies.
   Computing them is left out of the step times.
 
@@ -566,14 +572,17 @@ The `registration sync` line that follows has these steps:
   seen); the log labels, and any rows a label change moved; the bodies
   of those that will be registered; and what Chrome is given to
   register.
+  - Rows come from the worker's row cache once it's loaded; bodies
+    still come from storage.
   - The labels use the script numbers the worker assigned just before
-    the sync. A sync in an extension page reads them instead, shown as
-    `read numbers`.
-  - A full sync reads rows and bodies under `read`, and its note says
-    how many specs went without their code, since Chrome already held
-    it.
+    the sync.
+  - A full sync reads rows and bodies under `read`. Its note says how
+    many specs Chrome already held exactly (no call), how many more went
+    without their code, and how many registrations it dropped.
 - **list** (full syncs only): asking Chrome which registrations it
   holds.
+- **compare** (full syncs only): which of them Chrome already holds
+  exactly, or with the same code.
 - **unregister / register**: the `chrome.userScripts` calls, removals
   first.
 - **unregister after** (only when needed): removals Chrome may not hold,
@@ -581,6 +590,17 @@ The `registration sync` line that follows has these steps:
 - **read rejections / write rejections**: the list of scripts Chrome
   refused, which shows them as REJECTED. It is read alongside the
   calls above, so `read rejections` is only the wait left after them.
+
+Around the steps:
+
+- A worker's first sync is incremental when it took the last worker's
+  record ([injection.md](injection.md#startup-the-record-or-a-full-reconcile)):
+  its scope is the rows that changed while no worker ran. A
+  `registration record` line before it says whether the record was
+  taken, and if not, why.
+- The console line after a sync names what is in place with
+  `chrome.userScripts`; after a full sync, how many registrations were
+  sent and how many Chrome already held.
 
 ## Measuring a missed reload swap
 
@@ -687,12 +707,18 @@ rows, so measuring it costs this thread nothing.
 - The line names the caller, because that is the part a reader needs:
   `all scripts`, `key migration`, `blob migration`, `gm value wipe`.
 - The same line also reports the narrow reads of every script row
-  (`scanStorageRows`): `match index`, `registration sync`,
-  `log id table`, `membership reconcile`, `new copies`,
-  `all script rows`, and the extension-update backfills
-  (`startup log backfill`, `header check backfill`,
-  `retired header check`). These list the keys and read only the rows, so
-  they skip the bodies and GM values.
+  (`scanStorageRows`). These list the keys and read only the rows, so
+  they skip the bodies and GM values:
+  - `row cache`: the worker's, which the match index, log labels,
+    numbers, registration sync, registration record and membership
+    repair read once loaded.
+  - Those readers' own scans, when the cache isn't loaded: `match
+    index`, `log id table`, `registration sync`, `registration record`,
+    `membership reconcile`.
+  - `new copies`, and `all script rows` (pages, and the worker before
+    its cache is on).
+  - The extension-update backfills: `startup log backfill`, `header
+    check backfill`, `retired header check`.
 - Measured on a 266-row profile, a scan costs **129–193 ms** whoever
   asks. That is the unit to price any new one against.
 

@@ -79,6 +79,28 @@ test.describe('update probes', () => {
     expect(script.headerText).toContain('@version     1.0');
   });
 
+  test('an install from the preview checks for a newer version without a Refresh', async ({
+    sm, extensionContext, extensionId,
+  }) => {
+    server.setRoute('/thing.meta.js', metaBlock('2.0'));
+    server.setRoute('/thing.user.js', versionedScript({
+      version: '1.0',
+      updateUrl: `${server.baseUrl}/thing.meta.js`,
+    }));
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`${server.baseUrl}/thing.user.js`)}`);
+    await page.locator('#install-btn').click();
+    await page.waitForURL(/[?&]script=/);
+
+    const probes = async () => {
+      const [collection] = await sm.getCollections();
+      return (await sm.getCollectionWithScripts(collection.id))!.scripts[0]?.versionProbes ?? [];
+    };
+    await expect.poll(probes).toHaveLength(1);
+    expect((await probes())[0]).toMatchObject({ kinds: ['update'], version: '2.0' });
+    await page.close();
+  });
+
   test('the installed copy is never updated from the probed URL', async ({ sm }) => {
     // @downloadURL points at a *different* body. Honoring it would move
     // the update channel to an origin the user never approved, so the
@@ -561,7 +583,7 @@ test.describe('update probes', () => {
       const key = `script:${id}`;
       const got = await chrome.storage.local.get(key);
       const row = got[key] as Record<string, unknown>;
-      await chrome.storage.local.set({
+      await (self as unknown as { SourceMonkey: { seedStorage(items: Record<string, unknown>): Promise<void> } }).SourceMonkey.seedStorage({
         [key]: {
           ...row,
           versionProbes: [{
@@ -580,7 +602,7 @@ test.describe('update probes', () => {
       const key = `script:${id}`;
       const got = await chrome.storage.local.get(key);
       const row = got[key] as Record<string, unknown>;
-      await chrome.storage.local.set({
+      await (self as unknown as { SourceMonkey: { seedStorage(items: Record<string, unknown>): Promise<void> } }).SourceMonkey.seedStorage({
         // An inline body, which reads as it is in place of the row's blob.
         [key]: { ...row, bodyBlobRef: undefined, bodyText: 'console.log("edited");', contentHash: 'changed' },
       });

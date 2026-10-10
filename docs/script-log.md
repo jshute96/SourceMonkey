@@ -189,24 +189,23 @@ Two naming notes worth keeping:
 serializes those writes is module state — so it only orders the writes
 made in one JS context.
 
-- Both contexts write. The worker logs injection, refresh and probe
-  events; a page logs through the `script-store` code it shares with the
-  worker (an install's first-load line), and the viewer's Clear log
-  button removes the key.
-- Two chains on one key lose entries, and let an append that was already
-  in flight resurrect a log the user just cleared.
-- So a page hands every **mutation** to the worker
-  (`SCRIPT_LOG_WRITE_MESSAGE`, handled in `background.ts`) and the
-  worker's chain is the only one that touches the key. Reads don't hop —
-  they aren't read-modify-write.
-- The page falls back to writing locally unless the worker answers
-  `true`: a visible entry is worth more than the ordering, and a handler
-  that threw resolves the message rather than rejecting it, so the ack
-  has to be read and not just awaited.
-- What the chain guarantees is that the worker's chain orders everything
-  reaching it — not that one page's appends are ordered. Two writes from
-  a page are two messages, and a write that fell back is on a different
-  chain entirely.
+- Only the worker writes, as it writes all storage
+  ([worker-writes.md](worker-writes.md)): injection, refresh, install
+  and probe events, and the viewer's Clear log, which the page asks it
+  for.
+- Two chains on one key would lose entries, and let an append that was
+  already in flight resurrect a log the user just cleared.
+- A guard for pages: no page code logs today, but a page that logs
+  through code it shares with the worker hands the entry to the worker
+  (`SCRIPT_LOG_WRITE_MESSAGE`, handled in `background.ts`). Reads don't
+  hop: they aren't read-modify-write.
+  - The worker answers `true` once it has written the entry. A handler
+    that threw resolves the message rather than rejecting it, so the
+    ack has to be read, not just awaited.
+  - With no `true`, the page sends it once more: a worker stopped
+    mid-message leaves the first unanswered, and the second wakes a new
+    one. With no `true` again, it drops the entry and says so in its own
+    console.
 
 ## Status column promotion
 

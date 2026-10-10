@@ -181,10 +181,32 @@ of a 500 ms budget, the decision lands at ~243 ms. What remains:
   inside the window by every storage-granting script. A per-script
   in-memory value cache in the SW (invalidated by `gmval:` writes)
   would remove it — see the GM storage note below.
-- **The script-row scans are narrow now** — `match index`,
-  `registration sync`, `log id table` list the keys and read only the
-  rows, without bodies (storage format 2). They measured 129–193 ms
-  each as `get(null)` scans on a 266-row profile; worth re-measuring.
+- **The script-row scans are gone from the worker**: the match index,
+  registration sync, log labels and sticky numbers read the row cache,
+  loaded once per worker start (77–93 ms for 344 rows).
+- **Local stand-ins for dependencies can blow the budget.** A script in
+  a collection with local files on, whose `@require`/`@resource` files
+  have local copies under the Options roots, spent 317 ms of a reload
+  check in the dependency pass (`local-standin 316ms/2` in the reload
+  fast-path line) and missed the window: `update not detected within
+  500ms … running prior version`. Opportunistic checks pay it too
+  (116–242 ms of `rebuild`), off the user's path. Each dependency:
+  - lists the root folders (shared within one check), reads the local
+    copy, then lists its folder for the modified time; every one a
+    `file://` fetch, and Chrome's directory listings are slow;
+  - is looked up one after another: the two lookups sum to the whole
+    `rebuild`, so they appear not to overlap. Worth running in
+    parallel;
+  - searches the roots again every check, rather than starting from the
+    local path it found last time (still confirming nothing nearer
+    appeared, which is why listings aren't kept between checks);
+  - reads the whole file before stating it. A size + modified-time
+    check first, as the main script file gets (`fetchOrSkipInParallel`),
+    would reuse the stored bytes when nothing changed.
+  - The same check also showed `read-script 125ms` and `write 84ms` on
+    a reload (13 ms and 12 ms on a focus check of the same script),
+    probably the reload's other storage work competing; worth a look
+    alongside.
 - **`build-specs` costs ~320 ms on the sync right after a swap**, 2 ms
   on the next. That is the deferred parse check landing in
   `revalidateCandidates` — expected, and off the user-visible path, but
@@ -1133,10 +1155,11 @@ during cumulative review of the GM_* phases:
 
 ## Concurrency — accepted races
 
-The write mutex in `script-store.ts` is per JS context. The interleaves
-that leaves are catalogued in
-[docs/storage.md](docs/storage.md#the-lock-is-per-context) rather than
-here — they are decisions, not proposals.
+The write mutex in `script-store.ts` covers every write of a script row
+(`checkScriptRowWrite`); only the service worker writes at all. What it
+still leaves open is catalogued in
+[docs/storage.md](docs/storage.md#one-lock-in-the-worker) rather than
+here: those are decisions, not proposals.
 
 One thing does have a concrete fix we chose not to make:
 
@@ -1155,18 +1178,46 @@ One thing does have a concrete fix we chose not to make:
     is a diagnostic message rather than any state. Worth doing if the
     banner ever becomes load-bearing, or alongside any other change to
     that module.
-- **Enable toggles plan their changes before taking the lock.**
-  `src/extension/script-enablement.ts` reads the store, works out which
-  copies to turn on and off, then calls `writeEnablement`, which takes
-  the lock. See [docs/script-enablement.md](docs/script-enablement.md).
-  - Two quick clicks on one page (A on, then B on) can each plan from a
-    store where neither is active, so both end up active.
-  - A collection removed between the read and the write still has its
-    displaced copies turned off, with nothing coming on.
-  - The fix: `writeEnablement` takes a planner callback and runs it on
-    a snapshot read inside the lock. It costs a full store read under
-    the lock per click, and touches every caller of the toggles.
-  - Left for its own change.
+
+## Worker writes — performance follow-ups
+
+Set aside while moving every write into the service worker
+([docs/worker-writes.md](docs/worker-writes.md#open)), from timings on a
+326-script profile.
+
+- **Full row-cache reads still copy every row.** Enables no longer
+  read every row (they use the indexes and the frozen shared rows), but
+  `allCachedRows` / `cachedScriptRows` still copy the whole cache, at
+  10–30 ms for 326 rows.
+  - Their callers: the membership reconcile, the blob sweep, and
+    `getAllScriptMetas`.
+  - Each would need checking for edits to the rows it reads before it
+    could take the frozen rows instead.
+- **Cache recently used script bodies in the worker.** The sync's `read
+  bodies` takes ~5 ms alone but 60–180 ms while other storage work runs,
+  and it is part of what makes enables wait during a sync. A size-capped
+  blob cache, kept current the way the row cache is, would remove those
+  reads.
+- **Re-registering the GM runtime and bridge on pattern changes.** A
+  sync that changes a helper's patterns re-registers it, 200–430 ms, and
+  storage reads in pages stall meanwhile.
+  - Identical patterns already de-dupe (`applyScope` keeps a set), but a
+    pattern covered by another (`https://a.com/foo/*` beside
+    `https://a.com/*`) still changes the set.
+  - Options: per-origin patterns, so a second script on a covered site
+    changes nothing; or `<all_urls>`, which `buildGmRuntimeSpecs`
+    argues against (a page-visible `window.__SM_GM__` on every site is a
+    fingerprint and an attack surface).
+- **Minify the injected helpers properly.** The build only strips
+  comments and whitespace (`minifyForInjection`): the GM runtime goes
+  from 131 KB to 55 KB. A real minifier (esbuild or terser) might reach
+  25–30 KB.
+  - Measure first: Chrome's `register` time against helper size, and
+    page parse time where it's injected.
+  - Renamed identifiers make the runtime's own stack traces harder to
+    read; a source map would cover that.
+- **Audit what's in `wrapper-gm-runtime.js`** for code no current API
+  needs.
 
 ## Storage-key migration — remove after 2026-09-01
 

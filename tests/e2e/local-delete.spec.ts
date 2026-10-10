@@ -420,7 +420,8 @@ test.describe('deleting a local copy', () => {
     await expect(page.locator(`${DIALOG} #delete-file`)).toHaveText('hello.user.js');
     await page.locator(CONFIRM).click();
 
-    expect(fs.existsSync(file)).toBe(false);
+    // The click returns before the deletion has run.
+    await expect.poll(() => fs.existsSync(file)).toBe(false);
     // The page was standing on the copy, so it moves to the surviving
     // version rather than to the not-found line — which leaves that
     // version with no others, and the panel with nothing to show.
