@@ -673,9 +673,10 @@ $R stop                  # also removes the run's test collection
     for `get`/`set` (`set key --force <json>` outside a
     `--temp-browser`, since that's the person's real data).
 - A `document-start` script may run after the page's first inline
-  scripts during a run, where SourceMonkey alone would run it first:
-  while a run is live, every script waits for the extension's check
-  before running.
+  scripts in a tab a run tab opened (a popup, a link to a new tab),
+  where SourceMonkey alone would run it first: every script there waits
+  for the extension's check before running. In the tabs the run opens
+  itself, the run's scripts run as they would alone.
 - **Before building on a new request path, send one real request
   from it.**
   - A request that works from the page can still be refused from the
@@ -761,8 +762,8 @@ refused. How it works and what differs:
 - **A page global is `undefined` in the script**: it's in the isolated
   world. Use `unsafeWindow`, or `@grant none`.
 - **An early `document-start` change gets overwritten by the page
-  under sm-dev only**: during a run the script may run after the
-  page's first inline scripts (see
+  under sm-dev only**: in a tab a run tab opened, the script may run
+  after the page's first inline scripts (see
   [How a run uses the extension](#how-a-run-uses-the-extension)).
 - **The run refuses to start, or says `no SourceMonkey` / `SourceMonkey
   disabled`**: see [Getting a browser](#getting-a-browser).

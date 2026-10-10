@@ -1572,14 +1572,12 @@ these holds:
     happen on a reload.
   - That `skip` covers subframes too, and a subframe can't see the
     top page's navigation type, so subframes always ask.
-- No `mustAsk` in the script's config. It is set:
-  - for every script while any sm-dev tab claim is live, since a
-    claim can `skip` on any navigation (see
-    [sm-dev-design.md](sm-dev-design.md#making-every-wrapper-ask));
-  - for every script built before the SW has loaded the claims, or
-    built in an extension page (a retry of a rejected script), which
-    can't know them;
-  - always for scratch scripts, which run only in claimed tabs.
+- In a browser sm-dev is connected to, its tab vouches for the
+  script's run, since a claim can `skip` on any navigation. sm-dev marks
+  the pages for that; see
+  [sm-dev-design.md](sm-dev-design.md#making-wrappers-ask).
+  - A scratch script needs the vouch anywhere, since it runs only in
+    its run's tabs.
 - No GM storage grant: the reply carries the values snapshot.
 - No `.tld` rule: the reply carries the SW's exact match check.
 
@@ -1587,8 +1585,6 @@ Gaps:
 
 - On a reload, `document-start` scripts still wait, so a page's
   first inline scripts can win there.
-- A rejected script re-offered from an extension page asks until the
-  SW next re-registers it.
 
 ### sm:check-pending handler
 

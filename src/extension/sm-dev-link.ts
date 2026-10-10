@@ -29,12 +29,13 @@
 //   lives in memory only: a restarted worker has none, and the run
 //   subscribes again when it sees the new worker.
 //
-// Live-claim listener:
-// - While any claim is live, every wrapper must ask before running its
-//   body, since a claim can `skip` a script on any navigation (see
-//   `canSkipDecision` in userscript-prelude.js). The listener hears
-//   each change, and `claimTab` / `renewRun` wait for it, so a tab's
-//   first navigation already runs under the flag.
+// Wrappers that skip asking:
+// - A `document-start` wrapper runs its body without asking where the
+//   answer can only be `run` (see `canSkipDecision` in
+//   userscript-prelude.js). A claim can `skip` on any navigation, so in
+//   a browser sm-dev is connected to every wrapper asks, unless its tab
+//   vouches for its script. sm-dev marks the tabs for that; see
+//   docs/sm-dev-design.md#making-wrappers-ask.
 
 import { SM_DEV_EVENT } from '../sm-dev-protocol.js';
 
@@ -73,33 +74,6 @@ const subscribers = new Map<string, number>();
 
 let loading: Promise<void> | null = null;
 
-let liveListener: ((live: boolean) => Promise<void>) | null = null;
-let expiryTimer: ReturnType<typeof setTimeout> | null = null;
-
-/** Hears whether any claim is live, on every change. One listener. */
-export function onClaimsLiveChange(listener: (live: boolean) => Promise<void>): void {
-  liveListener = listener;
-  // Claims that started loading first reported to no one.
-  if (loading) void loading.then(() => reportLive());
-}
-
-
-/**
- * Tells the listener whether any claim is live, and arms a timer for
- * the next lease to run out, since nothing else happens then. The
- * listener ignores a call that changes nothing.
- */
-function reportLive(): Promise<void> {
-  const now = Date.now();
-  let next = Infinity;
-  for (const claim of claims.values()) {
-    if (claim.expires >= now) next = Math.min(next, claim.expires);
-  }
-  if (expiryTimer) clearTimeout(expiryTimer);
-  expiryTimer = next === Infinity ? null : setTimeout(() => void reportLive(), next - now + 1);
-  return liveListener ? liveListener(next !== Infinity) : Promise.resolve();
-}
-
 /**
  * Resolves once the claims kept in session storage are in memory. Called
  * before any answer that depends on them, so a worker that just started
@@ -122,10 +96,6 @@ export function claimsReady(): Promise<void> {
     } catch (err) {
       console.info('[SourceMonkey] could not read the sm-dev tab claims:', err);
     }
-    // Not awaited: every check-pending answer waits on `claimsReady`,
-    // and must not wait on the registration sync this can start too.
-    // The flag itself is set before this returns.
-    void reportLive();
   })();
   return loading;
 }
@@ -164,7 +134,6 @@ export async function claimTab(tabId: number, runId: string, ttlMs: number): Pro
   claims.set(tabId, { runId, expires });
   runs.set(runId, Math.max(runs.get(runId) ?? 0, expires));
   persist();
-  await reportLive();
 }
 
 // The navigations sm-dev names a tab by, by their fragment: each a
@@ -250,7 +219,6 @@ export async function renewRun(runId: string, ttlMs: number, tabs: RunTab[] = []
   }
   subscribers.set(runId, expires);
   persist();
-  await reportLive();
   return restored;
 }
 
@@ -266,7 +234,6 @@ export async function releaseRun(runId: string): Promise<void> {
   runs.delete(runId);
   subscribers.delete(runId);
   persist();
-  await reportLive();
 }
 
 /**
@@ -303,17 +270,12 @@ export async function staleRuns(withCollections: string[], now = Date.now()): Pr
   return stale;
 }
 
-/**
- * Forgets every claim, lease and subscription, for the e2e tests' reset.
- * Resolves once the wrappers no longer have to ask (the sync that
- * re-registers them), so a live claim can't carry into the next test.
- */
-export function resetSmDevLinkForTests(): Promise<void> {
+/** Forgets every claim, lease and subscription, for the e2e tests' reset. */
+export function resetSmDevLinkForTests(): void {
   claims.clear();
   runs.clear();
   subscribers.clear();
   lastSweep = 0;
-  return reportLive();
 }
 
 /**
@@ -333,7 +295,6 @@ export async function inheritClaim(sourceTabId: number, tabId: number): Promise<
 export function dropClaim(tabId: number): void {
   if (!claims.delete(tabId)) return;
   persist();
-  void reportLive();
 }
 
 /** Sends an event to the subscribed runs, if any is live. */

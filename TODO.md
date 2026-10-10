@@ -51,9 +51,9 @@ A backlog of **candidates**, not a list of obligations.
 - `@run-at document-start` isn't guaranteed to run before page scripts.
   - The body waits for the async `sm:check-pending` reply, while the
     parser can run the page's early `<head>` scripts. The extension
-    usually wins (~1-5ms reply). While an sm-dev run is live every
-    script asks, and often loses (a documented caveat in
-    harness-guide.md).
+    usually wins (~1-5ms reply). In a browser sm-dev is connected to,
+    every script asks outside the run's own tabs, and often loses (a
+    documented caveat in harness-guide.md).
   - Tampermonkey users expect it to run first: scripts that hook
     `fetch`, `XMLHttpRequest` or `addEventListener` miss page code
     otherwise.
@@ -70,8 +70,9 @@ A backlog of **candidates**, not a list of obligations.
       reloading, and have the wrapper read and clear it at
       `document-start`. Check subframes (other origins have their own
       `sessionStorage`) and pages that block storage.
-    - Removes the sm-dev known difference too, so update
-      harness-guide.md and injection.md (Concurrent gates).
+    - The sm-dev markers (sm-dev-design.md, Making wrappers ask) would
+      go too, so update harness-guide.md, sm-dev-design.md and
+      injection.md (Concurrent gates).
 - Make an icon that works
 
 ## Source maps for stack traces
@@ -154,7 +155,8 @@ Where it can't, an early inline `<head>` script can still win the race.
   - whether the load is a reload;
   - whether it grants GM storage, or has a `.tld` rule;
   - whether it is in a subframe;
-  - whether any sm-dev run is active, in any tab.
+  - whether sm-dev is connected to the browser, outside the run's own
+    tabs.
 - **Not robust.** The cases that still ask are a timing race, so a
   script that must patch the page first (user-agent spoofing, API
   hooks) works on some loads and not others.

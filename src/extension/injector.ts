@@ -259,9 +259,10 @@ interface ScriptCfgLiteral {
   loadedAt: number;
   runAt: string;
   needsGmValues: boolean;
-  // The wrapper must wait for the SW's check-pending answer even where
-  // it could otherwise skip it. See `setMustAskForDecision`.
-  mustAsk?: boolean;
+  // The sm-dev run a scratch script belongs to (`scratchRunOf`). Its
+  // wrapper waits for the SW's check-pending answer unless the tab
+  // vouches for that run (`smDevVouches` in userscript-prelude.js).
+  run?: string;
   matching: { matches: string[]; includes: string[]; excludes: string[] } | null;
   startupLogs: ReadonlyArray<StartupLog>;
   // See `RegistrationSpecOptions.manualRun`.
@@ -286,7 +287,7 @@ export function buildConfigBlob(cfg: ScriptCfgLiteral): string {
     runAt: cfg.runAt,
     needsGmValues: cfg.needsGmValues,
   };
-  if (cfg.mustAsk) wire.mustAsk = true;
+  if (cfg.run !== undefined) wire.run = cfg.run;
   if (cfg.manualRun) wire.manualRun = cfg.manualRun;
   if (cfg.matching) wire.matching = cfg.matching;
   if (cfg.startupLogs && cfg.startupLogs.length > 0) {
@@ -813,9 +814,6 @@ export async function buildSwapEvalBody(
 // from chrome.storage.local at register time (see
 // buildGmBindingsForScript).
 export interface RegistrationSpecOptions {
-  // Tell the wrapper to wait for the SW's check-pending answer (see
-  // `mustAskForDecision`). Scratch scripts always do.
-  mustAsk?: boolean;
   // Give the script sm-dev's eval hook under this key (see
   // src/eval-hook.ts). A script in an sm-dev test collection gets its
   // run's without being asked; the person's own scripts never get one.
@@ -972,7 +970,7 @@ export async function buildRegistrationSpec(
     loadedAt: script.loadedAt,
     runAt: declaredRunAt,
     needsGmValues: gmEmit.needsValues,
-    mustAsk: options.mustAsk === true || isScratchUrl(script.fileUrl),
+    ...(isScratchUrl(script.fileUrl) ? { run: scratchRunOf(script.fileUrl) ?? '' } : {}),
     matching: needsWrapperFilter ? script.matching : null,
     startupLogs: script.startupLogs ?? [],
     ...(options.manualRun ? { manualRun: options.manualRun } : {}),
@@ -1086,9 +1084,7 @@ export async function collectActiveSpecs(
     if (!isRegistrationCandidate(s, collections)) continue;
     const label = logIds.get(s.id) ?? scriptBasename(s.relativePath);
     eligible.push(s);
-    promises.push(buildRegistrationSpec(s, scriptHandlerVersion, label, {
-      mustAsk: mustAskForDecision ?? true,
-    }));
+    promises.push(buildRegistrationSpec(s, scriptHandlerVersion, label));
   }
   const results = await Promise.all(promises);
   const specs: RegistrationSpec[] = [];
@@ -1422,45 +1418,6 @@ interface RegistrationState {
   collections: Map<string, StoredCollection>;
 }
 let syncState: RegistrationState | null = null;
-
-// Whether every registered wrapper must wait for the SW's
-// check-pending answer, rather than run a `document-start` body
-// straight away where it could (see `canSkipDecision` in
-// userscript-prelude.js). On while any sm-dev tab claim is live: a
-// claim can `skip` a script on any navigation, and a body that already
-// ran can't be skipped.
-//
-// Registrations are global, so this slows `document-start` scripts in
-// every tab while a run is active, not just in the run's own tabs.
-//
-// `null` until the SW has loaded the claims, and in any extension page
-// (which never does), and read as `true` then: a registration built
-// without knowing must not let a claimed tab's script through. A page's
-// retry of a rejected script then asks until the SW next re-registers
-// it, which is only slower.
-let mustAskForDecision: boolean | null = null;
-// The sync that applies the latest change, for a caller asking for the
-// value already set to wait on too.
-let mustAskApplied: Promise<void> = Promise.resolve();
-// The next sync must be a full one. Set by a change every script's
-// registration depends on; a scoped sync would rebuild only the rows
-// that moved.
-let fullSyncNeeded = false;
-
-// Turns `mustAskForDecision` on or off, re-registering every script
-// with the new flag when it changes. Resolves once that sync is done,
-// so a caller that claims a tab can wait for the flag to be in place
-// before the tab navigates.
-//
-// The first call after the SW starts always syncs, which is what
-// brings the registrations in line with storage at startup.
-export function setMustAskForDecision(on: boolean): Promise<void> {
-  if (on === mustAskForDecision) return mustAskApplied;
-  mustAskForDecision = on;
-  fullSyncNeeded = true;
-  mustAskApplied = syncRegistrations();
-  return mustAskApplied;
-}
 
 // Forget what we last registered, so the next sync is a full reconcile.
 //
@@ -1986,8 +1943,7 @@ async function runSync(scope: SyncScope | undefined): Promise<void> {
     syncState = null;
     return;
   }
-  const state = fullSyncNeeded ? null : syncState;
-  fullSyncNeeded = false;
+  const state = syncState;
   try {
     const numbers = (await beforeSync?.()) ?? null;
     await ensureWorldConfigured();

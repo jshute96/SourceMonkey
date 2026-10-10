@@ -7429,7 +7429,7 @@
     },
     "test": {
       "status": "pass",
-      "date": "2026-10-06",
+      "date": "2026-10-09",
       "version": "2018.06.29.01"
     },
     "notes": [
@@ -7437,6 +7437,11 @@
         "date": "2026-10-06",
         "version": "2018.06.29.01",
         "text": "Runs cleanly (its `@require`d jQuery 1.11.1 loads, top-level `return` and `this.$ = ...` work), but its live targets no longer give it work:\n- Live: on www.deviantart.com (home, two profiles, team journals) there were no redirect links left to rewrite; DeviantArt now links external sites directly (tapas.io, facebook.com). Most other listed sites (adf.ly, sinhvienit.net, teamos-hkrg.com, srnk.co, vegaviet.com) don't answer, or return 403 (ouo.io, linkshrink.net, forums.voz.vn).\n- Stand-in pages (`--from-saved`): at example.com, an fshare.vn file link got \"Get vip link 1/2\" links after it and a 4share.vn link got \"Get vip link 1\"; served at www.deviantart.com, `/users/outgoing?https://example.org/page` was rewritten to `https://example.org/page`.\n- sm-dev: on an offline stand-in (DOMContentLoaded within a few ms) the script started after DOMContentLoaded and its listener never ran; a 3s parser-blocking script in the page fixed it. This is the known sm-dev run delay for `document-start`."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "2018.06.29.01",
+        "text": "Re-tested after sm-dev's page markers (a run's own document-start script now runs before the page's scripts in its tabs): passes with no workaround.\n- On a fast offline stand-in served at www.deviantart.com (`--from-saved --offline`, DOMContentLoaded at 63-157ms, no slow script), `/users/outgoing?https://example.org/page` was rewritten to `https://example.org/page` and a plain profile link was left alone, in T1 and 3 `newtab` tabs.\n- The 3s parser-blocking script is no longer needed."
       }
     ]
   },
@@ -14525,7 +14530,7 @@
     },
     "test": {
       "status": "pass",
-      "date": "2026-10-05",
+      "date": "2026-10-09",
       "version": "5"
     },
     "notes": [
@@ -14533,6 +14538,11 @@
         "date": "2026-10-05",
         "version": "5",
         "text": "Saved test page at https://example.com/fab.html loading the real FuckAdBlock 3.2.1 (cdnjs) with CSS hiding its bait element, as an ad blocker would. With the script, the page's `onNotDetected` handler fires and `onDetected` does not; `window.fuckAdBlock` is the script's stub (non-writable). A `--noscript` tab reports \"detected\".\n- sm-dev: a slow `<script src>` ahead of fuckadblock.js gave the document-start script time to run first during the run."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "5",
+        "text": "Re-tested after sm-dev's page markers (a run's own document-start script now runs before the page's scripts in its tabs): passes with no workaround.\n- Same stand-in at https://example.com/fab.html (real FuckAdBlock 3.2.1 from cdnjs, bait hidden by CSS), with no slow `<script src>` ahead of it: `onNotDetected` fired and `window.fuckAdBlock` is the script's non-writable stub, in T1 and 2 `newtab` tabs. A `--noscript` tab reports \"detected\".\n- The page's first inline script already saw `typeof fuckAdBlock === \"object\"` (`undefined` in the `--noscript` tab), so the script ran before the page's first scripts."
       }
     ]
   },
@@ -16027,7 +16037,7 @@
     },
     "test": {
       "status": "pass",
-      "date": "2026-10-06",
+      "date": "2026-10-09",
       "version": "1.1.4"
     },
     "notes": [
@@ -16035,6 +16045,11 @@
         "date": "2026-10-06",
         "version": "1.1.4",
         "text": "Tested on stand-in pages served by `--from-saved` (no real reCAPTCHA was clicked or solved):\n- A form at example.com holding a `.g-recaptcha` div, with a stub `grecaptcha` (counting `execute()` calls, `getResponse()` empty until flipped). On load the script called `grecaptcha.execute()` once; setting the stub to \"solved\" made it submit the form within 1s (navigated to `/submitted?q=x`).\n- A page served at `https://www.google.com/recaptcha/api2/anchor?fake=1` with a `.recaptcha-checkbox-checkmark` span: the script clicked it once.\n- sm-dev: on the first, offline copy of the form page (load at 131ms), the script started after `load`, so its `window.onload` never fired; with a 3s image on the page it set `onload` in time. This is the known sm-dev run delay for `document-start`, not SourceMonkey alone."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "1.1.4",
+        "text": "Re-tested after sm-dev's page markers (a run's own document-start script now runs before the page's scripts in its tabs): passes with no workaround.\n- Offline form stand-in at example.com (`.g-recaptcha` div, stub `grecaptcha`), with no slow image: load came at 45-138ms, and the script's `window.onload` still ran, calling `grecaptcha.execute()` once. Flipping the stub to solved submitted the form within 2s (`/submitted?q=x`). Same in 2 `newtab` tabs.\n- The page's first inline script already saw `typeof window.onload === \"function\"`, so the script ran before the page's first scripts."
       }
     ]
   },
@@ -17873,7 +17888,7 @@
     },
     "test": {
       "status": "pass",
-      "date": "2026-10-05",
+      "date": "2026-10-09",
       "version": "1"
     },
     "notes": [
@@ -17881,6 +17896,11 @@
         "date": "2026-10-05",
         "version": "1",
         "text": "Saved test page at https://example.com/hls.html with `<video src=\".../x36xhzz.m3u8\">` (Mux test stream): the script logs \"enabling M3U8 HLS shim\", swaps the src to a `blob:` MediaSource URL, and the video loads (readyState 4, 1280 wide, duration 634s). The `@require` (jsdelivr `hls.js/latest`) still serves hls.js 0.7.6.\n- On the script's own example page (walterebert.com/playground/video/hls/) it attaches to all 4 videos but they stay at readyState 0: the `.ts` segments have no CORS header, so hls.js's XHRs are blocked. A `--noscript` tab plays all 4 natively (Chrome now plays HLS itself, readyState 4). Same in any manager (`@grant none`, page XHR).\n- sm-dev: on a tiny page the script's `DOMContentLoaded` listener came too late (document-start runs late during a run); delaying DCL with a slow `<script src>` fixed it."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "1",
+        "text": "Re-tested after sm-dev's page markers (a run's own document-start script now runs before the page's scripts in its tabs): passes with no workaround.\n- Tiny stand-in at https://example.com/hls.html with `<video src=\".../x36xhzz.m3u8\">` and no slow script: the script logged \"enabling M3U8 HLS shim\", swapped the src to a `blob:` URL, and the video loaded (readyState 4, 1280 wide, duration 634.6s). Same src swap in 2 `newtab` tabs.\n- The page's first inline script already saw `typeof Hls === \"function\"` (the `@require`), so the script ran before the page's first scripts."
       }
     ]
   },
@@ -43659,7 +43679,7 @@
     },
     "test": {
       "status": "pass",
-      "date": "2026-09-29",
+      "date": "2026-10-09",
       "version": "1.9"
     },
     "notes": [
@@ -43667,6 +43687,11 @@
         "date": "2026-09-29",
         "version": "1.9",
         "text": "Tested with sm-dev (headless) on https://www.w3schools.com/html/html5_video.asp (native `<video controls>`).\n- The video got class `custom-native-player`, native `controls` removed, and a `videowrapper` with the custom controls (31 elements); the style element `#custom-native-player-style` was present.\n- With the video focused, key `5` seeked to 50% (5.01s of 10.03s).\n- sm-dev: the document-start `injectStyle()` threw `Cannot read properties of null (reading 'appendChild')` because sm-dev runs document-start code before `<html>` exists; the script's DOMContentLoaded handler re-injects the style, so no visible effect."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "1.9",
+        "text": "Re-tested after sm-dev's page markers (a run's own document-start script now runs before the page's scripts in its tabs): passes, and the document-start `injectStyle()` error is gone.\n- On https://www.w3schools.com/html/html5_video.asp (T1 and a `newtab` tab) no error was logged; one `#custom-native-player-style` is under `<html>`, the video has class `custom-native-player` with `controls` removed, and a `videowrapper` holds 31 control elements.\n- With the video focused, key `5` seeked to 5.01s of 10.03s."
       }
     ]
   },
@@ -51520,19 +51545,20 @@
       "version": "2.1.8"
     },
     "test": {
-      "status": "fail",
-      "blame": "unknown",
-      "date": "2026-10-04",
+      "status": "pass",
+      "date": "2026-10-09",
       "version": "2.1.8"
     },
-    "tags": [
-      "sm-dev-late-start"
-    ],
     "notes": [
       {
         "date": "2026-10-04",
         "version": "2.1.8",
         "text": "Most listed hosts are dead or their sample files deleted (ddownload, clicknupload, uploadrar, dailyuploads links all \"File Not Found\"). Tested on a live apkadmin.com file page (`/cm3lmadela65/...zip.html`), whose static HTML has the `F1` form and `#downloadbtn`.\n\n- sm-dev run: the script's `destroyWindowFunctions` ran after the page's own scripts (it replaced `jQuery1910...`, `__CF$cv$params`, `a0_0x433e` and other globals that already existed). The page then lost its download form, so at DOMContentLoaded the script logged \"Did not match as a download page... Stopping.\" A `--noscript` tab kept the form and `#downloadbtn`.\n- Same page with the script injected at true document start (Playwright `addInitScript` in the page world, outside the run): it found the download page, removed the clutter, turned `#downloadbtn` into its green \"Get Download Link\" button and added its \"Download Now\" form and hover banner. Not clicked through (no download).\n- So the failure comes from sm-dev's known late `document-start` timing while a run is live. Whether SourceMonkey alone runs it early enough here is untested."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "2.1.8",
+        "text": "Re-tested after sm-dev's page markers (a run's own document-start script now runs before the page's scripts in its tabs): now passes on the same apkadmin.com page (`/cm3lmadela65/Token_Generator_BOTOL_BABA.zip.html`), with fresh `start` / `open` loads in T1.\n\n- Timing: a `@grant none` document-start probe loaded with it logged `document.scripts.length` 0 and no `jQuery` at its start. SiteScrubber's `destroyWindowFunctions` now runs first, so the page's own declarations collide with its locked globals (`Identifier 'setPagination' has already been declared`, `delComment`, `showFullScreen`), the opposite of the old run.\n- Script: on each load it found the download page (\"Assuming this is a download page\"), removed the clutter, built its \"Get Download Link\" / \"Download Now\" buttons, then clicked its ready button, which submits `F1`. The tab then loads the next page, \"Your download link is ready\", with a `udl8.apkadmin.com/cgi-bin/dl.cgi/.../Token_Generator_BOTOL_BABA.zip` link (not downloaded).\n- Script: on that second page it logs \"Did not match as a download page... Stopping.\" That is expected (no form there), and may be what the old note read as the failure. A `--noscript` tab kept the `F1` form and `#downloadbtn`."
       }
     ]
   },
@@ -52639,18 +52665,23 @@
     },
     "test": {
       "status": "fail",
-      "blame": "unknown",
-      "date": "2026-10-07",
+      "blame": "script",
+      "date": "2026-10-09",
       "version": "1.0"
     },
     "tags": [
-      "sm-dev-late-start"
+      "anti-tamper"
     ],
     "notes": [
       {
         "date": "2026-10-07",
         "version": "1.0",
         "text": "On https://krunker.io/ (headed temp browser) the script started (it logs `Window`), but the game never loaded: after 3+ minutes only `pkg/loader-*.wasm` had been fetched (no `core.dat` parts) and the canvases stayed 300x150. A run with a trivial `@grant none` script loaded the game in about 2 minutes.\n- sm-dev: the same code injected over CDP at true document start, outside SourceMonkey, let the game load, and its `skins` setter fired twice (building the 5000-entry `localSkins` list). Krunker's loader halts when `Object.prototype` gets new accessors after it starts (see 432803), and the run's late document-start trips that.\n- Script: its `events` hook (`ahNum === 0`) never called `init` on the menu, so the websocket skin rewrite is unchecked; it needs a live match."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "1.0",
+        "text": "Re-tested after sm-dev's page markers (a run's own document-start script now runs before the page's scripts in its tabs): still fails, but not because of timing. On https://krunker.io/ (headless temp browser, fresh T1) the game still stalled after 2.5 minutes (only `pkg/loader-*.wasm`, no `core.dat` parts, canvases 300x150); a `--noscript` tab loaded it in about a minute.\n- SourceMonkey: the late start is gone. A probe copy logged `document.scripts.length` 0 and `readyState` `loading` at its first line, so it ran before the page's first script.\n- Script: Krunker compares `Object.prototype` with that of its own `about:blank` iframes. A CDP injection at document start that runs in every frame (as in the old note) loads the game; the same `Object.prototype` change guarded to the top frame only stalls it, as here. No manager runs a userscript in those page-made iframes.\n- Tampermonkey: a probe copy (ran after 2 page scripts there) stalled the game the same way, with the `skins` setter never firing (it fired twice in the all-frames CDP injection)."
       }
     ]
   },
@@ -54300,18 +54331,23 @@
     },
     "test": {
       "status": "fail",
-      "blame": "unknown",
-      "date": "2026-10-07",
+      "blame": "script",
+      "date": "2026-10-09",
       "version": "outdated - 3.7"
     },
     "tags": [
-      "sm-dev-late-start"
+      "anti-tamper"
     ],
     "notes": [
       {
         "date": "2026-10-07",
         "version": "outdated - 3.7",
         "text": "On https://krunker.io/ (headed temp browser) the script started: `Object.prototype.cnBSeen` became a non-writable `true` and the title cycled between \"Krunker | Simple ESP\" and \"Made by Hidden_X\". But the game never loaded: after 10+ minutes, and again after a reload, only `pkg/loader-*.wasm` had been fetched (no `core.dat` parts) and the canvases stayed 300x150. A `--noscript` tab, and a run with a trivial `@grant none` script, loaded the game in about 2 minutes.\n- sm-dev: the same code (with its `@require`) injected over CDP at true document start (`Page.addScriptToEvaluateOnNewDocument`, outside SourceMonkey) let the game load. Injected at `DOMContentLoaded` instead, it stalled the same way. So Krunker's loader halts when `Object.prototype` changes after it starts, and the run's late document-start is what trips it.\n- Script: whether the ESP still works is unchecked (it needs a live match). The author marks it \"[Currently Outdated]\", and a counting getter showed nothing reading `cnBSeen` on the menu."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "outdated - 3.7",
+        "text": "Re-tested after sm-dev's page markers (a run's own document-start script now runs before the page's scripts in its tabs): still fails, but not because of timing. On https://krunker.io/ (headless temp browser, fresh T1) the script ran (`cnBSeen` set, title cycling) but the game stalled (only `pkg/loader-*.wasm` after 75 s; a run with a trivial `@grant none` document-start script loaded all `core.dat` parts in that time).\n- SourceMonkey: the late start is gone; a probe of the same run setup (see 429156) ran with no page script yet in the document.\n- Script: Krunker compares `Object.prototype` with that of its own `about:blank` iframes (`cnBSeen` was in the top frame only). Over CDP, `Object.defineProperty(Object.prototype, 'cnBSeen', ...)` at document start in every frame loads the game; guarded to the top frame only, it stalls the same way.\n- Tampermonkey stalled the game the same way with this script."
       }
     ]
   },
@@ -74880,7 +74916,7 @@
     },
     "test": {
       "status": "pass",
-      "date": "2026-10-02",
+      "date": "2026-10-09",
       "version": "3.0.4"
     },
     "notes": [
@@ -74888,6 +74924,11 @@
         "date": "2026-10-02",
         "version": "3.0.4",
         "text": "On `https://www.scribd.com/document/492141210/User-Manual-BA400` the script replaced the page with the `/embeds/492141210/content` iframe, which showed all 145 pages, under a bar with \"Download\" and \"Original Page\" buttons.\n- \"Download\" POSTed the URL to `scribd.vdownloaders.com/check/` in a new tab, which landed on `/vdoc/` with the document's \"Download PDF\" page.\n- The script ran there too: no `adexchangerapid` / `crcdn.org` ad nodes were left. `window.aclib` was still the site's own object, not the script's stub; sm-dev may have run the document-start code after the site's ad script (a known sm-dev difference), not checked in the extension."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "3.0.4",
+        "text": "Re-tested after sm-dev's page markers (a run's own document-start script now runs before the page's scripts in its tabs): still passes; the `aclib` stub still loses, but not because of timing.\n\n- On `scribd.vdownloaders.com/vdoc/` in a fresh `newtab` / `open`, a probe wrapping `Object.defineProperty` showed the script's `cleanVdl` defining its `aclib` stub with `document.scripts.length` 0, before any page script.\n- Script: the site's `https://acscdn.com/script/aclib.js` (the page's first script) then calls `Object.defineProperty(window, \"aclib\", ...)` itself. The stub is `configurable: true`, so it is replaced and `window.aclib` ends as the site's object (`isShowingPop`, its own `runBanner`). This happens in any manager.\n- The ad sweep still works: no `adexchangerapid` / `crcdn.org` nodes left. The Scribd page still became the embed iframe with \"Download\" and \"Original Page\".\n- sm-dev: the tab opened by \"Download\" (a popup of T1) still gets the late start, as expected for tabs a run tab opens."
       }
     ]
   },

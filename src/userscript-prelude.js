@@ -940,21 +940,48 @@
        userscripts" `skip` happen only on a reload. That `skip` covers
        the tab's subframes too, and a subframe can't see the top
        page's navigation type, so subframes always ask.
-     - an sm-dev tab claim, or a scratch script, can `skip` on any
-       navigation. The SW sets `mustAsk` in the config of every script
-       while a claim is live, and always for scratch scripts.
      - the reply carries a GM storage snapshot (`needsGmValues`).
      - a `.tld` rule needs the SW's exact match check.
+     - an sm-dev tab claim can `skip` on any navigation, so in a browser
+       sm-dev is connected to the wrapper asks, unless the tab vouches
+       for the script's run. A scratch script (`cfg.run`) runs only in
+       its run's tabs, so it asks unless vouched for, wherever it is.
+       See `smDevMarker`.
      Other `@run-at` values wait for a later lifecycle event anyway, so
      the round trip costs them nothing. */
   function canSkipDecision(cfg) {
     if (cfg.runAt !== "document-start") return false;
-    if (cfg.mustAsk || cfg.needsGmValues) return false;
+    if (cfg.needsGmValues) return false;
     if (cfg.matching && hasTldRule(cfg.matching)) return false;
     try {
       if (window.top !== window) return false;
       var nav = performance.getEntriesByType("navigation")[0];
-      return !!nav && nav.type !== "reload";
+      if (!nav || nav.type === "reload") return false;
+    } catch (_e) {
+      return false;
+    }
+    if (typeof cfg.run === "string") return smDevMarker(SM_DEV_VOUCH_PREFIX + cfg.run);
+    return !smDevMarker(SM_DEV_PRESENT);
+  }
+
+  /* The markers sm-dev puts in a browser it is connected to (see
+     docs/sm-dev-design.md#making-wrappers-ask), each a window listener
+     that cancels its event. sm-dev adds them through CDP, ahead of
+     every script in a new document, so they are in place when the
+     wrapper starts, before any page script could fake one. A
+     synchronous dispatch reads them from any world. Names match
+     `SM_DEV_MARKERS` in src/sm-dev-protocol.ts.
+     - SM_DEV_PRESENT: in every page of the browser. sm-dev is connected,
+       so any tab may be claimed.
+     - SM_DEV_VOUCH_PREFIX + run: in a tab that run claims, while its
+       scripts are on. The run's own scripts get `run` there. */
+  var SM_DEV_PRESENT = "sourcemonkey-sm-dev";
+  var SM_DEV_VOUCH_PREFIX = "sourcemonkey-sm-dev-run:";
+  function smDevMarker(type) {
+    try {
+      var ev = new CustomEvent(type, { cancelable: true });
+      window.dispatchEvent(ev);
+      return ev.defaultPrevented;
     } catch (_e) {
       return false;
     }

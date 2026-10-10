@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 
 import { WRAPPER_PRELUDE } from '../../dist/generated-wrappers.js';
+import { SM_DEV_MARKERS } from '../../dist/sm-dev-protocol.js';
 
 const SCRIPT_ID = 'script-1';
 const SOURCE_URL = 'sourcemonkey://SourceMonkey/Demo/demo.user.js';
@@ -21,7 +22,11 @@ const SOURCE_URL = 'sourcemonkey://SourceMonkey/Demo/demo.user.js';
 // Minimal stand-in for the page globals the prelude touches. Only the
 // members it actually reaches are present — anything it starts using
 // will fail loudly here rather than silently no-op.
-function makeEnv({ readyState = 'loading' } = {}) {
+//
+// `firstLoad`: a top frame on a navigation that isn't a reload, where a
+// `document-start` wrapper may run without asking. `markers`: the event
+// types sm-dev's markers cancel (`SM_DEV_MARKERS`).
+function makeEnv({ readyState = 'loading', firstLoad = false, markers = [] } = {}) {
   const docListeners = new Map();
   const winListeners = new Map();
   const sent = [];
@@ -76,6 +81,17 @@ function makeEnv({ readyState = 'loading' } = {}) {
     removeEventListener() {},
     postMessage() {},
   };
+  if (firstLoad) {
+    sandbox.window.top = sandbox.window;
+    sandbox.performance = { getEntriesByType: () => [{ type: 'navigate' }] };
+    sandbox.CustomEvent = class {
+      constructor(type) { this.type = type; this.defaultPrevented = false; }
+    };
+    sandbox.window.dispatchEvent = (ev) => {
+      if (markers.includes(ev.type)) ev.defaultPrevented = true;
+      return !ev.defaultPrevented;
+    };
+  }
   vm.createContext(sandbox);
   vm.runInContext(WRAPPER_PRELUDE, sandbox);
 
@@ -115,8 +131,9 @@ function makeEnv({ readyState = 'loading' } = {}) {
   };
 }
 
-function makeCfg(runAt) {
+function makeCfg(runAt, extra) {
   return {
+    ...extra,
     id: SCRIPT_ID,
     name: 'Demo',
     sourceUrl: SOURCE_URL,
@@ -129,9 +146,9 @@ function makeCfg(runAt) {
 // Register a script and queue its body, mirroring the js[] order a real
 // injection uses (config blob → prelude → user program). Returns a
 // `ran` box the test asserts on.
-function install(env, runAt) {
+function install(env, runAt, extra = {}) {
   const ran = { count: 0 };
-  env.sandbox.__smPrelude.init(makeCfg(runAt));
+  env.sandbox.__smPrelude.init(makeCfg(runAt, extra));
   env.sandbox.__smRun(SCRIPT_ID, () => { ran.count += 1; });
   return ran;
 }
@@ -180,6 +197,26 @@ test('document-start: the decision is the only gate', async () => {
   await settle();
   assert.equal(ran.count, 1, 'no lifecycle wait to sit behind');
 });
+
+// A `document-start` wrapper runs without asking only where the answer
+// can only be `run` (`canSkipDecision`); in a browser sm-dev is
+// connected to, that takes its tab vouching for the script's run.
+for (const [label, markers, extra, asks] of [
+  ['no sm-dev: runs at once', [], {}, false],
+  ['sm-dev connected: asks', [SM_DEV_MARKERS.present], {}, true],
+  ['sm-dev connected, a claimed tab: asks', [SM_DEV_MARKERS.present, `${SM_DEV_MARKERS.vouchPrefix}R1`], {}, true],
+  ['a run\'s script, its run\'s tab: runs at once', [SM_DEV_MARKERS.present, `${SM_DEV_MARKERS.vouchPrefix}R1`], { run: 'R1' }, false],
+  ['a run\'s script, another run\'s tab: asks', [SM_DEV_MARKERS.present, `${SM_DEV_MARKERS.vouchPrefix}R2`], { run: 'R1' }, true],
+  ['a run\'s script, no sm-dev: asks', [], { run: 'R1' }, true],
+]) {
+  test(`document-start markers: ${label}`, async () => {
+    const env = makeEnv({ firstLoad: true, markers });
+    const ran = install(env, 'document-start', extra);
+    await settle();
+    assert.equal(env.sentTypes().includes('sm:check-pending'), asks);
+    assert.equal(ran.count, asks ? 0 : 1);
+  });
+}
 
 // The property that keeps the concurrent arming from ever being LATER
 // than the old chained shape: a lifecycle gate whose event has already

@@ -156,6 +156,9 @@ It runs against real headless Chromium with `chrome.userScripts`,
   - `extensionId` — the deterministic ID of the unpacked extension.
   - `sm` — typed proxy over `self.SourceMonkey`; see *SW test surface*
     below. Wipes storage and unregisters userscripts at test start.
+  - `smDevMarked` — marks the browser's pages as sm-dev's for the
+    test, as a run does, so a claimed tab's `document-start` wrappers
+    ask the SW. For specs that claim tabs through `sm`.
   - `testWithBrowserDownloads` — the same fixtures, but downloads are
     left to Chrome's own download manager, landing in the
     worker-scoped `downloadsDir` (a temp directory). Playwright's

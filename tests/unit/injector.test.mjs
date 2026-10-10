@@ -3082,18 +3082,12 @@ test('registerWithFallback: a spec Chrome genuinely refuses is offered once', as
   assert.deepEqual(Object.keys(await readRejections()), ['a']);
 });
 
-// ---------- mustAsk (document-start skip of check-pending) ----------
+// ---------- run (document-start skip of check-pending) ----------
 
-test('buildRegistrationSpec: a scratch script always tells its wrapper to ask', async () => {
+test('buildRegistrationSpec: a scratch script tells its wrapper its sm-dev run', async () => {
   const cfgOf = async (fileUrl) => (await buildRegistrationSpec(makeScript({ fileUrl }))).js[0].code;
-  assert.match(await cfgOf('scratch:///a.user.js'), /"mustAsk":true/);
-  assert.doesNotMatch(await cfgOf('file:///a.user.js'), /mustAsk/);
-});
-
-test('collectActiveSpecs: before the SW knows the sm-dev claims, every script asks', async () => {
-  const collections = new Map([['collection-1', { id: 'collection-1', enabled: true }]]);
-  const { specs } = await collectActiveSpecs([makeScript()], collections);
-  assert.match(specs[0].js[0].code, /"mustAsk":true/);
+  assert.match(await cfgOf('scratch:///R1-ab12/a.user.js'), /"run":"R1-ab12"/);
+  assert.doesNotMatch(await cfgOf('file:///a.user.js'), /"run"/);
 });
 
 // A row in storage format 2: its body in a `blob:` row (script-blobs.ts).

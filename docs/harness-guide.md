@@ -2047,13 +2047,17 @@ that, since the answer is a function.
 ## Known limitations
 
 - A `document-start` script may run after the page's first inline
-  `<head>` scripts while a run is live, where SourceMonkey alone would
-  usually run it first.
-  - While a run is live, every script waits for the extension's check
-    before running (see
-    [sm-dev-design.md](sm-dev-design.md#making-every-wrapper-ask)).
+  `<head>` scripts in a tab a run tab opened, where SourceMonkey alone
+  would usually run it first.
+  - In the tabs the run opens itself, the run's scripts run as they
+    would alone. In the tabs those open, every script waits for the
+    extension's check before running (see
+    [sm-dev-design.md](sm-dev-design.md#making-wrappers-ask)).
   - A script whose early change a page script then overwrites (a class
-    on `<html>`) can work alone and not under sm-dev, or the reverse.
+    on `<html>`) can work there and not in the run's own tab, or the
+    reverse.
+  - The person's own scripts wait for the check in every tab of a
+    browser a run is connected to.
 - A tab a run tab opens is found just after its first load, so console
   lines from that load aren't shown; the scripts' reports are (see
   [Tabs the page opens](#tabs-the-page-opens)).

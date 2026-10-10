@@ -15,13 +15,16 @@
 // - A run's scripts go into a test collection of its own,
 //   which the extension removes when the run is released, or a while
 //   after its lease runs out.
+// - It marks the browser's pages, so a `document-start` wrapper knows
+//   whether it can run without asking the extension
+//   (`markBrowser`, `setVouch`; docs/sm-dev-design.md#making-wrappers-ask).
 
 import { randomBytes } from 'node:crypto';
 
-import type { BrowserContext, Page, Worker } from '@playwright/test';
+import type { BrowserContext, CDPSession, Page, Worker } from '@playwright/test';
 
 import {
-  SM_DEV_EVENT, SM_DEV_PROTOCOL, type ManagedCollection, type ManagedOnDisk, type ManagedScript, type ProtocolVersion,
+  SM_DEV_EVENT, SM_DEV_MARKERS, SM_DEV_PROTOCOL, type ManagedCollection, type ManagedOnDisk, type ManagedScript, type ProtocolVersion,
 } from '../sm-dev-protocol.js';
 import type { StackLayout } from '../composed-source.js';
 import type { PushedFile } from '../external-files.js';
@@ -38,6 +41,34 @@ const RENEW_MS = 10_000;
 
 // How long the extension watches for the navigation that names a tab.
 const NAMING_MS = 10_000;
+
+// The world the per-tab marker's listener runs in, out of the page's
+// sight. A listener on `window` hears events dispatched from any world.
+const VOUCH_WORLD = 'sourcemonkey-sm-dev';
+
+// A marker: a window listener that cancels events of its type.
+const markerSource = (type: string): string =>
+  `window.addEventListener(${JSON.stringify(type)}, function (e) { e.preventDefault(); });`;
+
+// The contexts whose pages carry the marker every page does.
+const markedContexts = new WeakSet<BrowserContext>();
+
+/**
+ * Marks every page of the browser as one sm-dev is connected to, so a
+ * wrapper there asks the extension before running, since any tab may be
+ * claimed. Through Playwright's context init script, which Playwright
+ * adds to a new tab before letting it load, a tab a page opens
+ * included. Once per context: it lasts as long as the connection.
+ */
+async function markBrowser(context: BrowserContext): Promise<void> {
+  if (markedContexts.has(context)) return;
+  try {
+    await context.addInitScript({ content: markerSource(SM_DEV_MARKERS.present) });
+  } catch (err) {
+    throw new Error(`Could not mark the browser's pages as sm-dev's, so SourceMonkey's scripts would run in the run's tabs: ${firstLine(err)}`);
+  }
+  markedContexts.add(context);
+}
 
 // How to bring each side up to date, for the messages below.
 const UPDATE_EXTENSION = 'Update it: rebuild it and reload it in chrome://extensions, or use --temp-browser, which loads this sm-dev\'s copy.';
@@ -91,9 +122,6 @@ function requireMinorOf(extension: ProtocolVersion | undefined, minor: number, f
     throw new Error(`${feature} needs a newer SourceMonkey in this browser. ${UPDATE_EXTENSION}`);
   }
 }
-
-// What the collection and script commands say an older extension lacks.
-const MANAGING = 'Listing collections and scripts';
 
 /** Said when Chrome won't let the extension register user scripts. */
 function userScriptsOff(extensionId: string): string {
@@ -163,6 +191,9 @@ export class ExtensionLink {
   private renewTimer: NodeJS.Timeout | null = null;
   // The tabs the run holds, for a renewal to claim again if lost.
   private readonly tabs = new Map<number, { scriptsOff: boolean }>();
+  // The tabs the run claimed itself, each with the CDP session that
+  // marks it, and the marker's script while it has one (`setVouch`).
+  private readonly vouches = new Map<number, { session: CDPSession; script: string | null }>();
   private closed = false;
   // Set as `close` begins, so no renewal starts after it; every caller
   // of `close` waits on it.
@@ -235,6 +266,8 @@ export class ExtensionLink {
       }
     });
     if (!userScriptsOn) throw new Error(userScriptsOff(await sourceMonkeyExtensionId()));
+    // Before any claim, so no claimed tab's page goes unmarked.
+    await markBrowser(context);
     await link.adopt(worker);
     context.on('serviceworker', link.onWorker);
     link.renewTimer = setInterval(() => { void link.renew().catch(() => undefined); }, RENEW_MS);
@@ -349,6 +382,17 @@ export class ExtensionLink {
     { id: tabId, runId: this.runId, ttl: LEASE_MS });
     if (scriptsOff) await this.setTabScriptsOff(tabId, true);
     this.tabs.set(tabId, { scriptsOff });
+    try {
+      const session = await this.context.newCDPSession(page);
+      this.vouches.set(tabId, { session, script: null });
+      // Without it, the tab's new documents don't run the marker.
+      await session.send('Page.enable');
+      await this.setVouch(tabId, !scriptsOff);
+    } catch {
+      // Unmarked, the run's scripts ask the extension before running,
+      // which answers the same, later.
+      await this.forgetVouch(tabId);
+    }
     // The fragment off by history, not a navigation: one to `about:blank`
     // would swap the tab's main frame, and Playwright would then prefix
     // the page's snapshot refs (`f1e5`) as if it were an iframe.
@@ -382,14 +426,48 @@ export class ExtensionLink {
   /** The run no longer holds the tab (it closed). */
   forgetTab(tabId: number): void {
     this.tabs.delete(tabId);
+    void this.forgetVouch(tabId);
+  }
+
+  /**
+   * Marks a tab the run claimed, for every document it loads from now
+   * on, as one whose scripts on the run's own get `run`, or takes the
+   * marker away. Through a CDP script, which runs ahead of every
+   * extension script in a new document. It only reaches the tab: the
+   * tabs it opens, and its subframes, ask the extension. The marker is
+   * gone with the session, as the run closes or its connection drops.
+   */
+  private async setVouch(tabId: number, on: boolean): Promise<void> {
+    const vouch = this.vouches.get(tabId);
+    if (!vouch || on === (vouch.script !== null)) return;
+    if (on) {
+      const { identifier } = await vouch.session.send('Page.addScriptToEvaluateOnNewDocument', {
+        source: markerSource(SM_DEV_MARKERS.vouchPrefix + this.runId), worldName: VOUCH_WORLD,
+      });
+      vouch.script = identifier;
+    } else {
+      await vouch.session.send('Page.removeScriptToEvaluateOnNewDocument', { identifier: vouch.script as string });
+      vouch.script = null;
+    }
   }
 
   /** Turns a claimed tab's scripts off or back on, for `--noscript` tabs. */
   async setTabScriptsOff(tabId: number, off: boolean): Promise<void> {
+    // Off: the marker goes first, so no page in between runs a script.
+    if (off) await this.setVouch(tabId, false).catch(() => this.forgetVouch(tabId));
     await this.call(({ t, o }) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.setTabScriptsOff(t, o), { t: tabId, o: off });
     const held = this.tabs.get(tabId);
     if (held) held.scriptsOff = off;
+    if (!off) await this.setVouch(tabId, true).catch(() => undefined);
   }
+
+  // Drops a tab's marker session, and the marker with it.
+  private async forgetVouch(tabId: number): Promise<void> {
+    const vouch = this.vouches.get(tabId);
+    this.vouches.delete(tabId);
+    await vouch?.session.detach().catch(() => undefined);
+  }
+
 
   private async renew(): Promise<void> {
     if (this.closing) return;
@@ -468,7 +546,6 @@ export class ExtensionLink {
    * can't.
    */
   async runManualScript(tabId: number, scriptId: string): Promise<void> {
-    this.requireMinor(6, 'Running a manual script');
     const result = await this.call(({ t, s }) =>
       (self as unknown as { SourceMonkey: Api }).SourceMonkey.runManualScript(t, s),
     { t: tabId, s: scriptId });
@@ -476,10 +553,7 @@ export class ExtensionLink {
   }
 
   /** The collections and installed scripts, for the `collection` and `script` commands. */
-  readonly manager: ManagerControl = managerControl(
-    (fn, arg) => this.call(fn, arg),
-    (minor, feature) => this.requireMinor(minor, feature),
-  );
+  readonly manager: ManagerControl = managerControl((fn, arg) => this.call(fn, arg));
 
   /** Clicks a shown notification, as the person would. False when it isn't showing. */
   async clickNotification(notificationId: string): Promise<boolean> {
@@ -491,7 +565,6 @@ export class ExtensionLink {
    * False when it isn't waiting.
    */
   async answerConnectPrompt(promptId: string, choice: 'once' | 'cancel' | 'allow' | 'allow-all' | 'deny'): Promise<boolean> {
-    this.requireMinor(3, 'Answering a permission prompt');
     return this.call(({ p, c }) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.answerConnectPrompt(p, c), { p: promptId, c: choice });
   }
 
@@ -513,6 +586,10 @@ export class ExtensionLink {
     if (this.renewTimer) clearInterval(this.renewTimer);
     this.context.off('serviceworker', this.onWorker);
     await Promise.allSettled(this.renewing);
+    // The markers go before the claims, so no page in between runs a
+    // script on the strength of one.
+    await Promise.allSettled([...this.vouches.values()].map((v) => v.session.detach()));
+    this.vouches.clear();
     // Best effort: an unreleased claim runs out with its lease, and the
     // collection goes a while later.
     await this.call((runId) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.releaseRun(runId), this.runId)
@@ -534,39 +611,27 @@ export function firstLine(err: unknown): string {
  * no run: no tabs claimed, no events heard. For one command, made just
  * after the worker is found, so it doesn't look for a new one.
  * - Throws as `ExtensionLink.open` does for a protocol major that
- *   differs, or when the extension is too old for these calls.
+ *   differs.
  * - Doesn't need "Allow User Scripts", since nothing here runs a script.
  */
 export async function openManagerLink(context: BrowserContext): Promise<{ manager: ManagerControl; versionNote: string | null }> {
   const worker = await findExtensionWorker(context);
-  const { protocol, note } = await checkedProtocol(worker);
-  requireMinorOf(protocol, 2, MANAGING);
+  const { note } = await checkedProtocol(worker);
   return {
     versionNote: note,
-    manager: managerControl(
-      // Playwright's argument types don't follow a generic through.
-      (fn, arg) => worker.evaluate(fn as never, arg as never),
-      (minor, feature) => requireMinorOf(protocol, minor, feature),
-    ),
+    // Playwright's argument types don't follow a generic through.
+    manager: managerControl((fn, arg) => worker.evaluate(fn as never, arg as never)),
   };
 }
 
-// What the changing calls, and `script show` / `print`, say an older
-// extension lacks.
-const CHANGING = 'Changing collections and scripts';
-const SHOWING = 'Showing a script\'s details and text';
-
-// The manager calls, made with `invoke` (in the worker), each checking
-// first that the extension has it.
+// The manager calls, made with `invoke` (in the worker).
 function managerControl(
   invoke: <A, R>(fn: (arg: A) => R | Promise<R>, arg: A) => Promise<R>,
-  requireMinor: (minor: number, feature: string) => void,
 ): ManagerControl {
-  // `self.SourceMonkey.managed`'s calls, after checking for minor 5. A
-  // change it refuses fails with its message alone, without the
-  // `worker.evaluate: Error: ` Playwright puts before it.
-  const managed = async <A, R>(feature: string, fn: (arg: A) => R | Promise<R>, arg: A): Promise<R> => {
-    requireMinor(5, feature);
+  // `self.SourceMonkey.managed`'s calls. A change it refuses fails with
+  // its message alone, without the `worker.evaluate: Error: `
+  // Playwright puts before it.
+  const managed = async <A, R>(fn: (arg: A) => R | Promise<R>, arg: A): Promise<R> => {
     try {
       return await invoke(fn, arg);
     } catch (err) {
@@ -576,35 +641,20 @@ function managerControl(
   type Sm = { SourceMonkey: Api };
   return {
     label: 'SourceMonkey',
-    collections: async () => {
-      requireMinor(2, MANAGING);
-      return invoke(() => (self as unknown as Sm).SourceMonkey.managedCollections(), undefined);
-    },
-    scripts: async () => {
-      requireMinor(2, MANAGING);
-      return invoke(() => (self as unknown as Sm).SourceMonkey.managedScripts(), undefined);
-    },
-    onDisk: async () => {
-      // Extra to what the listings show, so an older extension lists
-      // without it rather than failing.
-      try {
-        requireMinor(5, CHANGING);
-      } catch {
-        return null;
-      }
-      return invoke(() => (self as unknown as Sm).SourceMonkey.managed.onDisk(), undefined);
-    },
-    setScriptEnabled: (id, enabled) => managed(CHANGING, ({ i, e }) => (self as unknown as Sm).SourceMonkey.managed.setScriptEnabled(i, e), { i: id, e: enabled }),
-    setCollectionEnabled: (id, enabled) => managed(CHANGING, ({ i, e }) => (self as unknown as Sm).SourceMonkey.managed.setCollectionEnabled(i, e), { i: id, e: enabled }),
-    refreshScript: (id) => managed(CHANGING, (i) => (self as unknown as Sm).SourceMonkey.managed.refreshScript(i), id),
-    refreshCollection: (id) => managed(CHANGING, (i) => (self as unknown as Sm).SourceMonkey.managed.refreshCollection(i), id),
-    installScript: (location, collectionId) => managed(CHANGING, ({ l, c }) =>
+    collections: () => invoke(() => (self as unknown as Sm).SourceMonkey.managedCollections(), undefined),
+    scripts: () => invoke(() => (self as unknown as Sm).SourceMonkey.managedScripts(), undefined),
+    onDisk: () => invoke(() => (self as unknown as Sm).SourceMonkey.managed.onDisk(), undefined),
+    setScriptEnabled: (id, enabled) => managed(({ i, e }) => (self as unknown as Sm).SourceMonkey.managed.setScriptEnabled(i, e), { i: id, e: enabled }),
+    setCollectionEnabled: (id, enabled) => managed(({ i, e }) => (self as unknown as Sm).SourceMonkey.managed.setCollectionEnabled(i, e), { i: id, e: enabled }),
+    refreshScript: (id) => managed((i) => (self as unknown as Sm).SourceMonkey.managed.refreshScript(i), id),
+    refreshCollection: (id) => managed((i) => (self as unknown as Sm).SourceMonkey.managed.refreshCollection(i), id),
+    installScript: (location, collectionId) => managed(({ l, c }) =>
       (self as unknown as Sm).SourceMonkey.managed.installScript(l, c), { l: location, c: collectionId }),
-    uninstallScript: (id) => managed(CHANGING, (i) => (self as unknown as Sm).SourceMonkey.managed.uninstallScript(i), id),
-    moveScript: (id, collectionId) => managed(CHANGING, ({ i, c }) => (self as unknown as Sm).SourceMonkey.managed.moveScript(i, c), { i: id, c: collectionId }),
-    renameCollection: (id, name) => managed(CHANGING, ({ i, n }) => (self as unknown as Sm).SourceMonkey.managed.renameCollection(i, n), { i: id, n: name }),
-    scriptDetails: (id) => managed(SHOWING, (i) => (self as unknown as Sm).SourceMonkey.managed.scriptDetails(i), id),
-    scriptText: (id) => managed(SHOWING, (i) => (self as unknown as Sm).SourceMonkey.managed.scriptText(i), id),
+    uninstallScript: (id) => managed((i) => (self as unknown as Sm).SourceMonkey.managed.uninstallScript(i), id),
+    moveScript: (id, collectionId) => managed(({ i, c }) => (self as unknown as Sm).SourceMonkey.managed.moveScript(i, c), { i: id, c: collectionId }),
+    renameCollection: (id, name) => managed(({ i, n }) => (self as unknown as Sm).SourceMonkey.managed.renameCollection(i, n), { i: id, n: name }),
+    scriptDetails: (id) => managed((i) => (self as unknown as Sm).SourceMonkey.managed.scriptDetails(i), id),
+    scriptText: (id) => managed((i) => (self as unknown as Sm).SourceMonkey.managed.scriptText(i), id),
   };
 }
 

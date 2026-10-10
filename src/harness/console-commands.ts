@@ -2431,7 +2431,7 @@ async function pickOther(ctx: ConsoleContext, label: string, tab: ControlledTab 
 // An installed script anywhere, by its E-id, or null for none.
 async function installedOther(ctx: ConsoleContext, label: string): Promise<OtherScript | null> {
   if (!ctx.manager || !ctx.others) return null;
-  // An extension too old to list them knows only those on the tab.
+  // A manager that can't list them knows only those on the tab.
   const listed = await Promise.all([ctx.manager.scripts(), ctx.manager.collections()]).catch(() => null);
   if (!listed) return null;
   const [scripts, collections] = listed;

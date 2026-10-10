@@ -14,6 +14,9 @@ const GREEN = '#2e7d32';
 test.describe('sm-dev tab claims', () => {
   let scriptsDir: ScriptsDir;
   test.beforeEach(() => { scriptsDir = ScriptsDir.create(); });
+  // As a run marks its browser, so these `document-start` scripts ask
+  // in a claimed tab rather than run without asking.
+  test.beforeEach(({ smDevMarked }) => smDevMarked);
   test.afterEach(() => { scriptsDir.cleanup(); });
 
   async function twoScripts(sm: SmApi, baseUrl: string): Promise<{ kept: string; allowed: string }> {

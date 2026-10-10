@@ -12,6 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extensionIdFromPath } from './extension-id';
 import { makeSwApi } from './sw-api';
+import { SM_DEV_MARKERS } from '../../lib/sm-dev-protocol.js';
 import {
   createFixtureServer,
   launchSourceMonkeyContext,
@@ -68,6 +69,11 @@ type TestFixtures = {
   // Typed proxy over the `self.SourceMonkey` SW surface. Wipes storage
   // between tests so each test starts from a known-clean slate.
   sm: ReturnType<typeof makeSwApi>;
+  // The browser marked as one sm-dev is connected to, for the test, as a
+  // run marks it (`markBrowser` in src/harness/extension-link.ts), so a
+  // claimed tab's `document-start` wrappers ask the SW. For a test that
+  // claims tabs itself.
+  smDevMarked: void;
 };
 
 // Two flavours of the same fixture set, differing only in who handles
@@ -120,6 +126,14 @@ function makeTest(browserDownloads: boolean) {
     const sw = await getServiceWorker();
     const id = new URL(sw.url()).host;
     await use(id);
+  },
+
+  smDevMarked: async ({ extensionContext }, use) => {
+    const marker = await extensionContext.addInitScript({
+      content: `window.addEventListener(${JSON.stringify(SM_DEV_MARKERS.present)}, (e) => e.preventDefault());`,
+    });
+    await use();
+    await marker.dispose();
   },
 
   sm: async ({ getServiceWorker }, use) => {

@@ -1068,29 +1068,55 @@ only the claiming run's scripts, the ones in its test collection.
     it shows as neither missing nor not loaded there.
 - Chrome still injects the wrappers; only their bodies are skipped.
 
-##### Making every wrapper ask
+##### Making wrappers ask
 
 A `document-start` wrapper normally skips the check where the answer
 can only be `run` (see
 [injection.md](injection.md#skipping-the-check-at-document-start)).
-A claim can `skip` on any navigation, so the SW turns that off:
+A claim can `skip` on any navigation, so in a browser sm-dev is
+connected to, the wrapper must know whether its tab is claimed.
+Registrations are global, so they can't say. sm-dev marks the pages
+instead (`markBrowser`, `setVouch` in extension-link.ts).
 
-- While any claim is live, the SW re-registers every script with a
-  `mustAsk` flag that makes its wrapper ask.
-- `claimTab` and `renewRun` resolve only once that is in place, so the
-  run's first page is covered.
-- A release, or a lapsed lease (on a timer), turns it back off.
-- Until the SW has loaded the claims after a restart, registrations
-  are built as asking.
-- Scratch scripts always carry `mustAsk`.
+Markers:
+
+- Each is a `window` listener that cancels an event of its type
+  (`SM_DEV_MARKERS`). The wrapper dispatches the event synchronously
+  and reads whether it was cancelled, from any world.
+- sm-dev adds them over CDP, which runs them ahead of every extension
+  script in a new document, so no page script can run first to fake
+  one.
+- They last as long as sm-dev's connection to the browser. A run that
+  dies takes them with it, while its claims last out their lease.
+  - Until then, the person's `document-start` scripts can run in the
+    run's claimed tabs without asking. Its other scripts are still
+    kept out.
+
+Which marker, where:
+
+- **Every page of the browser** gets the "sm-dev is here" marker, a
+  Playwright context init script added as the run connects.
+  - Playwright adds it to a new tab before letting it load, a tab a
+    page opens included.
+  - A wrapper that sees it asks, unless its tab vouches for it.
+- **A tab the run claims itself** (T1, `newtab`) also gets one that
+  vouches for the run, while its scripts are on: a
+  `Page.addScriptToEvaluateOnNewDocument` on a CDP session for the tab.
+  - The run's own scripts run there without asking.
+  - It doesn't reach the tabs the claimed tab opens, so their scripts
+    ask. Playwright resumes a new tab before another session's script
+    can be added to it.
+  - `--noscript` takes it away first, and the run's end takes it away
+    before the release.
+- **A scratch script** (its config's `run`) asks unless its tab
+  vouches for its run, since it runs only in its run's tabs.
 
 What that costs:
 
-- Registrations are global, so the person's other tabs ask too while a
-  run is active. Their `document-start` scripts may run after the
-  page's first inline scripts there.
-- In a run's own tabs, a `document-start` script may also run after
-  those page scripts, where the extension alone would run it first.
+- In a browser sm-dev is connected to, the person's own scripts ask in
+  every tab, so their `document-start` scripts may run after the page's
+  first inline scripts.
+- So do a run's scripts in the tabs its tabs open.
 
 #### Naming the tab
 

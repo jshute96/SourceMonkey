@@ -32,6 +32,21 @@ export const MANUAL_RUN_TAB_GONE = 'The tab was closed';
 export const MANUAL_RUN_PAGE_CHANGED = 'The page changed before the script could run. Try again.';
 export const MANUAL_RUN_SM_DEV = 'The sm-dev run controlling this tab keeps this script out';
 
+/**
+ * The event types of the markers sm-dev puts in its browser's pages,
+ * which tell a `document-start` wrapper whether it can run without
+ * asking the extension (`smDevMarker` in userscript-prelude.js, which
+ * has its own copy). See docs/sm-dev-design.md#making-wrappers-ask.
+ * - `present`: in every page. sm-dev is connected, so any tab may be
+ *   claimed.
+ * - `vouchPrefix` + the run's id: in a tab that run claims, while its
+ *   scripts are on.
+ */
+export const SM_DEV_MARKERS = {
+  present: 'sourcemonkey-sm-dev',
+  vouchPrefix: 'sourcemonkey-sm-dev-run:',
+} as const;
+
 /** The reason a skipped wrapper reports for a tab an sm-dev run controls. */
 export const SKIP_REASON_SM_DEV = 'tab controlled by sm-dev';
 
@@ -58,7 +73,10 @@ export const SKIP_REASON_SM_DEV = 'tab controlled by sm-dev';
 //   the `sm:manual` report for one waiting in a new document.
 // 1.7: a script's badge status can be `UNTRACKED`: its page loaded
 //   before the extension started.
-export const SM_DEV_PROTOCOL = { major: 1, minor: 7 } as const;
+// 2.0: wrappers no longer all ask while a claim is live; sm-dev marks
+//   the pages of its browser instead (`SM_DEV_MARKERS`), which an older
+//   sm-dev doesn't, so the extension would run scripts in its tabs.
+export const SM_DEV_PROTOCOL = { major: 2, minor: 0 } as const;
 
 export interface ProtocolVersion {
   major: number;

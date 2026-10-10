@@ -106,7 +106,7 @@ and `lib/`.
 | `src/source-map.ts` | Source Map v3 generator for the concatenated injection entry, plus the reverse lookup the Log tab maps stack refs with |
 | `src/gm-xhr-types.ts` | The `GM_xmlhttpRequest` request and event types passed between page and service worker |
 | `src/gm-connect.ts` | `@connect` URL-gating helpers — parse rules, extract self hosts, decide allow/ask/deny for a URL, phrase `GM_xmlhttpRequest`'s errors |
-| `src/sm-dev-protocol.ts` | What the extension and sm-dev share: the protocol version, the event line tag, the sm-dev skip reason |
+| `src/sm-dev-protocol.ts` | What the extension and sm-dev share: the protocol version, the event line tag, page marker names, the sm-dev skip reason |
 
 ### Pages and assets (`src/`)
 
@@ -264,7 +264,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/stuck-tabs.ts` | Before `sm-dev start` connects, names the tabs that don't answer (a dialog, say), and waits for them |
 | `src/harness/run.ts` | The run process `sm-dev start` spawns: open a browser, push the scripts into SourceMonkey, follow tabs, serve clients |
 | `src/harness/extension-launch.ts` | Launches Chromium with the built extension (or a fetched manager) on a temp profile: `--temp-browser`, and the e2e suites' browser |
-| `src/harness/extension-link.ts` | A run's or fixture test's connection to the real extension: version check, worker calls, pushes, claims and lease, events; the collection and script calls, also run-less |
+| `src/harness/extension-link.ts` | A run's or fixture test's connection to the real extension: version check, worker calls, pushes, claims and lease, page markers, events; the collection and script calls, also run-less |
 | `src/harness/manager-commands.ts` | The `collection` and `script` verbs: list, show and change a manager's collections and scripts, as text or JSON |
 | `src/harness/external-manager.ts` | Violentmonkey and Tampermonkey: their `collection`/`script` calls, a run's scripts in them, and scripts on a tab |
 | `src/harness/violentmonkey.ts` | Violentmonkey, driven by the messages its own pages send, from a hidden options page |
@@ -334,7 +334,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/script-blobs.spec.ts` | Storage format 2 end to end: shared bodies and requires stored once, format 1 rows migrated and still running, replaced bodies cleaned up |
 | `tests/e2e/script-enablement.spec.ts` | One active copy per script: toggles, collection on / off restores, adding a collection, new copies, Enable all |
 | `tests/e2e/focus-refresh.spec.ts` | Focus-triggered refresh: a tab switch or a page's own focus report picks up a local edit; http scripts stay unfetched |
-| `tests/e2e/document-start-early.spec.ts` | A document-start script runs before the page's first inline script; a live sm-dev claim makes every script ask |
+| `tests/e2e/document-start-early.spec.ts` | A document-start script runs before the page's first inline script, a run's own one too in its claimed tab |
 | `tests/e2e/reload-fast-path.spec.ts` | Reload triggers sm:check-pending → swap to fresh body on this reload; non-reload navs, world changes, and a newly-needed runtime don't |
 | `tests/e2e/reload-fast-path-parse-check.spec.ts` | The reload swap doesn't wait for the parse verdict, and the verdict still lands on the row afterwards |
 | `tests/e2e/reload-fast-path-sharing.spec.ts` | Navigation-triggered checks share one folder listing across the page's scripts, and still catch a per-script edit |

@@ -178,7 +178,7 @@ partway becomes an `Internal error:` result.
     context-menu)`; `--json` gives the state `manual`.
 - `menu` lists `M1: Run this script` first under each such script,
   run or not; `--json` marks it `builtin: 'run'`.
-  - Firing it calls `runManualScript` (`requireMinor(6)`), and prints
+  - Firing it calls `runManualScript`, and prints
     `Ran <name>`.
   - By label, with more than one manual script on the tab, it asks
     for the M number.
