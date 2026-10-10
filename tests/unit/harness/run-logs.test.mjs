@@ -85,6 +85,8 @@ test('lines read with their source, and their tab after T1', () => {
   assert.equal(streamText({ source: 'script', kind: 'log', tab: 1, text: 'hi' }), '[script log] hi');
   assert.equal(streamText({ source: 'page', kind: 'warning', tab: 2, text: 'x' }), '[T2] [page warning] x');
   assert.equal(streamText({ source: 'event', kind: 'started', tab: 1, text: 'A started on u' }), '[event] A started on u');
+  // An iframe's line names its frame, on T1 too.
+  assert.equal(streamText({ source: 'event', kind: 'started', tab: 1, frame: 3, text: 'A started in an iframe on u' }), '[T1.F3] [event] A started in an iframe on u');
   assert.equal(streamText({ source: 'sm', kind: 'error', text: 'A: no' }), '[sm error] A: no');
   // Long console lines are cut in the stream, but not when whole.
   const long = { source: 'script', kind: 'log', tab: 1, text: 'x'.repeat(1500) };
@@ -109,6 +111,11 @@ test('logs prints the time and tab, and each run of identical lines once', () =>
   ]);
   assert.equal(timeOfDay(at), '14:05:12.345');
   assert.deepEqual(logsLines([{ id: at, source: 'sm', kind: 'info', text: 'A: ok' }]), ['14:05:12.345 [sm info] A: ok']);
+  // An iframe's line: its tab and frame.
+  assert.deepEqual(logsLines([records[0], { id: at + 5, source: 'event', kind: 'started', tab: 1, frame: 4, text: 'A started' }]), [
+    '14:05:12.345 T1    [event] A started',
+    '14:05:12.345 T1.F4 [event] A started',
+  ]);
 });
 
 test('the stream cuts a long console line, with its length', () => {

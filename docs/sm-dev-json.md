@@ -124,7 +124,17 @@ interface Tab {
   offline?: boolean;     // a saved page served with --offline
   openedBy?: string;     // the tab that opened it
   dialog?: { kind: string; message: string }; // waiting for an answer
+  scripts: string[];     // the ids of the run's scripts running in its top frame
+  frames?: Frame[];      // its iframes, absent for none
+}
+
+// One of a tab's iframes (see sm-dev-frames.md), each after its parent.
+interface Frame {
+  id: string;            // "F3": unique in the run; the top frame is the tab's id
+  parent: string;        // "T1", or another frame's id
+  url: string;
   scripts: string[];     // the ids of the run's scripts running in it
+                         // (expected in it, under another manager)
 }
 
 // A script: one the run loaded ("1"), or one installed in the
@@ -157,7 +167,10 @@ interface Script {
 // What a script is doing on one tab.
 interface TabActivity {
   tab: string;           // "T1"
-  state: TabState;
+  state: TabState;       // "running" when it runs in any of the tab's frames
+  // Where in the tab it runs, the tab's id for its top frame. Absent
+  // when that's the top frame only.
+  frames?: string[];     // ["T1", "F1", "F3"]
 }
 
 type TabState =
@@ -465,6 +478,39 @@ JSON:
 }
 ```
 
+### `frames [tab|frame|all]`
+
+```ts
+interface FramesData {
+  tabs: {
+    tab: string;
+    url: string;
+    scripts: string[];   // the top frame's
+    frames: Frame[];     // with a frame named, it and those in it
+  }[];
+}
+```
+
+JSON:
+
+```json
+{
+  "command": "frames",
+  "tabs": [
+    {
+      "tab": "T1",
+      "url": "http://localhost:8765/frames/frames.html",
+      "scripts": ["1", "3"],
+      "frames": [
+        { "id": "F1", "parent": "T1", "url": "http://localhost:8765/frames/frame-a.html", "scripts": ["1"] },
+        { "id": "F2", "parent": "T1", "url": "http://127.0.0.1:8765/frames/frame-b.html", "scripts": ["1", "2"] },
+        { "id": "F3", "parent": "F2", "url": "http://127.0.0.1:8765/frames/frame-nested.html", "scripts": ["1"] }
+      ]
+    }
+  ]
+}
+```
+
 ### `scripts`
 
 The run's scripts, then the installed scripts on the selected tab.
@@ -643,8 +689,20 @@ interface MatchData {
       matches: boolean;
       matchedBy: string[];
       excludedBy?: string[]; // absent for none
+      frames?: MatchFrame[]; // with --frames, a tab's iframes
     }[];
   }[];
+}
+
+// An iframe, checked by its own URL.
+interface MatchFrame {
+  id: string;            // "F3"
+  parent: string;        // "T1", or another frame's id
+  url: string;
+  matches: boolean;      // false for a @noframes script
+  matchedBy: string[];
+  excludedBy?: string[];
+  noframes?: true;       // its rules match, but @noframes keeps it out
 }
 ```
 
@@ -735,7 +793,10 @@ interface MenuData {
     url: string;
     // `builtin: "run"`: a manual script's "Run this script", listed
     // first under it whether or not it has run.
-    commands: { id: string; script: string; name: string; builtin?: "run" }[];
+    commands: {
+      id: string; script: string; name: string; builtin?: "run";
+      frame?: string;    // registered in an iframe: its id ("F3")
+    }[];
   }[];
 }
 ```
@@ -789,6 +850,7 @@ interface LogLine {
   id: number;      // log ID: when it arrived, in microseconds since the epoch
   time: string;    // ISO 8601
   tab?: string;
+  frame?: string;  // from an iframe of the tab: its id ("F3")
   script?: string;
   source: "sm" | "event" | "script" | "page";
   also?: ("sm" | "event" | "script" | "page")[]; // other sources it belongs to

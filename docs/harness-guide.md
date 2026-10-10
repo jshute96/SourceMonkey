@@ -1264,13 +1264,18 @@ In a run, not given files, they act on the run's scripts and tabs:
 - `tabs` lists each tab's URL, which tab opened it, any open dialog,
   and the scripts running there, with `*` on the current tab and, under
   it, on the selected script.
+  - A tab with iframes shows how many: `(+3 frames)`. A script running
+    in any of them is listed, with where it runs when that isn't the
+    top frame alone: `(T1, F1, F3)` or `(F2)`. See
+    [Frames](#frames).
 - `status` lists the tabs first, then the scripts on the current tab.
 - `status` and `scripts` give each script a line saying whether it runs
   on the current tab, and on which others:
   - The list's heading names the tab:
     `Scripts (with status on active tab T1):`.
-  - Each script's line: `Active`, `Active (Also active on T2,T4.)`, or
-    `Not active (Active on T2.)`.
+  - Each script's line: `Active` (the current tab's top frame only),
+    `Active on T1 (T1, F2), T2`, `Not active on T1. Active on T2.`, or
+    `Not active`.
   - With no tabs open, there is no heading note and no line.
 - Per tab:
   - `menu T2` lists T2's commands, and `menu T2.M1` fires one there
@@ -1279,6 +1284,29 @@ In a run, not given files, they act on the run's scripts and tabs:
   - `values T2` shows the scripts running on T2. `values all` is all
     scripts' values, as `values` alone is.
   - `scripts T2.3` picks script 3 and tab T2 together.
+
+### Frames
+
+A script runs in each iframe whose URL it matches (see
+[docs/frames.md](frames.md)). sm-dev gives each iframe an id, `F1`,
+`F2`, ... across the run; the top frame goes by its tab's id.
+
+- An iframe keeps its id when it reloads or navigates. One the page
+  removes and adds again is a new frame.
+- `frames` shows the current tab's frame tree, with the scripts running
+  in each frame. `frames T2`, `frames all`, or `frames F3` (that frame
+  and those in it) for others.
+- `tabs --frames` and `status --frames` show each tab's tree in place
+  of its script list.
+- `match --frames` checks each iframe of a tab by its own URL, and
+  shows when `@noframes` keeps a script out.
+- `menu` shows the script's menu for the tab, as SourceMonkey's popup
+  does, with each command an iframe registered labeled with its frame:
+  `M3: Toggle (F2)`. Firing it runs it in that frame.
+- A script's start, skip and error in a frame, and its menu commands,
+  are prefixed with the frame: `[T1.F2] [event] ... started in an
+  iframe on ...`. Other lines from a frame (console lines, other `GM_*`
+  events) have only the tab's id.
 
 ### Tabs the page opens
 

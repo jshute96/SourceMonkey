@@ -55,7 +55,7 @@ export const STDERR_LINE = '\u0000sm-dev:stderr ';
  * (`hasJsonForm`).
  */
 export const JSON_COMMANDS = [
-  'list', 'status', 'scripts', 'tabs', 'values', 'get', 'match', 'validate', 'menu', 'logs', 'probe', 'collection', 'script',
+  'list', 'status', 'scripts', 'tabs', 'frames', 'values', 'get', 'match', 'validate', 'menu', 'logs', 'probe', 'collection', 'script',
 ];
 
 /** The line carrying `command`'s result, `data`'s fields after `command`. */
@@ -133,7 +133,20 @@ export interface Tab {
   openedBy?: string;
   /** A dialog waiting for an answer. */
   dialog?: { kind: string; message: string };
-  /** The ids of the run's scripts running in it. */
+  /** The ids of the run's scripts running in its top frame. */
+  scripts: string[];
+  /** Its iframes, each after its parent; absent for none. */
+  frames?: Frame[];
+}
+
+/** One of a tab's iframes. */
+export interface Frame {
+  /** `F3`: unique in the run. */
+  id: string;
+  /** The tab's id for a frame in its top frame, else the parent frame's. */
+  parent: string;
+  url: string;
+  /** The ids of the run's scripts running in it; under another manager, expected in it. */
   scripts: string[];
 }
 
@@ -166,7 +179,13 @@ export type TabState =
 
 export interface TabActivity {
   tab: string;
+  /** `running` when it runs in any of the tab's frames. */
   state: TabState;
+  /**
+   * Where in the tab it runs, by frame id, the tab's own id for its top
+   * frame. Absent when that's the top frame only.
+   */
+  frames?: string[];
 }
 
 /** A script: one the run loaded (`1`), or one installed in SourceMonkey (`E1`). */
@@ -314,6 +333,17 @@ export interface TabsData {
   tabs: Tab[];
 }
 
+export interface FramesData {
+  tabs: {
+    tab: string;
+    url: string;
+    /** The scripts in its top frame. */
+    scripts: string[];
+    /** Its iframes; with a frame named, that one and those in it. */
+    frames: Frame[];
+  }[];
+}
+
 export interface ScriptsData {
   /** The selected tab. */
   tab?: string;
@@ -342,6 +372,20 @@ export interface MatchPage {
   matchedBy: string[];
   /** The rules that excluded it; absent for none. */
   excludedBy?: string[];
+  /** With --frames: the tab's iframes, each checked by its own URL. */
+  frames?: MatchFrame[];
+}
+
+export interface MatchFrame {
+  id: string;
+  parent: string;
+  url: string;
+  /** False too for a script with @noframes. */
+  matches: boolean;
+  matchedBy: string[];
+  excludedBy?: string[];
+  /** Its rules match, but @noframes keeps it out of frames. */
+  noframes?: true;
 }
 
 export interface MatchData {
@@ -377,7 +421,11 @@ export interface MenuData {
      * `builtin: 'run'` marks a manual script's "Run this script", listed
      * first under it whether or not it has run.
      */
-    commands: { id: string; script: string; name: string; builtin?: 'run' }[];
+    commands: {
+      id: string; script: string; name: string; builtin?: 'run';
+      /** Registered in an iframe: the frame's id (`F3`). */
+      frame?: string;
+    }[];
   }[];
 }
 
@@ -398,6 +446,8 @@ export interface LogLine {
   /** ISO 8601. */
   time: string;
   tab?: string;
+  /** From an iframe of the tab: its id (`F3`). */
+  frame?: string;
   script?: string;
   source: 'sm' | 'event' | 'script' | 'page';
   /** Other sources it belongs to: a script's throw is `event`, also `sm` and `script`. */

@@ -255,7 +255,7 @@ test.describe('sm-dev typed commands', () => {
       expect(await run('status')).toEqual([
         'Tabs:', `* T1: ${target} [targetId=AB12CD34EF56AB12CD34EF56AB12CD34]`, '   * 1: Menus',
         `  T2: ${other} (opened by T1) [targetId=AB12CD99EF56AB12CD34EF56AB12CD34]`, '     1: Menus',
-        'Scripts (with status on active tab T1):', row, '     Active (Also active on T2.)', '     1 menu command',
+        'Scripts (with status on active tab T1):', row, '     Active on T1, T2', '     1 menu command',
       ]);
       expect(await run('status T2')).toEqual(['[sm-dev] ERROR: The status command takes no arguments']);
       expect(await run('menu')).toEqual(['Menu commands on T1:', row, '    M1: Hit /target.html']);

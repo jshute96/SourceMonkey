@@ -11,7 +11,7 @@ import { isMarkupContentType, looksLikeMarkup, markupResponseMessage } from '../
 import { unusableMatchGroupKey } from '../url-match.js';
 import { HAS_SCHEME, globFiles, globMistake, isDirectory, isGlob, walkScripts } from './path-args.js';
 import { jsonResult, type MatchPage, type ValidateData } from './json-output.js';
-import { NO_RULE_COVERS_URL, explainMatch, isDirectoryMessage, noSuchFileMessage, parseCheckWarning, prepareScript, shownPath, warningLines, type PreparedScript } from './prepare.js';
+import { NO_RULE_COVERS_URL, explainMatch, isDirectoryMessage, noSuchFileMessage, parseCheckWarning, preparedNoframes, prepareScript, shownPath, warningLines, type PreparedScript } from './prepare.js';
 
 // A mistake in how the command was typed, as opposed to a failure while
 // carrying it out: the one kind that exits 2.
@@ -214,22 +214,49 @@ function unmatchableScript(prepared: PreparedScript): boolean {
   return prepared.errorMessage !== undefined && unusableMatchGroupKey(prepared.errorMessage) !== null;
 }
 
+/** A page `match` checks: a URL, or a tab's, with its iframes for `--frames`. */
+export interface MatchTarget {
+  url: string;
+  /** The tab's id, shown after the URL. */
+  name?: string;
+  /** Its iframes, each after its parent (`depth` 1 in the top frame). */
+  frames?: { id: string; parent: string; url: string; depth: number }[];
+}
+
+// A script's verdict for an iframe: as for a page, but `@noframes`
+// keeps it out whatever its rules say.
+function frameVerdict(prepared: PreparedScript, url: string): ReturnType<typeof explainMatch> & { noframes: boolean } {
+  const verdict = explainMatch(prepared.matching, url);
+  const noframes = verdict.matches && preparedNoframes(prepared);
+  return { ...verdict, matches: verdict.matches && !noframes, noframes };
+}
+
 /**
  * `match`'s verdict for one script against each page, as JSON: what
  * `matchLines` prints.
  */
-export function matchJson(prepared: PreparedScript, pages: { url: string; name?: string }[]): { valid: boolean; error?: string; pages: MatchPage[] } {
+export function matchJson(prepared: PreparedScript, pages: MatchTarget[]): { valid: boolean; error?: string; pages: MatchPage[] } {
   const error = prepared.status === 'ok' ? {} : { error: prepared.diagnostic ?? prepared.errorMessage ?? '' };
   if (prepared.status !== 'ok' && !unmatchableScript(prepared)) return { valid: false, ...error, pages: [] };
   return {
     valid: prepared.status === 'ok',
     ...error,
-    pages: pages.map(({ url, name }) => {
+    pages: pages.map(({ url, name, frames }) => {
       const verdict = explainMatch(prepared.matching, url);
       return {
         url, ...(name ? { tab: name } : {}), matches: verdict.matches, matchedBy: verdict.matchedBy,
         // Rarely any, so left out when none, as warnings are.
         ...(verdict.excludedBy.length > 0 ? { excludedBy: verdict.excludedBy } : {}),
+        ...(frames ? {
+          frames: frames.map((frame) => {
+            const v = frameVerdict(prepared, frame.url);
+            return {
+              id: frame.id, parent: frame.parent, url: frame.url, matches: v.matches, matchedBy: v.matchedBy,
+              ...(v.excludedBy.length > 0 ? { excludedBy: v.excludedBy } : {}),
+              ...(v.noframes ? { noframes: true as const } : {}),
+            };
+          }),
+        } : {}),
       };
     }),
   };
@@ -239,11 +266,13 @@ export function matchJson(prepared: PreparedScript, pages: { url: string; name?:
  * `match`'s lines for one script against each page, and how many pages
  * it doesn't match (all of them, for a script that can't run at all).
  * `pages` are URLs, each with an optional name (a tab's) shown after
- * it. `label` names the script where there is no heading to.
+ * it, and its iframes under it, which don't count as misses: a script
+ * isn't expected in every frame. `label` names the script where there
+ * is no heading to.
  */
 export function matchLines(
   prepared: PreparedScript,
-  pages: { url: string; name?: string }[],
+  pages: MatchTarget[],
   label?: string,
 ): { lines: string[]; misses: number } {
   if (prepared.status !== 'ok' && !unmatchableScript(prepared)) {
@@ -251,18 +280,27 @@ export function matchLines(
   }
   const lines: string[] = [];
   let misses = 0;
-  for (const { url, name } of pages) {
-    const verdict = explainMatch(prepared.matching, url);
-    if (!verdict.matches) misses++;
-    // Every rule that covers the URL, not only the deciding one, so a
-    // miss shows what an @exclude overrode.
+  // Every rule that covers the URL, not only the deciding one, so a
+  // miss shows what an @exclude overrode.
+  const rulesOf = (verdict: ReturnType<typeof explainMatch>): string[] => {
     const rules = [
       ...verdict.excludedBy.map((rule) => `Excluded by: ${rule}`),
       // Padded so its rules line up with the excludes'.
       ...verdict.matchedBy.map((rule) => `Matched by:  ${rule}`),
     ];
     if (rules.length === 0) rules.push(NO_RULE_COVERS_URL);
-    lines.push(`${verdict.matches ? 'match   ' : 'no match'} ${url}${name ? ` (${name})` : ''}`, ...rules.map((r) => `    ${r}`));
+    return rules;
+  };
+  for (const { url, name, frames } of pages) {
+    const verdict = explainMatch(prepared.matching, url);
+    if (!verdict.matches) misses++;
+    lines.push(`${verdict.matches ? 'match   ' : 'no match'} ${url}${name ? ` (${name})` : ''}`, ...rulesOf(verdict).map((r) => `    ${r}`));
+    for (const frame of frames ?? []) {
+      const v = frameVerdict(prepared, frame.url);
+      const pad = '  '.repeat(frame.depth);
+      const rules = [...(v.noframes ? ['Kept out by: @noframes'] : []), ...rulesOf(v)];
+      lines.push(`${pad}${v.matches ? 'match   ' : 'no match'} ${frame.id}: ${frame.url}`, ...rules.map((r) => `${pad}    ${r}`));
+    }
   }
   return { lines, misses };
 }

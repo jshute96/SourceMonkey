@@ -19,6 +19,8 @@
 // - The run reports only on its own tabs: events from others, and Log
 //   entries made in them, are left out.
 
+import type { Frame, Page } from '@playwright/test';
+
 import { SM_ABANDONED_MSG, SM_ERROR_MSG, SM_MANUAL_MSG, SM_START_MSG, SM_SWAPPED_MSG } from '../runtime-messages.js';
 import { evalHookKey } from '../eval-hook.js';
 import { SKIP_REASON_SM_DEV } from '../sm-dev-protocol.js';
@@ -31,11 +33,14 @@ import {
 import type { ConsoleContext, OtherScript } from './console-commands.js';
 import type { LogEntry } from './extension-backend.js';
 import type { ExtensionEvent, ExtensionLink } from './extension-link.js';
+import { frameNodes, matchFrameTrees } from './frames.js';
 
 /** What the host needs of a tab's attachment, to order its events. */
 export interface WatchedPage extends PageLink {
   /** When the page's current document began (see `PageAttachment.documentStart`). */
   documentStart(): number;
+  /** The tab's page, whose frames the extension's are matched to. */
+  readonly page: Page;
 }
 
 type TabEvent = Extract<ExtensionEvent, { kind: 'report' | 'menu' | 'values' | 'request' | 'download' | 'notification' | 'connect-prompt' }>;
@@ -55,6 +60,14 @@ interface TabState {
   seenStart: number;
   // Events handled in order, each after the one before.
   queue: Promise<void>;
+  // The extension's frame ids matched to the page's frames, kept so
+  // each of two sibling frames with one URL keeps its match.
+  frames: Map<number, Frame>;
+  // Each live iframe document's frame, as last matched.
+  documents: Map<string, Frame>;
+  // Iframe documents that matched no frame when their first event came,
+  // not looked for again: each look costs the event queue a wait.
+  unmatched: Set<string>;
 }
 
 export class ExtensionHost extends HarnessHost {
@@ -186,7 +199,9 @@ export class ExtensionHost extends HarnessHost {
    * no scripts (opened from a `--noscript` tab), to keep if restored.
    */
   addTab(page: WatchedPage, tabId: number, loaded = false, scriptsOff = false): void {
-    const state: TabState = { page, seenStart: loaded ? -Infinity : page.documentStart(), queue: Promise.resolve() };
+    const state: TabState = {
+      page, seenStart: loaded ? -Infinity : page.documentStart(), queue: Promise.resolve(), frames: new Map(), documents: new Map(), unmatched: new Set(),
+    };
     this.tabs.set(tabId, state);
     this.tabsByPage.set(page, tabId);
     this.link.holdTab(tabId, scriptsOff);
@@ -202,6 +217,60 @@ export class ExtensionHost extends HarnessHost {
 
   tabIdOf(page: PageLink): number | undefined {
     return this.tabsByPage.get(page);
+  }
+
+  override async liveFrameDocuments(page: PageLink): Promise<Map<string, Frame> | null> {
+    const tabId = this.tabsByPage.get(page);
+    const state = tabId === undefined ? undefined : this.tabs.get(tabId);
+    if (tabId === undefined || !state) return null;
+    // Before protocol 2.1, the extension ran no scripts in iframes, and
+    // its reports say nothing of frames.
+    this.link.requireMinor(1, 'Showing which scripts run in iframes');
+    return this.matchFrames(tabId, state);
+  }
+
+  // Lists the tab's frames from the extension and matches them to the
+  // page's: the live iframe documents, each with its frame. When the
+  // listing fails (the worker restarting, say), the last answer stands:
+  // an empty one would show every frame's scripts as gone.
+  private async matchFrames(tabId: number, state: TabState): Promise<Map<string, Frame>> {
+    const listed = await this.link.allFrames(tabId).catch(() => null);
+    if (!listed) return state.documents;
+    const nodes = frameNodes(state.page.page, this.frameIds).map((n) => ({ key: n.frame, parent: n.parent === null ? null : n.frame.parentFrame(), url: n.url }));
+    const matched = new Map([...matchFrameTrees(listed, nodes, state.frames)].filter((e): e is [number, Frame] => e[1] !== null));
+    // A frame left out this time only because its URL is between two
+    // (mid-navigation) keeps its match, so same-URL siblings don't swap.
+    const taken = new Set(matched.values());
+    for (const f of listed) {
+      const was = state.frames.get(f.frameId);
+      if (was && !matched.has(f.frameId) && !was.isDetached() && !taken.has(was)) matched.set(f.frameId, was);
+    }
+    state.frames = matched;
+    const live = new Map<string, Frame>();
+    for (const f of listed) {
+      const frame = matched.get(f.frameId);
+      if (frame) live.set(f.documentId, frame);
+    }
+    state.documents = live;
+    return live;
+  }
+
+  // The frame number of the iframe document an event came from, for
+  // its line and menu label. A document new since the last match lists
+  // the frames again, and once more after a moment: Playwright can hear
+  // of a frame after the extension does. One that still matches none
+  // isn't looked for again.
+  private async frameNumberOf(tabId: number, state: TabState, documentId: string): Promise<number | undefined> {
+    const known = state.documents.get(documentId);
+    if (known && !known.isDetached()) return this.frameIds.number(known);
+    if (state.unmatched.has(documentId)) return undefined;
+    for (const wait of [0, 200]) {
+      if (wait) await new Promise((r) => setTimeout(r, wait));
+      const frame = (await this.matchFrames(tabId, state)).get(documentId);
+      if (frame) return this.frameIds.number(frame);
+    }
+    state.unmatched.add(documentId);
+    return undefined;
   }
 
   override detachPage(page: PageLink): void {
@@ -376,6 +445,13 @@ export class ExtensionHost extends HarnessHost {
     }
     const runId = this.runIds.get(event.scriptId);
     if (!runId || !this.tabs.has(event.tabId!)) return;
+    // An iframe's report or menu command names its frame. Looked up
+    // only for what's recorded, after the events that are dropped.
+    const inFrame = (event.kind === 'report' || event.kind === 'menu') && event.topFrame === false;
+    const frameNumber = async (): Promise<{ frameNumber?: number }> => {
+      const n = inFrame && event.documentId ? await this.frameNumberOf(event.tabId!, state, event.documentId) : undefined;
+      return n === undefined ? {} : { frameNumber: n };
+    };
     if (event.kind === 'request' || event.kind === 'download' || event.kind === 'notification') {
       this.recordActivity(runId, state.page, event);
       return;
@@ -389,11 +465,19 @@ export class ExtensionHost extends HarnessHost {
       return;
     }
     if (event.kind === 'menu') {
-      if (event.op === 'add') this.registerMenu(state.page, runId, event.commandId, event.name ?? '', event.documentId || undefined);
+      if (event.op === 'add') this.registerMenu(state.page, runId, event.commandId, event.name ?? '', event.documentId || undefined, inFrame ? await frameNumber() : undefined);
       else this.unregisterMenu(state.page, runId, event.commandId, event.documentId || undefined);
       return;
     }
-    const fields = { scriptId: runId, name: event.name, url: event.url, ...(event.topFrame === false ? { frame: true as const } : {}) };
+    // A tab with its scripts turned off (`--noscript`) skips them on
+    // each load, as asked: nothing to say.
+    if (event.type === SM_ABANDONED_MSG && event.reason === SKIP_REASON_SM_DEV) return;
+    const fields = {
+      scriptId: runId, name: event.name, url: event.url,
+      ...(inFrame ? { frame: true as const } : {}),
+      ...(event.documentId ? { documentId: event.documentId } : {}),
+      ...await frameNumber(),
+    };
     if (event.type === SM_START_MSG || event.type === SM_SWAPPED_MSG) {
       this.recordStart(state.page, fields);
     } else if (event.type === SM_ERROR_MSG) {
@@ -401,9 +485,6 @@ export class ExtensionHost extends HarnessHost {
     } else if (event.type === SM_MANUAL_MSG) {
       this.recordManual(state.page, fields);
     } else if (event.type === SM_ABANDONED_MSG) {
-      // A tab with its scripts turned off (`--noscript`) skips them on
-      // each load, as asked: nothing to say.
-      if (event.reason === SKIP_REASON_SM_DEV) return;
       // With no decision, the why (`detail`, from protocol 1.4) rather
       // than its token.
       this.recordSkip(state.page, { ...fields, reason: event.detail?.replace(/\.+$/, '') || event.reason || 'skip' });

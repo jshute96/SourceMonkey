@@ -40,6 +40,7 @@ import { attachParseLocation } from '../parse-location.js';
 import { describeDiagnostic, type DiagnosticLocation } from '../diagnostic-location.js';
 import { setConfiguredLocalRoots } from '../local-file-overrides.js';
 import { explainUrlMatch, type UrlMatchExplanation } from '../url-match.js';
+import { hasTag } from '../userscript-header.js';
 import { scriptBasename } from '../script-display.js';
 import { representativeMatch } from '../match-targets.js';
 import { bytesToBase64, sha256Hex } from '../bytes.js';
@@ -425,6 +426,11 @@ export function preparedScriptName(script: PreparedScript): string {
   const tags = script.script.header?.tags ?? [];
   const name = tags.find((t) => t.tag === 'name' && !t.locale)?.value;
   return name || script.script.relativePath;
+}
+
+/** Whether the script has `@noframes`, which keeps it to the top frame. */
+export function preparedNoframes(script: PreparedScript): boolean {
+  return script.script.header ? hasTag(script.script.header, 'noframes') : false;
 }
 
 /**

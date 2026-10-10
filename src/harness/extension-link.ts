@@ -33,6 +33,7 @@ import {
 } from './extension-backend.js';
 import type { ManagerControl } from './manager-commands.js';
 import { rebuildAdvice } from './rebuild-advice.js';
+import type { ExtensionFrame } from './frames.js';
 
 // How long a claim lasts unrenewed, and how often it's renewed. A killed
 // run's tabs run the extension's scripts again within the lease.
@@ -510,6 +511,19 @@ export class ExtensionLink {
   /** How the script's injected entry maps back to its files; see `remapStackText`. */
   async stackLayout(scriptId: string): Promise<StackLayout | null> {
     return this.call((id) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.getStackLayout(id), scriptId);
+  }
+
+  /**
+   * A tab's frames, live documents only, as Chrome lists them to the
+   * extension: straight from `chrome.webNavigation`, which every
+   * extension sm-dev works with has, so no protocol version gates it.
+   * Null when Chrome can't list them (the tab is gone).
+   */
+  async allFrames(tabId: number): Promise<ExtensionFrame[] | null> {
+    return this.call((id) => chrome.webNavigation.getAllFrames({ tabId: id }).then(
+      (frames) => frames?.map((f) => ({ frameId: f.frameId, parentFrameId: f.parentFrameId, documentId: f.documentId, url: f.url })) ?? null,
+      () => null,
+    ), tabId);
   }
 
   /** A script's stored values, in the wire form the extension keeps. */

@@ -13,10 +13,13 @@
 
 import { EventEmitter } from 'node:events';
 
+import type { Frame } from '@playwright/test';
+
 import { WRAPPER_GM_RUNTIME } from '../generated-wrappers.js';
 import type { GmXhrEvent, GmXhrRequestPayload } from '../gm-xhr-types.js';
 import type { PreparedScript } from './prepare.js';
 import { NO_RULE_COVERS_URL, explainMatch, preparedScriptName } from './prepare.js';
+import { FrameIds } from './frames.js';
 
 /** One watched page (a tab), as the host sees it. */
 export interface PageLink {
@@ -43,6 +46,10 @@ export interface MenuCommandRecord {
    * of its iframes'. Absent where the manager doesn't say.
    */
   documentId?: string;
+  /** Registered in one of the page's iframes, not the page itself. */
+  frame?: true;
+  /** Registered in an iframe: its frame id's number (`F3` is 3), when known. */
+  frameNumber?: number;
 }
 
 export interface NotificationRecord {
@@ -109,9 +116,16 @@ export interface ScriptReport {
   at: number;
   /** From one of the page's iframes, not the page itself. */
   frame?: true;
+  /** The extension's id for the document it came from, where it says. */
+  documentId?: string;
+  /** From an iframe: its frame id's number (`F3` is 3), when known. */
+  frameNumber?: number;
 }
 
 export interface StartReport extends ScriptReport {}
+
+/** What a manager's report gives for a `ScriptReport`; the host adds `at`. */
+export type ReportFields = Omit<ScriptReport, 'at'>;
 
 export interface ErrorReport extends ScriptReport {
   message: string;
@@ -225,6 +239,8 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
   // Each menu command's page; dropped when that page loads a new
   // document or goes away.
   private readonly menuOwners = new Map<MenuCommandRecord, PageLink>();
+  /** The run's frame ids (`F3`), across all its tabs. */
+  readonly frameIds = new FrameIds();
 
   /** Register a prepared script as running in `owner`'s tab. */
   addScript(prepared: PreparedScript, owner: PageLink): void {
@@ -255,8 +271,9 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
   }
 
   /**
-   * Whether a script is running in a page's current document: its last
-   * word from that page is a start rather than a skip.
+   * Whether a script is running in a page's current top-frame document:
+   * its last word from there is a start rather than a skip. For its
+   * iframes, see `frameRuns`.
    */
   isRunning(page: PageLink, scriptId: string): boolean {
     const { started, skipped } = this.lastStartAndSkip(page, scriptId);
@@ -309,11 +326,54 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
     });
   }
 
-  /** A script's latest start and latest skip from one page. */
+  /** A script's latest start and latest skip from one page's top frame. */
   lastStartAndSkip(page: PageLink, scriptId: string): { started?: StartReport; skipped?: SkipReport } {
     const mine = <T extends ScriptReport>(records: T[]): T | undefined =>
-      records.filter((r) => r.scriptId === scriptId && this.recordPages.get(r) === page).at(-1);
+      records.filter((r) => r.scriptId === scriptId && !r.frame && this.recordPages.get(r) === page).at(-1);
     return { started: mine(this.reports.started), skipped: mine(this.reports.skipped) };
+  }
+
+  /**
+   * The scripts running in each iframe document of a page that reported
+   * any, by the extension's document id: those whose last word from
+   * there is a start. Documents since gone are included; the caller
+   * knows which are live (`liveFrameDocuments`).
+   */
+  frameRuns(page: PageLink): Map<string, Set<string>> {
+    const last = new Map<string, Map<string, boolean>>();
+    const words = [
+      ...this.reports.started.map((r) => ({ r, running: true })),
+      ...this.reports.skipped.map((r) => ({ r, running: false })),
+    ].filter(({ r }) => r.frame && r.documentId && this.recordPages.get(r) === page)
+      .sort((a, b) => a.r.at - b.r.at);
+    for (const { r, running } of words) {
+      let scripts = last.get(r.documentId!);
+      if (!scripts) last.set(r.documentId!, scripts = new Map());
+      scripts.set(r.scriptId, running);
+    }
+    return new Map([...last].map(([doc, scripts]) => [doc, new Set([...scripts].filter(([, on]) => on).map(([id]) => id))]));
+  }
+
+  /**
+   * Whether a script started in any iframe document of a page since
+   * `since` (when its top document began), and wasn't skipped there
+   * after. Documents since gone count too: for picking the tabs to
+   * reload, one too many is better than one missed.
+   */
+  ranInFrames(page: PageLink, scriptId: string, since: number): boolean {
+    const started = new Set(this.reports.started
+      .filter((r) => r.frame && r.documentId && r.scriptId === scriptId && r.at >= since && this.recordPages.get(r) === page)
+      .map((r) => r.documentId!));
+    return [...started].some((doc) => this.frameRuns(page).get(doc)?.has(scriptId));
+  }
+
+  /**
+   * A page's live iframe documents, by the extension's id, each with
+   * its Playwright frame. Null where the manager can't say; throws when
+   * the extension is too old to report on frames.
+   */
+  async liveFrameDocuments(_page: PageLink): Promise<Map<string, Frame> | null> {
+    return null;
   }
 
   /** The page a record in `reports` came from, if it is still known. */
@@ -454,7 +514,7 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
   // ---------- What the scripts reported ----------
 
   /** A script started in `from`'s current document. */
-  protected recordStart(from: PageLink, fields: { scriptId: string; name: string; url: string; frame?: true }): void {
+  protected recordStart(from: PageLink, fields: ReportFields): void {
     const report: StartReport = this.baseReport(from, fields);
     this.reports.started.push(report);
     this.notify('start', report);
@@ -462,7 +522,7 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
 
   /** A script threw in `from`. */
   protected recordError(
-    from: PageLink, fields: { scriptId: string; name: string; url: string; frame?: true; message: string; stack: string },
+    from: PageLink, fields: ReportFields & { message: string; stack: string },
   ): void {
     const report: ErrorReport = this.baseReport(from, { ...fields, stack: this.remapStack(fields.stack) });
     this.reports.errors.push(report);
@@ -470,7 +530,7 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
   }
 
   /** A script didn't run in `from`, for `reason`. */
-  protected recordSkip(from: PageLink, fields: { scriptId: string; name: string; url: string; frame?: true; reason: string }): void {
+  protected recordSkip(from: PageLink, fields: ReportFields & { reason: string }): void {
     const report: SkipReport = this.baseReport(from, fields);
     this.reports.skipped.push(report);
     this.notify('skip', report);
@@ -505,9 +565,14 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
   }
 
   /** A script in `from` registered a menu command. */
-  protected registerMenu(from: PageLink, scriptId: string, commandId: string, name: string, documentId?: string): void {
+  protected registerMenu(
+    from: PageLink, scriptId: string, commandId: string, name: string, documentId?: string, frame?: { frameNumber?: number },
+  ): void {
     if (!this.scripts.has(scriptId) || !commandId) return;
-    const record: MenuCommandRecord = { scriptId, commandId, name, at: Date.now(), ...(documentId ? { documentId } : {}) };
+    const record: MenuCommandRecord = {
+      scriptId, commandId, name, at: Date.now(), ...(documentId ? { documentId } : {}),
+      ...(frame ? { frame: true as const, ...(frame.frameNumber !== undefined ? { frameNumber: frame.frameNumber } : {}) } : {}),
+    };
     // Re-registering an id replaces the entry in place, as the worker's
     // registry does. Per document: two frames can use the same id.
     const i = this.reports.menuCommands.findIndex((m) =>

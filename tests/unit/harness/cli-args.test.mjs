@@ -382,7 +382,7 @@ test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
   // Only line-wide flags: stdin is read for commands, and has none.
   assert.deepEqual(cli('--root', '.'), { code: 2, out: `ERROR: ${NO_COMMANDS}` });
   // A run's command with a flag it doesn't take, refused before any run is looked for.
-  assert.deepEqual(cli('status', '--bad'), { code: 2, out: 'ERROR: The status command has no --bad flag. It takes --json, --nojson.' });
+  assert.deepEqual(cli('status', '--bad'), { code: 2, out: 'ERROR: The status command has no --bad flag. It takes --frames, --json, --nojson.' });
   for (const name of ['open', 'reload', 'newtab']) assert.match(cli(name, '--bogus').out, new RegExp(`^ERROR: The ${name} command has no --bogus flag\\. It takes --noscript, --script, `));
   // The flags it does take, for a near miss.
   assert.deepEqual(cli('wait', '--timeout', '9'), { code: 2, out: 'ERROR: The wait command has no --timeout flag. It takes --timeout-seconds, --log-source, --find, --since.' });
@@ -524,7 +524,7 @@ test('each run command takes the flags its help lists, and no others', async () 
     click: ['--at', '--button', '--count', '--modifiers', '--nowait', T], hover: ['--at', '--modifiers', '--nowait', T], type: ['--nowait', '--file', '--clear', T], key: ['--nowait', T],
     eval: ['--page', '--script', '--file', '--out', T], snapshot: ['--visible', '--out', '--find', '--up', '--context', '--limit', T], screenshot: ['--full', T], probe: ['--css', '--html', ...json, T],
     load: [T], update: [T],
-    wait: ['--timeout-seconds', '--log-source', '--find', '--since'], logs: ['--tail', '--log-source', '--find', '--since', ...json], status: json, values: json, set: ['--file', '--force'], menu: json, tabs: json, focus: [],
+    wait: ['--timeout-seconds', '--log-source', '--find', '--since'], logs: ['--tail', '--log-source', '--find', '--since', ...json], status: ['--frames', ...json], values: json, set: ['--file', '--force'], menu: json, tabs: ['--frames', ...json], frames: json, focus: [],
   };
   for (const [name, flags] of Object.entries(expected)) assert.deepEqual(commandFlags(name).sort(), [...flags].sort(), name);
 });

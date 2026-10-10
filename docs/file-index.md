@@ -280,6 +280,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/manager-fetch.ts` | `manager fetch`: downloads TM or VM from the Chrome Web Store and unpacks its CRX into sm-dev's cache |
 | `src/harness/manager-actions.ts` | The `manager` verbs: fetch, install, enable and disable a manager, with their messages |
 | `src/harness/extension-host.ts` | Fills a run's or fixture test's host (reports, values, menus) from the extension's events, and answers its commands |
+| `src/harness/frames.ts` | A run's iframe ids (`F3`), a tab's frame tree, and matching the extension's frames to Playwright's |
 | `src/harness/extension-backend.ts` | Finds SourceMonkey in a browser: its id and its service worker |
 | `src/harness/run-log.ts` | A run's log file and `--temp-browser` downloads folder: timestamped names in `/tmp/sm-dev-logs-<user>`, stamped lines, per-run links |
 | `src/harness/download-watch.ts` | Prints where a download from one of the run's tabs was saved, from Chrome's CDP download events |
@@ -565,6 +566,7 @@ unit tests.
 | `tests/unit/harness/command-lines.test.mjs` | Unit tests for `{{ ... }}` blocks, comments, and lists of commands |
 | `tests/unit/harness/page-output.test.mjs` | Unit tests for whose a page's console lines and errors are: a run script's or the page's |
 | `tests/unit/harness/run-logs.test.mjs` | Unit tests for a run's log: sources, IDs and the cap, `--since` / `--tail` parsing, and how lines read |
+| `tests/unit/harness/frames.test.mjs` | Unit tests for frame refs and matching the extension's frame tree to the page's |
 | `tests/unit/harness/validate.test.mjs` | Runs `sm-dev validate` over the example suites: verdicts matching the browser's, and warnings |
 | `tests/unit/harness/prepare.test.mjs` | Unit tests for `prepareScript` and `explainMatch` over real files on disk |
 | `tests/unit/harness/saved-header.test.mjs` | Unit tests for writing and reading a saved page's header: its URL and the userscripts that were running |
@@ -577,6 +579,7 @@ built extension loaded; fixtures in `tests/fixtures/harness.ts`.
 | File | Description |
 |------|-------------|
 | `tests/harness/console-commands.spec.ts` | The commands typed into `sm-dev start`: `scripts`, `values`, `menu` by M number, dialogs, several tabs, stopped loads |
+| `tests/harness/frames.spec.ts` | sm-dev on the frames example: frame ids, `frames`, scripts per frame in `tabs`/`status`, menus, `match --frames`, JSON |
 | `tests/harness/run-tabs.spec.ts` | `sm-dev start` end to end: followed tabs, `--all`, `--notab`, `load` / `update` / `--watch` reloads, `--from-saved`, sandboxed pages, `--lang` |
 | `tests/harness/run-downloads.spec.ts` | Download lines from a run's tabs: a `--temp-browser` saves beside the run log, a connected browser by its own setting |
 | `tests/harness/page-commands.spec.ts` | The run commands that drive and read a page, in both worlds, with dialogs, quoting, and files |
@@ -681,6 +684,7 @@ For userscript repos to install, so their coding agents know how to use `sm-dev`
 | `docs/sm-dev-violentmonkey.md` | Design: sm-dev's run scripts and collection/script commands under Violentmonkey, and what other managers share |
 | `docs/sm-dev-tampermonkey.md` | Design: sm-dev under Tampermonkey, as differences from Violentmonkey (dashboard messages, ids, `@require`s, line numbers) |
 | `docs/sm-dev-managers.md` | Design draft: sm-dev commands for managing installed scripts, collections and managers (SM, TM, VM) |
+| `docs/sm-dev-frames.md` | Design: how sm-dev shows a tab's iframes, frame ids, and which scripts run in which frame |
 | `docs/sm-dev-logs.md` | A run's logs: the sources, what the stream, `logs` and `wait log` show, positions, and attributing lines |
 | `docs/sm-dev-json.md` | sm-dev's `--json` output: how it prints, each command's result type, and examples |
 | `docs/harness-guide.md` | User-facing: what a userscript repo installs, the `sm-dev` commands, the Playwright fixture API, known limitations |

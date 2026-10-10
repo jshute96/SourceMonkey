@@ -124,6 +124,8 @@ const TIMED = ['start', 'click', 'hover', 'type', 'key', 'eval', 'snapshot', 'pr
 // wait log, listed under both Logs and Waiting.
 const WAIT_LOG: HelpCommand = { usage: 'wait log [--find=]<text>', syntax: { args: 'text', trailingFlags: true }, about: [] };
 const WAIT_LOG_ABOUT = ['Wait for a log line with the text, or matching /regex/, logged since the previous command began.'];
+// `status` and `tabs` print each tab's frame tree with this.
+const FRAMES_OPTION: HelpItem = { term: '--frames', about: 'Show each tab\'s iframes as a tree, with the scripts running in each (see frames).' };
 // The commands that work through SourceMonkey, which a run under
 // another manager doesn't have.
 const SM: ManagerName[] = ['sourcemonkey'];
@@ -257,6 +259,7 @@ export const HELP_SECTIONS: HelpSection[] = [
           'Show overall status, script list, and tab list.',
           'With no run picked (by --run, start or attach): the --browser browser and its managers, then each active run\'s status.',
         ],
+        options: [FRAMES_OPTION],
       },
     ],
   },
@@ -285,6 +288,7 @@ export const HELP_SECTIONS: HelpSection[] = [
               { term: 'all-tabs', about: 'In a run: all tabs.' },
               { term: 'all', about: 'In a run: all scripts on all tabs.' },
             ],
+            options: [{ term: '--frames', about: 'In a run: for a tab, also check each of its iframes, by the frame\'s URL. @noframes keeps a script out of them.' }],
           },
           {
             usage: 'validate [script]...',
@@ -300,7 +304,7 @@ export const HELP_SECTIONS: HelpSection[] = [
   {
     title: 'Tabs',
     commands: [
-      { usage: 'tabs', syntax: { args: 'words', max: 1, tab: true }, about: 'List the tabs this run controls.' },
+      { usage: 'tabs', syntax: { args: 'words', max: 1, tab: true }, about: 'List the tabs this run controls.', options: [FRAMES_OPTION] },
       { usage: 'tab <tab>', about: 'Select the active tab by ID.' },
       {
         usage: 'open [tab] [page]',
@@ -352,6 +356,24 @@ export const HELP_SECTIONS: HelpSection[] = [
           '',
           'Page URLs are taken from the header comment in the HTML file if present. Otherwise, pass the URL with --url.',
           'The tab keeps serving that URL from the file, rereading it on reloads.',
+        ],
+      },
+    ],
+  },
+  {
+    title: 'Frames',
+    commands: [
+      {
+        usage: 'frames [tab|frame|all]',
+        syntax: { args: 'words', max: 1 },
+        about: [
+          'List the current tab\'s iframes, as a tree, with the scripts running in each.',
+          'Each iframe has an ID (F3), unique in the run, which it keeps when it navigates. The top frame is the tab\'s ID.',
+        ],
+        args: [
+          { term: 'T2', about: 'That tab\'s iframes.' },
+          { term: 'F3, T2.F3', about: 'That frame and the frames in it.' },
+          { term: 'all', about: 'Every tab\'s iframes.' },
         ],
       },
     ],
@@ -797,8 +819,7 @@ export const HELP_SECTIONS: HelpSection[] = [
             about: [
               'The repo root, searched for local copies of @require URLs.',
               '(Default: the current directory)',
-              'A script outside this repo uses its own collection\'s root, the nearest',
-              'directory above it with a script_manifest.json.',
+              'A script outside this repo uses its own collection\'s root, the nearest directory above it with a script_manifest.json.',
             ],
           },
           { term: '--local DIR', about: 'Additional directory to search. Can repeat.' },
@@ -871,6 +892,13 @@ export const HELP_SECTIONS: HelpSection[] = [
         items: [
           { term: 'T2', about: 'Tab ID in the tabs list.' },
           { term: 'targetId=<id>', about: ['Its CDP (Chrome DevTools Protocol) target id.', 'Or its first 6 or more characters. targetId= is optional.'] },
+        ],
+      },
+      {
+        title: 'Frames',
+        items: [
+          { term: 'F2', about: 'Iframe ID in the frames list. The top frame is its tab\'s ID (T2).' },
+          { term: 'T2.F2', about: 'Frame F2, on tab T2.' },
         ],
       },
       {

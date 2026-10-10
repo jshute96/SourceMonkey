@@ -175,6 +175,7 @@ Status stays per tab, kept on the top document's state
 - A menu command records its document, and fires there.
 - Reading a script's state and evaluating in its world still reach the
   top frame only.
-- A run keeps a frame's menu commands after the frame has gone.
+- Frame ids, the frames each script runs in, and the frames' menu
+  commands: [sm-dev-frames.md](sm-dev-frames.md).
 - Protocol 2.1 adds frame events and the document on a menu fire. An
   older extension fires the first matching command.

@@ -18,8 +18,8 @@ sm-dev [global options] <command> [args] [-- <command> ...]
   empty answer means and where to look next.
 - Add `--json` when you'll parse the output, with `jq` or a script:
   `$R --json scripts | jq -r '.scripts[] | select(.status == "invalid") | .name'`.
-  - `--json` works for `list`, `status`, `scripts`, `tabs`, `values`,
-    `get`, `match`, `validate`, `menu`, `logs`, `probe`, and every
+  - `--json` works for `list`, `status`, `scripts`, `tabs`, `frames`,
+    `values`, `get`, `match`, `validate`, `menu`, `logs`, `probe`, and every
     `collection` and `script` verb (`script list`, `script show`, ...).
     Each prints one JSON object; other commands print text as usual.
   - Other messages and failures stay text, on stderr, with the usual
@@ -124,7 +124,7 @@ test a script under VM or TM:
 | --- | --- |
 | `validate <path>...` | Header, `@require` and syntax checks, plus warnings, e.g. an `@icon` that can't be shown (files, dirs, globs) |
 | `match <script>... <url>...` | Would it run there; which rule decided |
-| `match`, `match all` | In a run: the selected script on the current tab; all scripts on all tabs |
+| `match`, `match all` | In a run: the selected script on the current tab; all scripts on all tabs. `--frames`: each of the tab's iframes too |
 | `scripts`, `script <script>` | List; pick the one `get`/`set`/`match` use. It also lists SourceMonkey-managed scripts on the tab as E1, ...; `scripts E1` picks one for `get`/`set`, any installed script (`script list` lists them), on the tab or not (`set key --force <json>` outside a `--temp-browser`) |
 | `load <script>...` | Add scripts to the run |
 | `update [script]` | Re-read changed scripts and reload affected tabs |
@@ -169,7 +169,8 @@ own: change them only when asked to.
 
 | Command | Does |
 | --- | --- |
-| `tabs`, `tab T2` | List (with targetIds); pick the current tab |
+| `tabs`, `tab T2` | List (with targetIds); pick the current tab. `--frames`: each tab's iframes too |
+| `frames [T2\|F3\|all]` | A tab's iframes (`F1`, ...) as a tree, with the scripts running in each |
 | `newtab [page...]` | Open a controlled tab (becomes current) |
 | `newtab --noscript <url>` | A tab the scripts stay out of (sticky) |
 | `closetab [T2 T3...\|all]` | Close the current tab, the ones named, or all. A page's "Leave site?" dialog waits for `accept`/`dismiss`; `--force` skips it |

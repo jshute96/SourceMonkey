@@ -52,6 +52,8 @@ export interface LogFields {
   kind: string;
   /** The tab it came from (`T<n>`'s n); none for a Log entry made outside a tab. */
   tab?: number;
+  /** The tab's iframe it came from (`F<n>`'s n), when known. */
+  frame?: number;
   /** The run's script it's about (`PreparedScript.id`), when known. */
   scriptId?: string;
   /** The line after its prefix. Can run over several lines (a stack). */
@@ -239,15 +241,23 @@ export function shortConsoleText(text: string): string {
   return `${Array.from(text).slice(0, CONSOLE_SHOWN_CHARS).join('')}... (${text.length} chars; logs shows ${text.length > LINE_CHARS ? `the first ${LINE_CHARS}` : 'it all'})`;
 }
 
+/** Where a line came from: `T2`, or `T1.F3` for an iframe; '' for none. */
+export function lineOrigin(record: LogFields): string {
+  if (record.tab === undefined) return '';
+  return `T${record.tab}${record.frame !== undefined ? `.F${record.frame}` : ''}`;
+}
+
 /**
- * A line as the stream prints it: `[T2] ` for a tab after T1, its
+ * A line as the stream prints it: `[T2] ` for a tab after T1, `[T1.F3] `
+ * for an iframe of any tab, its
  * prefix, then its text, a console line cut past a length unless
  * `whole` (`wait log` matches it whole).
  */
 export function streamText(record: LogFields, whole = false): string {
   const console = record.source === 'script' || record.source === 'page';
   const text = console && !whole ? shortConsoleText(record.text) : record.text;
-  return `${record.tab !== undefined && record.tab > 1 ? `[T${record.tab}] ` : ''}${sourcePrefix(record)} ${text}`;
+  const shown = record.tab !== undefined && (record.tab > 1 || record.frame !== undefined);
+  return `${shown ? `[${lineOrigin(record)}] ` : ''}${sourcePrefix(record)} ${text}`;
 }
 
 /**
@@ -255,8 +265,8 @@ export function streamText(record: LogFields, whole = false): string {
  * text, each run of identical lines once, marked `(N times)`.
  */
 export function logsLines(records: readonly LogRecord[]): string[] {
-  const width = Math.max(0, ...records.map((r) => (r.tab === undefined ? 0 : `T${r.tab}`.length)));
-  const body = (r: LogRecord): string => `${(r.tab === undefined ? '' : `T${r.tab}`).padEnd(width)}${width > 0 ? ' ' : ''}${sourcePrefix(r)} ${r.text}`;
+  const width = Math.max(0, ...records.map((r) => lineOrigin(r).length));
+  const body = (r: LogRecord): string => `${lineOrigin(r).padEnd(width)}${width > 0 ? ' ' : ''}${sourcePrefix(r)} ${r.text}`;
   const lines: string[] = [];
   for (let i = 0; i < records.length;) {
     const text = body(records[i]);

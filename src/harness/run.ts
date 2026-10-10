@@ -1351,8 +1351,10 @@ class FollowedTabs {
   async apply(next: PreparedScript[], changed: ScriptChange[], none: string, timeoutMs?: number): Promise<void> {
     this.scripts = next;
     const open = this.open();
+    // Running in the top frame or any iframe: a script for a page's
+    // embedded player may not match the page itself.
     const affected = open.filter(({ tab }) => changed.some((c) =>
-      (c.old?.id && this.host.isRunning(tab.link, c.old.id))
+      (c.old?.id && (this.host.isRunning(tab.link, c.old.id) || this.host.ranInFrames(tab.link, c.old.id, tab.link.documentFirstStart())))
       || explainMatch(c.next.matching, tab.page.url()).matches));
     if (affected.length === 0) this.opts.out(`[sm-dev] ${none}`);
     const reload = reloadable(affected.map(({ tab }) => tab), this.opts.out);
@@ -1690,7 +1692,10 @@ async function prepareAll(opts: RunOptions, files = opts.files): Promise<Prepare
 
 // `prefix` tags each report with the tab it came from.
 function wireHostOutput(host: ExtensionHost, emit: (fields: LogFields) => void, tabOf: (record: object) => number | undefined): void {
-  const event = (record: { scriptId?: string }, kind: string, text: string, also?: LogSource[]): void => emit({ source: 'event', kind, tab: tabOf(record), scriptId: record.scriptId, text, ...(also ? { also } : {}) });
+  // A report or menu command from an iframe names it (`T1.F3`).
+  const event = (record: { scriptId?: string; frameNumber?: number }, kind: string, text: string, also?: LogSource[]): void => emit({
+    source: 'event', kind, tab: tabOf(record), ...(record.frameNumber !== undefined ? { frame: record.frameNumber } : {}), scriptId: record.scriptId, text, ...(also ? { also } : {}),
+  });
   // SourceMonkey's Log has an entry for each of these, logged as the
   // report rather than twice; not for a rule miss, which only the run
   // finds. A throw is the script's own error too, and the page's console

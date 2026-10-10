@@ -986,6 +986,10 @@ User-facing behavior is in [harness-guide.md](harness-guide.md).
     also removes the run's test collection.
   - SourceMonkey-managed scripts: `scriptsOnTab(tabId)`, the rows the
     toolbar badge shows for a tab, with each one's collection;
+  - a tab's frames: `chrome.webNavigation.getAllFrames`, called
+    directly in the worker rather than through `self.SourceMonkey`.
+    It's Chrome's API, so no protocol version gates it (see
+    [sm-dev-frames.md](sm-dev-frames.md));
   - what's installed: `managedCollections` and `managedScripts`, for
     `collection list` and `script list`, and from 1.5 the calls on
     `managed` (`src/extension/managed-changes.ts`) for the other

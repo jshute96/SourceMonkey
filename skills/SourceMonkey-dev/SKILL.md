@@ -260,14 +260,12 @@ $R status
 - `match` names the rule that matched or excluded each URL. It is
   cheap: run it after any header edit.
 - `status` shows each script as `Active` or `Not active` on the current
-  tab, and the other tabs it runs on.
+  tab, and the other tabs and frames it runs on.
 - On a single-page app the URL can change without a load. `match` in a
   run (no arguments) checks the selected script against the current
   tab's URL now.
-- A script runs in each iframe whose own URL it matches, unless it has
-  `@noframes`. Its start shows as `started in an iframe on <frame URL>`.
-  - `click`/`snapshot` refs reach into frames (`f2e6`), but reading
-    the script's state and `eval` in its world reach the top frame only.
+- A script also runs in each iframe whose own URL it matches; see
+  [Scripts in iframes](#scripts-in-iframes).
 
 ### Finding selectors
 
@@ -547,6 +545,53 @@ $R savehtml pages/some-page.html              # the DOM, with the URL recorded
   In a script: `$R --json tabs | jq -r '.tabs[] | select(.id == "T2") | .targetId'`.
 - `reload all` reloads every tab; `wait all` waits for every tab to
   settle.
+
+### Scripts in iframes
+
+A script runs in each frame whose own URL it matches (the top page
+needn't match), unless it has `@noframes`. Each frame gets its own copy
+of the script; they share stored values, and can talk to each other with
+`postMessage`.
+
+```sh
+$R frames                           # the tab's iframes as a tree, with the scripts in each
+$R match --frames                   # what each frame's URL would match, and @noframes
+$R snapshot --find Save             # refs in a frame carry its number: f2e4
+$R click f2e4
+$R click '#player >> internal:control=enter-frame >> .play'   # a selector inside a frame
+```
+
+- Iframes are named `F1`, `F2`, ... for the whole run; the top frame
+  is its tab (`T1`). An iframe keeps its id when it reloads, so `F2`
+  stays the same frame across `--watch` reloads.
+- Where a script runs: `frames`, or `tabs` / `status`, which list a
+  script not only in the top frame as `(T1, F2)` or `(F2)`.
+  - A frame added after load (a widget opened by a click) shows up
+    once it exists. Run `frames` again after the click.
+  - A frame with no URL of its own (`about:blank`, `srcdoc`) never
+    runs scripts.
+- A frame's starts, errors and menu commands are prefixed with it:
+  `[T1.F2] [event] ... started in an iframe on <frame URL>`. Console
+  lines from frames show with only the tab, so log enough in the
+  script to tell its copies apart.
+- `menu` shows the script's one menu for the tab, as SourceMonkey's
+  popup does, with every frame's commands in it. sm-dev labels a
+  command an iframe registered with its frame: `M3: Toggle (F2)`.
+  Firing it runs it in that frame. A command registered by the copies
+  in several frames is listed once per frame.
+- Selectors don't reach into frames on their own:
+  - Use a snapshot ref (`f2e4`). Refs inside a frame change on every
+    reload, so take a new `snapshot --find` after one.
+  - Or enter the frame in the selector, which survives reloads:
+    `<iframe selector> >> internal:control=enter-frame >> <selector
+    inside>`, repeated for a nested frame. It works with `click`,
+    `probe`, `snapshot` and `wait`.
+- `eval` and reading the script's state reach the top frame only.
+  - A same-origin frame: `eval --page
+    "document.querySelector('#frame').contentDocument.title"`.
+  - A cross-origin frame's DOM and the script copy there can't be
+    read. Check them through the script's log lines, `probe`/`snapshot`
+    with a frame selector, `values`, and `screenshot`.
 
 ### Multi-step sequences
 

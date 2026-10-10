@@ -54,7 +54,7 @@ test('flags take a value after them or after =, and are checked', () => {
   // A quoted word is never a flag.
   assert.deepEqual(typed('probe', `'--x' .y`).words, ['--x', '.y']);
   // Also on a command that takes few.
-  assert.deepEqual(typed('status', '--bad'), { error: 'The status command has no --bad flag. It takes --json, --nojson.', flag: '--bad' });
+  assert.deepEqual(typed('status', '--bad'), { error: 'The status command has no --bad flag. It takes --frames, --json, --nojson.', flag: '--bad' });
 });
 
 test('a flag with an optional value takes it only after =', () => {

@@ -324,6 +324,23 @@ test('start, update and load give a page --timeout-seconds to load', async ({ fi
   expect(lines.filter((l) => l === '[sm-dev] T1 could not be reloaded: The page did not finish loading within 1s')).toHaveLength(2);
 });
 
+test('a script running only in an iframe: its lines name the frame, and update reloads its tab', async ({ fixtureServer, scriptsDir }) => {
+  // The frames example's Frame B, which the page itself doesn't match.
+  const file = scriptsDir.write({
+    relativePath: 'in-frame.user.js',
+    meta: { name: 'In frame', match: ['*://*/frames/frame-b.html'] },
+    body: `console.log('[in-frame] on ' + location.pathname);`,
+  });
+  const lines = await driveCli([file, `${fixtureServer.baseUrl}/frames/frames.html`], [
+    ['[event] In frame started in an iframe on', 'status'],
+    ['Active on T1 (F', () => { touch(file); return 'update 1'; }],
+    ['[sm-dev] Reloading T1', 'exit'],
+  ]);
+  expect(lines.some((l) => /^\[T1\.F\d+\] \[event\] In frame started in an iframe on http:\/\/\S+\/frames\/frame-b\.html$/.test(l))).toBe(true);
+  expect(lines.some((l) => /^\* T1: \S+\/frames\/frames\.html \(\+3 frames\)/.test(l))).toBe(true);
+  expect(lines.some((l) => /^ {5}Active on T1 \(F\d+\)$/.test(l))).toBe(true);
+});
+
 test('load, update and reload all reload just the tabs they affect', async ({ fixtureServer, scriptsDir }) => {
   const base = fixtureServer.baseUrl;
   const write = (name: string, page: string, body = `console.log('[${name}] on ' + location.pathname);`) => scriptsDir.write({
