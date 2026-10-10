@@ -68,7 +68,6 @@ const tabParam = params.get('tab');
 const inPopup = tabParam === null || params.has('close');
 
 const bannersEl = document.getElementById('banners') as HTMLElement;
-const reloadBarEl = document.getElementById('reload-bar') as HTMLElement;
 const scriptsEl = document.getElementById('scripts') as HTMLElement;
 const pageMenuBtn = document.getElementById('page-menu') as HTMLButtonElement;
 
@@ -215,22 +214,135 @@ function quietly(work: Promise<unknown>): void {
 
 // ---------- Rendering ----------
 
+// Whether script rows are on screen, so a banner coming or going now
+// does so under the pointer, rather than as part of the first draw.
+let listShown = false;
+
 function render(v: PopupView | null): void {
   // A redraw while a menu is open would leave it pointing at a button
   // that is gone.
   closeMenu();
   // Emptying the scroll box would scroll it back to the top.
   const scrollTop = scriptsEl.scrollTop;
+  const listHeight = scriptsEl.clientHeight;
+  const scrolling = scriptsEl.scrollHeight > scriptsEl.clientHeight;
+  const bannersHeight = bannersEl.offsetHeight;
+  const anchor = listShown ? topAnchor() : null;
   try {
     draw(v);
   } finally {
     scriptsEl.scrollTop = scrollTop;
+    const grew = bannersEl.offsetHeight - bannersHeight;
+    if (grew !== 0 && listShown) keepListInPlace(grew, scrollTop, listHeight, scrolling);
+    if (anchor) restoreAnchor(anchor);
+    listShown = scriptsEl.querySelector('.row') !== null;
   }
+}
+
+// The redraw replaces every row, which leaves Chrome's own scroll
+// anchoring nothing to hold on to. So it is done here: the row or
+// collection heading at the top of the list's view stays where it was
+// on screen. Otherwise a row above it changing height (a command list
+// coming or going after a reload, a pill rewrapping its name) would
+// move everything in view.
+interface Anchor { key: string; top: number }
+
+function topAnchor(): Anchor | null {
+  const listTop = scriptsEl.getBoundingClientRect().top;
+  for (const e of scriptsEl.querySelectorAll('.row, .group-head')) {
+    const r = e.getBoundingClientRect();
+    if (r.bottom > listTop) return { key: anchorKey(e), top: r.top };
+  }
+  return null;
+}
+
+function restoreAnchor(anchor: Anchor): void {
+  for (const e of scriptsEl.querySelectorAll('.row, .group-head')) {
+    if (anchorKey(e) !== anchor.key) continue;
+    scriptsEl.scrollTop += e.getBoundingClientRect().top - anchor.top;
+    return;
+  }
+}
+
+// A collection can head a group in more than one section; a script is
+// in just one.
+function anchorKey(e: Element): string {
+  const section = e.closest('section')?.getAttribute('data-section') ?? '';
+  const script = e.getAttribute('data-script-id');
+  return script ? `script:${script}` : `${section}:${e.getAttribute('data-collection-id') ?? ''}`;
+}
+
+// A banner appeared above the list while the popup was open (the
+// reload banner, after a toggle). Keep the rows where they were, so the
+// one just clicked stays under the pointer: the banner covers the top
+// of the list's view rather than pushing it down.
+// - Already scrolling, the popup is at its full height and the list
+//   just got shorter: scroll it on by the banner's height.
+// - Not scrolling, pin the list to its old height less the banner's,
+//   scrolled down by that much. Scrolling back up grows the popup
+//   instead (`growPinnedList`), and the pin goes once the top is back.
+// - Not when the banner would hide more than it leaves: then the popup
+//   just grows.
+// The banner going (ticking the box back, say) undoes this: the list
+// scrolls back by as much, and a pinned one grows into the space.
+// The list has no padding or border, so its heights are its content's.
+function keepListInPlace(grew: number, scrollTop: number, listHeight: number, scrolling: boolean): void {
+  const pinned = scriptsEl.style.maxHeight !== '';
+  if (grew < 0 && pinned) {
+    scriptsEl.style.maxHeight = `${listHeight - grew}px`;
+  } else if (grew > 0 && !scrolling) {
+    if (listHeight - grew < grew) return;
+    scriptsEl.style.maxHeight = `${listHeight - grew}px`;
+  } else if (!scrolling) {
+    return;
+  }
+  scriptsEl.scrollTop = scrollTop + grew;
+  growPinnedList();
+}
+
+// Only grows: rows added while pinned (a command list opened, say) are
+// scrolled to as usual, without the popup shrinking.
+function growPinnedList(): void {
+  if (!scriptsEl.style.maxHeight) return;
+  if (scriptsEl.scrollTop <= 0) unpinList();
+  else {
+    const height = Math.max(parseFloat(scriptsEl.style.maxHeight), scriptsEl.scrollHeight - scriptsEl.scrollTop);
+    scriptsEl.style.maxHeight = `${height}px`;
+  }
+}
+
+function unpinList(): void {
+  scriptsEl.style.maxHeight = '';
+}
+
+scriptsEl.addEventListener('scroll', growPinnedList);
+
+// The popup is always wider by a scrollbar (see popup.html). Without
+// one, the rows pad that strip (`--gutter`); with one, the scrollbar
+// fills it. Either way the rows keep their width and don't rewrap. The
+// list's content box changes width as a scrollbar comes or goes, which
+// the observer sees before the frame is painted.
+const scrollbarWidth = measureScrollbar();
+document.body.style.setProperty('--scrollbar-width', `${scrollbarWidth}px`);
+// Set before the first frame too: setting it from the observer's first
+// callback could rewrap a row and resize the list again in the same
+// frame, which Chrome reports as a ResizeObserver loop error.
+scriptsEl.style.setProperty('--gutter', `${scrollbarWidth}px`);
+new ResizeObserver(() => {
+  const scrolling = scriptsEl.offsetWidth > scriptsEl.clientWidth;
+  scriptsEl.style.setProperty('--gutter', scrolling ? '0px' : `${scrollbarWidth}px`);
+}).observe(scriptsEl);
+
+function measureScrollbar(): number {
+  const probe = el('div', { style: 'position: absolute; visibility: hidden; overflow: scroll; width: 100px' });
+  document.body.append(probe);
+  const width = probe.offsetWidth - probe.clientWidth;
+  probe.remove();
+  return width;
 }
 
 function draw(v: PopupView | null): void {
   bannersEl.replaceChildren();
-  reloadBarEl.replaceChildren();
   scriptsEl.replaceChildren();
   document.body.dataset.ready = 'true';
   if (!v || !v.injectable) {
@@ -241,7 +353,7 @@ function draw(v: PopupView | null): void {
   if (v.banner) {
     const reload = el('button', { type: 'button' }, 'Reload');
     reload.addEventListener('click', () => quietly(reloadPlain()));
-    reloadBarEl.append(el('div', { class: 'banner-row reload' }, el('span', {}, v.banner), reload));
+    bannersEl.append(el('div', { class: 'banner-row reload' }, el('span', {}, v.banner), reload));
   }
   const { enabled, frames, manual, disabled } = arrange(v);
   if (enabled.length === 0 && frames.length === 0 && manual.length === 0 && disabled.length === 0) {

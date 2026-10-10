@@ -8,7 +8,13 @@
       /* The toolbar popup (docs/status-popup.md). Chrome caps a popup at
          800x600, so the body is a fixed-width column whose script area
          scrolls once the whole thing would pass the cap. Opened in a
-         plain tab (`?tab=<id>`, for tests) it keeps the same width. */
+         plain tab (`?tab=<id>`, for tests) it keeps the same width.
+         The popup is always wider by a scrollbar's width, so the rows
+         keep their width whether the script area scrolls or not: Chrome
+         grows a popup leftwards, so widening only when a scrollbar
+         shows would shift everything. Without a scrollbar the rows take
+         that strip as extra right padding (`--gutter`, set in popup.ts),
+         so their backgrounds still reach the edge. */
       :root {
         --popup-width: 380px;
         --rule: #e3ddd4;
@@ -26,7 +32,7 @@
       }
       body {
         font: 13px system-ui, sans-serif; color: #222; background: #fff;
-        margin: 0; width: var(--popup-width); max-height: 590px;
+        margin: 0; width: calc(var(--popup-width) + var(--scrollbar-width, 0px)); max-height: 590px;
         display: flex; flex-direction: column;
       }
       /* Chrome draws the popup with no frame of its own, so a white
@@ -58,7 +64,7 @@
         padding: 5px 8px 5px 10px; font-size: 12.5px; font-weight: 600;
       }
       .banner-row span { flex: 1; }
-      .banner-row.reload { background: var(--purple-tint); color: var(--purple-deep); border-top: 1px solid #e7b6f2; }
+      .banner-row.reload { background: var(--purple-tint); color: var(--purple-deep); border-bottom: 1px solid #e7b6f2; }
       .banner-row.reload::before {
         content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--purple); flex: none;
       }
@@ -67,22 +73,24 @@
       .banner-row.sm-dev { background: var(--cyan-tint); color: var(--cyan); border-bottom: 1px solid #a5dde3; }
 
       /* Only the script list gives up height at the popup's cap. */
-      #banners, #reload-bar { flex: none; }
-      .scripts { overflow-y: auto; min-height: 0; flex: 1 1 auto; }
+      #banners { flex: none; }
+      /* No native scroll anchoring: popup.ts keeps the top row in place
+         itself (restoreAnchor), around its own scrolling for banners. */
+      .scripts { overflow-y: auto; min-height: 0; flex: 1 1 auto; overflow-anchor: none; }
       .section-head {
         position: sticky; top: 0; z-index: 2;
         /* Darker than the rows, with a rule on both edges, so the
            Disabled bar doesn't blend into the white row above it. */
         background: #ece5da; border-top: 1px solid #c9bba6; border-bottom: 1px solid #c9bba6;
-        padding: 3px 10px; font-size: 11px; font-weight: 700; line-height: 15px;
+        padding: 3px calc(10px + var(--gutter, 0px)) 3px 10px; font-size: 11px; font-weight: 700; line-height: 15px;
         letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
       }
-      .empty-note { padding: 7px 10px 9px; color: var(--muted); font-style: italic; }
-      .empty-page { padding: 22px 16px; text-align: center; color: var(--muted); }
+      .empty-note { padding: 7px calc(10px + var(--gutter, 0px)) 9px 10px; color: var(--muted); font-style: italic; }
+      .empty-page { padding: 22px calc(16px + var(--gutter, 0px)) 22px 16px; text-align: center; color: var(--muted); }
 
       .group-head {
         display: flex; align-items: center; gap: 6px;
-        padding: 4px 6px 0 8px; font-weight: 600; border-top: 1px solid var(--rule);
+        padding: 4px calc(4px + var(--gutter, 0px)) 0 8px; font-weight: 600; border-top: 1px solid var(--rule);
       }
       .section-head + .group-head { border-top: none; }
       /* The first bar sits right under the header bar's own border. */
@@ -99,7 +107,16 @@
       }
       .group-head.off .collection-name, .group-head.off .collection-type-bubble { opacity: 0.6; }
 
-      .row { padding: 4px 6px 4px 8px; border-bottom: 1px solid #f1ede7; }
+      .row { padding: 4px calc(4px + var(--gutter, 0px)) 4px 8px; border-bottom: 1px solid #f1ede7; }
+      /* A row's ⋯ sits centered between what's left of it (the pill, say)
+         and the scrollbar, or the popup's edge when there is none: the
+         spare strip (`--gutter`) is split either side of it. The row's
+         other content keeps its width either way, so only the ⋯ moves
+         as a scrollbar comes and goes. The -2px narrows the flex gap to
+         the 4px on its right. */
+      .row button.kebab, .group-head button.kebab {
+        margin-left: calc(var(--gutter, 0px) / 2 - 2px); margin-right: calc(var(--gutter, 0px) / -2);
+      }
       .row:last-child { border-bottom: none; }
       /* Top-aligned so a name that wraps keeps its controls on its
          first line. */
@@ -181,10 +198,6 @@
     </header>
     <div id="banners"></div>
     <div id="scripts" class="scripts"></div>
-    <!-- The reload banner sits BELOW the list: it appears when a toggle
-         here changes what's enabled, and at the top it would push down
-         the row just clicked. Down here the popup just grows. -->
-    <div id="reload-bar"></div>
     <script type="module" src="extension/popup.js"></script>
   </body>
 </html>

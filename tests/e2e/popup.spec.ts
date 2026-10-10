@@ -16,6 +16,41 @@ async function openPopup(context: BrowserContext, extensionId: string, tabId: nu
   return popup;
 }
 
+// The popup's width, the first row's content width, and the list's
+// scrollbar (0 when it has none).
+async function widths(popup: Page): Promise<{ body: number; rowMain: number; scrollbar: number }> {
+  return popup.evaluate(() => {
+    const list = document.getElementById('scripts')!;
+    return {
+      body: document.body.offsetWidth,
+      rowMain: (document.querySelector('.row-main') as HTMLElement).offsetWidth,
+      scrollbar: list.offsetWidth - list.clientWidth,
+    };
+  });
+}
+
+// The space either side of a row's ⋯: to the pill on its left, and to
+// the scrollbar (or the popup's edge) on its right.
+async function kebabGaps(popup: Page, name: string): Promise<{ left: number; right: number }> {
+  return popup.locator('.row', { hasText: name }).evaluate((row) => {
+    const list = document.getElementById('scripts')!;
+    const kebab = row.querySelector('button.kebab')!.getBoundingClientRect();
+    const pill = row.querySelector('.pill')!.getBoundingClientRect();
+    const edge = list.getBoundingClientRect().left + list.clientWidth;
+    return { left: Math.round(kebab.left - pill.right), right: Math.round(edge - kebab.right) };
+  });
+}
+
+async function bodyHeight(popup: Page): Promise<number> {
+  return popup.evaluate(() => document.body.offsetHeight);
+}
+
+async function listState(popup: Page): Promise<{ scrollTop: number; pinned: boolean }> {
+  return popup.locator('#scripts').evaluate((e) => ({
+    scrollTop: Math.round(e.scrollTop), pinned: (e as HTMLElement).style.maxHeight !== '',
+  }));
+}
+
 // A popup in a tab that closes as a real popup would (`close=1`). A
 // real popup's close ends the page at once; navigating away stands in
 // for that, so a test can see it happen.
@@ -207,13 +242,46 @@ test.describe('toolbar popup', () => {
     const alphaBox = popup.locator('.row', { hasText: 'Alpha' }).locator('input[type="checkbox"]');
     const boxTop = async () => (await alphaBox.boundingBox())!.y;
     const topBefore = await boxTop();
+    const heightBefore = await bodyHeight(popup);
+    const widthsBefore = await widths(popup);
+    expect(widthsBefore.scrollbar).toBe(0);
+    // The ⋯ sits centered between the pill and the popup's edge.
+    const gapsBefore = await kebabGaps(popup, 'Alpha');
+    expect(gapsBefore.left).toBe(gapsBefore.right);
     await alphaBox.uncheck();
     await expect(popup.locator('section[data-section="enabled"] .row', { hasText: 'Alpha' }).locator('.pill')).toHaveText('Still running');
     await expect(popup.locator('.row', { hasText: 'Alpha' })).toHaveClass(/\boff\b/);
     await expect(popup.locator('.banner-row.reload')).toContainText('Reload required: Scripts disabled');
-    // The banner appears below the list, so the checkbox just clicked
-    // stays under the pointer.
+    // The banner covers the top of the list rather than pushing it
+    // down, so the checkbox just clicked stays under the pointer, and
+    // the popup keeps its height.
     expect(await boxTop()).toBe(topBefore);
+    expect(await bodyHeight(popup)).toBe(heightBefore);
+    const bannerHeight = await popup.locator('.banner-row.reload').evaluate((e) => (e as HTMLElement).offsetHeight);
+    expect(await listState(popup)).toEqual({ scrollTop: bannerHeight, pinned: true });
+    // The pinned list has a scrollbar now, in the strip the rows padded:
+    // nothing gets wider or narrower.
+    const widthsPinned = await widths(popup);
+    expect(widthsPinned.scrollbar).toBeGreaterThan(0);
+    expect({ ...widthsPinned, scrollbar: 0 }).toEqual(widthsBefore);
+    // Only the ⋯ moves, to centered between the pill and the scrollbar.
+    expect(await kebabGaps(popup, 'Alpha')).toEqual({ left: 4, right: 4 });
+
+    // Ticking it back takes the banner away, and the rows stay put again.
+    await alphaBox.check();
+    await expect(popup.locator('.banner-row.reload')).toHaveCount(0);
+    expect(await boxTop()).toBe(topBefore);
+    expect(await bodyHeight(popup)).toBe(heightBefore);
+    expect(await listState(popup)).toEqual({ scrollTop: 0, pinned: false });
+    await alphaBox.uncheck();
+    await expect(popup.locator('.banner-row.reload')).toBeVisible();
+    expect(await boxTop()).toBe(topBefore);
+
+    // Scrolling the covered rows back into view grows the popup, and
+    // with them all back the list is no longer pinned.
+    await popup.locator('#scripts').evaluate((e) => { e.scrollTop = 0; });
+    await expect.poll(() => listState(popup)).toEqual({ scrollTop: 0, pinned: false });
+    expect(await bodyHeight(popup)).toBe(heightBefore + bannerHeight);
 
     // Enable Beta as well: the banner says the mix changed.
     await popup.locator('.row', { hasText: 'Beta' }).locator('input[type="checkbox"]').check();
@@ -232,6 +300,100 @@ test.describe('toolbar popup', () => {
     await popup.reload();
     await expect(popup.locator('section[data-section="disabled"] .row', { hasText: 'Alpha' })).toBeVisible();
     await expect(popup.locator('section[data-section="enabled"] .row', { hasText: 'Beta' })).toBeVisible();
+
+    // Already up as the popup opens, it just sits at the top.
+    await popup.locator('.row', { hasText: 'Beta' }).locator('input[type="checkbox"]').uncheck();
+    await popup.reload();
+    await expect(popup.locator('.banner-row.reload')).toContainText('Reload required: Scripts disabled');
+    expect(await listState(popup)).toEqual({ scrollTop: 0, pinned: false });
+    await popup.close();
+    await page.close();
+  });
+
+  test('a banner appearing over a scrolled list keeps the rows in place, and the scrollbar takes the spare strip', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker, extensionId,
+  }) => {
+    const d = dir();
+    const match = [`${fixtureServer.baseUrl}/target.html`];
+    for (let i = 10; i < 50; i++) {
+      d.write({ relativePath: `s${i}.user.js`, meta: { name: `Script ${i}`, match }, body: '' });
+    }
+    await sm.addCollection(d.path);
+    await sm.syncNow();
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    const tabId = await activeTabId(getServiceWorker);
+    await waitForTabState(sm, tabId, (s) => s.rows.includes('Script 49 | OK'), 'scripts ran');
+    const popup = await openPopup(extensionContext, extensionId, tabId);
+    await expect(popup.locator('.row')).toHaveCount(40);
+
+    // The list scrolls, its scrollbar filling the strip the popup keeps
+    // for one, so the rows are as wide as without.
+    const w = await widths(popup);
+    expect(w.scrollbar).toBeGreaterThan(0);
+    expect(w.rowMain).toBe(368);
+    expect(w.body).toBe(380 + w.scrollbar);
+
+    await popup.locator('#scripts').evaluate((e) => { e.scrollTop = 200; });
+    const box = popup.locator('.row', { hasText: 'Script 20' }).locator('input[type="checkbox"]');
+    const y = (await box.boundingBox())!.y;
+    const height = await bodyHeight(popup);
+    await box.uncheck();
+    await expect(popup.locator('.banner-row.reload')).toBeVisible();
+    const bannerHeight = await popup.locator('.banner-row.reload').evaluate((e) => (e as HTMLElement).offsetHeight);
+    // The list gives up its top to the banner; nothing else moves.
+    expect((await box.boundingBox())!.y).toBe(y);
+    expect(await bodyHeight(popup)).toBe(height);
+    expect(await listState(popup)).toEqual({ scrollTop: 200 + bannerHeight, pinned: false });
+    expect(await widths(popup)).toEqual(w);
+    // Ticking it back scrolls the list back as the banner goes.
+    await box.check();
+    await expect(popup.locator('.banner-row.reload')).toHaveCount(0);
+    expect((await box.boundingBox())!.y).toBe(y);
+    expect(await listState(popup)).toEqual({ scrollTop: 200, pinned: false });
+    await popup.close();
+    await page.close();
+  });
+
+  test('a row above the view changing height leaves the rows in view in place', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker, extensionId,
+  }) => {
+    const d = dir();
+    const match = [`${fixtureServer.baseUrl}/target.html`];
+    d.write({
+      relativePath: 's10.user.js',
+      meta: { name: 'Script 10', match, grant: ['GM_registerMenuCommand'] },
+      body: `GM_registerMenuCommand('Paint', () => {});`,
+    });
+    for (let i = 11; i < 50; i++) {
+      d.write({ relativePath: `s${i}.user.js`, meta: { name: `Script ${i}`, match }, body: '' });
+    }
+    await sm.addCollection(d.path);
+    await sm.syncNow();
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    const tabId = await activeTabId(getServiceWorker);
+    await waitFor(() => sm.getActionContextMenu(tabId), (g) => g.length === 1, { label: 'command registered' });
+    const popup = await openPopup(extensionContext, extensionId, tabId);
+    const first = popup.locator('.row', { hasText: 'Script 10' });
+    await expect(first.locator('button.command')).toHaveText(['Paint']);
+
+    await popup.locator('#scripts').evaluate((e) => { e.scrollTop = 200; });
+    const inView = popup.locator('.row', { hasText: 'Script 20' });
+    const y = (await inView.boundingBox())!.y;
+    // Disable the first script, scrolled out of view above: the banner
+    // comes, and the rows stay put.
+    const s10 = (await allScripts(sm)).find((s) => s.relativePath === 's10.user.js')!;
+    await sm.setScriptEnabled(s10.id, false);
+    await sm.syncNow();
+    await expect(popup.locator('.banner-row.reload')).toBeVisible();
+    expect((await inView.boundingBox())!.y).toBe(y);
+    // The reload takes the banner away and the first row's command with
+    // it, so that row gets shorter. The rows in view still stay put.
+    await page.reload();
+    await expect(first.locator('button.command')).toHaveCount(0);
+    await expect(popup.locator('.banner-row.reload')).toHaveCount(0);
+    expect((await inView.boundingBox())!.y).toBe(y);
     await popup.close();
     await page.close();
   });

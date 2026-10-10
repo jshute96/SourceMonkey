@@ -92,6 +92,18 @@ So no popup is set (`handleActionClick` in background.ts).
 Fixed width (~380px). Chrome caps popups at 800×600, so height grows
 with content up to a cap, then the script area scrolls.
 
+- The popup is always wider by a scrollbar's width, a strip on the
+  right that the script area's scrollbar fills when it has one.
+  - So the rows keep their width as a scrollbar comes and goes: no
+    rewrapping.
+  - Widening only while there is a scrollbar would shift everything:
+    Chrome keeps a popup aligned to its toolbar icon, so it grows
+    leftwards.
+  - Without a scrollbar, the rows pad that strip, so their backgrounds
+    reach the edge.
+  - A row's ⋯ is centered in the space right of the pill, strip
+    included, or between the pill and the scrollbar when there is one.
+    It is the only thing that moves as a scrollbar comes and goes.
 - A 1px border in the header bar's brown: Chrome draws the popup with
   no frame, so it would have no edge over a white page.
   - Drawn on a fixed overlay at the viewport's edges, not as the body's
@@ -107,22 +119,10 @@ From top to bottom:
 - Cyan **sm-dev banner**, only when the page is under sm-dev's
   control: `Page under sm-dev control`, replacing the menu's row of
   that name.
-- **Script area**, one scroll region (see [Scrolling](#scrolling)):
-  - **Enabled** section.
-  - **Active in frames** section, only when it has rows: scripts running
-    in the page's iframes that neither matched nor ran in the page
-    itself (see [frames.md](frames.md#active-in-frames)).
-  - **Manual** section, only when it has rows: scripts with `@run-at
-    context-menu` (see [manual-scripts.md](manual-scripts.md#popup)).
-  - **Disabled** section.
-  - Each section groups its scripts under collection headings (see
-    [Collection groups](#collection-groups)).
-- Purple **reload banner** at the bottom, below the script area (only when a
-  reload is needed):
-  - Below the list, not above it: a toggle in the popup is what usually
-    makes it appear, and at the top it would push down the row just
-    clicked. At the bottom the popup just grows, or at full height the
-    list loses a row of view.
+- Purple **reload banner**, only when a reload is needed.
+  - Appearing while the popup is open (usually after a toggle there),
+    it doesn't push the rows down: see
+    [A banner that appears under the pointer](#a-banner-that-appears-under-the-pointer).
   - Purple to match the purple badge, with a Reload button. Wording by
     cause:
     - `Reload required: Page loaded before SourceMonkey started` (see
@@ -154,6 +154,16 @@ From top to bottom:
     - `Scripts disabled`: one the run let in was unticked.
     - Enabling never counts there: the run decides what loads in its
       tab, so a reload wouldn't run the newly enabled script.
+- **Script area**, one scroll region (see [Scrolling](#scrolling)):
+  - **Enabled** section.
+  - **Active in frames** section, only when it has rows: scripts running
+    in the page's iframes that neither matched nor ran in the page
+    itself (see [frames.md](frames.md#active-in-frames)).
+  - **Manual** section, only when it has rows: scripts with `@run-at
+    context-menu` (see [manual-scripts.md](manual-scripts.md#popup)).
+  - **Disabled** section.
+  - Each section groups its scripts under collection headings (see
+    [Collection groups](#collection-groups)).
 
 ### Page ⋯ menu
 
@@ -378,6 +388,38 @@ Every pill has a tooltip:
     Disabled to a sliver, or the split needs tuning.
   - Sticky headings keep the "which section am I in" benefit of
     separate regions.
+- **A redraw keeps the top row in view where it was** (`restoreAnchor`
+  in `popup.ts`): the row or collection heading at the top of the
+  list's view stays put on screen.
+  - Otherwise a row scrolled out of view above changing height (a
+    reload adding or removing its menu commands, a pill rewrapping its
+    name) would move everything in view.
+  - A row in view that changes height grows or shrinks below its top,
+    as expected.
+  - Done by hand: the redraw replaces every row, which leaves Chrome's
+    own scroll anchoring nothing to hold on to, so that is turned off
+    for the list.
+
+### A banner that appears under the pointer
+
+A toggle in the popup can make the reload banner appear. Pushing the
+list down would move the row just clicked out from under the pointer,
+so the banner covers the top of the list's view instead
+(`keepListInPlace` in `popup.ts`):
+
+- **List already scrolling** (the popup is at its full height): the
+  list gets shorter by the banner's height and scrolls on by as much.
+- **List not scrolling**: the popup keeps its height. The list is
+  pinned to its old height less the banner's, and scrolled down by the
+  banner's height, so it has a scrollbar.
+  - Scrolling back up grows the popup rather than moving the rows.
+    With the top row back in view, the pin goes and the scrollbar with
+    it.
+  - Skipped when the banner would hide more of the list than it
+    leaves: the popup just grows.
+- The banner going (ticking the box back, say) undoes this: the list
+  scrolls back by as much, and a pinned one grows into the space.
+- Already up as the popup opens, the banner is just drawn at the top.
 
 ## Collection groups
 
