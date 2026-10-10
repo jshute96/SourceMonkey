@@ -230,3 +230,15 @@ function isPlainClick(ev: MouseEvent): boolean {
 export function openExtensionTab(url: string): Promise<void> {
   return chrome.tabs.create({ url }).then(() => undefined);
 }
+
+// Open an extension page in a new background tab, as a middle click or
+// Ctrl/Cmd-click on a link does.
+export function openBackgroundTab(url: string): Promise<void> {
+  return chrome.tabs.create({ url, active: false }).then(() => undefined);
+}
+
+// Open an extension page in a new window, as a Shift-click on a link
+// does.
+export function openExtensionWindow(url: string): Promise<void> {
+  return chrome.windows.create({ url }).then(() => undefined);
+}

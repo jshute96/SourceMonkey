@@ -43,7 +43,9 @@ import {
 } from './popup-view.js';
 import { SM_DEV_CONTROL_LABEL } from './tab-status.js';
 import { collectionAnchorId, EDIT_COLLECTION_HASH_PREFIX, makeCollectionTypeBubble } from './collection-display.js';
-import { installHomeLinkHandler, namedPageUrl, openExtensionTab, openNamedTab } from './page-links.js';
+import {
+  namedPageUrl, openBackgroundTab, openExtensionTab, openExtensionWindow, openNamedTab, type NamedPage,
+} from './page-links.js';
 import { touchesStructuralRows } from './structural-keys.js';
 import { enableTitle, watchSoloModifier } from './solo-click.js';
 import { ENABLE_TITLE, viewerUrl } from '../script-display.js';
@@ -79,10 +81,10 @@ let view: PopupView | null = null;
 // popup is open.
 const commandsOpen = new Map<string, boolean>();
 
-installHomeLinkHandler();
-document.getElementById('open-collections')!.addEventListener('click', () => {
-  quietly(openNamedTab('collections').then(closeSoon));
-});
+// The Open button and the header's home links (icon, product name).
+for (const home of document.querySelectorAll<HTMLElement>('#open-collections, a.page-home')) {
+  onOpenClick(home, namedPageUrl('collections'), () => openNamedTab('collections').then(closeSoon));
+}
 pageMenuBtn.addEventListener('click', () => {
   openMenu(pageMenuBtn, [
     // A plain reload, every script included. The popup stays open
@@ -95,7 +97,7 @@ pageMenuBtn.addEventListener('click', () => {
       hidden: !view?.perScriptReload
         || (view.enabled.length === 0 && view.frames.length === 0 && view.disabled.length === 0),
     },
-    { label: 'SourceMonkey options', run: () => openNamedTab('options').then(closeSoon) },
+    namedPageItem('SourceMonkey options', 'options'),
   ]);
 });
 
@@ -368,25 +370,16 @@ function groupHead(group: PopupGroup): HTMLElement {
     class: 'collection-name', href: namedPageUrl('collections', hash), target: '_blank',
     title: 'Show this collection on the collections page',
   }, c.name);
-  // Close only once the tab is open: closing the popup ends this page,
-  // and an open still in flight with it.
-  name.addEventListener('click', (ev) => {
-    if (!isPlainClick(ev)) return;
-    ev.preventDefault();
-    quietly(openNamedTab('collections', { hash }).then(closeSoon));
-  });
+  onOpenClick(name, namedPageUrl('collections', hash), () => openNamedTab('collections', { hash }).then(closeSoon));
   const off = !c.enabled;
   const kebab = kebabButton('Collection actions');
   kebab.addEventListener('click', () => openMenu(kebab, [
-    { label: 'Collection details', run: () => openNamedTab('collections', { hash }).then(closeSoon) },
+    namedPageItem('Collection details', 'collections', hash),
     {
       label: off ? 'Enable collection' : 'Disable collection',
       run: () => setEnabled('collection', c.id, off),
     },
-    {
-      label: 'Collection options',
-      run: () => openNamedTab('collections', { hash: EDIT_COLLECTION_HASH_PREFIX + c.id }).then(closeSoon),
-    },
+    namedPageItem('Collection options', 'collections', EDIT_COLLECTION_HASH_PREFIX + c.id),
   ]));
   const head = el('div', { class: 'group-head' + (off ? ' off' : ''), 'data-collection-id': c.id },
     name, makeCollectionTypeBubble(c.path));
@@ -414,7 +407,7 @@ function scriptRow(row: PopupRow, group: PopupGroup): HTMLElement {
   box.addEventListener('change', () => quietly(setEnabled('script', row.id, box.checked, takeSolo())));
 
   const name = el('a', { class: 'script-name', href: viewerUrl(row.id), target: '_blank', title: 'Open the script page' }, row.name);
-  name.addEventListener('click', (ev) => openPage(ev, viewerUrl(row.id)));
+  onOpenClick(name, viewerUrl(row.id));
 
   const main = el('div', { class: 'row-main' }, box, name);
   if (row.status === 'PENDING' || row.status === 'UNTRACKED') {
@@ -428,7 +421,7 @@ function scriptRow(row: PopupRow, group: PopupGroup): HTMLElement {
       title: row.tooltip ?? '',
       'data-status': row.status,
     }, POPUP_STATUS_LABELS[row.status]);
-    pill.addEventListener('click', (ev) => openPage(ev, viewerUrl(row.id, 'log')));
+    onOpenClick(pill, viewerUrl(row.id, 'log'));
     main.append(pill);
   }
   const kebab = kebabButton('Script actions');
@@ -436,8 +429,8 @@ function scriptRow(row: PopupRow, group: PopupGroup): HTMLElement {
   // keeping it out is nothing.
   const perScriptReload = view?.perScriptReload === true && !row.manual;
   kebab.addEventListener('click', () => openMenu(kebab, [
-    { label: 'Script details', run: () => openExtensionTab(viewerUrl(row.id)).then(closeSoon) },
-    { label: 'Script log', run: () => openExtensionTab(viewerUrl(row.id, 'log')).then(closeSoon) },
+    pageItem('Script details', viewerUrl(row.id)),
+    pageItem('Script log', viewerUrl(row.id, 'log')),
     { separator: true, hidden: !perScriptReload },
     // Greyed for a script that won't run (its box or its collection is
     // off): running it alone or keeping it out would do nothing.
@@ -503,16 +496,48 @@ function commandList(row: PopupRow): HTMLElement {
   return list;
 }
 
-// A link to a per-script page: a plain click opens it in a new tab and
-// closes the popup; a modified click is left to the browser.
-function openPage(ev: MouseEvent, url: string): void {
-  if (!isPlainClick(ev)) return;
-  ev.preventDefault();
-  quietly(openExtensionTab(url).then(closeSoon));
+// How a click on something that opens a page opens it, after the
+// browser's gestures for a link:
+// - plain: `openPlain`, then the popup closes;
+// - middle or Ctrl/Cmd: a background tab, and the popup (and any menu)
+//   stays open, to open several pages in a row;
+// - Shift with either of those: a new tab in front;
+// - Shift alone: a new window.
+// The popup closes for the last two, since they leave it behind.
+// Handled here even on links: Chrome closes a real popup when a link
+// opens a tab its own way. Alt is left to the browser.
+type OpenHow = 'plain' | 'background' | 'tab' | 'window';
+
+function openHow(ev: MouseEvent): OpenHow | null {
+  if (ev.altKey) return null;
+  if (ev.button === 1 || (ev.button === 0 && (ev.ctrlKey || ev.metaKey))) {
+    return ev.shiftKey ? 'tab' : 'background';
+  }
+  if (ev.button !== 0) return null;
+  return ev.shiftKey ? 'window' : 'plain';
 }
 
-function isPlainClick(ev: MouseEvent): boolean {
-  return ev.button === 0 && !ev.ctrlKey && !ev.metaKey && !ev.shiftKey && !ev.altKey;
+// Wire `target` to open `url` by the click's gesture. `openPlain`
+// defaults to a plain new tab. Each closes the popup only once the page
+// is open: closing it ends this page, and an open still in flight with
+// it. The middle button fires `auxclick`, not `click`.
+function onOpenClick(
+  target: HTMLElement, url: string,
+  openPlain: () => Promise<unknown> = () => openExtensionTab(url).then(closeSoon),
+  onOpened?: (how: OpenHow) => void,
+): void {
+  const handle = (ev: MouseEvent): void => {
+    const how = openHow(ev);
+    if (!how) return;
+    ev.preventDefault();
+    onOpened?.(how);
+    if (how === 'plain') quietly(openPlain());
+    else if (how === 'background') quietly(openBackgroundTab(url));
+    else if (how === 'tab') quietly(openExtensionTab(url).then(closeSoon));
+    else quietly(openExtensionWindow(url).then(closeSoon));
+  };
+  target.addEventListener('click', handle);
+  target.addEventListener('auxclick', handle);
 }
 
 // ---------- Actions ----------
@@ -569,8 +594,19 @@ interface MenuItem {
   disabled?: boolean;
   title?: string;
   run?: () => Promise<unknown>;
+  // The page `run` opens, for the other ways to open it (`onOpenClick`).
+  url?: string;
   separator?: boolean;
   hidden?: boolean;
+}
+
+// Menu items that open a page, by any of `onOpenClick`'s gestures.
+function pageItem(label: string, url: string): MenuItem {
+  return { label, run: () => openExtensionTab(url).then(closeSoon), url };
+}
+
+function namedPageItem(label: string, page: NamedPage, hash?: string): MenuItem {
+  return { label, run: () => openNamedTab(page, { hash }).then(closeSoon), url: namedPageUrl(page, hash) };
 }
 
 let openMenuEl: HTMLElement | null = null;
@@ -596,10 +632,15 @@ function openMenu(btn: HTMLButtonElement, items: MenuItem[]): void {
     const b = el('button', { type: 'button', role: 'menuitem' }, item.label ?? '') as HTMLButtonElement;
     b.disabled = item.disabled === true;
     if (item.title) b.title = item.title;
-    b.addEventListener('click', () => {
-      closeMenu();
-      if (item.run) quietly(item.run());
-    });
+    if (item.url && item.run) {
+      // A page: a background open leaves the menu up, for the next one.
+      onOpenClick(b, item.url, item.run, (how) => { if (how !== 'background') closeMenu(); });
+    } else {
+      b.addEventListener('click', () => {
+        closeMenu();
+        if (item.run) quietly(item.run());
+      });
+    }
     menu.append(b);
   }
   document.body.append(menu);

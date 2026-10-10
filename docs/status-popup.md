@@ -215,6 +215,27 @@ by shown name (`compareScriptNames`).
       banner's button does. Its tooltip says which.
   - **⋯ menu** for the script.
 
+### Opening pages
+
+Anything that opens a page (names, pills, the header's icon, name and
+**Open** button, menu items) takes the browser's link gestures
+(`onOpenClick` in `popup.ts`):
+
+| Click | Opens | Popup |
+|---|---|---|
+| Plain | A new tab, or the Collections / Options tab reused | Closes |
+| Middle, or Ctrl/Cmd | A background tab | Stays open, with any menu |
+| Shift + middle, or Ctrl/Cmd + Shift | A new tab in front | Closes |
+| Shift | A new window | Closes |
+
+- Staying open lets several pages be opened in a row.
+- The others close it: the popup is left behind anyway, and would
+  otherwise linger until that window is next focused.
+- Handled by the popup even on links: Chrome closes a real popup when a
+  link opens a tab the browser's own way.
+  - The middle button fires `auxclick`, not `click`.
+  - Alt-click on a link is left to the browser.
+
 ### Script ⋯ menu
 
 - Script details (script page).

@@ -16,6 +16,19 @@ async function openPopup(context: BrowserContext, extensionId: string, tabId: nu
   return popup;
 }
 
+// A popup in a tab that closes as a real popup would (`close=1`). A
+// real popup's close ends the page at once; navigating away stands in
+// for that, so a test can see it happen.
+async function openClosablePopup(context: BrowserContext, extensionId: string, tabId: number): Promise<Page> {
+  const popup = await context.newPage();
+  await popup.addInitScript(() => {
+    window.close = () => { location.href = 'about:blank#closed'; };
+  });
+  await popup.goto(`chrome-extension://${extensionId}/popup.html?tab=${tabId}&close=1`);
+  await expect(popup.locator('body[data-ready="true"]')).toBeAttached();
+  return popup;
+}
+
 // "Collection: script, script | Collection: …" per section, from the
 // rendered page.
 async function sectionText(popup: Page, section: 'enabled' | 'disabled'): Promise<string> {
@@ -411,19 +424,89 @@ test.describe('toolbar popup', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
-    // A real popup's close ends the page at once, along with anything it
-    // still had in flight. `close=1` has this tab close as a popup
-    // would, and navigating away stands in for the close itself.
-    const popup = await extensionContext.newPage();
-    await popup.addInitScript(() => {
-      window.close = () => { location.href = 'about:blank#closed'; };
-    });
-    await popup.goto(`chrome-extension://${extensionId}/popup.html?tab=${tabId}&close=1`);
-    await expect(popup.locator('body[data-ready="true"]')).toBeAttached();
+    // The close ends the page, along with an open still in flight.
+    const popup = await openClosablePopup(extensionContext, extensionId, tabId);
     const collections = extensionContext.waitForEvent('page', (p) => p.url().includes('/collections.html'));
     await popup.locator(`.group-head[data-collection-id="${b}"] .collection-name`).click();
     expect(new URL((await collections).url()).hash).toBe(`#collection-${b}`);
     await expect(popup).toHaveURL('about:blank#closed');
+    await popup.close();
+    await page.close();
+  });
+
+  test('a middle or Ctrl click opens a background tab and leaves the popup and menu open', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker, extensionId,
+  }) => {
+    await twoCollections(sm, fixtureServer.baseUrl);
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    const tabId = await activeTabId(getServiceWorker);
+    await waitForTabState(sm, tabId, (s) => s.rows.includes('Alpha | OK'), 'scripts ran');
+    const popup = await openClosablePopup(extensionContext, extensionId, tabId);
+    const sw = await getServiceWorker();
+
+    const collections = extensionContext.waitForEvent('page', (p) => p.url().includes('/collections.html'));
+    await popup.locator('#open-collections').click({ button: 'middle' });
+    await collections;
+
+    // A link too: Chrome would close a real popup for its own new tab.
+    const viewer = extensionContext.waitForEvent('page', (p) => p.url().includes('/userscript.html'));
+    await popup.locator('.row', { hasText: 'Alpha' }).locator('.script-name').click({ modifiers: ['ControlOrMeta'] });
+    await (await viewer).close();
+
+    await popup.locator('.row', { hasText: 'Alpha' }).locator('button.kebab').click();
+    const log = extensionContext.waitForEvent('page', (p) => p.url().includes('#Log'));
+    await popup.getByRole('menuitem', { name: 'Script log' }).click({ button: 'middle' });
+    const logTab = await log;
+    await expect(popup.getByRole('menuitem', { name: 'Script details' })).toBeVisible();
+    // Opened in the background: the popup's own tab is still the active one.
+    expect(await popup.evaluate(async () => (await chrome.tabs.getCurrent())?.active)).toBe(true);
+    expect(popup.url()).toContain('popup.html');
+    await logTab.close();
+    await closeCollectionsTabs(sw);
+    await popup.close();
+    await page.close();
+  });
+
+  test('Shift opens a new window, and Shift with middle or Ctrl a front tab, closing the popup', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker, extensionId,
+  }) => {
+    await twoCollections(sm, fixtureServer.baseUrl);
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    const tabId = await activeTabId(getServiceWorker);
+    await waitForTabState(sm, tabId, (s) => s.rows.includes('Alpha | OK'), 'scripts ran');
+    const sw = await getServiceWorker();
+    const windows = (): Promise<number> => sw.evaluate(async () => (await chrome.windows.getAll()).length);
+    const before = await windows();
+    const alpha = (popup: Page) => popup.locator('.row', { hasText: 'Alpha' });
+
+    let popup = await openClosablePopup(extensionContext, extensionId, tabId);
+    let opened = extensionContext.waitForEvent('page', (p) => p.url().includes('/userscript.html'));
+    await alpha(popup).locator('.script-name').click({ modifiers: ['Shift'] });
+    let tab = await opened;
+    expect(await windows()).toBe(before + 1);
+    await expect(popup).toHaveURL('about:blank#closed');
+    await tab.close();
+    await popup.close();
+
+    popup = await openClosablePopup(extensionContext, extensionId, tabId);
+    opened = extensionContext.waitForEvent('page', (p) => p.url().includes('#Log'));
+    await alpha(popup).locator('.pill').click({ modifiers: ['ControlOrMeta', 'Shift'] });
+    tab = await opened;
+    expect(await tab.evaluate(async () => (await chrome.tabs.getCurrent())?.active)).toBe(true);
+    await expect(popup).toHaveURL('about:blank#closed');
+    await tab.close();
+    await popup.close();
+
+    popup = await openClosablePopup(extensionContext, extensionId, tabId);
+    await alpha(popup).locator('button.kebab').click();
+    opened = extensionContext.waitForEvent('page', (p) => p.url().includes('/userscript.html'));
+    await popup.getByRole('menuitem', { name: 'Script details' }).click({ button: 'middle', modifiers: ['Shift'] });
+    tab = await opened;
+    expect(await tab.evaluate(async () => (await chrome.tabs.getCurrent())?.active)).toBe(true);
+    await expect(popup).toHaveURL('about:blank#closed');
+    await tab.close();
     await popup.close();
     await page.close();
   });
