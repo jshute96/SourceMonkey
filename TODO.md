@@ -14,15 +14,36 @@ A backlog of **candidates**, not a list of obligations.
 
 ## Skeleton
 
-- Injection follow-ups — see the **Limitations / future work**
-  section of [docs/injection.md](docs/injection.md): `@noframes` /
-  `allFrames`. (`@grant` / `GM_*`, `@require`, and `@resource` are
-  all implemented; per-area follow-ups below.)
-  - `allFrames` is no longer a self-contained change: `src/extension/gm-menu.ts`
-    keys menu commands by one `documentId` per tab, which only works
-    while every wrapper shares the top-level document. Re-key it by
-    (tabId, documentId) first, or subframe and top-frame scripts will
-    wipe each other's menu commands.
+- Frames follow-ups (see [docs/frames.md](docs/frames.md)):
+  - sm-dev reads a script's state and evaluates in its world in the top
+    frame only. A script that runs only in a frame needs a way to pick
+    the frame.
+  - Frames with no URL of their own (`about:blank`, `srcdoc`) get no
+    injection: `chrome.userScripts` has no `matchOriginAsFallback`.
+    Revisit if Chrome adds it.
+  - Removing an iframe sends no event, so the badge can count a run in
+    a removed frame until the popup opens or another frame navigates.
+  - `GM_saveTab` / `GM_getTab` (per-tab storage shared by a tab's
+    frames) become more useful now that scripts in frames talk to each
+    other.
+  - For `about:blank` / `srcdoc` frames: no match pattern reaches them
+    (not even `<all_urls>`), so registration can't. The supported route
+    would be on-request injection: watch for such frames and run the
+    scripts matching their parent's URL in them with
+    `chrome.userScripts.execute` (`documentIds`), as manual runs already
+    do for the top frame. Check first that Chrome allows `execute` into
+    these frames; only worth it if real scripts need it.
+  - Reload fast path for frames: let a frame's check-pending use the
+    tab's fast-path entry, so frames (and frame-only scripts) run the
+    edited copy on the reload too.
+  - A command registered in several frames shows once per frame, with
+    nothing to tell them apart. Label it with the frame's host if a real
+    script needs it.
+  - sm-dev keeps a frame's menu commands after the frame has gone
+    (`forgetDocumentState` drops records per page only).
+  - Every frame's copy asks the worker whether to run
+    (`sm:check-pending`) on the document-start path. Fine at normal frame
+    counts; a page with dozens of matching frames pays it per frame.
 - Reload fast-path: once HTTP-fetched scripts land, split the current
   single 500ms timeout in `handleCheckPending` into a 500ms detection
   window and a separate ~5s loading window. File:// reads finish well
@@ -341,16 +362,6 @@ wasn't checked.
     `cloneInto is not defined`.
   - VM defines pass-through stand-ins on Chrome (`makeComponentUtils`
     in `src/injected/web/util.js`). Cheap to copy.
-- **Scripts never run in iframes** (`needs-iframes`: 461650, 382039, 492877,
-  382285, 27481, 30482, 36904, 31088, 376404, 384610, 381868, 439388,
-  455610, 433861, 436028, 445583, 445584).
-  - reCAPTCHA and hCaptcha helpers must run inside the captcha frames,
-    and Sketchfab downloaders inside the same-origin viewer frame.
-    See the `allFrames` item under "Skeleton" for what blocks it.
-  - bonk.io's game and Nitro Type's whole race page now sit in
-    same-origin iframes, so scripts for those sites need it too.
-  - TM ran 36904, 439388, 455610, 445583 and 445584 in the frame and
-    they worked (`--manager tm`).
 - **Granted scripts run in the isolated world** (`needs-page-globals`:
   561432, 382030, 485608, 395461, 37314, 382359, 386908, 387955,
   432423, and earlier ones; `needs-custom-elements`: 397848).

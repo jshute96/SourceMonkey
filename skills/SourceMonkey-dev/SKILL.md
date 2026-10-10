@@ -264,6 +264,10 @@ $R status
 - On a single-page app the URL can change without a load. `match` in a
   run (no arguments) checks the selected script against the current
   tab's URL now.
+- A script runs in each iframe whose own URL it matches, unless it has
+  `@noframes`. Its start shows as `started in an iframe on <frame URL>`.
+  - `click`/`snapshot` refs reach into frames (`f2e6`), but reading
+    the script's state and `eval` in its world reach the top frame only.
 
 ### Finding selectors
 

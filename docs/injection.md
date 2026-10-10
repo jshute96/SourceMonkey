@@ -2106,18 +2106,6 @@ and the decision timeout remains the hard ceiling for every `@run-at`.
 
 ## Limitations / future work
 
-- **No frame control.** We don't set `allFrames`, so scripts only run
-  in the top frame. Adding `@noframes` parsing + a `allFrames` flip
-  is straightforward.
-  - **What it would break:** the menu-command registry
-    (`src/extension/gm-menu.ts`) holds ONE `documentId` per tab, and a register
-    naming a different document replaces the state. That is safe only
-    because every wrapper in a tab shares the top-level document
-    today. With scripts in subframes, a subframe register and a
-    top-frame register name different documents and would clobber
-    each other's commands, alternating as each fires.
-  - Whoever flips `allFrames` needs to key that registry by
-    (tabId, documentId) and merge across a tab's live documents for
-    the menu render — and to decide what a navigation clear means
-    when only one frame navigated. See
-    [GM-APIs.md](GM-APIs.md#lifecycle).
+- **Frames.** Scripts run in every frame whose URL they match, unless
+  `@noframes`; frames with no URL of their own (`about:blank`,
+  `srcdoc`) get none. See [frames.md](frames.md).

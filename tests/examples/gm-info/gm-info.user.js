@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name        SourceMonkey example: GM_info
+// @name        SourceMonkey example: gm-info: GM_info
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     2.1.0
+// @version     2.1.1
 // @description Hand GM_info to the page, which renders it.
 // @author      SourceMonkey examples
 // @copyright   2026, SourceMonkey examples

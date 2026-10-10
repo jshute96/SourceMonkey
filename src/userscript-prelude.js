@@ -777,8 +777,14 @@
 
   /* ---------- startup logs (page-console diagnostics) ---------- */
 
-  /* Fire the script's startupLogs to the page console exactly once on
-     activation. Same try/catch wrap as the old wrapper splice — pages
+  /* Whether this document is the tab's top frame. Reading `window.top`
+     is allowed across origins, so this doesn't throw in practice. */
+  function inTopFrame() {
+    try { return window.top === window; } catch (_e) { return false; }
+  }
+
+  /* Fire the script's startupLogs to the page console once per page
+     (see `initScript`). Same try/catch wrap as the old wrapper splice — pages
      that clobber console can't break us. */
   function emitStartupLogs(cfg) {
     var logs = cfg.startupLogs;
@@ -817,7 +823,10 @@
     /* Past the matcher, so only a document we actually run on reports
        its focus. Not per-script — the flag inside is module-scoped. */
     installFocusSignal();
-    emitStartupLogs(cfg);
+    /* Once per page: all its frames share one DevTools console. A
+       frame's copy prints them only if the worker says so, with its
+       decision (docs/frames.md). */
+    if (inTopFrame()) emitStartupLogs(cfg);
     if (cfg.manualRun) {
       startManualRun(entry, cfg);
       return entry;
@@ -857,6 +866,7 @@
     }
     awaitDecision(entry, function (decision) {
       entry.decision = decision;
+      if (decision && decision.startupLogs === true && !inTopFrame()) emitStartupLogs(cfg);
       if (entry.decision.action === "skip") {
         /* The @run-at gate may already have fired; `flushPending`
            re-checks `skip` so a queued body can't slip through, and

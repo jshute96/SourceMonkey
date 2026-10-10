@@ -1695,8 +1695,10 @@ function wireHostOutput(host: ExtensionHost, emit: (fields: LogFields) => void, 
   // report rather than twice; not for a rule miss, which only the run
   // finds. A throw is the script's own error too, and the page's console
   // shows it.
-  host.on('start', (r: StartReport) => event(r, 'started', `${r.name} started on ${r.url}`, ['sm']));
-  host.on('skip', (r: SkipReport) => event(r, 'skipped', `${r.name} skipped on ${r.url}: ${r.reason}`, r.ruleMiss ? undefined : ['sm']));
+  // A report from an iframe says so: its URL is the frame's, not the page's.
+  const on = (r: { url: string; frame?: true }): string => `${r.frame ? 'in an iframe ' : ''}on ${r.url}`;
+  host.on('start', (r: StartReport) => event(r, 'started', `${r.name} started ${on(r)}`, ['sm']));
+  host.on('skip', (r: SkipReport) => event(r, 'skipped', `${r.name} skipped ${on(r)}: ${r.reason}`, r.ruleMiss ? undefined : ['sm']));
   host.on('manual', (r: ManualReport) => event(r, 'manual', `${r.name} is waiting to be run on ${r.url}, since it has @run-at context-menu. Use menu to run it.`));
   host.on('script-error', (r: ErrorReport) => {
     const frames = r.stack ? r.stack.split('\n').slice(1, 4).map((line) => `\n    ${decodeOwnRefs(line.trim())}`).join('') : '';

@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name        SourceMonkey example: GM storage
+// @name        SourceMonkey example: gm-storage: GM storage
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.0
+// @version     1.0.1
 // @description Set/get/delete/list per-script GM storage values via a form.
 // @match       *://*/gm-storage/gm-storage.html
 // @match       file:///*/gm-storage/gm-storage.html

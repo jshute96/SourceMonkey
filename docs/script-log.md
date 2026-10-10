@@ -50,8 +50,21 @@ interface LogEntry {
   location?: DiagnosticLocation;  // a place in the script's own files
   state?: LoadState;       // the Status-badge state this event moved the script into
   resetsLogLevel?: boolean;  // clears `loglevel:` as it is written — a fresh start
+  collapseKey?: string;    // later entries with this key fold into this one
+  count?: number;          // how many it stands for, once folded
 }
 ```
+
+### Folded entries
+
+- An append with `collapse: { key, message(count) }` folds into the
+  entry already written with that key, while it's still in the Log.
+  - That entry keeps its place and first time. Its count goes up, and
+    `message(count)` rewords it.
+  - It isn't a new entry, so sm-dev's entry listener isn't told.
+- Used for reports from a page's iframes (see
+  [frames.md](frames.md#script-log)), which would otherwise fill a
+  script's Log in a few loads of a page full of frames.
 
 `state` is set on entries that record a **state transition** rather
 than something the script did. Type `LoadState` (`script-display.ts`):

@@ -32,6 +32,7 @@ import { urlMatchesScript } from '../url-match.js';
 import { resolveScriptWorld, type InjectionWorld } from '../script-world.js';
 import { grantedSubsystems, type ApiSubsystem } from '../gm-api-catalog.js';
 import { isManualScript } from '../script-build.js';
+import { hasTag } from '../userscript-header.js';
 
 export interface MatchedScript {
   id: string;
@@ -50,6 +51,8 @@ export interface MatchedScript {
   // A manual script (`@run-at context-menu`), which runs only on
   // request. See docs/manual-scripts.md.
   manual?: true;
+  // `@noframes`: runs in the top frame only (docs/frames.md).
+  noframes?: true;
 }
 
 const SCRIPT_PREFIX = 'script:';
@@ -140,6 +143,7 @@ function toEntry(script: ScriptMeta): CacheEntry | null {
     local: isFileUrl(script.fileUrl),
     ...smDevRunField(script.fileUrl),
     ...(isManualScript(script) ? { manual: true as const } : {}),
+    ...(script.header && hasTag(script.header, 'noframes') ? { noframes: true as const } : {}),
   };
 }
 
@@ -322,12 +326,24 @@ export function findMatchesForUrl(url: string, kind: MatchKind = 'load'): Matche
         world: entry.world,
         ...(entry.smDevRun !== undefined ? { smDevRun: entry.smDevRun } : {}),
         ...(entry.manual ? { manual: true as const } : {}),
+        ...(entry.noframes ? { noframes: true as const } : {}),
       });
     }
   }
   // Stable display order for the tooltip.
   out.sort((a, b) => compareScriptNames(a.name, b.name));
   return out;
+}
+
+// What the index knows of script `id` (any `ok` script, enabled or
+// not), or undefined for one it doesn't hold.
+export function indexedScript(id: string): Pick<MatchedScript, 'world' | 'noframes' | 'manual'> | undefined {
+  const entry = cache.get(id);
+  return entry && {
+    world: entry.world,
+    ...(entry.noframes ? { noframes: true as const } : {}),
+    ...(entry.manual ? { manual: true as const } : {}),
+  };
 }
 
 // Whether `id` is a manual script (`@run-at context-menu`). False for

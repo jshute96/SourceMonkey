@@ -202,6 +202,11 @@ user before elaborating further. Default to action over planning.
   concern (see `tests/e2e/` for the current split).
 
 ## Editing example userscripts
+- When adding an example under `tests/examples/`, follow the page
+  skeleton and the "Adding a new example" checklist in
+  `tests/examples/README.md`: the footer, the `@name` prefix, the
+  README table row and the `index.html` link are easy to miss.
+  `tests/unit/examples.test.mjs` checks them.
 - When changing the body of any `tests/examples/**/*.user.js`, bump
   its `@version` header. `scripts/sync-manager-scripts.mjs` (and the
   cross-manager specs) compares local `@version` against the installed

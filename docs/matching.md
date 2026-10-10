@@ -341,6 +341,8 @@ For each tab we:
 
 - `computeBadge` (`src/extension/tab-status.ts`) gives each script in
   the union of expected and actual a status.
+  - Scripts running in the page's iframes count too, one row each,
+    worst run first (see [frames.md](frames.md#status-badge-and-popup)).
 - The popup's view (`buildPopupView`) builds on those, adding the
   statuses only it tells apart. See [status-popup.md](status-popup.md#status-pills).
 - `summarizeToolbar` (`src/extension/toolbar-summary.ts`) sums up the

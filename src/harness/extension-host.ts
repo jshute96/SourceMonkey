@@ -14,9 +14,8 @@
 //   it: a report stamped before its document began would not count for
 //   it, and a menu command recorded then would be cleared by the
 //   navigation that follows. Only a top-frame event's document counts:
-//   SourceMonkey runs scripts in top frames only today, but an iframe's
-//   events would carry the iframe's document, which no navigation of
-//   the tab's would ever match.
+//   an iframe's events carry the iframe's document, which no navigation
+//   of the tab's would ever match.
 // - The run reports only on its own tabs: events from others, and Log
 //   entries made in them, are left out.
 
@@ -315,7 +314,7 @@ export class ExtensionHost extends HarnessHost {
     const tabId = page && this.tabsByPage.get(page);
     const id = this.extensionIds.get(entry.scriptId);
     if (tabId === undefined || !id) return false;
-    return this.link.fireMenu(tabId, id, entry.commandId);
+    return this.link.fireMenu(tabId, id, entry.commandId, entry.documentId);
   }
 
   private ingest(event: ExtensionEvent): void {
@@ -390,11 +389,11 @@ export class ExtensionHost extends HarnessHost {
       return;
     }
     if (event.kind === 'menu') {
-      if (event.op === 'add') this.registerMenu(state.page, runId, event.commandId, event.name ?? '');
-      else this.unregisterMenu(state.page, runId, event.commandId);
+      if (event.op === 'add') this.registerMenu(state.page, runId, event.commandId, event.name ?? '', event.documentId || undefined);
+      else this.unregisterMenu(state.page, runId, event.commandId, event.documentId || undefined);
       return;
     }
-    const fields = { scriptId: runId, name: event.name, url: event.url };
+    const fields = { scriptId: runId, name: event.name, url: event.url, ...(event.topFrame === false ? { frame: true as const } : {}) };
     if (event.type === SM_START_MSG || event.type === SM_SWAPPED_MSG) {
       this.recordStart(state.page, fields);
     } else if (event.type === SM_ERROR_MSG) {

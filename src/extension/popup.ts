@@ -92,7 +92,8 @@ pageMenuBtn.addEventListener('click', () => {
       label: RELOAD_NO_SCRIPTS_LABEL,
       run: () => reloadTab({ kind: 'none' }),
       // Nothing to keep out on a page no script matches.
-      hidden: !view?.perScriptReload || (view.enabled.length === 0 && view.disabled.length === 0),
+      hidden: !view?.perScriptReload
+        || (view.enabled.length === 0 && view.frames.length === 0 && view.disabled.length === 0),
     },
     { label: 'SourceMonkey options', run: () => openNamedTab('options').then(closeSoon) },
   ]);
@@ -240,12 +241,15 @@ function draw(v: PopupView | null): void {
     reload.addEventListener('click', () => quietly(reloadPlain()));
     reloadBarEl.append(el('div', { class: 'banner-row reload' }, el('span', {}, v.banner), reload));
   }
-  const { enabled, manual, disabled } = arrange(v);
-  if (enabled.length === 0 && manual.length === 0 && disabled.length === 0) {
+  const { enabled, frames, manual, disabled } = arrange(v);
+  if (enabled.length === 0 && frames.length === 0 && manual.length === 0 && disabled.length === 0) {
     scriptsEl.append(el('div', { class: 'empty-page' }, POPUP_NO_SCRIPTS));
     return;
   }
   renderSection('Enabled', enabled, 'No enabled scripts match this page.');
+  // Only when there are some: scripts that run in the page's iframes
+  // without matching the page itself (docs/frames.md).
+  if (frames.length > 0) renderSection('Active in frames', frames, '');
   // Only when there are some: most pages have no manual scripts.
   if (manual.length > 0) renderSection('Manual', manual, '');
   renderSection('Disabled', disabled, 'None');
@@ -263,8 +267,8 @@ function draw(v: PopupView | null): void {
 // keeps being listed even when another copy of its script becomes the
 // one the identity rule would pick.
 
-type SectionKey = 'enabled' | 'manual' | 'disabled';
-const SECTION_KEYS: readonly SectionKey[] = ['enabled', 'manual', 'disabled'];
+type SectionKey = 'enabled' | 'frames' | 'manual' | 'disabled';
+const SECTION_KEYS: readonly SectionKey[] = ['enabled', 'frames', 'manual', 'disabled'];
 interface PlacedGroup { collectionId: string; ids: string[] }
 let layout: Record<SectionKey, PlacedGroup[]> | null = null;
 // The URL the layout was placed for. On another URL (the page
@@ -289,7 +293,7 @@ function arrange(v: PopupView): Record<SectionKey, PopupGroup[]> {
   if (!layout) {
     const place = (groups: PopupGroup[]): PlacedGroup[] =>
       groups.map((g) => ({ collectionId: g.collection.id, ids: g.rows.map((r) => r.id) }));
-    layout = { enabled: place(v.enabled), manual: place(v.manual), disabled: place(v.disabled) };
+    layout = { enabled: place(v.enabled), frames: place(v.frames), manual: place(v.manual), disabled: place(v.disabled) };
   } else {
     // A row whose collection changed (the script moved) leaves its old
     // group; then anything not placed yet goes at the end of its group,
@@ -323,11 +327,13 @@ function arrange(v: PopupView): Record<SectionKey, PopupGroup[]> {
       rows: g.ids.map((id) => fresh.get(id)?.row).filter((r): r is PopupRow => r !== undefined),
     }))
     .filter((g) => g.collection !== undefined && g.rows.length > 0);
-  return { enabled: build(layout.enabled), manual: build(layout.manual), disabled: build(layout.disabled) };
+  return {
+    enabled: build(layout.enabled), frames: build(layout.frames), manual: build(layout.manual), disabled: build(layout.disabled),
+  };
 }
 
 function renderSection(title: string, groups: PopupGroup[], emptyText: string): void {
-  const section = el('section', { class: 'script-section', 'data-section': title.toLowerCase() });
+  const section = el('section', { class: 'script-section', 'data-section': title.toLowerCase().replace(/ /g, '-') });
   section.append(el('div', { class: 'section-head' }, title));
   if (groups.length === 0) section.append(el('div', { class: 'empty-note' }, emptyText));
   for (const group of groups) {
@@ -491,7 +497,7 @@ function commandList(row: PopupRow): HTMLElement {
   if (!open) return list;
   for (const cmd of row.commands) {
     const btn = el('button', { type: 'button', class: 'command' }, cmd.name);
-    btn.addEventListener('click', () => quietly(runCommand(row.id, cmd.commandId)));
+    btn.addEventListener('click', () => quietly(runCommand(row.id, cmd.commandId, cmd.documentId)));
     list.append(btn);
   }
   return list;
@@ -521,9 +527,11 @@ async function reloadTab(mode: ReloadMode): Promise<void> {
   await chrome.runtime.sendMessage(req);
 }
 
-async function runCommand(scriptId: string, commandId: string): Promise<void> {
+async function runCommand(scriptId: string, commandId: string, documentId?: string): Promise<void> {
   if (tabId === null) return;
-  const req: PopupCommandRequest = { type: POPUP_COMMAND_MESSAGE, tabId, scriptId, commandId };
+  const req: PopupCommandRequest = {
+    type: POPUP_COMMAND_MESSAGE, tabId, scriptId, commandId, ...(documentId ? { documentId } : {}),
+  };
   await chrome.runtime.sendMessage(req);
   closeSoon();
 }

@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name        SourceMonkey example: @run-at context-menu
+// @name        SourceMonkey example: run-at-context-menu: @run-at context-menu
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.1
+// @version     1.0.2
 // @description Runs only when asked: each run adds a line to the page.
 // @match       *://*/run-at-context-menu/run-at-context-menu.html
 // @match       file:///*/run-at-context-menu/run-at-context-menu.html

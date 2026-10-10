@@ -17,6 +17,7 @@ import {
   BADGE_RED,
   SM_DEV_CONTROL_LABEL,
   countsOnBadge,
+  runsHere,
   type TabMatchState,
 } from './tab-status.js';
 
@@ -40,13 +41,13 @@ const is = (n: number) => (n === 1 ? 'is' : 'are');
 export function summarizeToolbar(view: PopupView, state: TabMatchState | null): ToolbarSummary {
   // An invalid script that isn't enabled is listed for reference only:
   // it wasn't going to run, so it's not this page's problem.
-  const rows: PopupRow[] = [...view.enabled, ...view.manual, ...view.disabled]
+  const rows: PopupRow[] = [...view.enabled, ...view.frames, ...view.manual, ...view.disabled]
     .flatMap((g) => g.rows)
     .filter((r) => r.status !== 'INVALID' || r.active);
   const count = (pred: (r: PopupRow) => boolean) => rows.filter(pred).length;
   const withStatus = (...statuses: string[]) => count((r) => r.status !== null && statuses.includes(r.status));
 
-  const running = count((r) => state?.actual[r.id] != null);
+  const running = count((r) => state != null && runsHere(state, r.id));
   const errors = withStatus('ERROR');
   const rejected = withStatus('REJECTED');
   const invalid = withStatus('INVALID');

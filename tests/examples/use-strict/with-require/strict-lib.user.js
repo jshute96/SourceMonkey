@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name        SourceMonkey example: 'use strict' with a @require (strict-lib)
+// @name        SourceMonkey example: use-strict: 'use strict' with a @require (strict-lib)
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.1
+// @version     1.0.2
 // @description Reports whether the script runs in strict mode when it has a @require.
 // @match       *://*/use-strict/use-strict.html
 // @match       file:///*/use-strict/use-strict.html

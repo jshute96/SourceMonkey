@@ -1006,6 +1006,9 @@ export async function buildRegistrationSpec(
     }),
     runAt: 'document_start',
     world,
+    // Every frame whose own URL matches, as in TM and VM, unless the
+    // script opts out. See docs/frames.md.
+    allFrames: !(script.header && hasTag(script.header, 'noframes')),
   };
   if (matches.length > 0) spec.matches = matches;
   if (includeGlobs.length > 0) spec.includeGlobs = includeGlobs;
@@ -1150,6 +1153,13 @@ export function buildBridgeSpec(activeSpecs: RegistrationSpec[]): RegistrationSp
   return scope ? bridgeSpec(scope) : null;
 }
 
+// The helpers (the bridge, the GM runtime) go into frames whatever
+// their scripts' `@noframes`: they're scoped by a pattern union, not
+// per script, and one missing from a frame where a script runs breaks
+// it, while one in a frame where only `@noframes` scripts match just
+// sits idle. See docs/frames.md.
+const HELPER_ALL_FRAMES = true;
+
 // The spec itself, with no "is it wanted?" question attached — the
 // incremental sync answers that from the whole registration set rather
 // than from one sync's spec list. `scope` is never empty: a MAIN-world
@@ -1160,6 +1170,8 @@ function bridgeSpec(scope: GmRuntimeScope): RegistrationSpec {
     js: [{ code: WRAPPER_BRIDGE + `\n//# sourceURL=${BRIDGE_SOURCE_URL}\n` }],
     runAt: 'document_start',
     world: 'USER_SCRIPT',
+    // In frames too, whether or not its scripts are: see `HELPER_ALL_FRAMES`.
+    allFrames: HELPER_ALL_FRAMES,
   };
   applyScope(spec, scope);
   return spec;
@@ -1209,6 +1221,7 @@ export function buildGmRuntimeSpecs(
       js: [{ code: WRAPPER_GM_RUNTIME + `\n//# sourceURL=${GM_RUNTIME_SOURCE_URL}\n` }],
       runAt: 'document_start',
       world,
+      allFrames: HELPER_ALL_FRAMES,
     };
     applyScope(spec, s);
     out.push(spec);

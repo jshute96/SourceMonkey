@@ -2831,6 +2831,12 @@
        - Arguments are ignored — neither method takes any. */
   var windowControlInstalled = _ObjectCreate(null);
 
+  /* Whether this document is the tab's top frame. A cross-origin parent
+     makes `window.top` itself readable, so the comparison doesn't throw. */
+  function isTopFrame() {
+    try { return window.top === window.self; } catch (_te) { return false; }
+  }
+
   /* Replace one method. Idempotent per name: a second granting script
      (or a re-registration inside the same document) reuses the
      override that's already there.
@@ -2842,6 +2848,10 @@
      degrading quietly is the whole story. */
   function installWindowControl(scriptId, method) {
     if (windowControlInstalled[method]) return;
+    /* As in TM: a frame keeps the page's own `close`, which is a no-op
+       there. The override closes the whole tab, which a frame's
+       `window.close()` never does (docs/frames.md). */
+    if (method === "close" && !isTopFrame()) return;
     var msgType = (method === "close") ? "sm:gm-window-close" : "sm:gm-window-focus";
     var replacement = function () {
       try {

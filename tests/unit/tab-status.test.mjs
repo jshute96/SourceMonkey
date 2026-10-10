@@ -10,6 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  applyFrameReport,
   applyScriptReport,
   clearScriptStale,
   computeBadge,
@@ -18,6 +19,7 @@ import {
   markScriptStale,
   mergeMatches,
   noteManualRun,
+  pruneFrameRuns,
   setCurrentDoc,
   writeDocState,
   BADGE_GREEN,
@@ -634,4 +636,73 @@ test('computeBadge: a document loaded before the extension started → UNTRACKED
   };
   const view = computeBadge(st, new Set(['b']));
   assert.deepEqual(view.rows.map((r) => [r.name, r.status]), [['Alpha', 'UNTRACKED'], ['Beta', 'REJECTED']]);
+});
+
+// ---------- Runs in iframes (docs/frames.md) ----------
+
+const frameRun = (state, name, frameId = 1) => ({ state, name, frameId, url: `https://frame/${frameId}` });
+
+test('frames: a script running only in frames is one row, counted once, framesOnly', () => {
+  let st = { documentId: DOC, url: 'https://x', matches: [], actual: {} };
+  st = applyFrameReport(st, 'f', 'fd1', frameRun('started', 'Framed', 1));
+  st = applyFrameReport(st, 'f', 'fd2', frameRun('started', 'Framed', 2));
+  const view = badge(st);
+  assert.equal(view.count, 1);
+  assert.equal(view.color, BADGE_GREEN);
+  assert.deepEqual(view.rows.map((r) => `${r.name}|${r.status}|${r.framesOnly === true}`), ['Framed|OK|true']);
+});
+
+test('frames: the row takes the worst of its runs', () => {
+  let st = {
+    documentId: DOC, url: 'https://x',
+    matches: [expected('a', 'Alpha')],
+    actual: { a: { state: 'started', name: 'Alpha' } },
+  };
+  st = applyFrameReport(st, 'a', 'fd1', frameRun('started', 'Alpha'));
+  st = applyFrameReport(st, 'a', 'fd2', { ...frameRun('error', 'Alpha', 2), message: 'Boom' });
+  const view = badge(st);
+  assert.equal(view.color, BADGE_RED);
+  assert.deepEqual(view.rows.map((r) => `${r.status}|${r.message}|${r.framesOnly === true}`), ['ERROR|Boom|false']);
+});
+
+test('frames: Missing is the top frame\'s alone, and outranks a frame\'s run', () => {
+  let st = { documentId: DOC, url: 'https://x', matches: [expected('a', 'Alpha')], actual: {} };
+  st = applyFrameReport(st, 'a', 'fd1', frameRun('started', 'Alpha'));
+  assert.deepEqual(badge(st).rows.map((r) => r.status), ['MISSING']);
+});
+
+test('frames: an error in a frame stays for that document; outdated code shows Updated', () => {
+  let st = { documentId: DOC, url: 'https://x', matches: [], actual: {} };
+  st = applyFrameReport(st, 'f', 'fd1', { ...frameRun('error', 'F'), message: 'Boom' });
+  assert.equal(applyFrameReport(st, 'f', 'fd1', frameRun('started', 'F')), st);
+  st = markScriptStale(st, 'f');
+  assert.deepEqual(computeBadge(st).rows.map((r) => r.status), ['RELOAD']);
+  assert.equal(badge(st).color, BADGE_PURPLE);
+  // Per run: a frame loading again runs the new code, and once the old
+  // run's frame has gone the script is no longer Updated.
+  st = applyFrameReport(st, 'f', 'fd2', frameRun('started', 'F', 2));
+  assert.deepEqual(computeBadge(st).rows.map((r) => r.status), ['RELOAD']);
+  st = pruneFrameRuns(st, new Set(['fd2']));
+  assert.deepEqual(computeBadge(st).rows.map((r) => r.status), ['OK']);
+  assert.equal(st.staleScriptIds, undefined);
+});
+
+test('frames: a stale frame run doesn\'t mark the top frame\'s run', () => {
+  let st = { documentId: DOC, url: 'https://x', matches: [expected('a', 'Alpha')], actual: { a: { state: 'started', name: 'Alpha' } } };
+  st = applyFrameReport(st, 'a', 'fd1', { ...frameRun('started', 'Alpha'), stale: true });
+  assert.deepEqual(computeBadge(st).rows.map((r) => r.status), ['RELOAD']);
+  st = pruneFrameRuns(st, new Set());
+  assert.deepEqual(computeBadge(st).rows.map((r) => r.status), ['OK']);
+});
+
+test('frames: pruneFrameRuns drops runs in documents that are gone', () => {
+  let st = { documentId: DOC, url: 'https://x', matches: [], actual: {} };
+  st = applyFrameReport(st, 'f', 'fd1', frameRun('started', 'F', 1));
+  st = applyFrameReport(st, 'f', 'fd2', frameRun('started', 'F', 2));
+  st = applyFrameReport(st, 'g', 'fd2', frameRun('started', 'G', 2));
+  assert.equal(pruneFrameRuns(st, new Set(['fd1', 'fd2'])), st);
+  const kept = pruneFrameRuns(st, new Set(['fd1']));
+  assert.deepEqual(Object.keys(kept.frameRuns), ['f']);
+  assert.deepEqual(Object.keys(kept.frameRuns.f), ['fd1']);
+  assert.equal(pruneFrameRuns(kept, new Set()).frameRuns, undefined);
 });

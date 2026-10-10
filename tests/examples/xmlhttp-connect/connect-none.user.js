@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name        SourceMonkey example: GM_xmlhttpRequest with no @connect lines
+// @name        SourceMonkey example: xmlhttp-connect: GM_xmlhttpRequest with no @connect lines
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     2.0.0
+// @version     2.0.1
 // @description Declares no @connect lines, so SourceMonkey asks before each request to another site.
 // @match       *://*/xmlhttp-connect/xmlhttp-connect.html
 // @match       file:///*/xmlhttp-connect/xmlhttp-connect.html

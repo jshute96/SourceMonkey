@@ -532,11 +532,15 @@ export class ExtensionLink {
     return this.call((id) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.scriptsOnTab(id), tabId);
   }
 
-  /** Fires a menu command in a tab, as clicking it in the toolbar menu does. */
-  async fireMenu(tabId: number, scriptId: string, commandId: string): Promise<boolean> {
-    const result = await this.call(({ t, s, c }) =>
-      (self as unknown as { SourceMonkey: Api }).SourceMonkey.fireActionContextMenuItem(t, s, c),
-    { t: tabId, s: scriptId, c: commandId });
+  /**
+   * Fires a menu command in a tab, as clicking it in the toolbar menu
+   * does: in `documentId`, the document that registered it, when given.
+   * An extension before protocol 2.1 ignores it, firing the first match.
+   */
+  async fireMenu(tabId: number, scriptId: string, commandId: string, documentId?: string): Promise<boolean> {
+    const result = await this.call(({ t, s, c, d }) =>
+      (self as unknown as { SourceMonkey: Api }).SourceMonkey.fireActionContextMenuItem(t, s, c, d),
+    { t: tabId, s: scriptId, c: commandId, d: documentId });
     return result.ok;
   }
 
@@ -672,7 +676,7 @@ interface Api {
   getGmValues(scriptId: string): Promise<Record<string, unknown>>;
   getScriptLog(scriptId: string): Promise<LogEntry[]>;
   writeGmValues(scriptId: string, writes: { key: string; value?: unknown; deleted?: boolean }[]): Promise<void>;
-  fireActionContextMenuItem(tabId: number, scriptId: string, commandId: string): Promise<{ ok: boolean }>;
+  fireActionContextMenuItem(tabId: number, scriptId: string, commandId: string, documentId?: string): Promise<{ ok: boolean }>;
   runManualScript(tabId: number, scriptId: string): Promise<{ ok: boolean; error?: string }>;
   scriptsOnTab(tabId: number): Promise<{ id: string; name: string; status: string; collection: string; number?: number }[]>;
   clickNotification(notificationId: string): boolean;

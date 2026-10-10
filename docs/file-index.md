@@ -195,7 +195,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/script-url-hash.ts` | Pure `parseHash` / `buildHash` for the viewer's `#<filename>[:<line>[:<col>]]` / `#Log` URL fragment |
 | `src/extension/match-index.ts` | In-memory cache of scripts' matching info, world and local-ness, synced with storage; invalid ones only for the popup |
 | `src/extension/injector.ts` | Incrementally syncs the enabled script set into `chrome.userScripts`, re-checking unverified rows first, and wraps each body with an activation/error shim |
-| `src/extension/tab-status.ts` | Pure helpers for per-tab script status (expected ∪ actual classification), badge colors, and per-tab document LRU |
+| `src/extension/tab-status.ts` | Pure helpers for per-tab script status (expected ∪ actual, runs in frames), badge colors, and per-tab document LRU |
 | `src/extension/toolbar-summary.ts` | Pure: the toolbar badge's count and color and its tooltip's status lines, from the popup's view |
 | `src/extension/missing-scripts.ts` | Log warnings for scripts that matched a page but never started |
 | `src/extension/storage-usage.ts` | Sorts storage rows into the Options page's usage table: scripts, `@require`/`@resource` files, shared bodies, GM values, icons |
@@ -227,6 +227,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/gm-notification.ts` | SW-side `GM_notification` dispatcher (`chrome.notifications.create` + per-request mapping for click/close routing) |
 | `src/extension/gm-url-scheme.ts` | Shared URL-scheme gate for the SW-side GM_* dispatchers (parse + allowlist check for tabs / notifications / downloads) |
 | `src/extension/gm-originator-map.ts` | Shared shed-on-tab-close helper for the gm-tab / gm-notification / gm-download per-request maps (drop entries by originator tab) |
+| `src/extension/frame-info.ts` | Whether a message came from an iframe or a page's top frame, and which page, via `webNavigation.getFrame` |
 | `src/extension/gm-menu.ts` | SW-side `GM_registerMenuCommand` per-(tab, document, script) command registry feeding the toolbar popup |
 | `src/extension/gm-url-change.ts` | SW-side `window.onurlchange` driver — forwards `webNavigation.onHistoryStateUpdated` to the changed document as `sm:url-change` |
 | `src/extension/gm-window-control.ts` | SW-side `window.close` / `window.focus` driver — closes or fronts the sender's own tab via `chrome.tabs` / `chrome.windows` |
@@ -351,6 +352,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/collection-dialog.spec.ts` | The collection dialog from the collections page: Add-field routing, inferred type / name, readability probe, live refusals, Edit rename and options, scheme chips |
 | `tests/e2e/install-target.spec.ts` | The install page's "Install into" dropdown: groups and order, renamed / missing default, install into a chosen or new collection, second copy of one URL |
 | `tests/e2e/move-script.spec.ts` | The move-script dialog from the viewer's Collection row: destination list, id preserved, stacked create dialog, disabled destination, button placement |
+| `tests/e2e/frames.spec.ts` | Scripts in iframes: one popup row per script, "Active in frames", menu commands per frame, frames ending, `@noframes` updates |
 | `tests/e2e/file-changes.spec.ts` | The deleted / modified chips on the viewer's rows, the versions table and the collections page, the "refresh pending" chip, and their removal on refresh |
 | `tests/e2e/local-delete.spec.ts` | Deleting a local copy: own dependencies go, shared ones are kept, an untracked file blocks until deleted by hand, files gone from disk, from every trash can that offers it, control placement |
 | `tests/e2e/local-copy.spec.ts` | Local copies: first copy creates the Downloads collection and takes over, Replace for files and installed scripts, name rules, dependency files, cleanup after a refused write, a copy refusing its own name |
@@ -439,6 +441,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/generated-wrappers.test.mjs` | Guard test: each minified wrapper (`WRAPPER_*`) is a single line of valid JS with load-bearing tokens intact |
 | `tests/unit/source-layout.test.mjs` | Checks the `src/` split: what `lib/` and `dist/` compile, and that shared modules are shared |
 | `tests/unit/page-writes.test.mjs` | No page-only module imports a store writer directly or writes storage itself |
+| `tests/unit/examples.test.mjs` | Example pages keep the footer, scripts are named `SourceMonkey example: <dir>: …`, each dir is listed in README and index |
 | `tests/unit/eval-hook.test.mjs` | Where the eval hook goes in a program, and the keys it's kept under |
 | `tests/unit/phase-timing.test.mjs` | The debug-gated phase timers: what they report, and that they never throw into what they time |
 | `tests/unit/source-map.test.mjs` | Unit tests for VLQ encoding, line-level mappings, and inline-map encoding |
@@ -519,6 +522,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/examples/gm-resource/` | `GM_getResourceText` / `GM_getResourceURL` examples reading prefetched CSS, JSON, and SVG `@resource` files |
 | `tests/examples/window-onurlchange/` | `@grant window.onurlchange` example — page-wired pushState / replaceState / hash / back buttons with a urlchange log |
 | `tests/examples/window-close-focus/` | `@grant window.close` / `window.focus` example — buttons that close this tab and raise the browser window |
+| `tests/examples/frames/` | Iframes example: a page with same- and cross-origin frames (one nested), scripts per frame, `@noframes`, a shared counter |
 | `tests/examples/headers-run-at/` | `@run-at` header example with one userscript per value (`document-start`/`-end`/`-idle`) on a shared page |
 | `tests/examples/run-at-context-menu/` | `@run-at context-menu` example: a manual script that adds a line and menu commands each run |
 | `tests/examples/headers-match-hash/` | How `@match`, `@include` and `@exclude` treat a URL's `#hash`, with each manager's observed results |

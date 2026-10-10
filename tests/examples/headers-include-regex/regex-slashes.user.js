@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name        SourceMonkey example: Include regex: unescaped slashes
+// @name        SourceMonkey example: headers-include-regex: unescaped slashes
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.4
+// @version     1.0.5
 // @description A regex @include with unescaped slashes inside it. This matches.
 // @include     /headers-include-regex/headers-include-regex\.html/
 // @grant       none

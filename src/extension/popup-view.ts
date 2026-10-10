@@ -8,7 +8,7 @@
 import { RUN_SCRIPT_LABEL } from '../userscript-header.js';
 import { compareScriptNames } from '../script-display.js';
 import { comparePreferred, preferredCopy } from './copy-preference.js';
-import { isSettling, skippedOnDocument, type BadgeRow, type RowStatus, type TabMatchState } from './tab-status.js';
+import { isSettling, runsHere, skippedOnDocument, type BadgeRow, type RowStatus, type TabMatchState } from './tab-status.js';
 
 // The badge's statuses, plus the ones only the popup shows:
 //   - PENDING: enabled since the page loaded; a reload would run it.
@@ -91,6 +91,9 @@ export interface PopupCollectionInput {
 export interface PopupMenuCommand {
   commandId: string;
   name: string;
+  // The document that registered it (the top frame's or a frame's),
+  // where a click fires it.
+  documentId?: string;
 }
 
 export interface PopupViewInput {
@@ -171,6 +174,9 @@ export interface PopupView {
   // run's choice.
   perScriptReload: boolean;
   enabled: PopupGroup[];
+  // Scripts running only in the page's iframes: neither matched nor ran
+  // in the top frame (docs/frames.md). Below Enabled.
+  frames: PopupGroup[];
   // Manual scripts (`@run-at context-menu`) that are on, or have run
   // here: between Enabled and Disabled.
   manual: PopupGroup[];
@@ -227,6 +233,7 @@ export interface PopupViewRequest {
 export interface PopupReloadRequest { type: typeof POPUP_RELOAD_MESSAGE; tabId: number; mode: ReloadMode }
 export interface PopupCommandRequest {
   type: typeof POPUP_COMMAND_MESSAGE; tabId: number; scriptId: string; commandId: string;
+  documentId?: string;
 }
 export interface PopupRunScriptRequest { type: typeof POPUP_RUN_SCRIPT_MESSAGE; tabId: number; scriptId: string }
 export interface PopupSetEnabledRequest {
@@ -258,6 +265,9 @@ const DEFAULT_TOOLTIPS: Record<PopupStatus, string> = {
 export function manualRunsText(runs: number): string {
   return runs === 1 ? 'Ran once on this page' : `Ran ${runs} times on this page`;
 }
+
+// OK's tooltip for a script running only in the page's iframes.
+const FRAMES_OK_TOOLTIP = 'Running in frames on this page';
 
 // STILL_RUNNING's tooltip for a script removed since the page loaded.
 const REMOVED_TOOLTIP = 'Removed since this page loaded. It keeps running until a reload.';
@@ -324,6 +334,7 @@ export function buildPopupView(input: PopupViewInput): PopupView {
     bannerRecheckAt: null,
     perScriptReload: !smDev && state != null,
     enabled: [],
+    frames: [],
     manual: [],
     disabled: [],
     collections: [...input.collections],
@@ -335,7 +346,7 @@ export function buildPopupView(input: PopupViewInput): PopupView {
   const badgeById = new Map(input.badgeRows.map((r) => [r.id, r]));
   const nameOf = (id: string) => scripts.get(id)?.name ?? badgeById.get(id)?.name ?? id;
   const isActive = (s: PopupScriptInput) => s.enabled && (collections.get(s.collectionId)?.enabled ?? false);
-  const isRunning = (id: string) => state?.actual[id] != null;
+  const isRunning = (id: string) => state != null && runsHere(state, id);
   const settling = state != null && isSettling(state, input.now ?? Date.now());
 
   // Every candidate, then one identity at a time: the copies that are
@@ -387,6 +398,7 @@ export function buildPopupView(input: PopupViewInput): PopupView {
   const causes: BannerCauses = {};
   const rowsByCollection = {
     enabled: new Map<string, PopupRow[]>(),
+    frames: new Map<string, PopupRow[]>(),
     manual: new Map<string, PopupRow[]>(),
     disabled: new Map<string, PopupRow[]>(),
   };
@@ -445,6 +457,7 @@ export function buildPopupView(input: PopupViewInput): PopupView {
     let tooltip: string | null = null;
     if (status) {
       let text = DEFAULT_TOOLTIPS[status];
+      if (status === 'OK' && badge?.framesOnly) text = FRAMES_OK_TOOLTIP;
       if (status === 'ERROR' && badge?.message) text = badge.message;
       if (status === 'REJECTED' && input.rejected[s.id]) text = input.rejected[s.id]!;
       if (status === 'NOT_LOADED' && state) {
@@ -477,10 +490,12 @@ export function buildPopupView(input: PopupViewInput): PopupView {
     };
     // Anything running in the page is listed with the active scripts,
     // even when it's disabled now (Still running) or unexpected. Manual
-    // scripts have their own section, by the same rule.
+    // scripts have their own section, by the same rule, and so do
+    // scripts running only in frames.
     const into = !(active || isRunning(s.id))
       ? rowsByCollection.disabled
-      : s.manual ? rowsByCollection.manual : rowsByCollection.enabled;
+      : s.manual ? rowsByCollection.manual
+      : badge?.framesOnly ? rowsByCollection.frames : rowsByCollection.enabled;
     const list = into.get(s.collectionId);
     if (list) list.push(row); else into.set(s.collectionId, [row]);
   }
@@ -493,6 +508,7 @@ export function buildPopupView(input: PopupViewInput): PopupView {
         rows: byColl.get(c.id)!.sort((a, b) => compareScriptNames(a.name, b.name)),
       }));
   view.enabled = toGroups(rowsByCollection.enabled);
+  view.frames = toGroups(rowsByCollection.frames);
   view.manual = toGroups(rowsByCollection.manual);
   view.disabled = toGroups(rowsByCollection.disabled);
   if (removed.length > 0) {
