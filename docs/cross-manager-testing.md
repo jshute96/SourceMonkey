@@ -219,7 +219,14 @@ node scripts/sync-manager-scripts.mjs --allow-downgrade     # also install older
 ```
 
 It prints a clear plan per script (`INSTALL` / `UPDATE` / `SKIP`)
-before doing any work, and a final re-read for confirmation. This is
+before doing any work, and a final re-read for confirmation.
+
+- It also lists installed examples that no local file is named for any
+  more (`[STALE]`): ones renamed or deleted.
+  - Matching is by `@name`, so a renamed example installs as a new
+    script beside the old copy, and both run on the example pages.
+  - Remove the stale ones from the manager's dashboard. The CLI doesn't,
+    as removing goes through each manager's own UI. This is
 the easiest way to (a) prime a fresh profile with every example script
 and (b) debug install issues when a manager's UI changes.
 

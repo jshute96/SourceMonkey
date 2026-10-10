@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name        SourceMonkey example: Include regex: uppercase glob
+// @name        SourceMonkey example: headers-include-regex: uppercase glob
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.4
+// @version     1.0.5
 // @description An uppercase glob @include, on a lowercase URL. This doesn't match.*
 // @include     *HEADERS-INCLUDE-REGEX.HTML*
 // @grant       none

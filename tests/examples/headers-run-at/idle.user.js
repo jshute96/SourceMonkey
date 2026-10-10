@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name        SourceMonkey example: @run-at document-idle
+// @name        SourceMonkey example: headers-run-at: @run-at document-idle
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.2.0
+// @version     1.2.1
 // @description Demonstrates @run-at document-idle (default; once readyState is complete, just before load).
 // @match       *://*/headers-run-at/headers-run-at.html
 // @match       file:///*/headers-run-at/headers-run-at.html

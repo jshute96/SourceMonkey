@@ -76,7 +76,10 @@ export const SKIP_REASON_SM_DEV = 'tab controlled by sm-dev';
 // 2.0: wrappers no longer all ask while a claim is live; sm-dev marks
 //   the pages of its browser instead (`SM_DEV_MARKERS`), which an older
 //   sm-dev doesn't, so the extension would run scripts in its tabs.
-export const SM_DEV_PROTOCOL = { major: 2, minor: 0 } as const;
+// 2.1: scripts run in iframes, so report and menu events now come from
+//   frames too (`topFrame: false`); `fireActionContextMenuItem` takes
+//   the command's `documentId`.
+export const SM_DEV_PROTOCOL = { major: 2, minor: 1 } as const;
 
 export interface ProtocolVersion {
   major: number;

@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name        SourceMonkey example: Hash matching: @match without the hash
+// @name        SourceMonkey example: headers-match-hash: @match without the hash
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.6
+// @version     1.0.7
 // @description @match names the page without a hash. This matches, with any hash or none.
 // @match       *://*/headers-match-hash/headers-match-hash.html
 // @match       file:///*/headers-match-hash/headers-match-hash.html

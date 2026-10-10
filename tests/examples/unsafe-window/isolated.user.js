@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name        SourceMonkey example: unsafeWindow outside the page
+// @name        SourceMonkey example: unsafe-window: unsafeWindow outside the page
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.1.2
+// @version     1.1.3
 // @description The other corner: @inject-into content keeps the script out of the page, so unsafeWindow is not the page's window.
 // @match       *://*/unsafe-window/unsafe-window.html
 // @match       file:///*/unsafe-window/unsafe-window.html

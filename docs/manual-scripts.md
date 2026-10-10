@@ -189,5 +189,7 @@ partway becomes an `Internal error:` result.
 
 ## Limits
 
-- Top frame only, as with every script (`@noframes` isn't enforced).
+- Top frame only, unlike scripts that run on load (see
+  [frames.md](frames.md)): choosing among matching frames would add
+  confusion for little use.
 - No right-click item on the page: the popup is where scripts are.

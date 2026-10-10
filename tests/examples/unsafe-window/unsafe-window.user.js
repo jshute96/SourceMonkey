@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name        SourceMonkey example: unsafeWindow
+// @name        SourceMonkey example: unsafe-window: unsafeWindow
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.1.1
+// @version     1.1.2
 // @description Reads and writes the page's real window through unsafeWindow, while still using GM storage.
 // @match       *://*/unsafe-window/unsafe-window.html
 // @match       file:///*/unsafe-window/unsafe-window.html

@@ -186,7 +186,7 @@ export interface SmApi {
   // GM_registerMenuCommand test surface.
   getActionContextMenu(tabId: number): Promise<{
     scriptId: string;
-    commands: { commandId: string; name: string }[];
+    commands: { commandId: string; name: string; documentId?: string }[];
   }[]>;
   // The toolbar popup's view of the tab: what popup.html renders.
   getPopupView(tabId: number): Promise<PopupViewLike>;
@@ -194,6 +194,8 @@ export interface SmApi {
     tabId: number,
     scriptId: string,
     commandId: string,
+    // The document that registered it, for a command in a frame.
+    documentId?: string,
   ): Promise<{ ok: boolean; error?: string }>;
   // Answers a connection prompt by the id it was shown with. False when
   // it isn't waiting.
@@ -258,6 +260,7 @@ export interface PopupViewLike {
   banner: string | null;
   perScriptReload: boolean;
   enabled: PopupGroupLike[];
+  frames: PopupGroupLike[];
   manual: PopupGroupLike[];
   disabled: PopupGroupLike[];
 }
@@ -267,7 +270,7 @@ export interface PopupGroupLike {
   rows: {
     id: string; name: string; checked: boolean; active: boolean;
     status: string | null; tooltip: string | null; versionLine: string | null;
-    commands: { commandId: string; name: string }[];
+    commands: { commandId: string; name: string; documentId?: string }[];
     runnable?: boolean;
   }[];
 }

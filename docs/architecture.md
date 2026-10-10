@@ -444,6 +444,9 @@ takes effect:
 - [injection.md](injection.md) — `chrome.userScripts` registration
   lifecycle, the activation/error wrapper, opt-in requirements,
   unsupported pattern forms.
+- [frames.md](frames.md) — scripts in a page's iframes: `@noframes`,
+  one status per script across frames, menu commands and value
+  broadcasts per frame.
 - [injection-modes.md](injection-modes.md) — the three possible
   arrangements of a script's `js[]` entries (concat vs separate
   entries vs eval-per-require); why we ship the concatenated user

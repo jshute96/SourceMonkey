@@ -455,3 +455,37 @@ test('a page loaded before the extension started: Reload, with a reload banner',
     'This page loaded before SourceMonkey started, so its status is unknown. Reload to restart.\nClick to reload the page.',
   );
 });
+
+test('a script running only in frames is listed under Active in frames, once', () => {
+  const v = view({
+    st: state({
+      matches: [m('top'), m('both')],
+      actual: { top: { state: 'started', name: 'top' } },
+      loadMatchIds: ['top', 'both'],
+      frameRuns: {
+        both: { fd1: { state: 'started', name: 'both', frameId: 1, url: 'https://f/' } },
+        framed: {
+          fd1: { state: 'started', name: 'framed', frameId: 1, url: 'https://f/' },
+          fd2: { state: 'started', name: 'framed', frameId: 2, url: 'https://f/' },
+        },
+      },
+    }),
+    scripts: [script('top', 'A'), script('both', 'A'), script('framed', 'B')],
+    matching: ['top', 'both'],
+  });
+  // `both` matched the top frame too (and is Missing there): not a
+  // frames-only script.
+  assert.deepEqual(names(v.enabled), ['A: both=MISSING, top=OK']);
+  assert.deepEqual(names(v.frames), ['B: framed=OK']);
+  assert.match(v.frames[0].rows[0].tooltip, /^Running in frames on this page/);
+});
+
+test('a frames-only script disabled since the page loaded is Still running, in its section', () => {
+  const v = view({
+    st: state({ frameRuns: { framed: { fd1: { state: 'started', name: 'framed', frameId: 1, url: 'https://f/' } } } }),
+    scripts: [script('framed', 'A', { enabled: false })],
+    matching: [],
+  });
+  assert.deepEqual(names(v.frames), ['A: framed=STILL_RUNNING']);
+  assert.equal(v.banner, 'Reload required: Scripts disabled');
+});

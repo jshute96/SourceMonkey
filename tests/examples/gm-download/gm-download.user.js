@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name        SourceMonkey example: GM_download
+// @name        SourceMonkey example: gm-download: GM_download
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.3
+// @version     1.0.4
 // @description Click buttons to download files with various GM_download call shapes.
 // @match       *://*/gm-download/gm-download.html
 // @match       file:///*/gm-download/gm-download.html

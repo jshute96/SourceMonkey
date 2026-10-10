@@ -977,7 +977,8 @@ User-facing behavior is in [harness-guide.md](harness-guide.md).
   - connection prompts: `answerConnectPrompt(id, choice)` (below);
   - values and menus: `getGmValues`, `writeGmValues`,
     `fireActionContextMenuItem` (named for the context menu the
-    toolbar popup replaced), and from 1.6 `runManualScript` for a
+    toolbar popup replaced; from 2.1 it takes the command's document,
+    for a command in a frame), and from 1.6 `runManualScript` for a
     manual script (see [manual-scripts.md](manual-scripts.md#sm-dev));
   - claims: `watchForNamingNavigation` and `namedTab` (which tab is
     which, see [Naming the tab](#naming-the-tab)), `claimTab`,

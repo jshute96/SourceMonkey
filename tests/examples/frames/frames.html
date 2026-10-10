@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Userscript examples for iframes</title>
+  <link rel="stylesheet" href="../examples.css" />
+  <style>
+    /* Stacked and sized to their content, so nothing in them scrolls.
+       Frame B holds the nested frame, so it's the taller one. */
+    .frames { display: flex; flex-direction: column; gap: 1em; }
+    .frames iframe { width: 100%; box-sizing: border-box; border: 2px solid #c4d4f7; border-radius: 4px; }
+    #frame-a { height: 340px; }
+    #frame-b { height: 680px; }
+  </style>
+</head>
+<body data-page="top">
+  <header>
+    <h1>Userscript examples for iframes</h1>
+  </header>
+  <main>
+    <h2>Headers</h2>
+    <ul>
+      <li>A script runs in every frame whose own URL it matches. The
+        top page doesn't have to match.</li>
+      <li><code>@noframes</code>: runs in the top frame only.</li>
+    </ul>
+
+    <h2>Details</h2>
+    <ul>
+      <li>This page holds two frames: <em>Frame A</em> on the same
+        origin, and <em>Frame B</em> on another origin
+        (<code>localhost</code> and <code>127.0.0.1</code> swapped),
+        with a nested frame inside it.</li>
+      <li><code>every-frame.user.js</code> matches all four documents,
+        and logs a row in each one it runs in. Its Count button
+        increments a shared <code>GM_setValue</code> counter; every
+        document shows it through <code>GM_addValueChangeListener</code>.</li>
+      <li><code>top-only.user.js</code> matches all four too, with
+        <code>@noframes</code>: it should log here only.</li>
+      <li><code>frame-b-only.user.js</code> matches Frame B only, so it
+        runs on this page without matching it.</li>
+      <li>Each script registers a menu command per document it runs in,
+        named after the document. Running one logs a row in that
+        document only.</li>
+    </ul>
+
+    <h2>This page</h2>
+    <div class="buttons" id="buttons"></div>
+    <p>Count: <span id="count">-</span></p>
+    <ul id="log"></ul>
+
+    <h2>Frames</h2>
+    <div class="frames">
+      <iframe id="frame-a" title="Frame A" src="frame-a.html"></iframe>
+      <iframe id="frame-b" title="Frame B"></iframe>
+    </div>
+  </main>
+  <script>
+    // Frame B on the other loopback host name: another origin, served
+    // by the same server.
+    var other = location.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
+    var b = location.protocol === 'file:' ? 'frame-b.html'
+      : location.protocol + '//' + other + (location.port ? ':' + location.port : '') + location.pathname.replace(/[^/]*$/, 'frame-b.html');
+    document.getElementById('frame-b').src = b;
+  </script>
+  <footer>
+    <a href="../index.html">&larr; all examples</a>
+    &nbsp;|&nbsp;
+    <a href="every-frame.user.js">every-frame.user.js</a>
+    &nbsp;|&nbsp;
+    <a href="top-only.user.js">top-only.user.js</a>
+    &nbsp;|&nbsp;
+    <a href="frame-b-only.user.js">frame-b-only.user.js</a>
+  </footer>
+</body>
+</html>

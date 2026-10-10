@@ -135,8 +135,13 @@ events.
 | `gm-open-in-tab/`          | `GM_openInTab`                                                    | form-driven   |
 | `gm-notification/`         | `GM_notification`                                                 | button-driven |
 | `gm-download/`             | `GM_download`                                                     | button-driven |
+| `gm-menu/`                 | `GM_registerMenuCommand` / `GM_unregisterMenuCommand`             | button-driven |
+| `gm-resource/`             | `GM_getResourceText` / `GM_getResourceURL`                        | pure read     |
 | `window-onurlchange/`      | `@grant window.onurlchange` (the `urlchange` event)               | page-wired    |
 | `window-close-focus/`      | `@grant window.close` / `@grant window.focus`                     | button-driven |
+| `run-at-context-menu/`     | `@run-at context-menu` (runs only when asked)                     | button-driven |
+| `unsafe-window/`           | `unsafeWindow`: granted, isolated, and used with no grant         | multi-script  |
+| `frames/`                  | Scripts in same- and cross-origin iframes, `@noframes`            | multi-script  |
 | `headers-run-at/`          | `@run-at` (`document-start` / `-end` / `-idle` variants)           | multi-script  |
 | `headers-inject-into/`     | `@inject-into` (`page` MAIN-world vs `content` USER_SCRIPT-world)  | multi-script  |
 | `headers-match-hash/`      | `#hash` in `@match` / `@include` / `@exclude`, per manager        | multi-script  |
@@ -185,8 +190,10 @@ prose paragraphs. Mirrors the project-wide doc convention.
    they demonstrate a userscript header, not a `GM_*` API.
 4. Link `examples.css` (`../examples.css` from a per-api dir) for
    consistent styling.
-5. Add a row to the table above and a link in `index.html`.
-6. In `<api>.spec.ts`, import the fixture from
+5. Name each userscript `SourceMonkey example: <dir>: <what it shows>`,
+   so a directory's scripts sort together in a manager's list.
+6. Add a row to the table above and a link in `index.html`.
+7. In `<api>.spec.ts`, import the fixture from
    `../../fixtures/manager` and call
    `await setup.installScriptsFrom(__dirname)` — that registers the
    dir's userscripts with whichever manager the run is targeting.

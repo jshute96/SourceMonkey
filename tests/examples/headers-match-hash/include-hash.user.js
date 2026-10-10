@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name        SourceMonkey example: Hash matching: @include with the hash
+// @name        SourceMonkey example: headers-match-hash: @include with the hash
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.6
+// @version     1.0.7
 // @description @include names the page with #part. This matches with #part only.*
 // @include     *://*/headers-match-hash/headers-match-hash.html#part
 // @include     file:///*/headers-match-hash/headers-match-hash.html#part

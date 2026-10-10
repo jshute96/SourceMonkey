@@ -97,6 +97,12 @@ export interface LogEntry {
   // are linkified by scanning the message, whereas this is a location
   // SourceMonkey derived and knows structurally.
   location?: DiagnosticLocation;
+  // Set on an entry later events of the same kind fold into rather than
+  // each adding a row (`AppendLogInput.collapse`), with how many it
+  // stands for. Runs in a page's iframes use it: a script on a page with
+  // many matching frames would otherwise fill its Log in a few loads.
+  collapseKey?: string;
+  count?: number;
 }
 
 // Hard cap on retained entries per script. Older entries are dropped
@@ -157,6 +163,11 @@ export interface AppendLogInput {
   state?: LoadState;
   // See `LogEntry.resetsLogLevel`.
   resetsLogLevel?: boolean;
+  // Fold into the entry already written with this `key`, if it's still
+  // in the Log, rather than adding a row: it keeps its place and first
+  // time, its count goes up, and `message(count)` rewords it. Worker
+  // callers only (a function doesn't cross to the worker).
+  collapse?: { key: string; message: (count: number) => string };
   // Optional override for the timestamp (tests use this to keep output
   // deterministic). Production callers omit it and get Date.now().
   timestamp?: number;
@@ -236,13 +247,31 @@ async function writeEntry(
   const got = await chrome.storage.session.get([lk, mk]);
   const prior: LogEntry[] = Array.isArray(got[lk]) ? (got[lk] as LogEntry[]) : [];
   const priorLevel = got[mk] as LogLevel | undefined;
+  if (input.collapse) {
+    const { key, message } = input.collapse;
+    let at = prior.length - 1;
+    while (at >= 0 && prior[at]!.collapseKey !== key) at--;
+    if (at >= 0) {
+      const old = prior[at]!;
+      const count = (old.count ?? 1) + 1;
+      const level = isHigher(input.level, old.level) ? input.level : old.level;
+      const next = prior.slice();
+      next[at] = { ...old, level, count, message: message(count) };
+      const toSet: Record<string, unknown> = { [lk]: next };
+      if (isHigher(input.level, priorLevel)) toSet[mk] = input.level;
+      // Not a new entry, so the entry listener isn't told.
+      await chrome.storage.session.set(toSet);
+      return;
+    }
+  }
   const entry: LogEntry = {
     timestamp: input.timestamp ?? Date.now(),
     level: input.level,
     source: input.source,
-    message: input.message,
+    message: input.collapse ? input.collapse.message(1) : input.message,
   };
   if (input.tabId !== undefined) entry.tabId = input.tabId;
+  if (input.collapse) entry.collapseKey = input.collapse.key;
   const location = validLocation(input.location);
   if (location) entry.location = location;
   // Checked like `location`: the input may have crossed the page →

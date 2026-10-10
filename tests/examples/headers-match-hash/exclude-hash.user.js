@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name        SourceMonkey example: Hash matching: @exclude of the hash
+// @name        SourceMonkey example: headers-match-hash: @exclude of the hash
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.6
+// @version     1.0.7
 // @description @match names the page, and @exclude *#part names it with #part. This matches except with #part.*
 // @match       *://*/headers-match-hash/headers-match-hash.html
 // @match       file:///*/headers-match-hash/headers-match-hash.html

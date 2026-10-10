@@ -75,8 +75,8 @@ Details of the page-side half (`installFocusSignal` in
 - One listener per execution world per document — the prelude IIFE is
   idempotent — armed only once some script has matched this URL. A page
   running scripts in both worlds therefore reports twice per gesture,
-  each with its own floor. Scripts never register with `allFrames`, so
-  subframes add nothing.
+  each with its own floor. A frame running scripts reports too, with a
+  floor of its own (see [frames.md](frames.md)).
 - A 5 s floor per document, below the SW's own interval so it never
   becomes the binding limit. It exists to stop focus churn from waking
   the worker, not to rate-limit checks.

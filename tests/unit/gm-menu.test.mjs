@@ -2,10 +2,11 @@
 //
 // The module is pure in-memory state with no chrome.* dependency, so
 // it imports directly. What's worth pinning down is the document
-// scoping: the registry holds commands for exactly one document per
-// tab, and both the clear and the unregister paths have to respect
-// that or a navigation can delete registrations nothing will resend
-// (see the fresh-document race in docs/GM-APIs.md).
+// scoping: the registry holds commands for one page per tab (its top
+// document and its frames' documents), and both the clear and the
+// unregister paths have to respect that or a navigation can delete
+// registrations nothing will resend (see the fresh-document race in
+// docs/GM-APIs.md, and docs/frames.md).
 
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
@@ -16,6 +17,9 @@ const {
   getMenuCommandsForTab,
   findMenuCommand,
   clearTab,
+  pruneDocuments,
+  topDocument,
+  hasFrameDocuments,
 } = await import('../../dist/extension/gm-menu.js');
 
 // Each test picks its own tabId so the module-level state can't leak
@@ -102,11 +106,61 @@ test('unregisterMenuCommand is silent on unknown ids', () => {
 test('findMenuCommand resolves a click back to its entry', () => {
   const tab = freshTab();
   registerMenuCommand(tab, 'doc', 's1', 'c1', 'First');
-  assert.deepEqual(findMenuCommand(tab, 's1', 'c1'), { commandId: 'c1', name: 'First' });
+  assert.deepEqual(findMenuCommand(tab, 's1', 'c1'), { commandId: 'c1', name: 'First', documentId: 'doc' });
   assert.equal(findMenuCommand(tab, 's1', 'gone'), null);
   assert.equal(findMenuCommand(tab, 'other-script', 'c1'), null);
 });
 
 test('getMenuCommandsForTab returns an empty map for an untracked tab', () => {
   assert.deepEqual([...getMenuCommandsForTab(freshTab()).keys()], []);
+});
+
+// ---- Frames: one page, several documents ----
+
+test('a frame\'s commands merge after the top frame\'s, whichever registered first', () => {
+  const tab = freshTab();
+  registerMenuCommand(tab, 'frame1', 's1', 'c1', 'From frame', 'top');
+  registerMenuCommand(tab, 'top', 's1', 'c1', 'From top');
+  assert.deepEqual(names(tab, 's1'), ['From top', 'From frame']);
+  assert.equal(topDocument(tab), 'top');
+});
+
+test('the same commandId in two documents stays apart, and resolves by document', () => {
+  const tab = freshTab();
+  registerMenuCommand(tab, 'top', 's1', 'shared', 'Top');
+  registerMenuCommand(tab, 'frame1', 's1', 'shared', 'Frame', 'top');
+  assert.equal(findMenuCommand(tab, 's1', 'shared', 'frame1').name, 'Frame');
+  assert.equal(findMenuCommand(tab, 's1', 'shared').name, 'Top');
+  assert.equal(unregisterMenuCommand(tab, 'frame1', 's1', 'shared'), true);
+  assert.deepEqual(names(tab, 's1'), ['Top']);
+});
+
+test('a register under another page replaces the tab\'s commands, frames included', () => {
+  const tab = freshTab();
+  registerMenuCommand(tab, 'topA', 's1', 'c1', 'A');
+  registerMenuCommand(tab, 'frameA', 's1', 'c2', 'A frame', 'topA');
+  registerMenuCommand(tab, 'frameB', 's1', 'c3', 'B frame', 'topB');
+  assert.deepEqual(names(tab, 's1'), ['B frame']);
+});
+
+test('clearTab keeps the new page\'s frames that registered before the clear', () => {
+  const tab = freshTab();
+  registerMenuCommand(tab, 'frameB', 's1', 'c1', 'B frame', 'topB');
+  clearTab(tab, 'topB');
+  assert.deepEqual(names(tab, 's1'), ['B frame']);
+  clearTab(tab, 'topC');
+  assert.deepEqual([...getMenuCommandsForTab(tab).keys()], []);
+});
+
+test('pruneDocuments drops frames that are gone, never the top frame', () => {
+  const tab = freshTab();
+  registerMenuCommand(tab, 'top', 's1', 'c1', 'Top');
+  registerMenuCommand(tab, 'frame1', 's1', 'c2', 'Frame 1', 'top');
+  registerMenuCommand(tab, 'frame2', 's1', 'c3', 'Frame 2', 'top');
+  assert.equal(pruneDocuments(tab, new Set(['frame2'])), true);
+  assert.deepEqual(names(tab, 's1'), ['Top', 'Frame 2']);
+  assert.equal(pruneDocuments(tab, new Set(['frame2'])), false);
+  assert.equal(hasFrameDocuments(tab), true);
+  pruneDocuments(tab, new Set());
+  assert.equal(hasFrameDocuments(tab), false);
 });

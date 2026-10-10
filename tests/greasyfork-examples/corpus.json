@@ -21174,19 +21174,20 @@
       "version": "1.15"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-06",
+      "status": "pass",
+      "date": "2026-10-09",
       "version": "1.15"
     },
-    "tags": [
-      "needs-iframes"
-    ],
     "notes": [
       {
         "date": "2026-10-06",
         "version": "1.15",
         "text": "On https://www.google.com/recaptcha/api2/demo (headed temp browser) the page holds the `recaptcha/api2/anchor?...` iframe the script's `@match` covers, but the script never starts there; its only line is \"skipped\" for the demo page itself.\n\n- SourceMonkey: it runs scripts in the top frame only (docs/injection.md, \"No frame control\"); Tampermonkey and Violentmonkey run `@match` scripts in iframes.\n- The script only clicks when the anchor frame's referrer is one of its listed shorteners, so even in another manager it would do nothing on the demo page. The shortener flow wasn't driven: it auto-clicks a live reCAPTCHA."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "1.15",
+        "text": "Re-tested after SourceMonkey began running scripts in iframes (allFrames unless @noframes): now passes. The script clicks only when the anchor frame's referrer is one of its listed shorteners, so it was tested on a minimal page served as `https://ouo.io/captcha-test2` (`open --from-saved --url`) holding a reCAPTCHA widget with the demo's site key.\n- It started in the `api2/anchor` frame at `document-end`, logged \"Automatic click of reCAPTCHA has been executed\", and the image challenge opened (screenshot).\n- With Google's old always-pass test key the widget renders \"ERROR for site owner: Invalid site key\" and the script's click throws on the missing `#recaptcha-anchor`: that key no longer works, not the script."
       }
     ]
   },
@@ -23209,18 +23210,20 @@
     },
     "test": {
       "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-06",
+      "blame": "script",
+      "date": "2026-10-09",
       "version": "09212017002"
     },
-    "tags": [
-      "needs-iframes"
-    ],
     "notes": [
       {
         "date": "2026-10-06",
         "version": "09212017002",
         "text": "On https://music.163.com/#/song?id=186016 (logged out) the script ran in the top frame only: its `<style>` and XHR hook are in place there (`_ahrealxhr`, `hookAjax`, `encrypt_data` defined; `ul.m-nav.j-tflag>li.lst` display none).\n- SourceMonkey: the site's content lives in the same-origin `#g_iframe` (at `https://music.163.com/song?id=186016`), and the script got no style there. Four of its hide rules target that frame (`#g_backtop`, `div.g-ft`, `#j-music-ad`, `div.m-multi`: 1 match each, still `display: block`). The script has no `@noframes`, so Tampermonkey would run it in that frame too. Known gap: TODO.md \"Scripts never run in iframes\".\n- Script: the cover-click download and high-quality features need a playing song; logged out, the song page's play button is disabled and the chart's play button opens a QR login dialog, so those parts need an account."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "09212017002",
+        "text": "Re-tested after SourceMonkey began running scripts in iframes (allFrames unless @noframes): the frame part now works, but the top-frame part throws.\n\n- SourceMonkey: on `https://music.163.com/#/discover/toplist` (logged out) the script started in the `#g_iframe` frame without errors. There its style hid `#g_backtop` and `div.g-ft` (`display: none`), and `encrypt_data` and the `_ahrealxhr` XHR hook were defined.\n- Script: in the top frame it now throws at line 22, `Cannot read properties of undefined (reading 'appendChild')`. At `@run-at document-start` the page has no `<head>` yet, and the script appends its `<style>` to `getElementsByTagName(\"head\")[0]`. Tampermonkey runs document-start that early too.\n  - The earlier pass in the top frame came from sm-dev running document-start late, which it no longer does. So the top nav's `ul.m-nav.j-tflag>li.lst` stays visible.\n- Site: a few seconds after load the page often goes busy for minutes (JavaScript unresponsive, the network service spinning on cookie reads and writes). This also happens under Tampermonkey with this script, and with a trivial `@grant none` script, so later checks went through a raw CDP poll in the first seconds.\n- The download and high-quality features need a playing song, which needs a login, as before."
       }
     ]
   },
@@ -24018,19 +24021,20 @@
       "version": "1.2"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-06",
+      "status": "pass",
+      "date": "2026-10-09",
       "version": "1.2"
     },
-    "tags": [
-      "needs-iframes"
-    ],
     "notes": [
       {
         "date": "2026-10-06",
         "version": "1.2",
         "text": "Not run. It matches only `https://www.google.com/recaptcha/api2/bframe?*`, the reCAPTCHA challenge iframe, which is never a top-level page.\n- SourceMonkey: injects only into the top frame (known gap, docs/injection.md \"No frame control\"); Tampermonkey and Violentmonkey run in frames."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "1.2",
+        "text": "Re-tested after SourceMonkey began running scripts in iframes (allFrames unless @noframes): now passes. On https://www.google.com/recaptcha/api2/demo (temp browser) it is skipped on the page and starts (`document-start`) in the `api2/bframe` frame. There:\n- its `unsafeWindow.setTimeout` replacement is in place (`function(callback, delay) { return __setTimeout(callback, Number(delay) / SPEED); }`), where a `--noscript` control tab's bframe has Google's own wrapper;\n- after load its style sheet with the shortened `transition-duration` rules (0.2s, 0.8s, ...) is in the frame.\n- The drag-to-select tiles feature wasn't driven (it needs an open image challenge)."
       }
     ]
   },
@@ -27429,19 +27433,20 @@
       "version": "1.0.0"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-06",
+      "status": "pass",
+      "date": "2026-10-09",
       "version": "1.0.0"
     },
-    "tags": [
-      "needs-iframes"
-    ],
     "notes": [
       {
         "date": "2026-10-06",
         "version": "1.0.0",
         "text": "Tested on Google's reCAPTCHA demo, `https://www.google.com/recaptcha/api2/demo`. The script has to run inside the reCAPTCHA anchor iframe (`google.com/recaptcha/api2/anchor`) to click `.recaptcha-checkbox-checkmark`.\n- SourceMonkey: the script started only in the top frame; the checkbox stayed unchecked and no challenge appeared. Known gap: scripts never run in iframes (TODO.md, `needs-iframes`; docs/injection.md \"No frame control\").\n- Tampermonkey (`--manager tm`, same page, temp browser): the click happened in the frame and the image challenge popped up within 3s.\n- Script: its `@match http://eBonus.gg` has no path and is ignored; the `@include *` does the work."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "1.0.0",
+        "text": "Re-tested after SourceMonkey began running scripts in iframes (allFrames unless @noframes): now passes. On https://www.google.com/recaptcha/api2/demo (temp browser) the script started in the `api2/anchor` frame and clicked `.recaptcha-checkbox-checkmark`; the image challenge was visible 3s after load, while a `--noscript` control tab's stayed hidden. The form auto-submit half (top page, after a solved captcha) wasn't tested."
       }
     ]
   },
@@ -34231,19 +34236,20 @@
       "version": "0.1"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-06",
+      "status": "pass",
+      "date": "2026-10-09",
       "version": "0.1"
     },
-    "tags": [
-      "needs-iframes"
-    ],
     "notes": [
       {
         "date": "2026-10-06",
         "version": "0.1",
         "text": "Not run. It matches only `http*://www.google.com/recaptcha/*`, which is the reCAPTCHA anchor/challenge iframe, never a top-level page. It would auto-click the \"I'm not a robot\" checkbox.\n- SourceMonkey: injects only into the top frame (known gap, docs/injection.md \"No frame control\"); Tampermonkey and Violentmonkey run in frames."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "0.1",
+        "text": "Re-tested after SourceMonkey began running scripts in iframes (allFrames unless @noframes): now passes. On https://www.google.com/recaptcha/api2/demo (temp browser) it started in the `api2/anchor` frame and its 1s timer clicked the checkbox: the image challenge opened. The check: whether the challenge popup (`api2/bframe` frame) became visible; in a `--noscript` control tab it stays hidden.\n- Script: its `@match http*://www.google.com/recaptcha/*` also covers the demo page and the bframe, where the checkmark is absent, so it throws `Cannot read properties of undefined (reading 'click')` there (harmless; the same in any manager that runs it in frames)."
       }
     ]
   },
@@ -35854,19 +35860,20 @@
       "version": "0.0.1.20190608093618"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-06",
+      "status": "pass",
+      "date": "2026-10-09",
       "version": "0.0.1.20190608093618"
     },
-    "tags": [
-      "needs-iframes"
-    ],
     "notes": [
       {
         "date": "2026-10-06",
         "version": "0.0.1.20190608093618",
         "text": "On https://www.google.com/recaptcha/api2/demo (temp browser) the script starts only on the demo page itself, whose URL its `@match https://www.google.com/recaptcha/*` also covers. There its onload click throws `Cannot read properties of undefined (reading 'click')`: the checkbox lives in the `api2/anchor` iframe.\n\n- SourceMonkey: the script needs to run inside the reCAPTCHA anchor iframe, and SourceMonkey injects into the top frame only (docs/injection.md, \"No frame control\"). Tampermonkey and Violentmonkey run `@match` scripts in iframes by default. Known gap, same as 461650.\n- Not tried further: per the brief, we don't auto-click real captchas."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "0.0.1.20190608093618",
+        "text": "Re-tested after SourceMonkey began running scripts in iframes (allFrames unless @noframes): now passes. On https://www.google.com/recaptcha/api2/demo (temp browser) it started in the `api2/anchor` frame and its onload click (after a random 0.7-1.4s) opened the image challenge. The check: whether the challenge popup (`api2/bframe` frame) became visible; in a `--noscript` control tab it stays hidden.\n- Script: its `@match https://www.google.com/recaptcha/*` also covers the demo page and the bframe, where it throws `Cannot read properties of undefined (reading 'click')` (harmless; same in other managers)."
       }
     ]
   },
@@ -35936,19 +35943,20 @@
       "version": "1.0.2"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-02",
+      "status": "pass",
+      "date": "2026-10-09",
       "version": "1.0.2"
     },
-    "tags": [
-      "needs-iframes"
-    ],
     "notes": [
       {
         "date": "2026-10-02",
         "version": "1.0.2",
         "text": "On https://www.google.com/recaptcha/api2/demo (real extension, shared browser) it is skipped on the page, and the same-origin `api2/bframe` challenge iframe gets no `*{transition:none!important}` style.\n\n- SourceMonkey: its `@match` covers only the `recaptcha/api2/bframe` iframe, and SourceMonkey injects into the top frame only (docs/injection.md, \"No frame control\"). Tampermonkey and Violentmonkey run scripts in iframes."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "1.0.2",
+        "text": "Re-tested after SourceMonkey began running scripts in iframes (allFrames unless @noframes): now passes. On https://www.google.com/recaptcha/api2/demo (temp browser) it is skipped on the page and starts in the `api2/bframe` frame. That frame's document now has the `*{transition:none!important}` style, and its `setTimeout` is the script's wrapper; a `--noscript` control tab's bframe has neither style."
       }
     ]
   },
@@ -36056,19 +36064,20 @@
       "version": "0.3.0"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-04",
+      "status": "pass",
+      "date": "2026-10-09",
       "version": "0.3.0"
     },
-    "tags": [
-      "needs-iframes"
-    ],
     "notes": [
       {
         "date": "2026-10-04",
         "version": "0.3.0",
         "text": "On `https://music.163.com/#/discover/toplist` the chart lives in the same-origin `g_iframe` (`contentFrame`), and the script does all its work only when `window.top != window.self`.\n\n- SourceMonkey: the script ran only in the top frame (a logging copy printed `in https://music.163.com/#/discover/toplist false` once and never from the frame), so the frame kept its 30 greyed `.js-dis` rows.\n- Evaluating the same script body inside the frame's window by hand removed all 30 (`.js-dis` count 30 -> 0) without errors, so the script still works against the current site when it runs there.\n- Tampermonkey runs scripts in frames by default (no `@noframes`)."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "0.3.0",
+        "text": "Re-tested after SourceMonkey began running scripts in iframes (allFrames unless @noframes): the chart is now unlocked.\n\n- On `https://music.163.com/#/discover/toplist` (logged out) the run printed \"started in an iframe on https://music.163.com/discover/toplist\". The frame's greyed `.js-dis` rows went from 50 (a `--noscript` tab) to 0, with no errors.\n- After a hash navigation to `#/song?id=186016`, the script started again in the reloaded frame: `#content-operation` got the play link (`u-btni-play-dis` 0, `[data-res-action=play]` 1).\n- Site: in later temp-browser runs music.163.com often went busy for minutes after load (page JavaScript unresponsive, the network service spinning on cookie reads and writes). A trivial `@grant none` script triggers it under Tampermonkey too; a skipped or isolated-world script didn't."
       }
     ]
   },
@@ -36623,19 +36632,20 @@
       "version": "1.0.0"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-06",
+      "status": "pass",
+      "date": "2026-10-09",
       "version": "1.0.0"
     },
-    "tags": [
-      "needs-iframes"
-    ],
     "notes": [
       {
         "date": "2026-10-06",
         "version": "1.0.0",
         "text": "On the reCAPTCHA demo (`google.com/recaptcha/api2/demo`) the script started in the top page only. After over a minute the checkbox in the same-origin `api2/anchor` frame was still `recaptcha-checkbox-unchecked`.\n- Calling `.click()` on `.recaptcha-checkbox-checkmark` in that frame by hand (the script's own action) opened the challenge frame, so the script's click would have worked had it run there.\n- SourceMonkey: known gap, scripts never run in iframes (TODO.md \"Scripts never run in iframes\"). Tampermonkey and Violentmonkey run `@include *` scripts in frames.\n- The auto-submit half (top page, after a solved captcha) was not tested: no captcha solving.\n- Script: `@match ebonus.gg google.com` is ignored (no path); `@include *` covers everything anyway."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "1.0.0",
+        "text": "Re-tested after SourceMonkey began running scripts in iframes (allFrames unless @noframes): now passes. On https://www.google.com/recaptcha/api2/demo (temp browser) it started in the `api2/anchor` and `api2/bframe` frames; its 5s interval clicked the checkmark in the anchor frame and the image challenge was visible 8s after load. The check: whether the challenge popup (`api2/bframe` frame) became visible; in a `--noscript` control tab it stays hidden.\n- The auto-submit half (top page, after a solved captcha) wasn't tested: no captcha solving.\n- Script: `@match ebonus.gg google.com` is still ignored (no path); `@include *` covers everything."
       }
     ]
   },
@@ -48911,11 +48921,10 @@
     "test": {
       "status": "fail",
       "blame": "script",
-      "date": "2026-10-03",
+      "date": "2026-10-09",
       "version": "3.1.4"
     },
     "tags": [
-      "needs-iframes",
       "trusted-types"
     ],
     "notes": [
@@ -48923,6 +48932,11 @@
         "date": "2026-10-03",
         "version": "3.1.4",
         "text": "On YouTube (live stream `jfKfPfyJRdk`, shared visible browser) the script never starts: its `@require` jQuery 3.5.1 throws while loading (`Failed to set the 'innerHTML' property ... requires 'TrustedHTML' assignment`), so no `#PTTChat` panel appears. Chrome enforces YouTube's Trusted Types in the isolated world too, for any manager.\n- On blank.org, one of its other `@match` sites, it starts (\"initialize finished at Blank\") and adds the `#PTTChat` panel with a `term.ptt.cc/?url=https://blank.org/` iframe.\n- SourceMonkey: the PTT side of the script must run inside that `term.ptt.cc` iframe (it throws if it finds itself top-level there), and SourceMonkey runs scripts in the top frame only (never `allFrames`, per docs/GM-APIs.md), so the chat can never connect on any site.\n- Using it also needs a PTT account login, which wasn't tried."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "3.1.4",
+        "text": "Re-tested after SourceMonkey began running scripts in iframes (allFrames unless @noframes): the PTT part now runs in its frame, but the script can't read the current PTT terminal.\n\n- SourceMonkey: on `https://blank.org/` the panel opened as before, and the script started in the cross-origin `term.ptt.cc/?url=https://blank.org/` iframe (\"PTTChatOnYT PTT part started\", \"initialize finish\"). The frame connected to PTT (`wss://ws.ptt.cc/bbs`) and showed its login screen in the PTT畫面 tab. The panel's \"restart PTT\" button reloaded the frame, and the script started there again.\n- Script: its PTT side updates only when the terminal page logs `view update` through `console.log`, which it hooks. Current term.ptt.cc never logs that line (\"load pref from storage\", \"connect: ...\", \"app onConnect\" only), so the frame never posts its state to the panel. A `message` listener at the top saw no messages. The terminal also shows a new login dialog of its own.\n- YouTube still fails as before: the `@require`d jQuery is blocked by Trusted Types.\n- Not logged in to PTT; the chat needs an account anyway."
       }
     ]
   },
@@ -54696,19 +54710,20 @@
       "version": "1.0.4"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-07",
+      "status": "pass",
+      "date": "2026-10-09",
       "version": "1.0.4"
     },
-    "tags": [
-      "needs-iframes"
-    ],
     "notes": [
       {
         "date": "2026-10-07",
         "version": "1.0.4",
         "text": "The script's `@match` is the game iframe, https://bonk.io/gameframe-release.html, inside https://bonk.io/.\n- SourceMonkey: on https://bonk.io/ the script never ran in the iframe. The frame's `document.head.appendChild` was still native, and its `js/alpha2s.js` loaded from its original src (not refetched with `?` and patched); no `[Injector]` log lines. Known gap: scripts run in the top frame only (TODO.md \"Scripts never run in iframes\", docs/injection.md \"No frame control\").\n- Opening the frame URL as a top-level page does start the script there, but the page then goes to https://bonk.io/ (the run showed it skipped there right after), so it can't be judged that way."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "1.0.4",
+        "text": "Re-tested after SourceMonkey began running scripts in iframes (allFrames unless @noframes): on https://bonk.io/ the script now starts in the `gameframe-release.html` iframe (skipped on the top page, as its `@match` says).\n- It logged \"Fetching alpha2s.js...\", \"Patching...\", \"Patched alpha2s.js successfully\"; the frame's `document.head.appendChild` is the script's, and the game code (2699132 chars) sits in an inline `<script>` with no `src`. The game loaded normally (guest button, \"133 online\").\n- With a test companion script (`@grant none`, `document-start`, same frame) pushing a function onto `window.bonkCodeInjectors`, that injector received the 2699132-char code and its appended line ran (`__companionPatched === true` in the frame)."
       }
     ]
   },
@@ -55614,19 +55629,20 @@
       "version": "0.0.5"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-06",
+      "status": "pass",
+      "date": "2026-10-09",
       "version": "0.0.5"
     },
-    "tags": [
-      "needs-iframes"
-    ],
     "notes": [
       {
         "date": "2026-10-06",
         "version": "0.0.5",
         "text": "On `https://bonk.io/` the script started in the top frame only. The game UI is in the same-origin iframe `#maingameframe` (`/gameframe-release.html`), where the script adds its button.\n- After load that frame had `#pretty_top_bar` with 5 `.pretty_top_button`s and no `#pretty_top_fullscreen`, so there is no fullscreen button.\n- The top frame's branch only adds CSS keyed on a `.fullscreen` class that only the frame's button sets, so nothing visible happens.\n- SourceMonkey: known gap, scripts never run in iframes (TODO.md, `needs-iframes`). Tampermonkey runs scripts in frames by default."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "0.0.5",
+        "text": "Re-tested after SourceMonkey began running scripts in iframes (allFrames unless @noframes): on https://bonk.io/ the script now starts in both the top page and the `#maingameframe` iframe.\n- The frame's top bar gained `#pretty_top_fullscreen` (6 buttons, was 5), with the script's style (`right: 291px`).\n- Clicking it (`.click()` from the page: a real `click` timed out with the frame's `#pagecontainer` on top of the bar at that point, on the guest/login screen) put `fullscreen` on both bodies; the iframe went from 1265x720 at y=120 to 1280x720 at 0,0 with `z-index: 99999`, `#bonkioheader` hidden, `#bonkiocontainer` 1280x720 and the lobby `max-width` set. A second click restored the frame to y=125."
       }
     ]
   },
@@ -57161,19 +57177,20 @@
       "version": "0.1"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-06",
+      "status": "pass",
+      "date": "2026-10-09",
       "version": "0.1"
     },
-    "tags": [
-      "needs-iframes"
-    ],
     "notes": [
       {
         "date": "2026-10-06",
         "version": "0.1",
         "text": "Tested on a saved page served as `https://example.com/captcha-test` holding a reCAPTCHA widget with Google's public test site key (always passes; no real captcha was clicked).\n- SourceMonkey: the checkbox in the `www.google.com/recaptcha/api2/anchor` frame stayed unchecked, and the run showed only the top page as skipped: the script never ran in the frame. Known gap, see \"Scripts never run in iframes\" in TODO.md.\n- Tampermonkey (`--manager tm`), same page: the checkbox showed `[checked]` a few seconds after load."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "0.1",
+        "text": "Re-tested after SourceMonkey began running scripts in iframes (allFrames unless @noframes): now passes. On https://www.google.com/recaptcha/api2/demo (temp browser) it started in the `api2/anchor` frame and clicked `.recaptcha-checkbox-border`: the image challenge opened. The check: whether the challenge popup (`api2/bframe` frame) became visible; in a `--noscript` control tab it stays hidden. The real site key was used this time, not the test key (Google's always-pass test key `6LeIxAc...` now renders \"Invalid site key\")."
       }
     ]
   },
@@ -59415,19 +59432,20 @@
       "version": "2.0.0"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-07",
+      "status": "pass",
+      "date": "2026-10-09",
       "version": "2.0.0"
     },
-    "tags": [
-      "needs-iframes"
-    ],
     "notes": [
       {
         "date": "2026-10-07",
         "version": "2.0.0",
         "text": "On https://www.nitrotype.com/race (guest tutorial race) the game now lives in a full-window same-URL `<iframe>`; the top document holds only that iframe.\n- SourceMonkey: the script runs only in the top frame and throws `raceContainer is not defined` (line 38). After typing the whole race with `key`, no reload came in 10s.\n- Tampermonkey (`--manager tm`): the top-frame copy throws the same, but the frame copy logs \"Auto Reload Activated.\"; after typing the race the frame reloaded (`Loaded .../race`, then \"Activated\" again).\n- Known gap: scripts run only in the top frame (TODO.md \"Scripts never run in iframes\")."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "2.0.0",
+        "text": "Re-tested after SourceMonkey began running scripts in iframes (allFrames unless @noframes): on https://www.nitrotype.com/race (guest tutorial race) the script now starts in the same-URL game iframe too, matching Tampermonkey.\n- Script: the top-frame copy still throws `raceContainer is not defined` (line 38), as it does under Tampermonkey; the frame copy logs \"Auto Reload Activated.\".\n- After typing the race with `key`, the frame reloaded (`Loaded .../race`, then the frame copy started and logged \"Activated\" again); the top page did not reload."
       }
     ]
   },
@@ -59456,19 +59474,20 @@
       "version": "1.0.0"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-07",
+      "status": "pass",
+      "date": "2026-10-09",
       "version": "1.0.0"
     },
-    "tags": [
-      "needs-iframes"
-    ],
     "notes": [
       {
         "date": "2026-10-07",
         "version": "1.0.0",
         "text": "On https://www.nitrotype.com/race (guest tutorial race) the site now renders the whole game in a full-window same-URL `<iframe src=\"https://www.nitrotype.com/race\">`; the top document has only the iframe (also in a `--noscript` tab).\n- SourceMonkey: the script started only in the top frame (\"Perfect Nitros Activated.\" once), where `.dash-letter` never appears, so it polls forever. No word in the frame was highlighted.\n- Tampermonkey (`--manager tm`, same page): \"Activated\" logged twice (top and frame), and in the frame the longest words \"quick\", \"brown\", \"jumps\" got `background-color: white`.\n- Known gap: scripts run only in the top frame (TODO.md \"Scripts never run in iframes\", docs/injection.md frame-control note)."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "1.0.0",
+        "text": "Re-tested after SourceMonkey began running scripts in iframes (allFrames unless @noframes): on https://www.nitrotype.com/race (guest tutorial race) \"Perfect Nitros Activated.\" now logs twice, top page and the same-URL game iframe, as under Tampermonkey.\n- In the frame the longest words \"quick\", \"brown\", \"jumps\" got `background-color: white`; the other words of \"The quick brown fox jumps over the lazy dog.\" stayed plain."
       }
     ]
   },
@@ -63398,19 +63417,20 @@
       "version": "1.0"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-06",
+      "status": "pass",
+      "date": "2026-10-09",
       "version": "1.0"
     },
-    "tags": [
-      "needs-iframes"
-    ],
     "notes": [
       {
         "date": "2026-10-06",
         "version": "1.0",
         "text": "Tested on hCaptcha's demo page with its always-pass test site key, `https://accounts.hcaptcha.com/demo?sitekey=10000000-ffff-ffff-ffff-000000000001`. The reCAPTCHA half wasn't tried (no auto-clicking Google captchas).\n- SourceMonkey: the script acts only inside the `newassets.hcaptcha.com/captcha/v1/.../hcaptcha.html#frame=checkbox` iframe, which its `@match https://*.hcaptcha.com/*captcha*` covers, but SourceMonkey injects into the top frame only (docs/injection.md, \"No frame control\"; TODO.md \"Scripts never run in iframes\"). Its only line was \"skipped\" on the demo page itself; after 5s the checkbox was still unchecked.\n- Tampermonkey (`--manager tm`, same page): the script logged \"HC OPEN BOX\" from the frame and the checkbox showed \"'I am human' is now checked. You are verified\"."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "1.0",
+        "text": "Re-tested after SourceMonkey began running scripts in iframes (allFrames unless @noframes): now passes.\n- hCaptcha: on `https://accounts.hcaptcha.com/demo?sitekey=10000000-ffff-ffff-ffff-000000000001` (the always-pass test key) it started in the `newassets.hcaptcha.com/.../hcaptcha.html#frame=checkbox` and `#frame=challenge` frames, logged \"HC OPEN BOX\" from the checkbox frame about 3s later, and the checkbox read \"'I am human' is now checked. You are verified\".\n- reCAPTCHA: on https://www.google.com/recaptcha/api2/demo (temp browser) it logged \"RC OPEN BOX\" from the anchor frame and the image challenge opened."
       }
     ]
   },
@@ -65348,19 +65368,20 @@
       "version": "1.5"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-02",
+      "status": "pass",
+      "date": "2026-10-09",
       "version": "1.5"
     },
-    "tags": [
-      "needs-iframes"
-    ],
     "notes": [
       {
         "date": "2026-10-02",
         "version": "1.5",
         "text": "On https://www.google.com/recaptcha/api2/demo (real extension, shared browser) the checkbox in the `api2/anchor` iframe stays `aria-checked=\"false\"`, after waiting 3s.\n\n- SourceMonkey: the script only acts inside the reCAPTCHA iframe, and SourceMonkey injects into the top frame only (docs/injection.md, \"No frame control\"). Its only start line is for the demo page itself. Tampermonkey and Violentmonkey run `@match` scripts in iframes by default."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "1.5",
+        "text": "Re-tested after SourceMonkey began running scripts in iframes (allFrames unless @noframes): now passes. On https://www.google.com/recaptcha/api2/demo (temp browser) the run shows \"started in an iframe\" for the `api2/anchor` and `api2/bframe` frames. Its 500ms timer clicked the checkbox in the anchor frame and the image challenge opened (screenshot). The check: whether the challenge popup (`api2/bframe` frame) became visible; in a `--noscript` control tab it stays hidden."
       }
     ]
   },
@@ -72702,18 +72723,20 @@
     },
     "test": {
       "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-03",
+      "blame": "script",
+      "date": "2026-10-09",
       "version": "2.1"
     },
-    "tags": [
-      "needs-iframes"
-    ],
     "notes": [
       {
         "date": "2026-10-03",
         "version": "2.1",
         "text": "On a model page (https://sketchfab.com/3d-models/the-great-drawing-room-feb9ad17e042418c8e759b81e3b2e5d7) the viewer is the same-origin iframe `#api-frame` (`/models/<id>/embed`), and no DOWNLOAD button appears.\n\n- SourceMonkey: scripts run in the top frame only (docs/injection.md \"No frame control\"). The script ran in the top page (\"[UserScript]init\") but not in the embed frame: its `attachbody` hook is undefined there.\n- Opening the embed URL directly as the top page, the script fetched and re-injected the viewer bundle (patches 1-4 logged, \"But patch_0 failed\") and added the blue DOWNLOAD button to the titlebar.\n- Script: even there, after the model rendered and was dragged to orbit it, a wrapper on `window.attachbody` and `drawhookimg` counted 0 calls and `allmodel` stayed empty, so a download would hold no geometry. Whether that is the site's newer bundle or the original viewer bundle still running beside the patched copy is not settled; it was not checked in Tampermonkey."
+      },
+      {
+        "date": "2026-10-09",
+        "version": "2.1",
+        "text": "Re-tested after SourceMonkey began running scripts in iframes (allFrames unless @noframes): the DOWNLOAD button now appears, but a download would still be empty.\n\n- SourceMonkey: on the model page (`the-great-drawing-room-feb9ad17e042418c8e759b81e3b2e5d7`) the script started in the same-origin `#api-frame` (`/models/<id>/embed`). It patched the viewer bundle there (patches 1-4 logged, \"But patch_0 failed\") and added the blue DOWNLOAD button to the frame's `div.titlebar`. `window.attachbody` and `drawhookimg` are defined in the frame.\n  - The button is an `<a class=\"control\">` with a click handler (zip via JSZip and FileSaver), no href. It was not clicked.\n- Script: after the model rendered and was dragged to orbit it, the frame's `allmodel` stayed empty (0), so the capture hooks never fire against the current viewer bundle.\n  - Tampermonkey (same page, same drag) gives the same result: button shown, `allmodel` 0. The script is out of date with the site."
       }
     ]
   },

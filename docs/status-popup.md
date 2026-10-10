@@ -109,6 +109,9 @@ From top to bottom:
   that name.
 - **Script area**, one scroll region (see [Scrolling](#scrolling)):
   - **Enabled** section.
+  - **Active in frames** section, only when it has rows: scripts running
+    in the page's iframes that neither matched nor ran in the page
+    itself (see [frames.md](frames.md#active-in-frames)).
   - **Manual** section, only when it has rows: scripts with `@run-at
     context-menu` (see [manual-scripts.md](manual-scripts.md#popup)).
   - **Disabled** section.
@@ -248,6 +251,9 @@ colored pills, using the badge colors.
 | `NOT_LOADED` | Not loaded | Grey | Why it was kept out (below) |
 | `UNTRACKED` | Reload | Purple outline | This page loaded before SourceMonkey started, so its status is unknown. Reload to restart. |
 | `WARNING` | Warning | Amber outline | Running on this page, with warnings |
+
+A script running in several documents (the page and its iframes) shows
+one pill, the worst of its runs: see [frames.md](frames.md#status-badge-and-popup).
 
 New ones the popup needs, since a toggle now happens in front of the
 page it affects:

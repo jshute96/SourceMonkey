@@ -539,13 +539,11 @@ its own dispatch doesn't corrupt iteration.
   missed by this tab until the next document — or until its next
   resync, for a script with a value-change listener. The window
   closes once sm:start lands; subsequent writes broadcast normally.
-- **Iframe-of-same-tab broadcast skip.** The openers table dedupes
-  by tabId, so a write in the main frame of tab T doesn't broadcast
-  to other frames of T (the `tabId === excludeTabId` guard fires
-  for every frame in T). Each frame gets its own check-pending
-  snapshot at load time; they're consistent at that moment and
-  diverge on writes until each frame's next reload. Acceptable for
-  now.
+- **The writer's own tab is sent to frame by frame.** The openers
+  table dedupes by tabId, so the writer's tab gets the update in each
+  of its frames but the writer's (`chrome.webNavigation.getAllFrames`),
+  rather than one tab-wide send that would echo back to the writer.
+  See [frames.md](frames.md#gm-apis).
 - **Cross-script storage spoofing is within the trust boundary.**
   The `scriptId` in the `sm:gm-batch-write` envelope is supplied
   by the wrapper's compiled-in literal. A misbehaving userscript
@@ -936,12 +934,10 @@ Why the split:
   - Navigating to a non-injectable URL (`chrome://`, `about:blank`,
     ...).
   - Tab close (`chrome.tabs.onRemoved`).
-- **One document per tab is an assumption, not a guarantee.** It holds
-  only because scripts run in the top frame only (we never set
-  `allFrames`). Scripts in subframes would name different documents
-  and clobber each other's commands here — re-key this registry before
-  flipping `allFrames`. See
-  [injection.md](injection.md#limitations--future-work).
+- **A tab holds commands from several documents** when scripts run
+  in its frames. The registry is keyed by document, each filed under
+  the tab's top document, and the popup merges them. See
+  [frames.md](frames.md#menu-commands).
 - SW restart wipes the in-memory mirror. Page-side callbacks are
   scoped to the same document so they're already gone; the symmetric
   drop is correct.
@@ -1002,11 +998,9 @@ Both are forwarded to the exact document that changed as an
 `sm:url-change` message carrying the reported URL, which the page-side
 runtime replays verbatim to its listeners.
 
-The targeting is load-bearing even though no userscript runs in a
-sub-frame today (we never set `allFrames` — see
-[injection.md](injection.md)): without it, an ad iframe's navigation
-would arrive at the top frame's listeners as if the document had
-moved.
+The targeting is load-bearing with scripts in frames (see
+[frames.md](frames.md)): without it, an ad iframe's navigation would
+arrive at the top frame's listeners as if the document had moved.
 
 We address by `documentId`, falling back to `frameId` on builds that
 don't report one. A frame ID names a slot rather than a document, so
@@ -1218,12 +1212,9 @@ too.
   unavailable) is reported both to the page console and, from the SW
   side, to the script's Log tab at `warning` level. There is nothing
   to report on success: a successful close takes the document with it.
-- **The target is the sender's whole tab, frames included.** A
-  granting script inside a sub-frame would close the tab, where the
-  frame's own `window.close()` is a no-op. Not reachable today —
-  SourceMonkey never sets `allFrames` (see
-  [injection.md](injection.md)) — but worth knowing if frame injection
-  ever lands.
+- **The target is the sender's whole tab.** So a frame keeps the
+  page's own `window.close` (a no-op there), and the worker refuses a
+  close sent from a frame. See the sub-frames note below.
 - **The `@grant` line is the whole gate** — no confirmation prompt at
   call time, same as TM. Closing the user's tab out from under them is
   a real capability, and the only thing standing in front of it is
@@ -1240,12 +1231,9 @@ too.
     The fix is the same (per-script worlds) and equally out of reach
     today, so it's pinned by a test rather than closed — see
     `tests/e2e/window-close-focus.spec.ts`.
-- **Sub-frames.** TM only overrides `window.close` in the **top**
-  frame (`page.js` hands a sub-frame the page's own `close`); its
-  `window.focus` has no such guard. We override in every frame we
-  inject into, which is only ever the top frame today — so the two
-  agree in practice, and TM's guard is the thing to copy if frame
-  injection ever lands.
+- **Sub-frames.** As TM does (`page.js` hands a sub-frame the page's
+  own `close`), we override `window.close` in the **top** frame only.
+  `window.focus` has no such guard in either: it focuses the tab.
 - **MAIN world is unsupported**, as with every other non-`GM_info`
   binding. `@grant window.close` on its own puts the script in
   USER_SCRIPT world, so only the explicit `@inject-into page`

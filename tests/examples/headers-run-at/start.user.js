@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name        SourceMonkey example: @run-at document-start
+// @name        SourceMonkey example: headers-run-at: @run-at document-start
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.1.0
+// @version     1.1.1
 // @description Demonstrates @run-at document-start (runs before DOM parses).
 // @match       *://*/headers-run-at/headers-run-at.html
 // @match       file:///*/headers-run-at/headers-run-at.html

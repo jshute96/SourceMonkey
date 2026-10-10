@@ -3461,3 +3461,22 @@ test('syncRegistrations: an incremental sync takes the numbers beforeSync assign
   assert.equal(asked.includes('scriptNumbers'), false, 'the numbers are not read again');
   assert.ok(chrome_.spec('a').js.some((c) => c.code.includes('bad-a%23E7/')), 'the label carries the number');
 });
+
+// ---------- Frames (docs/frames.md) ----------
+
+test('buildRegistrationSpec: every matching frame, unless @noframes, whatever its value', async () => {
+  const withTags = (...tags) => scriptWith({ header: { tags: [{ tag: 'name', value: 'Foo' }, ...tags] } });
+  assert.equal((await buildRegistrationSpec(withTags())).allFrames, true);
+  // A flag, as in TM: any value still keeps the script to the top frame.
+  for (const value of ['', 'true', 'false']) {
+    assert.equal((await buildRegistrationSpec(withTags({ tag: 'noframes', value }))).allFrames, false, `@noframes ${value}`);
+  }
+});
+
+test('the helpers go into frames, whatever their scripts\' @noframes', async () => {
+  const spec = await buildRegistrationSpec(scriptWith({
+    header: { tags: [{ tag: 'name', value: 'Foo' }, { tag: 'noframes', value: '' }, { tag: 'grant', value: 'unsafeWindow' }] },
+  }));
+  assert.equal(spec.world, 'MAIN');
+  assert.equal(buildBridgeSpec([spec]).allFrames, true);
+});

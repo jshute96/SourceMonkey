@@ -32,6 +32,7 @@ import {
   onCacheChanged,
   scriptGrantsSubsystem,
   scriptWorld,
+  indexedScript,
   type MatchedScript,
 } from './match-index.js';
 import { BRIDGE_DENIED, STORAGE_SUBSYSTEMS, type ApiSubsystem } from '../gm-api-catalog.js';
@@ -113,6 +114,7 @@ import {
   SM_DEV_MARKER_CYAN,
   clearScriptStale,
   computeBadge,
+  applyFrameReport,
   getCurrentState,
   getDocState,
   markScriptStale,
@@ -120,6 +122,8 @@ import {
   noteManualRun,
   notePageReport,
   noteScriptWarning,
+  pruneFrameRuns,
+  runsHere,
   setCurrentDoc,
   writeDocState,
   type ActualStatus,
@@ -315,11 +319,15 @@ import {
   clearTab as clearMenuCommandsForTab,
   findMenuCommand,
   getMenuCommandsForTab,
+  hasFrameDocuments as hasFrameMenuDocuments,
+  pruneDocuments as pruneMenuDocuments,
+  topDocument as menuTopDocument,
   registerMenuCommand,
   unregisterMenuCommand,
   type MenuCommandEntry,
 } from './gm-menu.js';
 import { installUrlChangeWatch } from './gm-url-change.js';
+import { frameInfo, type FrameInfo } from './frame-info.js';
 import { openNamedTab } from './page-links.js';
 import {
   closeGmWindow,
@@ -600,6 +608,8 @@ interface SourceMonkeyApi {
     tabId: number,
     scriptId: string,
     commandId: string,
+    // The document that registered it, for a command in a frame.
+    documentId?: string,
   ) => Promise<{ ok: boolean; error?: string }>;
   // Run a manual script (`@run-at context-menu`) on `tabId` now: the
   // popup's "Run this script", which sm-dev's `menu` fires too.
@@ -758,7 +768,7 @@ const api: SourceMonkeyApi = {
       popupViewForTab(tabId),
     ]);
     // The popup's rows, as `Name | STATUS`, for the ones with a status.
-    const rows = [...view.enabled, ...view.disabled]
+    const rows = [...view.enabled, ...view.frames, ...view.disabled]
       .flatMap((g) => g.rows)
       .filter((r) => r.status !== null)
       .map((r) => `${r.name} | ${r.status}`);
@@ -835,11 +845,11 @@ const api: SourceMonkeyApi = {
   openCollectionsPage: async (windowId) => {
     await openCollectionsPage(windowId);
   },
-  fireActionContextMenuItem: async (tabId, scriptId, commandId) => {
+  fireActionContextMenuItem: async (tabId, scriptId, commandId, documentId) => {
     // Goes through the same dispatchMenuCommand helper the popup
     // click handler uses — same validation, same message shape. Test
     // assertions can rely on the result instead of polling page state.
-    return await dispatchMenuCommand(tabId, scriptId, commandId);
+    return await dispatchMenuCommand(tabId, scriptId, commandId, documentId);
   },
   runManualScript: (tabId, scriptId) => runManualScript(tabId, scriptId),
   reloadWithoutScripts: async (tabId) => {
@@ -1640,6 +1650,7 @@ async function updateTabMatches(
     if (prev.warnedIds) state.warnedIds = prev.warnedIds;
     if (prev.manualRuns) state.manualRuns = prev.manualRuns;
     if (prev.loadedBefore) state.loadedBefore = true;
+    if (prev.frameRuns) state.frameRuns = prev.frameRuns;
   } else {
     state.loadMatchIds = incoming.map((m) => m.id);
     state.loadUrl = url;
@@ -2074,7 +2085,41 @@ async function popupViewForTab(
   // previous page's rows, so they're dropped.
   keepUrl?: string,
 ): Promise<PopupView> {
+  // Runs in frames that are gone, and their menu commands, don't show.
+  await inTabQueue(tabId, () => pruneGoneFramesAndRepaint(tabId));
   return buildTabView(tabId, undefined, keepIds, keepUrl);
+}
+
+// Drop what the tab holds for frame documents it no longer has: their
+// runs on the badge and their menu commands. A frame that navigated or
+// was removed has no event of its own that says so. Returns whether
+// anything went (and so a repaint is due). See docs/frames.md.
+async function pruneGoneFrames(tabId: number): Promise<boolean> {
+  const record = await getTabRecord(tabId);
+  const current = getCurrentState(record);
+  // Nothing held for frames: no need to ask Chrome. Most frame commits
+  // (ads, trackers) land here.
+  if (!current?.frameRuns && !hasFrameMenuDocuments(tabId)) return false;
+  let frames: chrome.webNavigation.GetAllFrameResultDetails[] | null;
+  try {
+    frames = await chrome.webNavigation.getAllFrames({ tabId });
+  } catch {
+    return false;
+  }
+  if (!frames) return false;
+  const live = new Set(frames.map((f) => (f as { documentId?: string }).documentId ?? ''));
+  const menuChanged = pruneMenuDocuments(tabId, live);
+  if (!record || !current) return menuChanged;
+  const next = pruneFrameRuns(current, live);
+  if (next === current) return menuChanged;
+  await setTabRecord(tabId, writeDocState(record, record.currentDocId, next));
+  return true;
+}
+
+// `pruneGoneFrames`, then repaint the badge (and an open popup) when
+// anything went.
+async function pruneGoneFramesAndRepaint(tabId: number): Promise<void> {
+  if (await pruneGoneFrames(tabId)) await renderBadge(tabId, getCurrentState(await getTabRecord(tabId)));
 }
 
 // The popup's view of a tab. `stateIn` is the state a badge paint is for; undefined reads the
@@ -2466,7 +2511,8 @@ function installPopupListener(): void {
         sendResponse(null);
         return undefined;
       }
-      work = dispatchMenuCommand(req.tabId, req.scriptId, req.commandId).then((result) => {
+      const documentId = typeof req.documentId === 'string' ? req.documentId : undefined;
+      work = dispatchMenuCommand(req.tabId, req.scriptId, req.commandId, documentId).then((result) => {
         // The command was unregistered between the popup drawing it and
         // the click. The popup redraws without it.
         if (!result.ok) console.info(`[SourceMonkey] menu command ${req.commandId} did not fire on tab ${req.tabId}: ${result.error}`);
@@ -2495,20 +2541,25 @@ async function dispatchMenuCommand(
   tabId: number,
   scriptId: string,
   commandId: string,
+  documentId?: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  if (!findMenuCommand(tabId, scriptId, commandId)) {
+  const entry = findMenuCommand(tabId, scriptId, commandId, documentId);
+  if (!entry) {
     // Not user-facing today, so not recased: the popup discards this
     // reply, and only the test surface reads it. If it ever reaches a
     // person, it takes a capital like any other message.
     return { ok: false, error: 'this menu command is no longer registered' };
   }
   try {
+    // To the document that registered it: with scripts in frames, a
+    // tab-wide send would reach every frame, and an explicit `{id}` can
+    // name a command in more than one of them.
     await chrome.tabs.sendMessage(tabId, {
       type: 'sm:gm-menu-fire',
       smWorld: pushWorld(scriptId),
       scriptId,
       commandId,
-    });
+    }, entry.documentId ? { documentId: entry.documentId } : {});
     return { ok: true };
   } catch (err) {
     return { ok: false, error: String((err as Error)?.message ?? err) };
@@ -2703,8 +2754,8 @@ async function tryManualRun(tabId: number, scriptId: string): Promise<ManualRunR
 // chrome.userScripts uses for injection, so keying state on it keeps
 // our expected/actual model honest.
 //
-// We only care about the main frame (frameId === 0). Sub-frame events
-// would add noise we don't currently render.
+// We track the main frame (frameId === 0). A sub-frame's commit only
+// ends the runs of the document it replaced (docs/frames.md).
 function installNavigationListeners(): void {
   // `@grant window.onurlchange` feeds off the same-document navigation
   // events too, but needs `onReferenceFragmentUpdated` as well and
@@ -2735,7 +2786,14 @@ function installNavigationListeners(): void {
     })();
   });
   wn.onCommitted.addListener((d) => {
-    if (d.frameId !== 0) return;
+    if (d.frameId !== 0) {
+      // A frame's new document ends the runs (and menu commands) of
+      // the one it replaced. See docs/frames.md.
+      if (d.frameId > 0) enqueueTabWork(d.tabId, () => pruneGoneFramesAndRepaint(d.tabId));
+      return;
+    }
+    // Another page: its documents register afresh as they start.
+    clearOpenerDocsForTab(d.tabId);
     // ONE batch for this commit, shared by both fan-outs it starts. The
     // reload fast path and the opportunistic sweep check the same
     // script set from the same navigation, so a batch each would read
@@ -2823,6 +2881,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   enqueueTabWork(tabId, () => clearTabState(tabId));
   clearSkipScripts(tabId);
   dropClaim(tabId);
+  frameStartupLogsByTab.delete(tabId);
   // GM_registerMenuCommand: the page-side callbacks are gone with the
   // document, so the SW-side mapping is dead weight after close.
   clearMenuCommandsForTab(tabId);
@@ -2831,6 +2890,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   // tab (broadcast() catches the "Receiving end does not exist"
   // rejection but the lookup work is wasted).
   clearTabFromGmOpeners(tabId);
+  clearOpenerDocsForTab(tabId);
   // GM_openInTab / GM_notification: drop any per-originator state
   // pointing at this tab. The tabs we opened on its behalf stay
   // open (matches TM/VM); we just lose the ability to route close
@@ -3146,7 +3206,7 @@ async function propagateStaleScripts(scriptIds: string[]): Promise<void> {
     // showing only an outdated MISSING row are intentionally NOT
     // promoted; without an actual report there's no "running code" to
     // be stale against, and a reload won't change what the badge shows.
-    const relevant = scriptIds.filter((id) => current.actual[id] != null);
+    const relevant = scriptIds.filter((id) => runsHere(current, id));
     if (relevant.length === 0) continue;
     affectedTabs++;
     enqueueTabWork(tabId, () => applyStaleToTab(tabId, relevant));
@@ -3403,7 +3463,7 @@ interface CheckPendingPayload {
 // registration that may sit after the wrapper in Chrome's order (an
 // updated registration moves to the end), and by run time every
 // document_start registration has executed.
-type CheckPendingReply =
+type CheckPendingReply = (
   | { action: 'run'; gmValues?: Record<string, unknown> }
   | {
       action: 'run-new';
@@ -3413,7 +3473,12 @@ type CheckPendingReply =
       needsRuntime?: boolean;
       gmValues?: Record<string, unknown>;
     }
-  | { action: 'skip'; reason: string; detail?: string };
+  | { action: 'skip'; reason: string; detail?: string }
+) & {
+  // To a copy in one of the page's iframes: print the script's header
+  // warnings, which no other copy on the page will (docs/frames.md).
+  startupLogs?: true;
+};
 
 async function handleCheckPending(
   sender: chrome.runtime.MessageSender,
@@ -3900,9 +3965,8 @@ async function handleXhrStart(
   //
   // Frame-scoped: the response body is the sensitive part of the API,
   // and `chrome.tabs.sendMessage` with no frameId hands it to every
-  // frame in the tab. Only the frame that asked needs it. (Moot while
-  // nothing registers with `allFrames`, but it stops being moot the
-  // day something does.)
+  // frame in the tab, scripts in frames included (docs/frames.md). Only
+  // the frame that asked needs it.
   const deliver = (event: GmXhrEvent | GmXhrStreamEvent): Promise<unknown> => chrome.tabs.sendMessage(tabId, {
     type: 'sm:gm-xhr-event',
     smWorld: pushWorld(payload.scriptId),
@@ -4056,6 +4120,9 @@ function originOf(url: string | undefined): string | undefined {
 const NO_ORIGINATOR_TAB =
   'internal error: could not identify the tab this call came from';
 
+// A `window.close` request from a frame (docs/frames.md).
+const FRAME_CLOSE_REFUSED = 'A script in a frame cannot close the tab';
+
 // ---------- GM_openInTab dispatch ----------
 
 async function handleTabOpen(
@@ -4161,6 +4228,12 @@ async function handleWindowControl(
   const tabId = sender.tab?.id;
   if (tabId == null) {
     return { ok: false, error: NO_ORIGINATOR_TAB };
+  }
+  // A frame's runtime leaves `window.close` alone (as TM does), so a
+  // close from one is forged: it would close the tab, which the frame's
+  // own `close()` never does.
+  if (which === 'close' && (await frameInfo(sender)).subframe) {
+    return { ok: false, error: FRAME_CLOSE_REFUSED };
   }
   // Only the focus path needs the window; a close with a tab id but no
   // window id would otherwise be refused for no reason.
@@ -4294,8 +4367,8 @@ interface BatchWritePayload {
 // wrapper for this script running. Updated on sm:start / sm:swapped
 // (recordScriptReport, below), on a resync request, and on tab close.
 // We don't track per-frame because chrome.tabs.sendMessage broadcasts
-// to every frame in a tab — frame-level filtering can land later if
-// it's worth it.
+// to every frame in a tab; the writer's own tab is sent to frame by
+// frame (`broadcastValueUpdate`).
 //
 // Mirrored into chrome.storage.session so it survives a service-worker
 // restart. It has to: the table is only filled at document start, an
@@ -4417,8 +4490,29 @@ async function resetGmOpenersState(): Promise<void> {
   gmOpenersHydration = null;
 }
 
-function registerOpener(scriptId: string, tabId: number): void {
+// `documentId`: the document running it, for the writer's own tab
+// (`openerDocs`).
+function registerOpener(scriptId: string, tabId: number, documentId?: string): void {
   if (addOpenerToMap(scriptId, tabId)) persistGmOpeners();
+  if (!documentId) return;
+  let tabs = openerDocs.get(scriptId);
+  if (!tabs) openerDocs.set(scriptId, tabs = new Map());
+  let docs = tabs.get(tabId);
+  if (!docs) tabs.set(tabId, docs = new Set());
+  docs.add(documentId);
+}
+
+// Per script and tab, the documents running it: the page's and its
+// frames'. A write reaches the writer's tab only through these, as one
+// tab-wide send would reach the writer too. In memory only, and
+// dropped per tab when its top frame loads another page: after a worker
+// restart, a document is added again when it next writes or resyncs,
+// and until then a sibling frame may miss an update (as a lost
+// broadcast would, which the resync recovers). See docs/frames.md.
+const openerDocs = new Map<string, Map<number, Set<string>>>();
+
+function clearOpenerDocsForTab(tabId: number): void {
+  for (const tabs of openerDocs.values()) tabs.delete(tabId);
 }
 
 function clearTabFromGmOpeners(tabId: number): void {
@@ -4565,13 +4659,17 @@ async function handleBatchWrite(
   } finally {
     overlayEvictIfUnchanged(payload.scriptId, installed);
   }
-  // Broadcast the delta to every OTHER tab running this script.
-  // The originating tab already has the writes applied in its
-  // page-side cache (it issued the writes); broadcasting back would
-  // be redundant and could feed back through value-change listeners.
+  // Broadcast the delta to every OTHER document running this script:
+  // other tabs, and the writer's tab's other frames. The writing
+  // document already has the writes applied in its page-side cache (it
+  // issued the writes); broadcasting back would be redundant and could
+  // feed back through value-change listeners.
   const senderTabId = sender.tab?.id;
+  // The writer runs the script, so its document is one an update from
+  // another frame of its tab should reach (`openerDocs`).
+  if (senderTabId != null) registerOpener(payload.scriptId, senderTabId, (sender as { documentId?: string }).documentId);
   emitSmDevEvent({ kind: 'values', scriptId: payload.scriptId, tabId: senderTabId, writes: payload.writes });
-  await broadcastValueUpdate(payload.scriptId, payload.writes, senderTabId);
+  await broadcastValueUpdate(payload.scriptId, payload.writes, senderTabId, (sender as { documentId?: string }).documentId);
   return { ok: true };
 }
 
@@ -4584,11 +4682,23 @@ async function broadcastValueUpdate(
   scriptId: string,
   writes: readonly BatchWriteEntry[],
   excludeTabId: number | undefined,
+  excludeDocId?: string,
 ): Promise<void> {
   if (__debugSuppressGmBroadcast) return;
   await hydrateGmOpeners();
   const targets = gmOpeners.get(scriptId);
+  const message = { type: 'sm:gm-value-update', smWorld: pushWorld(scriptId), scriptId, writes };
   let sent = 0;
+  // The writer's own tab: the other documents of it running the script
+  // (its page and frames), each addressed by document, so one that
+  // navigated meanwhile isn't sent the old page's update. Nothing when
+  // the writer is the only one, the usual case.
+  if (excludeTabId !== undefined && excludeDocId) {
+    for (const documentId of openerDocs.get(scriptId)?.get(excludeTabId) ?? []) {
+      if (documentId === excludeDocId) continue;
+      void chrome.tabs.sendMessage(excludeTabId, message, { documentId }).catch(() => undefined);
+    }
+  }
   // Fire-and-forget per tab. chrome.tabs.sendMessage delivers to
   // every frame on the tab and each frame's runtime listener
   // dispatches by scriptId locally. "Receiving end does not exist"
@@ -4598,12 +4708,7 @@ async function broadcastValueUpdate(
     for (const tabId of targets) {
       if (tabId === excludeTabId) continue;
       sent++;
-      void chrome.tabs.sendMessage(tabId, {
-        type: 'sm:gm-value-update',
-        smWorld: pushWorld(scriptId),
-        scriptId,
-        writes,
-      }).catch(() => undefined);
+      void chrome.tabs.sendMessage(tabId, message).catch(() => undefined);
     }
   }
   // A write with nowhere to go is the normal single-tab case, so this
@@ -4652,7 +4757,7 @@ async function handleGmResync(
   if (typeof scriptId !== 'string' || !scriptId) return { ok: false };
   if (viaBridge(payload) && !(await bridgeMayActAs(scriptId, sender, STORAGE_SUBSYSTEMS))) return { ok: false, error: BRIDGE_DENIED };
   const tabId = sender.tab?.id;
-  if (tabId != null) registerOpener(scriptId, tabId);
+  if (tabId != null) registerOpener(scriptId, tabId, (sender as { documentId?: string }).documentId);
   const values = await loadSnapshotForCheckPending(scriptId);
   return { ok: true, values };
 }
@@ -4748,9 +4853,11 @@ async function bridgeMayActAs(
   if (!url) return false;
   await ensureLoaded();
   // URL-based, so this answers "could this script run here?" rather
-  // than "did it?". Frame-level gating (`@noframes`) isn't reflected.
+  // than "did it?".
   const match = findMatchesForUrl(url, 'any').find((m) => m.id === scriptId && m.world === 'MAIN');
   if (!match) return false;
+  // Nor in a frame, for a script kept to the top frame.
+  if (match.noframes && (await frameInfo(sender)).subframe) return false;
   // A manual script runs in a document only when asked, so the page
   // has its powers only where it was run.
   if (match.manual && !await manualRanIn(sender, scriptId)) return false;
@@ -4870,6 +4977,49 @@ function respondAsync(
   return true;
 }
 
+// Per tab, menu registrations and removals in the order they came. A
+// frame's has to look up its page first (`frameInfo`), and a removal
+// mustn't overtake the registration it removes.
+const menuQueues = new Map<number, Promise<void>>();
+function inMenuQueue(tabId: number, task: () => Promise<void>): void {
+  const next = (menuQueues.get(tabId) ?? Promise.resolve()).then(task).catch((err) => {
+    console.info('[SourceMonkey] menu command bookkeeping failed:', err);
+  });
+  menuQueues.set(tabId, next);
+  void next.finally(() => { if (menuQueues.get(tabId) === next) menuQueues.delete(tabId); });
+}
+
+// Per tab, the page (top document) and the scripts whose header
+// warnings a frame of it has printed to the page console.
+const frameStartupLogsByTab = new Map<number, { topDocId: string; ids: Set<string> }>();
+
+// Whether a copy of `scriptId` in one of the tab's frames prints the
+// script's header warnings (its `startupLogs`): once per page, as all
+// the page's frames share one DevTools console. Not when the script
+// matches the page itself, whose copy prints them; then only the first
+// frame's copy. Matched against the page's URL rather than the tab's
+// state, which may not have recorded this page's commit yet. A page
+// moved by pushState can make that answer wrong, a rare extra or
+// missing print. See docs/frames.md.
+async function frameShowsStartupLogs(
+  tabId: number,
+  scriptId: string,
+  sender: chrome.runtime.MessageSender,
+): Promise<boolean> {
+  const where = await frameInfo(sender);
+  if (!where.subframe) return false;
+  let shown = frameStartupLogsByTab.get(tabId);
+  if (!shown || shown.topDocId !== where.topDocId) {
+    shown = { topDocId: where.topDocId, ids: new Set() };
+    frameStartupLogsByTab.set(tabId, shown);
+  }
+  if (shown.ids.has(scriptId)) return false;
+  shown.ids.add(scriptId);
+  if (!where.topUrl) return true;
+  await ensureLoaded();
+  return !findMatchesForUrl(where.topUrl).some((m) => m.id === scriptId);
+}
+
 // ---------- sm:start / sm:error from injected wrappers ----------
 //
 // Messages from the USER_SCRIPT world arrive on the dedicated
@@ -4928,11 +5078,17 @@ function installScriptMessageListener(): void {
           return undefined;
         });
       Promise.all([decisionP, snapshotP]).then(
-        ([reply, gmValues]) => {
-          const enriched: CheckPendingReply =
-            gmValues !== undefined && reply.action !== 'skip'
-              ? { ...reply, gmValues }
-              : reply;
+        async ([reply, gmValues]) => {
+          // A frame's copy prints the script's header warnings only when
+          // nothing else on the page does (`frameShowsStartupLogs`), and
+          // not where it doesn't run at all (`no-match`).
+          const noMatch = reply.action === 'skip' && reply.reason === SKIP_REASON_NO_MATCH;
+          const startupLogs = sender.frameId !== 0 && tabId != null && !noMatch
+            && await frameShowsStartupLogs(tabId, payload.id, sender).catch(() => false);
+          const enriched: CheckPendingReply = {
+            ...(gmValues !== undefined && reply.action !== 'skip' ? { ...reply, gmValues } : reply),
+            ...(startupLogs ? { startupLogs: true as const } : {}),
+          };
           try { sendResponse(enriched); } catch { /* gone */ }
         },
         (err) => {
@@ -5092,37 +5248,39 @@ function installScriptMessageListener(): void {
       // and the navigation clear only drops another document's state.
       const payload = msg as { scriptId?: unknown; commandId?: unknown; name?: unknown };
       return guardBridgeCall(msg, payload.scriptId, ['menu'], sender, () => {
-        if (
-          typeof payload.scriptId === 'string' &&
-          typeof payload.commandId === 'string' &&
-          typeof payload.name === 'string'
-        ) {
-          const changed = registerMenuCommand(tabId, menuDocId, payload.scriptId, payload.commandId, payload.name);
-          if (changed) notifyPopup(tabId);
-          if (changed) {
-            emitSmDevEvent({
-              kind: 'menu', op: 'add', tabId, documentId: menuDocId, topFrame: sender.frameId === 0,
-              scriptId: payload.scriptId, commandId: payload.commandId, name: payload.name,
-            });
-          }
-        }
+        const { scriptId, commandId, name } = payload;
+        if (typeof scriptId !== 'string' || typeof commandId !== 'string' || typeof name !== 'string') return;
+        inMenuQueue(tabId, async () => {
+          // A frame's commands belong to the page it's in. When that
+          // can't be told, the page whose commands the tab holds.
+          const where = await frameInfo(sender);
+          const topDocId = !where.subframe ? menuDocId : where.topDocId || menuTopDocument(tabId) || menuDocId;
+          const changed = registerMenuCommand(tabId, menuDocId, scriptId, commandId, name, topDocId);
+          if (!changed) return;
+          notifyPopup(tabId);
+          emitSmDevEvent({
+            kind: 'menu', op: 'add', tabId, documentId: menuDocId, topFrame: !where.subframe,
+            scriptId, commandId, name,
+          });
+        });
       }, sendResponse);
     }
     if (type === 'sm:gm-menu-unregister') {
       const payload = msg as { scriptId?: unknown; commandId?: unknown };
       return guardBridgeCall(msg, payload.scriptId, ['menu'], sender, () => {
-        if (typeof payload.scriptId === 'string' && typeof payload.commandId === 'string') {
-          const changed = unregisterMenuCommand(tabId, menuDocId, payload.scriptId, payload.commandId);
+        const { scriptId, commandId } = payload;
+        if (typeof scriptId !== 'string' || typeof commandId !== 'string') return;
+        inMenuQueue(tabId, async () => {
+          const changed = unregisterMenuCommand(tabId, menuDocId, scriptId, commandId);
           // Unknown ids (silent no-op contract) don't change visible
           // state, so an open popup isn't told.
-          if (changed) notifyPopup(tabId);
-          if (changed) {
-            emitSmDevEvent({
-              kind: 'menu', op: 'remove', tabId, documentId: menuDocId, topFrame: sender.frameId === 0,
-              scriptId: payload.scriptId, commandId: payload.commandId,
-            });
-          }
-        }
+          if (!changed) return;
+          notifyPopup(tabId);
+          emitSmDevEvent({
+            kind: 'menu', op: 'remove', tabId, documentId: menuDocId,
+            topFrame: !(await frameInfo(sender)).subframe, scriptId, commandId,
+          });
+        });
       }, sendResponse);
     }
     if (type === SM_GM_DOM_BLOCKED_MSG) {
@@ -5312,6 +5470,31 @@ function composeWrapperErrorMessage(
   return st;
 }
 
+// How a report from one of the page's iframes goes in the Log: one row
+// per page for each kind of report (and error message), counting the
+// frames' repeats, rather than a row each. A page full of matching ad
+// frames would otherwise fill a script's Log in a few loads. The row
+// says it's from an iframe, which one last, and on which page, which
+// the frame's URL alone doesn't tell. See docs/frames.md.
+//   - `first`: the row as the first report words it.
+//   - `repeated(n)`: as `n` of them word it.
+//   - The page is the frame's own (`where.topDocId`), not whichever the
+//     tab shows now.
+async function frameLogCollapse(
+  tabId: number,
+  where: FrameInfo,
+  kind: string,
+  first: (on: string) => string,
+  repeated: (count: number, on: string) => string,
+): Promise<NonNullable<AppendLogInput['collapse']>> {
+  const pageUrl = getDocState(await getTabRecord(tabId), where.topDocId)?.url ?? where.topUrl;
+  const on = pageUrl ? ` on ${pageUrl}` : '';
+  return {
+    key: `frame:${tabId}:${where.topDocId}:${kind}`,
+    message: (count) => (count === 1 ? first(on) : repeated(count, on)),
+  };
+}
+
 async function recordScriptReport(
   tabId: number,
   sender: chrome.runtime.MessageSender,
@@ -5336,10 +5519,24 @@ async function recordScriptReport(
 ): Promise<void> {
   const id = payload.id;
   if (!id) return;
+  // Where it came from: the page itself, or one of its iframes, and
+  // which page. A frame no longer in the tab sent it before going (an
+  // async error from the previous page's frames, say), and it isn't
+  // about the page the tab shows now: dropped (docs/frames.md).
+  const where = await frameInfo(sender, true);
+  if (where.subframe && !where.live) return;
   // The page-world bridge relays any report the page sends, including
-  // one about a script the extension never registered (a forgery).
-  // Those aren't ours to show (they'd read as UNEXPECTED) or to log.
-  if (payload.__viaBridge && !(await getScriptMeta(id))) return;
+  // one about a script the extension never registered (a forgery), or
+  // one that can't be there: a USER_SCRIPT-world script (whose reports
+  // never take the bridge), or a `@noframes` one in a frame. Those
+  // aren't ours to show (they'd read as UNEXPECTED, or in frames) or to
+  // log. Not a URL check: a page may have moved (pushState) since its
+  // script started.
+  if (payload.__viaBridge) {
+    await ensureLoaded();
+    const known = indexedScript(id);
+    if (!known || known.world !== 'MAIN' || (known.noframes && where.subframe)) return;
+  }
   const name = String(payload.name ?? id);
   // sender.url is the document URL where the wrapper sent from; prefer
   // it over payload.url because Chrome sets it.
@@ -5349,15 +5546,18 @@ async function recordScriptReport(
   // chrome.webNavigation reports, so we can use it to tell which
   // document the wrapper belongs to.
   const senderDocId = (sender as { documentId?: string }).documentId ?? '';
+  // From one of the page's iframes: its run is kept apart from the top
+  // frame's (docs/frames.md).
+  const inFrame = where.subframe;
 
-  const tabPart = ` tab=${tabId}`;
+  const tabPart = ` tab=${tabId}${inFrame ? ` frame=${sender.frameId}` : ''}`;
   const label = getScriptLogLabel(id);
   emitSmDevEvent({
     kind: 'report',
     type,
     tabId,
     documentId: senderDocId,
-    topFrame: sender.frameId === 0,
+    topFrame: !inFrame,
     scriptId: id,
     name,
     url: senderUrl,
@@ -5371,7 +5571,7 @@ async function recordScriptReport(
   // swap path is a wrapper that just took control of a document
   // and needs the same pairing so future writes can fan out to it.
   if (type === SM_START_MSG || type === SM_SWAPPED_MSG) {
-    registerOpener(id, tabId);
+    registerOpener(id, tabId, senderDocId || undefined);
   }
   if (type === SM_START_MSG) {
     console.log(`[SourceMonkey] start ${label}${tabPart} ${senderUrl}`);
@@ -5382,6 +5582,11 @@ async function recordScriptReport(
       source: 'script-wrapper',
       tabId,
       message: `Started at ${senderUrl}`,
+      ...(inFrame ? {
+        collapse: await frameLogCollapse(tabId, where, 'start',
+          (on) => `Started in an iframe at ${senderUrl}${on}`,
+          (n, on) => `Started ${n} times in iframes${on}, latest at ${senderUrl}`),
+      } : {}),
     });
   } else if (type === SM_SWAPPED_MSG) {
     // The reload swap path. Log alongside sm:start so the SW console
@@ -5415,17 +5620,25 @@ async function recordScriptReport(
     //   why (`noDecisionMessage`).
     // - Any other reason (a token, from an older wrapper's bare `skip`)
     //   is a warning, the token in parentheses as a detail.
-    if (payload.reason !== SKIP_REASON_SM_DEV) logScriptEvent(id, {
-      // The run hears this as a report, so not again as a Log entry.
-      fromReport: true,
-      level: payload.reason === SKIP_REASON_NO_DECISION ? 'error'
-        : ASKED_SKIP_REASONS.has(payload.reason ?? '') ? 'info' : 'warning',
-      source: 'script-wrapper',
-      tabId,
-      message: payload.reason === SKIP_REASON_NO_DECISION
+    if (payload.reason !== SKIP_REASON_SM_DEV) {
+      const message = payload.reason === SKIP_REASON_NO_DECISION
         ? noDecisionMessage(payload.detail)
-        : `Did not run on this page (${payload.reason ?? 'no reason given'})`,
-    });
+        : `Did not run ${inFrame ? 'in this iframe' : 'on this page'} (${payload.reason ?? 'no reason given'})`;
+      logScriptEvent(id, {
+        // The run hears this as a report, so not again as a Log entry.
+        fromReport: true,
+        level: payload.reason === SKIP_REASON_NO_DECISION ? 'error'
+          : ASKED_SKIP_REASONS.has(payload.reason ?? '') ? 'info' : 'warning',
+        source: 'script-wrapper',
+        tabId,
+        message,
+        ...(inFrame ? {
+          collapse: await frameLogCollapse(tabId, where, `abandoned:${message}`,
+            (on) => `${message}\nIn an iframe at ${senderUrl}${on}`,
+            (n, on) => `${message}\nIn iframes ${n} times${on}, latest at ${senderUrl}`),
+        } : {}),
+      });
+    }
   } else {
     // console.info (not console.warn / .error) so a userscript runtime
     // failure — which is a bug in user-supplied code we're relaying —
@@ -5440,13 +5653,23 @@ async function recordScriptReport(
     // we prefer it as-is. Fall back to message-only when the engine
     // didn't give us a stack — older browsers / errors thrown from
     // primitive values won't carry one.
+    const text = composeWrapperErrorMessage(payload.message, payload.stack);
     logScriptEvent(id, {
       // The run hears this as a report, so not again as a Log entry.
       fromReport: true,
       level: 'error',
       source: 'script-wrapper',
       tabId,
-      message: composeWrapperErrorMessage(payload.message, payload.stack),
+      message: text,
+      // Folded by the error's message, not its stack: frames failing
+      // alike make one row, failing differently one each. Two different
+      // failures with the same message share a row, showing the latest
+      // one's stack.
+      ...(inFrame ? {
+        collapse: await frameLogCollapse(tabId, where, `error:${payload.message ?? ''}`,
+          (on) => `${text}\nIn an iframe at ${senderUrl}${on}`,
+          (n, on) => `${text}\nIn iframes ${n} times${on}, latest at ${senderUrl}`),
+      } : {}),
     });
   }
 
@@ -5490,7 +5713,27 @@ async function recordScriptReport(
     }
   }
 
+  const report: ActualStatus = noDecision
+    ? { state: 'error', name, message: noDecisionMessage(payload.detail) }
+    : type === SM_ERROR_MSG
+      ? { state: 'error', name, message: String(payload.message ?? '') }
+      : { state: 'started', name };
   const record = await getTabRecord(tabId);
+  if (inFrame) {
+    // Filed under the page the frame is in. Reports wait behind the
+    // page's commit in the tab queue, so its state is there; none means
+    // a page we don't track, with nothing to show it on.
+    const pageDocId = where.topDocId || record?.currentDocId || '';
+    const page = getDocState(record, pageDocId);
+    if (!record || !page) return;
+    const next = applyFrameReport(page, id, senderDocId, {
+      ...report, frameId: sender.frameId!, url: senderUrl, ...(isStale ? { stale: true as const } : {}),
+    });
+    if (next === page) return;
+    await setTabRecord(tabId, writeDocState(record, pageDocId, next));
+    if (record.currentDocId === pageDocId) await renderBadge(tabId, next);
+    return;
+  }
   let state = getDocState(record, senderDocId);
   if (!state) {
     // Bootstrap: sm:start arrived before webNavigation.onCommitted
@@ -5513,11 +5756,6 @@ async function recordScriptReport(
       ...claimFields,
     };
   }
-  const report: ActualStatus = noDecision
-    ? { state: 'error', name, message: noDecisionMessage(payload.detail) }
-    : type === SM_ERROR_MSG
-      ? { state: 'error', name, message: String(payload.message ?? '') }
-      : { state: 'started', name };
   let next = applyScriptReport(state, id, report, manual);
   // What this report says about the document itself, for explaining
   // another script that never starts here (see missing-scripts.ts).

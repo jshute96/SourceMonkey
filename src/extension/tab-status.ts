@@ -27,6 +27,18 @@ export interface ActualStatus {
   message?: string;
 }
 
+// One run of a script in one of the page's iframes (docs/frames.md).
+export interface FrameRun extends ActualStatus {
+  // Chrome's id for the frame (its slot in the tab), and the URL its
+  // document was at when the script reported.
+  frameId: number;
+  url: string;
+  // It ran code that has changed since, so the frame shows Updated
+  // until it loads again. Kept per run, not per script: a frame that
+  // reloads runs the new code.
+  stale?: true;
+}
+
 export interface TabMatchState {
   // The current document's ID, from chrome.webNavigation. State is keyed
   // by tabId in storage, but invalidated whenever this changes — bfcache
@@ -114,6 +126,12 @@ export interface TabMatchState {
   // load, so whether its scripts run is unknown. Any copy still running
   // is the old extension's, cut off from it.
   loadedBefore?: boolean;
+  // Runs in the page's iframes: script id → frame document id → run.
+  // Kept apart from `actual`, which is the top frame's alone: what runs
+  // in frames is never in `matches`, so it can't be MISSING or
+  // UNEXPECTED. Runs go when their frame's document does
+  // (`pruneFrameRuns`). See docs/frames.md.
+  frameRuns?: Record<string, Record<string, FrameRun>>;
 }
 
 export type RowStatus =
@@ -124,6 +142,9 @@ export interface BadgeRow {
   name: string;
   status: RowStatus;
   message?: string;
+  // Runs only in the page's iframes: neither matched nor ran in the
+  // top frame.
+  framesOnly?: boolean;
 }
 
 export interface BadgeView {
@@ -177,7 +198,10 @@ export const SM_DEV_MARKER_CYAN = '#00acc1';
 //       UNEXPECTED — actual `started` but not in our expected set
 //       RELOAD     — a script that's started here, but its on-disk
 //                    content has changed since (would be OK otherwise)
-//   - The count is the size of the union of expected ∪ actual IDs.
+//   - The count is the size of the union of expected ∪ actual IDs,
+//     with the scripts running in frames.
+//   - A script running in frames takes the worst of its runs' statuses
+//     (`STATUS_RANK`); one running only in frames is `framesOnly`.
 //
 // REJECTED is a refinement of MISSING, not a new axis: both mean
 // "expected here, never reported". MISSING is provisional — the wrapper
@@ -199,9 +223,11 @@ export function computeBadge(
 
   const stale = new Set<string>(state.staleScriptIds ?? []);
 
+  const frameRuns = state.frameRuns ?? {};
   const allIds = new Set<string>([
     ...expectedById.keys(),
     ...Object.keys(state.actual),
+    ...Object.keys(frameRuns),
   ]);
 
   const rows: BadgeRow[] = [];
@@ -210,7 +236,12 @@ export function computeBadge(
     const actual = state.actual[id];
     // Prefer the actual-side name (most recently reported by the
     // wrapper); fall back to the match-index name; finally the id.
-    const name = actual?.name ?? expected?.name ?? id;
+    const runs = Object.values(frameRuns[id] ?? {});
+    const name = actual?.name ?? expected?.name ?? runs[0]?.name ?? id;
+    if (!expected && !actual) {
+      rows.push({ id, name, ...frameStatus(runs), framesOnly: true });
+      continue;
+    }
     let status: RowStatus;
     let message: string | undefined;
     // A manual script runs its current copy each time it's asked, so
@@ -247,12 +278,36 @@ export function computeBadge(
     } else {
       status = 'OK';
     }
+    if (runs.length > 0) {
+      const inFrames = frameStatus(runs);
+      if (STATUS_RANK[inFrames.status] > STATUS_RANK[status]) ({ status, message } = inFrames);
+    }
     rows.push({ id, name, status, message });
   }
   rows.sort((a, b) => compareScriptNames(a.name, b.name));
 
   const count = [...allIds].filter((id) => countsOnBadge(state, id)).length;
   return { count, rows };
+}
+
+// Worst first: a row with runs in several documents shows the worst.
+// Errors outrank everything; a run of outdated code (RELOAD) outranks
+// what a reload would also settle (MISSING, UNEXPECTED).
+const STATUS_RANK: Record<RowStatus, number> = {
+  ERROR: 7, REJECTED: 7, RELOAD: 5, MISSING: 4, UNEXPECTED: 3, UNTRACKED: 2, NOT_LOADED: 1, OK: 0,
+};
+
+// A script's status from its runs in frames: outdated code first, as
+// for the top frame's run, then an error, else running.
+function frameStatus(runs: readonly FrameRun[]): { status: RowStatus; message?: string } {
+  if (runs.some((r) => r.stale)) return { status: 'RELOAD' };
+  const error = runs.find((r) => r.state === 'error');
+  return error ? { status: 'ERROR', message: error.message } : { status: 'OK' };
+}
+
+/** Whether `id` has reported running in this document or any of its frames. */
+export function runsHere(state: TabMatchState, id: string): boolean {
+  return state.actual[id] != null || state.frameRuns?.[id] != null;
 }
 
 /**
@@ -262,7 +317,7 @@ export function computeBadge(
  */
 export function countsOnBadge(state: TabMatchState, id: string): boolean {
   if (state.smDevAllow === undefined || state.scriptsSkipped) return true;
-  return !skippedOnDocument(state, id) || state.actual[id] != null;
+  return !skippedOnDocument(state, id) || runsHere(state, id);
 }
 
 /**
@@ -385,11 +440,19 @@ export function mergeMatches(
 // Pure: flag `scriptId` as stale. No-op when the wrapper hasn't
 // reported anything for this script — the SW listener uses the
 // identity-return to skip storage writes for non-running tabs.
+//
+// Its runs in frames are marked each (`FrameRun.stale`), so a frame
+// that loads again afterwards, with the new code, isn't.
 export function markScriptStale(state: TabMatchState, scriptId: string): TabMatchState {
-  if (!state.actual[scriptId]) return state;
-  const existing = state.staleScriptIds ?? [];
-  if (existing.includes(scriptId)) return state;
-  return { ...state, staleScriptIds: [...existing, scriptId] };
+  let next = state;
+  const runs = state.frameRuns?.[scriptId];
+  if (runs && Object.values(runs).some((r) => !r.stale)) {
+    const marked = Object.fromEntries(Object.entries(runs).map(([doc, r]) => [doc, { ...r, stale: true as const }]));
+    next = { ...next, frameRuns: { ...next.frameRuns, [scriptId]: marked } };
+  }
+  const existing = next.staleScriptIds ?? [];
+  if (!state.actual[scriptId] || existing.includes(scriptId)) return next;
+  return { ...next, staleScriptIds: [...existing, scriptId] };
 }
 
 // Pure: clear the stale flag for `scriptId`. Used after a sm:swapped
@@ -463,4 +526,39 @@ export function notePageReport(
     ...(newWorld ? { reportedWorlds: [...worlds, world] } : {}),
     ...(newOpaque ? { opaqueOrigin: true } : {}),
   };
+}
+
+// Pure: merge a report from a script in one of the page's iframes, the
+// same way `applyScriptReport` does for the top frame: an error stays
+// for that frame's document.
+export function applyFrameReport(
+  state: TabMatchState,
+  id: string,
+  frameDocId: string,
+  run: FrameRun,
+): TabMatchState {
+  const runs = state.frameRuns?.[id] ?? {};
+  if (run.state === 'started' && runs[frameDocId]?.state === 'error') return state;
+  return {
+    ...state,
+    frameRuns: { ...state.frameRuns, [id]: { ...runs, [frameDocId]: run } },
+  };
+}
+
+// Pure: drop the frame runs whose document isn't in `liveDocIds` (the
+// tab's frames now): the frame navigated or was removed. Identity-
+// returns when nothing went, so the caller can skip a storage write.
+export function pruneFrameRuns(state: TabMatchState, liveDocIds: ReadonlySet<string>): TabMatchState {
+  if (!state.frameRuns) return state;
+  let changed = false;
+  const kept: Record<string, Record<string, FrameRun>> = {};
+  for (const [id, runs] of Object.entries(state.frameRuns)) {
+    const live = Object.entries(runs).filter(([docId]) => liveDocIds.has(docId));
+    if (live.length !== Object.keys(runs).length) changed = true;
+    if (live.length > 0) kept[id] = Object.fromEntries(live);
+  }
+  if (!changed) return state;
+  if (Object.keys(kept).length > 0) return { ...state, frameRuns: kept };
+  const { frameRuns: _drop, ...rest } = state;
+  return rest;
 }

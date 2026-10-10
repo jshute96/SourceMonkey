@@ -103,7 +103,7 @@ Pattern forms beyond Chrome's own grammar:
 |-----|:----------:|:--:|:--:|:--:|-------|
 | `@run-at` | ✅ | ✓ | ✓ | ✓ (partial) | When the script runs: see [`@run-at` values](#run-at-values) below. |
 | `@inject-into` | ✅ |   | ✓ |   | VM-specific. `page` → MAIN world. `content` → USER_SCRIPT (isolated) world, even for a script that asks for `unsafeWindow` (by `@grant` or just by using it), which would otherwise run in MAIN: it stays isolated, and gets a warning that it can't reach the page's variables. `auto` / unset falls through to `@grant` (see [injection.md → Execution world](injection.md#execution-world)). TM uses `@sandbox` for the same purpose. |
-| `@noframes` | ⚪ | ✓ | ✓ | ✓ | Should map to Chrome's `allFrames: false`. Currently every script runs in the top frame only because we don't set `allFrames` at all, so this happens to be the right behavior *by accident* — but a script that wants the opposite (also run in frames) can't get it. Running in frames also needs the menu-command registry re-keyed first — see the frame-control note in [injection.md](injection.md#limitations--future-work). |
+| `@noframes` | ✅ | ✓ | ✓ | ✓ | Runs the script in the top frame only. Without it, a script runs in every frame whose own URL it matches, as in TM and VM: see [frames.md](frames.md). |
 | `@run-in` | ⚪ | ✓ (5.3+) |   |   | Normal vs incognito vs Firefox containers. TM-only. |
 | `@sandbox` | ⚪ | ✓ (4.18+) |   |   | TM's world-selector. SourceMonkey uses `@inject-into` instead, mirroring VM. |
 | `@unwrap` | ⚪ | ✓ | ✓ |   | Inject the body without our activation/error shim. We always wrap — see [injection.md](injection.md#the-activation--error-wrapper). |

@@ -2064,8 +2064,9 @@ that, since the answer is a function.
 - When Chrome restarts SourceMonkey's service worker (its background
   script) during a run, what the scripts did meanwhile may be missing
   from the run's output. The run says when this happens.
-- SourceMonkey runs scripts in the top frame only. A script meant for
-  an iframe (`@match` of the frame's URL) never starts there.
+- A script running in an iframe reports to the run (`started in an
+  iframe on <frame URL>`), but reading its state and evaluating in its
+  world reach the top frame only.
 - `--lang` doesn't reach `GM_xmlhttpRequest` and `GM_download` in a
   connected browser (see [`start` options in detail](#start-options-in-detail)).
 - In specs, a worker's tests share the browser's context (see

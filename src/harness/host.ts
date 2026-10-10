@@ -38,6 +38,11 @@ export interface MenuCommandRecord {
   commandId: string;
   name: string;
   at: number;
+  /**
+   * The document that registered it, where it fires: the page's, or one
+   * of its iframes'. Absent where the manager doesn't say.
+   */
+  documentId?: string;
 }
 
 export interface NotificationRecord {
@@ -99,8 +104,11 @@ export type ConnectChoice = 'once' | 'cancel' | 'allow' | 'allow-all' | 'deny';
 export interface ScriptReport {
   scriptId: string;
   name: string;
+  /** The URL of the document it came from: an iframe's, for `frame`. */
   url: string;
   at: number;
+  /** From one of the page's iframes, not the page itself. */
+  frame?: true;
 }
 
 export interface StartReport extends ScriptReport {}
@@ -446,21 +454,23 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
   // ---------- What the scripts reported ----------
 
   /** A script started in `from`'s current document. */
-  protected recordStart(from: PageLink, fields: { scriptId: string; name: string; url: string }): void {
+  protected recordStart(from: PageLink, fields: { scriptId: string; name: string; url: string; frame?: true }): void {
     const report: StartReport = this.baseReport(from, fields);
     this.reports.started.push(report);
     this.notify('start', report);
   }
 
   /** A script threw in `from`. */
-  protected recordError(from: PageLink, fields: { scriptId: string; name: string; url: string; message: string; stack: string }): void {
+  protected recordError(
+    from: PageLink, fields: { scriptId: string; name: string; url: string; frame?: true; message: string; stack: string },
+  ): void {
     const report: ErrorReport = this.baseReport(from, { ...fields, stack: this.remapStack(fields.stack) });
     this.reports.errors.push(report);
     this.notify('script-error', report);
   }
 
   /** A script didn't run in `from`, for `reason`. */
-  protected recordSkip(from: PageLink, fields: { scriptId: string; name: string; url: string; reason: string }): void {
+  protected recordSkip(from: PageLink, fields: { scriptId: string; name: string; url: string; frame?: true; reason: string }): void {
     const report: SkipReport = this.baseReport(from, fields);
     this.reports.skipped.push(report);
     this.notify('skip', report);
@@ -495,13 +505,13 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
   }
 
   /** A script in `from` registered a menu command. */
-  protected registerMenu(from: PageLink, scriptId: string, commandId: string, name: string): void {
+  protected registerMenu(from: PageLink, scriptId: string, commandId: string, name: string, documentId?: string): void {
     if (!this.scripts.has(scriptId) || !commandId) return;
-    const record: MenuCommandRecord = { scriptId, commandId, name, at: Date.now() };
+    const record: MenuCommandRecord = { scriptId, commandId, name, at: Date.now(), ...(documentId ? { documentId } : {}) };
     // Re-registering an id replaces the entry in place, as the worker's
-    // registry does.
+    // registry does. Per document: two frames can use the same id.
     const i = this.reports.menuCommands.findIndex((m) =>
-      m.scriptId === scriptId && m.commandId === commandId && this.menuOwners.get(m) === from);
+      m.scriptId === scriptId && m.commandId === commandId && m.documentId === documentId && this.menuOwners.get(m) === from);
     if (i >= 0) {
       this.menuOwners.delete(this.reports.menuCommands[i]);
       this.reports.menuCommands[i] = record;
@@ -514,9 +524,9 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
   }
 
   /** A script in `from` removed a menu command. */
-  protected unregisterMenu(from: PageLink, scriptId: string, commandId: string): void {
+  protected unregisterMenu(from: PageLink, scriptId: string, commandId: string, documentId?: string): void {
     const i = this.reports.menuCommands.findIndex((m) =>
-      m.scriptId === scriptId && m.commandId === commandId && this.menuOwners.get(m) === from);
+      m.scriptId === scriptId && m.commandId === commandId && m.documentId === documentId && this.menuOwners.get(m) === from);
     if (i < 0) return;
     this.menuOwners.delete(this.reports.menuCommands[i]);
     this.reports.menuCommands.splice(i, 1);
