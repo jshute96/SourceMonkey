@@ -1,7 +1,9 @@
 # sm-dev commands by task
 
-A summary. `pnpm sm-dev help <command>` shows a command's exact
-options; `pnpm sm-dev --help` lists everything.
+A summary. `pnpm sm-dev help` lists the help topics, and
+`help <topic>` shows one. `help <command>` (or `<command> --help`)
+shows a command's exact options; `help commands` lists the commands,
+and `help all` everything.
 
 ## Shape of a command line
 

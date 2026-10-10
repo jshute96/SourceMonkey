@@ -348,8 +348,14 @@ Command marks:
 
 - The help is data: sections of commands, each with its arguments and
   options, rendered and wrapped to fit.
+  - Each section has a `name`, its topic for `help <name>`, and a
+    `summary`. `help` alone lists the topics with their summaries;
+    `help commands` gives each command's first sentence (or its
+    `summary`), by topic; `help all` renders everything.
   - `help <command>` picks one command out of it, with the options any
     section lists for it.
+  - A section that is just the command of its name (`frames`, `logs`)
+    shows that command's help instead, which has all its options.
 - The same list gives each command's syntax (`commandSyntax`), the
   names Tab completes, and which commands go to a run.
   - Its flags come from its options and usage lines (`cdp [tab] --file

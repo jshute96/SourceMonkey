@@ -34,7 +34,7 @@ import { parseCommandArgs, splitWords } from './command-args.js';
 import { DEFAULT_MANAGER, MANAGERS, managerMistake, managerNamed, type ManagerName } from './managers.js';
 import type { ManagerVerb } from './manager-actions.js';
 import type { ManagerControl } from './manager-commands.js';
-import { MAX_TIMER_SECONDS, OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, TIMEOUT_NEEDS_SECONDS, commandNamed, commandSyntax, commandsHelp, fullHelp, timeoutSecondsMs, unsupportedCommand } from './command-list.js';
+import { MAX_TIMER_SECONDS, OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, TIMEOUT_NEEDS_SECONDS, commandNamed, commandSyntax, commandsHelp, helpText, timeoutSecondsMs, unsupportedCommand } from './command-list.js';
 import { readJsonFile } from './input-file.js';
 import { isJsonLine, jsonLayoutMistake, jsonResult, jsonResultData, STDERR_LINE, withLayout, type JsonLayout, type BrowserStatus, type ListData, type MatchData, type RunConnection, type StatusData, type StatusRunsData } from './json-output.js';
 // Node built-ins only, so as cheap to load as the rest here.
@@ -50,12 +50,18 @@ import {
 
 
 // After a mistake, in place of the whole help, which would bury it.
-const LIST_COMMANDS = 'Use sm-dev --help to list the commands.';
+const LIST_COMMANDS = 'Use sm-dev help commands to list the commands.';
 
-// `sm-dev help <command>...`, or the mistake for a name that is no command.
-function commandHelp(names: string[]): string {
-  const { text, unknown } = commandsHelp(names);
-  if (unknown.length > 0) throw new UsageError(`${unknown.join(', ')} ${unknown.length === 1 ? 'is' : 'are'} not ${unknown.length === 1 ? 'a command' : 'commands'}. Use sm-dev --help to list them.`);
+// `sm-dev help [topic]...`, and the help of `commands` (`scripts
+// --help`), or the mistake for a name that is none.
+function commandHelp(topics: string[], commands: string[] = []): string {
+  const { text, unknown } = helpText(topics, commands);
+  // Unknown topics are named first, alone: their message covers both kinds.
+  const asTopics = unknown.filter((name) => topics.includes(name));
+  const asCommands = unknown.filter((name) => !topics.includes(name));
+  const are = (names: string[], one: string, many: string): string => `${names.join(', ')} ${names.length === 1 ? `is not ${one}` : `are not ${many}`}`;
+  if (asTopics.length > 0) throw new UsageError(`${are(asTopics, 'a command or help topic', 'commands or help topics')}. Use sm-dev help to list the topics, or sm-dev help commands for the commands.`);
+  if (asCommands.length > 0) throw new UsageError(`${are(asCommands, 'a command', 'commands')}. ${LIST_COMMANDS}`);
   return text;
 }
 
@@ -1058,7 +1064,7 @@ function checkedList(text: string): { commands: AssembledCommand[] } {
 }
 
 function unknownRunCommand(name: string): string {
-  return `${name} is not a command a run takes. Use sm-dev help to list them.`;
+  return `${name} is not a command a run takes. Use sm-dev help commands to list them.`;
 }
 
 /**
@@ -1527,7 +1533,7 @@ async function attachCommand(opts: Opts, client: Client): Promise<number> {
 const HELP_FLAGS = new Set(['--help', '-h']);
 
 // The `help` command's topics, or null for another command; empty for
-// the whole help. `--help` is handled for the whole line (`lineHelp`).
+// the help index. `--help` is handled for the whole line (`lineHelp`).
 function helpTopics(argv: string[]): string[] | null {
   if (argv[0] !== 'help' && argv[0] !== '?') return null;
   // `help --help`: help's own help, as for any command.
@@ -1539,21 +1545,23 @@ function helpTopics(argv: string[]): string[] | null {
  * `--help` (or `-h`) anywhere on the line: the help for each command
  * the line names, once each, and nothing run. Looked for before the
  * commands are checked, so a mistake elsewhere doesn't stand in the
- * way. With no command named, the whole help. Null when not asked.
+ * way. With no command named, the help index. Null when not asked.
  */
 function lineHelp(commands: string[][]): string | null {
   if (!commands.some((words) => words.some((w) => HELP_FLAGS.has(w)))) return null;
+  const topics: string[] = [];
   const names: string[] = [];
   for (const words of commands) {
     const rest = words.filter((w) => !HELP_FLAGS.has(w));
     // `help status`: its topics. Otherwise the command's name, which
     // may come after its flags (`--detach start`).
     // `help --help` alone: help's own.
-    const topics = rest.length === 1 ? ['help'] : rest.slice(1);
-    const named = rest[0] === 'help' || rest[0] === '?' ? topics : rest.filter((w) => !w.startsWith('-')).slice(0, 1);
-    for (const name of named) if (!names.includes(name)) names.push(name);
+    if (rest[0] === 'help' || rest[0] === '?') {
+      if (rest.length === 1) names.push('help');
+      else topics.push(...rest.slice(1));
+    } else names.push(...rest.filter((w) => !w.startsWith('-')).slice(0, 1));
   }
-  return names.length === 0 ? fullHelp() : commandHelp(names);
+  return commandHelp(topics, names);
 }
 
 // The signals that end sm-dev: Ctrl-C, kill, and a closed terminal.
@@ -1763,7 +1771,7 @@ function isVerdict(words: string[]): boolean {
 // A command's own words, sorted out: help, a command sent to a run, or
 // one of sm-dev's own.
 type ParsedCommand =
-  | { kind: 'help'; topics: string[] }
+  | { kind: 'help'; topics: string[]; commands?: string[] }
   | { kind: 'send'; words: string[] }
   | { kind: 'cli'; opts: Opts; words: string[] };
 
@@ -1782,7 +1790,7 @@ function parseCommand(words: string[]): ParsedCommand {
   if (words.length === 1 && OWN_COMMANDS.has(head) && head !== words[0]) return parseCommand(commandWords(words[0]));
   const opts = parseArgs(words);
   if (opts.command === null) throw new UsageError(`A command is needed. ${LIST_COMMANDS}`);
-  if (opts.help) return { kind: 'help', topics: [opts.command] };
+  if (opts.help) return { kind: 'help', topics: [], commands: [opts.command] };
   if (!OWN_COMMANDS.has(opts.command)) {
     // A run's ID where the command goes: the old `sm-dev D1 status`.
     const run = runIdOf(opts.command);
@@ -1812,7 +1820,7 @@ function parseCommand(words: string[]): ParsedCommand {
 async function checkCommand(words: string[]): Promise<void> {
   const parsed = parseCommand(words);
   if (parsed.kind === 'help') {
-    if (parsed.topics.length > 0) commandHelp(parsed.topics);
+    if (parsed.topics.length > 0 || parsed.commands) commandHelp(parsed.topics, parsed.commands);
     return;
   }
   if (parsed.kind === 'send') return checkSend(parsed.words);
@@ -1839,7 +1847,7 @@ async function runOne(words: string[], client: Client): Promise<number> {
   try {
     const parsed = parseCommand(words);
     if (parsed.kind === 'help') {
-      for (const line of (parsed.topics.length === 0 ? fullHelp() : commandHelp(parsed.topics)).trimEnd().split('\n')) print(line);
+      for (const line of commandHelp(parsed.topics, parsed.commands).trimEnd().split('\n')) print(line);
       return 0;
     }
     if (parsed.kind === 'send') return await sendCommand(parsed.words, client);
@@ -1917,7 +1925,7 @@ async function main(): Promise<void> {
   // `--open-browser` alone, which is a whole line: start a browser.)
   const stdin = flags.stdin || (commands.length === 0 && !flags.interactive && !lineOpenBrowser && !process.stdin.isTTY);
   if (commands.length === 0 && !stdin && !flags.interactive && !lineOpenBrowser) {
-    process.stdout.write(fullHelp());
+    process.stdout.write(commandHelp([]));
     process.exitCode = 2;
     return;
   }

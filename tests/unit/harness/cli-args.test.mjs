@@ -255,7 +255,7 @@ test('piped stdin is commands with none on the line, or with --stdin, checked in
     stdout: '',
     stderr: [
       'stdin > evel 1',
-      'ERROR: evel is not a command a run takes. Use sm-dev help to list them.',
+      'ERROR: evel is not a command a run takes. Use sm-dev help commands to list them.',
       'ERROR: Line 3: Only the cdp, eval, set and type commands take a {{ block, so its lines up to }} are skipped',
       'ERROR: The {{ block on line 5 has no }} line to end it',
       'None of the commands were run.',
@@ -285,7 +285,7 @@ test('stdin from a file is checked in full; lines a pipe sends later run as read
   const r = spawnSync(process.execPath, [CLI], { stdio: [fd, 'pipe', 'pipe'], encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
   closeSync(fd);
   assert.equal(r.status, 2);
-  assert.equal(r.stderr, 'stdin > evel 1\nERROR: evel is not a command a run takes. Use sm-dev help to list them.\nNone of the commands were run.\n');
+  assert.equal(r.stderr, 'stdin > evel 1\nERROR: evel is not a command a run takes. Use sm-dev help commands to list them.\nNone of the commands were run.\n');
   // A pipe: a command first, then later a mistake, said as it comes,
   // which stops the rest, as a failed command does. The mistake is
   // sent only once `list` has answered: a fixed pause raced a slow
@@ -308,7 +308,7 @@ test('stdin from a file is checked in full; lines a pipe sends later run as read
   assert.equal(code, 1);
   assert.equal(stderr, [
     'stdin > evel 1',
-    'ERROR: evel is not a command a run takes. Use sm-dev help to list them.',
+    'ERROR: evel is not a command a run takes. Use sm-dev help commands to list them.',
     'That command failed, so the commands after it were not run',
     '',
   ].join('\n'));
@@ -402,10 +402,10 @@ test('several commands on a line are checked before any runs, then run in order,
   assert.equal(bad.stdout, '');
   assert.equal(bad.stderr, [
     'arg > evel 1',
-    'ERROR: Unknown command: evel. Use sm-dev --help to list the commands.',
+    'ERROR: Unknown command: evel. Use sm-dev help commands to list the commands.',
     'arg > \'status',
     'bogus\'',
-    'ERROR: bogus is not a command a run takes. Use sm-dev help to list them.',
+    'ERROR: bogus is not a command a run takes. Use sm-dev help commands to list them.',
     'arg > stop x',
     'ERROR: The run ID x is not valid. Run IDs are D and then letters, digits, _ or -.',
     'None of the commands were run.',
@@ -447,27 +447,77 @@ test('--lang takes language tags, alone or in a list, and refuses anything else'
   ]) assert.deepEqual(run(SCRIPT, '--lang', given), { code: 2, out: message });
 });
 
-test('--help lists every command, in sections, and how to name things', () => {
+function help(...args) {
+  const r = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8' });
+  return { code: r.status, out: r.stdout + r.stderr };
+}
+
+test('--help and help list the topics by name, and no commands', () => {
   const r = spawnSync(process.execPath, [CLI, '--help'], { encoding: 'utf8' });
   assert.equal(r.status, 0);
-  assert.match(r.stdout, /^Global options:$/m);
-  assert.match(r.stdout, /^Concurrent runs:$/m);
-  assert.match(r.stdout, /^ {2}Checking scripts:$/m);
-  // A section's own help command, as a hint.
+  assert.match(r.stdout, /^ {2}help commands +Short list of all commands$/m);
+  assert.match(r.stdout, /^ {2}runs +Run IDs, /m);
+  // A subsection under its section, bulleted.
+  assert.match(r.stdout, /^ {2}- checking +Match and validate scripts$/m);
+  assert.doesNotMatch(r.stdout, /click \[tab\]/);
+  assert.equal(help('help').out, r.stdout);
+});
+
+test('help all lists every command, in sections, and how to name things', () => {
+  const r = spawnSync(process.execPath, [CLI, 'help', 'all'], { encoding: 'utf8' });
+  assert.equal(r.status, 0);
+  assert.equal(help('help', 'full').out, r.stdout);
+  assert.match(r.stdout, /^Global options \[help global-flags\]:$/m);
+  assert.match(r.stdout, /^Concurrent runs \[help runs\]:$/m);
+  assert.match(r.stdout, /^ {2}Checking scripts \[help checking\]:$/m);
   assert.match(r.stdout, /^Logs \[help logs\]:$/m);
   assert.match(r.stdout, /^ {2}click \[tab\] <selector>\n {20}Click an element\.$/m);
   assert.match(r.stdout, /^ {4}menu \[what\] /m);
   // Unindented, beside the commands.
-  assert.match(r.stdout, /^Specifying objects:$/m);
+  assert.match(r.stdout, /^Specifying objects \[help objects\]:$/m);
   assert.match(r.stdout, /^ {4}Dname {11}A user-chosen/m);
   // Every line fits a terminal.
   for (const line of r.stdout.split('\n')) assert.ok(line.length <= 79, line);
 });
 
-function help(...args) {
-  const r = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8' });
-  return { code: r.status, out: r.stdout + r.stderr };
-}
+test('help commands lists each command once, with a line on it, under its sections', () => {
+  const { out, code } = help('help', 'commands');
+  assert.equal(code, 0);
+  assert.match(out, /^Scripts \[help scripts\]:\n {2}scripts +List the loaded scripts/m);
+  assert.match(out, /^ {2}- Waiting \[help waiting\]:\n {4}wait +Wait for the page to settle/m);
+  // Each command's first sentence only, and wait (of several forms) once.
+  assert.match(out, /^ {2}status +Show overall status, script list, and tab list\.$/m);
+  assert.equal(out.match(/^ +wait /gm).length, 1);
+  assert.doesNotMatch(out, /^Global options/m);
+  for (const line of out.split('\n')) assert.ok(line.length <= 79, line);
+});
+
+test('help <topic> shows that section; one that is just a command shows its help', () => {
+  const tabs = help('help', 'tabs').out;
+  assert.match(tabs, /^Tabs \[help tabs\]:\n {2}tabs /);
+  assert.match(tabs, /^ {2}Saved pages \[help saved-pages\]:$/m);
+  assert.doesNotMatch(tabs, /^Frames/m);
+  // A subsection alone.
+  assert.match(help('help', 'waiting').out, /^Waiting \[help waiting\]:\n/);
+  // frames and logs are their command's sections: the command's help.
+  assert.equal(help('help', 'frames').out, help('frames', '--help').out);
+  assert.match(help('help', 'logs').out, /^Usage: sm-dev logs /);
+  // --help on a command is its help, even where a section has its name.
+  assert.match(help('scripts', '--help').out, /^Usage: sm-dev scripts\n/);
+});
+
+test('help topic names are unique, and none is a topic help has of its own', async () => {
+  const { HELP_SECTIONS } = await import('../../../lib/harness/command-list.js');
+  const all = (sections) => sections.flatMap((s) => [s, ...all(s.subsections ?? [])]);
+  const names = all(HELP_SECTIONS).map((s) => s.name).filter(Boolean);
+  assert.equal(new Set(names).size, names.length);
+  for (const reserved of ['all', 'full', 'commands']) assert.ok(!names.includes(reserved), reserved);
+});
+
+test('an unknown name given twice is named once', () => {
+  assert.deepEqual(help('frob', '--help', '--', 'frob', '-h'), { code: 2, out: 'ERROR: frob is not a command. Use sm-dev help commands to list the commands.\n' });
+  assert.match(help('help', 'nope', 'nope').out, /^ERROR: nope is not a command or help topic\./);
+});
 
 test('help for one command shows its entry and only its flags', () => {
   const match = help('help', 'match');
@@ -509,7 +559,7 @@ test('--help anywhere on a line shows each command\'s help once, and runs nothin
   assert.ok(all.indexOf('Usage: sm-dev newtab') < all.indexOf('Usage: sm-dev eval'));
   assert.match(r.out, /^Usage: sm-dev eval \[tab\] <js> \[options\]$/m);
   assert.doesNotMatch(r.out, /No sm-dev runs|has no --bad flag/);
-  assert.deepEqual(help('list', '--', 'frob', '-h'), { code: 2, out: 'ERROR: frob is not a command. Use sm-dev --help to list them.\n' });
+  assert.deepEqual(help('list', '--', 'frob', '-h'), { code: 2, out: 'ERROR: frob is not a command. Use sm-dev help commands to list the commands.\n' });
 });
 
 test('each run command takes the flags its help lists, and no others', async () => {
@@ -535,14 +585,14 @@ test('help covers a run\'s commands and aliases, and refuses unknown names', () 
   assert.match(typed.out, /^Usage: sm-dev status \[options\]$/m);
   // `script` is `scripts`'s singular, so its help is the same.
   assert.match(typed.out, /^Usage: sm-dev scripts\n {7}sm-dev script <script>$/m);
-  assert.equal(help('help', 'script').out, help('help', 'scripts').out);
+  assert.equal(help('help', 'script').out, help('scripts', '--help').out);
   assert.match(typed.out, /^Usage: sm-dev get <key> \[options\]$/m);
   assert.doesNotMatch(typed.out, /menu \[what\]/);
   // Every form of a command of several.
   assert.equal(help('help', 'wait').out.match(/^ {2}wait /gm).length, 5);
   // ? is help, and keys is key.
   assert.equal(help('?', 'keys').out, help('help', 'key').out);
-  assert.deepEqual(help('help', 'nope'), { code: 2, out: 'ERROR: nope is not a command. Use sm-dev --help to list them.\n' });
+  assert.deepEqual(help('help', 'nope'), { code: 2, out: 'ERROR: nope is not a command or help topic. Use sm-dev help to list the topics, or sm-dev help commands for the commands.\n' });
 });
 
 test('the browser options are global, and only one browser is chosen', () => {

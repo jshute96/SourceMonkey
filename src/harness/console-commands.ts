@@ -353,7 +353,7 @@ export function runCommandHelp(input: { line: string } | { words: string[] }): s
 
 // The error for a word that names no command a run takes.
 function notACommand(word: string): string {
-  return `${word} is not a command. Use help to list them.`;
+  return `${word} is not a command. Use help commands to list them.`;
 }
 
 // A run command's name, aliases resolved, and its words after the name;
@@ -3147,7 +3147,7 @@ export interface PromptIO {
  * Returns a function that closes the prompt.
  */
 export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?: { start?: () => void }) => Promise<unknown>): () => void {
-  io.out('[sm-dev] Ready for commands. Use help to list them.');
+  io.out('[sm-dev] Ready for commands. Use help commands to list them.');
   // A dumb terminal can't move the cursor, so writeOutputLine couldn't
   // redraw around a prompt there.
   const terminal = Boolean(process.stdout.isTTY) && process.env.TERM !== 'dumb';

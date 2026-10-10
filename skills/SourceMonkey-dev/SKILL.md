@@ -48,8 +48,9 @@ Where to look:
   with the harness fixture.
 - [references/other-managers.md](references/other-managers.md): testing
   under Violentmonkey.
-- `pnpm sm-dev --help`, or `pnpm sm-dev help <command>`: the
-  authoritative, current reference.
+- `pnpm sm-dev help`: the authoritative, current reference. Alone it
+  lists the topics; `help <topic>` or `help <command>` shows one,
+  `help commands` lists the commands, and `help all` everything.
 - The `SourceMonkey-friction` skill, when installed: log where these
   tools got in the way once the task is done.
 - Full docs, when the above isn't enough:

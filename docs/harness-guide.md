@@ -277,12 +277,22 @@ up:
 
 ### Help
 
-- `sm-dev --help` lists everything, in sections: command input,
-  examples, then all commands grouped by what they work on, then the
+- The help is in sections, each a named topic: command input,
+  examples, then the commands grouped by what they work on, then the
   global and common options, and how to name scripts, tabs and the
   rest.
+- `sm-dev help` (or `sm-dev --help`) lists the topics, with a line on
+  each.
+- `sm-dev help <topic>` shows one, e.g. `sm-dev help tabs`.
+  - A topic that is just one command (`frames`, `logs`) shows that
+    command's help.
+- `sm-dev help commands` lists each command with a line on what it
+  does, under its topics.
+- `sm-dev help all` (or `help full`) shows everything.
 - `sm-dev help start` (or `sm-dev start --help`) shows one command: its
   usage, arguments, and only the options it takes.
+  - `--help` on a command always gives the command, even where a
+    topic shares its name (`scripts --help`).
 - It takes several names at once: `sm-dev help status tabs`.
 - `--help` (or `-h`) anywhere on a line shows the help for each command
   on it, once each, and runs none of them.

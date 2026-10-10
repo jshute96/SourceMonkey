@@ -1,4 +1,4 @@
-// Every sm-dev command in one list, in the sections `sm-dev --help`
+// Every sm-dev command in one list, in the sections `sm-dev help all`
 // shows: the ones sm-dev runs itself (start, stop, ...) and the ones it
 // sends to a run (status, click, ...), with their arguments and
 // options. `help <command>` picks a command out of it, the prompt
@@ -78,14 +78,22 @@ export interface HelpCommand {
   pointer?: boolean;
   /** A blank line before it in the full help. */
   gap?: boolean;
+  /** Its line in `help commands`; the first sentence of `about` when not given. */
+  summary?: string;
   /** The managers (`--manager`) it works with; every one when not given. */
   managers?: ManagerName[];
 }
 
 export interface HelpSection {
   title: string;
-  /** The help command that shows just this section, shown after its title: `Logs [help logs]:`. */
-  helpHint?: string;
+  /**
+   * Its help topic, for `help <name>`, shown after its title: `Logs [help logs]:`.
+   * A section that is just the command of the same name shows that
+   * command's help instead, which has all its options.
+   */
+  name?: string;
+  /** What it covers, beside its name in the `help` index. */
+  summary?: string;
   /**
    * Lines before the rest, each wrapped to fit. '' is a blank line, and
    * one starting with two spaces is shown as is.
@@ -127,7 +135,7 @@ const WAIT_LOG_ABOUT = ['Wait for a log line with the text, or matching /regex/,
 // The page commands that act in an iframe with `--frame`.
 const IN_FRAME = ['eval', 'click', 'hover', 'type', 'snapshot', 'screenshot', 'probe', 'wait', 'cdp'];
 // `status` and `tabs` print each tab's frame tree with this.
-const FRAMES_OPTION: HelpItem = { term: '--frames', about: 'Show each tab\'s iframes as a tree, with the scripts running in each (see frames).' };
+const FRAMES_OPTION: HelpItem = { term: '--frames', about: 'Show each tab\'s iframes as a tree, with the scripts running in each (see help frames).' };
 // The commands that work through SourceMonkey, which a run under
 // another manager doesn't have.
 const SM: ManagerName[] = ['sourcemonkey'];
@@ -135,6 +143,8 @@ const SM: ManagerName[] = ['sourcemonkey'];
 export const HELP_SECTIONS: HelpSection[] = [
   {
     title: 'Command input',
+    name: 'input',
+    summary: 'Send commands from command line, stdin, or interactively',
     text: [
       'Commands run in order, stopping at the first that fails.',
       'Commands come from one or more of:',
@@ -150,6 +160,8 @@ export const HELP_SECTIONS: HelpSection[] = [
   },
   {
     title: 'Examples',
+    name: 'examples',
+    summary: 'Example syntaxes',
     text: [
       'Choose a browser:',
       '  # Start a headless test browser for this sm-dev run.',
@@ -179,13 +191,22 @@ export const HELP_SECTIONS: HelpSection[] = [
   },
   {
     title: 'General commands',
+    name: 'general',
+    summary: 'help and exit commands',
     commands: [
-      { usage: 'help [command]...', syntax: WORDS, about: 'Show commands and options.' },
+      {
+        usage: 'help [topic]...',
+        syntax: WORDS,
+        summary: 'Show help: the topics, one topic or command, or all.',
+        about: 'Show help: the list of topics with none given, or a topic, a command, commands (a line on each), or all (everything).',
+      },
       { usage: 'exit', syntax: NONE, about: 'End this sm-dev. Runs it started without --detach stop.' },
     ],
   },
   {
     title: 'Starting a run',
+    name: 'start',
+    summary: 'Start a run: a browser, its scripts and tabs',
     text: [
       'A run is an sm-dev server process connected to a browser, managing a list of tabs, and using the SourceMonkey extension to run scripts on them.',
       'The run pushes its scripts into its own test collection in the extension, which gets removed when the run ends. Injected scripts run only in the run\'s managed tabs.',
@@ -207,7 +228,7 @@ export const HELP_SECTIONS: HelpSection[] = [
             options: [
               { term: '--all', about: 'Open each script\'s default page, one tab per page.' },
               { term: '--notab', about: 'Open no tabs at startup. (Use newtab later.)' },
-              { term: '--from-saved', about: 'Serve .html files as saved page snapshots, at their embedded URLs by default. See Saved pages.' },
+              { term: '--from-saved', about: 'Serve .html files as saved page snapshots, at their embedded URLs by default. See help saved-pages.' },
               { term: '--url URL', about: 'With --from-saved and one .html file: The URL to serve it at.' },
               { term: '--offline', about: 'With --from-saved: Block network requests from the saved pages.' },
             ],
@@ -236,6 +257,8 @@ export const HELP_SECTIONS: HelpSection[] = [
   },
   {
     title: 'Concurrent runs',
+    name: 'runs',
+    summary: 'Run IDs, work with runs',
     text: [
       'Each run is identified by a run ID (named D1, D2, ..., or D<name>).',
       'If started with --detach, the run continues after sm-dev exits.',
@@ -245,7 +268,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       '',
     ],
     commands: [
-      { usage: 'start [script]... [url]...', about: 'Start a run, and connect to it. See Starting a run.', pointer: true },
+      { usage: 'start [script]... [url]...', about: 'Start a run, and connect to it. See help start.', pointer: true },
       { usage: 'list', syntax: NONE, about: 'List the active runs.' },
       { usage: 'attach [ID]', syntax: { args: 'words', max: 1 }, about: 'Connect to an existing run.' },
       { usage: 'stop [ID|--all]', syntax: { args: 'words', max: 1 }, about: 'Stop a run, or all runs.' },
@@ -253,6 +276,8 @@ export const HELP_SECTIONS: HelpSection[] = [
   },
   {
     title: 'Status',
+    name: 'status',
+    summary: 'Overall status for browser and runs',
     commands: [
       {
         usage: 'status',
@@ -267,15 +292,19 @@ export const HELP_SECTIONS: HelpSection[] = [
   },
   {
     title: 'Scripts',
+    name: 'scripts',
+    summary: 'Work with scripts',
     commands: [
       { usage: 'scripts', syntax: JSON_TEXT, about: 'List the loaded scripts, and the manager\'s other scripts on the current tab.' },
       { usage: 'script <script>', about: 'Select the active script by ID. With T2.3, pick tab T2 too.' },
-      { usage: 'load <script>...', syntax: WORDS, about: 'Load more scripts from disk: files, directories, or globs. See Files and file patterns.' },
+      { usage: 'load <script>...', syntax: WORDS, about: 'Load more scripts from disk: files, directories, or globs. See help files.' },
       { usage: 'update [script]', syntax: { args: 'text', trailingFlags: true }, about: 'Re-read one (or all) scripts from disk, and reload all affected tabs.' },
     ],
     subsections: [
       {
         title: 'Checking scripts',
+        name: 'checking',
+        summary: 'Match and validate scripts',
         text: [
           'Without a run, these check script files and URLs. In a run, they can also reference scripts and tabs by ID, or use the currently selected script and current tab\'s URL by default.',
           '',
@@ -305,6 +334,8 @@ export const HELP_SECTIONS: HelpSection[] = [
   },
   {
     title: 'Tabs',
+    name: 'tabs',
+    summary: 'Work with tabs',
     commands: [
       { usage: 'tabs', syntax: { args: 'words', max: 1, tab: true }, about: 'List the tabs this run controls.', options: [FRAMES_OPTION] },
       { usage: 'tab <tab>', about: 'Select the active tab by ID.' },
@@ -353,6 +384,8 @@ export const HELP_SECTIONS: HelpSection[] = [
     subsections: [
       {
         title: 'Saved pages',
+        name: 'saved-pages',
+        summary: 'Work with saved HTML snapshots',
         text: [
           'With --from-saved, pages contents are served from saved html snapshot files. Chrome shows the page running at its original URL, so the page and its scripts work as on the live site. --offline blocks network requests to other live pages.',
           '',
@@ -364,7 +397,8 @@ export const HELP_SECTIONS: HelpSection[] = [
   },
   {
     title: 'Frames',
-    helpHint: 'help frames',
+    name: 'frames',
+    summary: 'Work with iframes',
     text: [
       'A script runs in each iframe whose own URL it matches, unless it has @noframes. Each iframe gets an ID, F1, F2 and so on across the run, which it keeps when it reloads. The top frame goes by its tab\'s ID (T1).',
       '',
@@ -400,6 +434,8 @@ export const HELP_SECTIONS: HelpSection[] = [
   },
   {
     title: 'Inspecting the page',
+    name: 'inspecting',
+    summary: 'Read the page',
     commands: [
       {
         usage: 'snapshot [tab] [selector]',
@@ -436,7 +472,8 @@ export const HELP_SECTIONS: HelpSection[] = [
   },
   {
     title: 'Logs',
-    helpHint: 'help logs',
+    name: 'logs',
+    summary: 'Read or search logs',
     text: [
       'A run tracks log lines from these sources, narrowest first:',
       '  1) sm: SourceMonkey logs. (From a script\'s Log tab: reloads, updates,',
@@ -485,6 +522,8 @@ export const HELP_SECTIONS: HelpSection[] = [
   },
   {
     title: 'Driving the page',
+    name: 'driving',
+    summary: 'Act on the page: clicks, eval javascript, etc',
     commands: [
       {
         usage: 'click [tab] <selector>',
@@ -547,9 +586,12 @@ export const HELP_SECTIONS: HelpSection[] = [
     subsections: [
       {
         title: 'Waiting',
+        name: 'waiting',
+        summary: 'Wait for some condition',
         commands: [
           {
             usage: 'wait [T<n>|all]',
+            summary: 'Wait for the page to settle, an element, a log line, or a time.',
             syntax: { args: 'words', tab: true },
             about: [
               'Wait until one tab, or all tabs, settles.',
@@ -568,6 +610,8 @@ export const HELP_SECTIONS: HelpSection[] = [
       },
       {
         title: 'Sending raw CDP (Chrome DevTools Protocol) calls',
+        name: 'cdp',
+        summary: 'Send raw Chrome DevTools Protocol calls',
         text: [
           'Use it for what no other command does. Each cdp command is one CDP session.',
           'A {{ block or --file holds multiple Method calls, one per line, run sequentially in that session, stopping after errors.',
@@ -578,6 +622,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         commands: [
           {
             usage: 'cdp [tab] <Method> [params]',
+            summary: 'Send raw CDP calls to the page.',
             syntax: { args: 'text', tab: true, block: true, unquote: 'none', trailingFlags: true },
             about: ['Make one Method call, and print the result as JSON.', 'e.g. cdp Input.insertText \'{"text": "hello"}\''],
           },
@@ -590,6 +635,8 @@ export const HELP_SECTIONS: HelpSection[] = [
       },
       {
         title: 'Menus',
+        name: 'menus',
+        summary: 'Use userscript menus',
         commands: [
           {
             managers: SM,
@@ -607,6 +654,8 @@ export const HELP_SECTIONS: HelpSection[] = [
       },
       {
         title: 'Stored values',
+        name: 'stored-values',
+        summary: 'View and update userscript GM storage',
         commands: [
           {
             managers: SM,
@@ -635,6 +684,8 @@ export const HELP_SECTIONS: HelpSection[] = [
       },
       {
         title: 'Dialog boxes',
+        name: 'dialogs',
+        summary: 'Answer dialog boxes',
         commands: [
           { usage: 'accept [tab] [text]', syntax: { args: 'text', tab: true }, about: 'Answer an open dialog with OK, and a prompt with the text.' },
           { usage: 'dismiss [tab]', syntax: { args: 'none', tab: true }, about: 'Answer an open dialog with Cancel.' },
@@ -654,6 +705,8 @@ export const HELP_SECTIONS: HelpSection[] = [
   },
   {
     title: 'Userscript managers',
+    name: 'managers',
+    summary: 'Install and control userscript managers',
     text: [
       'sm-dev works with one userscript manager, picked with --manager: SourceMonkey (the default), Tampermonkey or Violentmonkey. A run works with the one it started with.',
       'Under Tampermonkey or Violentmonkey, a run installs its scripts into it, marked as the run\'s, and removes them when it ends. The manager runs all its scripts in every tab, so scripts and status show the ones each tab is expected to run, by their match rules.',
@@ -666,6 +719,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     commands: [
       {
         usage: 'manager fetch',
+        summary: 'Fetch, install, enable or disable the userscript manager.',
         syntax: NONE,
         about: 'Download Tampermonkey or Violentmonkey from the Chrome Web Store into ~/.cache/sm-dev/managers, or update it there to the newest version.',
       },
@@ -683,6 +737,8 @@ export const HELP_SECTIONS: HelpSection[] = [
   },
   {
     title: 'Managing installed collections and scripts',
+    name: 'installed',
+    summary: 'Manage installed collections and scripts',
     text: [
       'What SourceMonkey has installed. Collections are named C1, C2, ... and scripts E1, E2, ..., by the numbers SourceMonkey keeps for them.',
       'Under Tampermonkey or Violentmonkey, its scripts are E1, E2, ..., in one collection, C0, whose enable and disable are its switch for all scripts. Violentmonkey\'s are its own numbers; Tampermonkey\'s are ones sm-dev keeps for it.',
@@ -691,9 +747,12 @@ export const HELP_SECTIONS: HelpSection[] = [
     subsections: [
       {
         title: 'Collections',
+        name: 'collections',
+        summary: 'Manage SourceMonkey collections',
         commands: [
           {
             usage: 'collection list',
+            summary: 'List, show, enable, disable, refresh or rename collections.',
             syntax: NONE,
             about: [
               'List the collections, with their kind, location, script count, and whether they are enabled.',
@@ -714,6 +773,8 @@ export const HELP_SECTIONS: HelpSection[] = [
       },
       {
         title: 'Scripts',
+        name: 'installed-scripts',
+        summary: 'Manage installed scripts',
         text: [
           'The script comes before the verb: script E4 enable. Left out, it is the selected script (not for uninstall).',
           'Turning a script on, by enable, install or move, turns off its other copies that were running, as SourceMonkey\'s script page does. Each one turned off is listed.',
@@ -722,6 +783,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         commands: [
           {
             usage: 'script list [collection]',
+            summary: 'List, show, print, enable, disable, refresh, install, uninstall or move installed scripts.',
             syntax: { args: 'words', max: 1 },
             about: ['List the installed scripts, under their collections, or one collection\'s. scripts list does the same.', 'A run\'s own scripts show as 1, 2, ..., and another run\'s by name only. Under Tampermonkey or Violentmonkey, a run\'s show by their E-ids, marked as the run\'s. The selected script is marked *.', 'A local file changed or deleted since it loaded shows as modified or deleted on disk.'],
             args: [COLLECTION_ARG],
@@ -768,6 +830,8 @@ export const HELP_SECTIONS: HelpSection[] = [
   },
   {
     title: 'Global options',
+    name: 'global-flags',
+    summary: 'sm-dev flags (before the command)',
     text: ['These go first, before any command, and apply for later commands.'],
     subsections: [
       {
@@ -793,7 +857,7 @@ export const HELP_SECTIONS: HelpSection[] = [
           {
             term: '--manager NAME',
             about: [
-              'The userscript manager to work with: sm, tm or vm, or sourcemonkey, tampermonkey or violentmonkey. See Userscript managers.',
+              'The userscript manager to work with: sm, tm or vm, or sourcemonkey, tampermonkey or violentmonkey. See help managers.',
               '(Default: sm, or a run\'s own)',
             ],
           },
@@ -849,6 +913,8 @@ export const HELP_SECTIONS: HelpSection[] = [
   },
   {
     title: 'Common options',
+    name: 'common-flags',
+    summary: 'command flags (after the command)',
     text: ['These apply for multiple commands.'],
     options: [
       {
@@ -879,10 +945,15 @@ export const HELP_SECTIONS: HelpSection[] = [
         about: 'Print the result as text, despite the global --json.',
         commands: JSON_COMMANDS,
       },
+      // All commands take it, but it's read apart from their flags, so no
+      // command lists it as one of its own.
+      { term: '--help, -h', about: 'Show the command\'s help instead of running it.' },
     ],
   },
   {
     title: 'Specifying objects',
+    name: 'objects',
+    summary: 'IDs for scripts, tabs, frames, elements and more',
     text: ['Each object type has a unique keyspace. Some commands determine object type based on these rules.'],
     subsections: [
       {
@@ -953,6 +1024,8 @@ export const HELP_SECTIONS: HelpSection[] = [
   },
   {
     title: 'Files and file patterns',
+    name: 'files',
+    summary: 'File names, directories and glob patterns',
     text: ['Commands that take filenames accept:'],
     items: [
       { term: '<filename>', about: 'A file name, optionally with a path.' },
@@ -1028,9 +1101,12 @@ function paragraphLines(texts: string[], indent: number): string[] {
   });
 }
 
+// A section's title, and its help topic: `Logs [help logs]`.
+const sectionHeading = (section: HelpSection): string => `${section.title}${section.name ? ` [help ${section.name}]` : ''}`;
+
 function sectionLines(section: HelpSection, indent: number): string[] {
   const inner = indent + 2;
-  const lines = [`${' '.repeat(indent)}${section.title}${section.helpHint ? ` [${section.helpHint}]` : ''}:`];
+  const lines = [`${' '.repeat(indent)}${sectionHeading(section)}:`];
   lines.push(...paragraphLines(section.text ?? [], inner));
   // Under the section's text, if any, as options are below.
   const itemIndent = section.text ? inner + 2 : inner;
@@ -1056,7 +1132,7 @@ function sectionLines(section: HelpSection, indent: number): string[] {
   return lines;
 }
 
-/** The whole of `sm-dev --help`. */
+/** The whole help, `sm-dev help all`. */
 export function fullHelp(): string {
   return [...INTRO, ...HELP_SECTIONS.flatMap((section) => ['', ...sectionLines(section, 0)])].join('\n') + '\n';
 }
@@ -1067,6 +1143,104 @@ function allSections(sections = HELP_SECTIONS): HelpSection[] {
 }
 
 const nameOf = (command: HelpCommand): string => command.usage.split(' ')[0];
+
+/** `sm-dev help`: what help can show, and each section's topic. */
+export function helpIndex(): string {
+  const rows: [string, string][] = [];
+  const add = (sections: HelpSection[], indent: number): void => {
+    for (const section of sections) {
+      // A subsection's name under its section's, bulleted: `  - checking`.
+      if (section.name) rows.push([(indent > 2 ? `${' '.repeat(indent - 2)}- ` : ' '.repeat(indent)) + section.name, section.summary ?? section.title]);
+      add(section.subsections ?? [], indent + 2);
+    }
+  };
+  add(HELP_SECTIONS, 2);
+  const usage: [string, string][] = [
+    ['  help <topic>...', 'Help for a topic or command'],
+    ['  help commands', 'Short list of all commands'],
+    ['  help all', 'All topics'],
+    ['  <command> --help', 'Help for one command'],
+  ];
+  // One column for both lists, so their descriptions line up.
+  const column = Math.max(...[...usage, ...rows].map(([name]) => name.length)) + 2;
+  return [
+    ...INTRO,
+    '',
+    ...usage.map(([name, about]) => name.padEnd(column) + about),
+    '',
+    'Topics:',
+    ...rows.flatMap(([name, about]) => {
+      const [first, ...rest] = wrap(about, WIDTH - column);
+      return [name.padEnd(column) + first, ...rest.map((line) => ' '.repeat(column) + line)];
+    }),
+  ].join('\n') + '\n';
+}
+
+// A command's line in `help commands`: its summary, or what it does up
+// to the first sentence's end.
+function summaryOf(command: HelpCommand): string {
+  if (command.summary) return command.summary;
+  const about = typeof command.about === 'string' ? command.about : command.about[0] ?? '';
+  return /^.*?\.(?=\s|$)/.exec(about)?.[0] ?? about;
+}
+
+/** `sm-dev help commands`: each command's name and a line on it, under its topics. */
+export function commandList(): string {
+  const hasCommands = (section: HelpSection): boolean => (section.commands ?? []).some((command) => !command.pointer) || (section.subsections ?? []).some(hasCommands);
+  const lines = ['Commands, by topic. Use help <command> for one in full.'];
+  const add = (sections: HelpSection[], indent: number): void => {
+    for (const section of sections.filter(hasCommands)) {
+      // A subsection's heading bulleted, its commands under its title.
+      lines.push('', `${indent > 0 ? `${' '.repeat(indent)}- ` : ''}${sectionHeading(section)}:`);
+      // A command of several forms (wait) once, by its first form's line.
+      const seen = new Set<string>();
+      for (const command of section.commands ?? []) {
+        const name = nameOf(command);
+        if (command.pointer || seen.has(name)) continue;
+        seen.add(name);
+        lines.push(...itemLines(name, summaryOf(command), indent + 2));
+      }
+      add(section.subsections ?? [], indent + 2);
+    }
+  };
+  add(HELP_SECTIONS, 0);
+  return lines.join('\n') + '\n';
+}
+
+// The section `help <topic>` shows, or null for none. Null too for a
+// section that is just the command of that name (frames), whose own
+// help has all its options, and the section's text.
+function sectionTopic(topic: string): HelpSection | null {
+  const section = allSections().find((s) => s.name === topic);
+  if (!section) return null;
+  const command = commandNamed(topic);
+  const own = (section.commands ?? []).filter((c) => !c.pointer).map(nameOf);
+  if (command && !section.subsections?.length && own.every((name) => name === command)) return null;
+  return section;
+}
+
+/**
+ * `sm-dev help [topic]...`: with none, the index; else each topic once
+ * (all or full, commands, a section), then the commands named. `commands`
+ * are commands only, never sections (`scripts --help`). `unknown`: the
+ * names that are none of those.
+ */
+export function helpText(topics: string[], commandNames: string[] = []): { text: string; unknown: string[] } {
+  if (topics.length === 0 && commandNames.length === 0) return { text: helpIndex(), unknown: [] };
+  const blocks: string[] = [];
+  const unknown = [...new Set(commandNames.filter((name) => !commandNamed(name)))];
+  const commands = commandNames.filter((name) => commandNamed(name));
+  for (const topic of new Set(topics.map((t) => (t === 'full' ? 'all' : t)))) {
+    const section = sectionTopic(topic);
+    if (topic === 'all') blocks.push(fullHelp());
+    else if (topic === 'commands') blocks.push(commandList());
+    else if (section) blocks.push(sectionLines(section, 0).join('\n') + '\n');
+    else if (commandNamed(topic)) commands.push(topic);
+    else if (!unknown.includes(topic)) unknown.push(topic);
+  }
+  if (commands.length > 0) blocks.push(commandsHelp(commands).text);
+  return { text: blocks.join('\n'), unknown };
+}
 
 // Each command's forms (wait has several), with the section listing them.
 function formsOf(name: string): { command: HelpCommand; section: HelpSection }[] {
