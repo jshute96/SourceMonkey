@@ -1339,6 +1339,11 @@ collection, which holds exactly the scripts the run pushed.
   - a notification shown, clicked or closed.
 - So output arrives as it happens, and `wait`, `open` and `reload`
   wait on "started" events.
+- Each event that comes from a document names it (`documentId`): the
+  reports and menu commands since 2.1, with `topFrame`; requests,
+  downloads, value writes and shown notifications from 2.2. That's how
+  a line names the iframe it came from (see
+  [sm-dev-frames.md](sm-dev-frames.md#log-lines)).
 
 #### Ordering events against navigations
 

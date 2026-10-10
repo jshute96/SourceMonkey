@@ -206,11 +206,11 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('eval confirm("sure?")')).toContain('[sm-dev] The expression opened a dialog, which is waiting for an answer.');
   expect(await run('dismiss')).toEqual(['[sm-dev] Dismissed the dialog']);
   expect(await run('screenshot')).toEqual([expect.stringContaining('The screenshot command needs a file')]);
-  expect(await run('snapshot --deep')).toEqual(['[sm-dev] ERROR: The snapshot command has no --deep flag. It takes --visible, --out, --find, --up, --context, --limit, --timeout-seconds.']);
+  expect(await run('snapshot --deep')).toEqual(['[sm-dev] ERROR: The snapshot command has no --deep flag. It takes --visible, --out, --find, --up, --context, --limit, --timeout-seconds, --frame.']);
   // Every command, not only the ones with flags of their own; a quoted
   // selector with -- in it is one word, not a flag.
   expect(await run('status --bad')).toEqual(['[sm-dev] ERROR: The status command has no --bad flag. It takes --frames, --json, --nojson.']);
-  expect(await run('eval T1 --script --x')).toEqual(['[sm-dev] ERROR: The eval command has no --x flag. It takes --page, --script, --file, --out, --timeout-seconds.']);
+  expect(await run('eval T1 --script --x')).toEqual(['[sm-dev] ERROR: The eval command has no --x flag. It takes --page, --script, --file, --out, --timeout-seconds, --frame.']);
   expect(await run(`probe '.a --b'`)).not.toContainEqual(expect.stringContaining('flag'));
 
   // A navigation an expression doesn't live through is said as such,
@@ -476,7 +476,7 @@ test('snapshot refs name elements for the other commands, and it can show only t
   expect(await run(`probe --css ${save}`)).toEqual([`found    ${save}  (1)`, '    selector: button[data-testid="save"]']);
   expect(await selectorOf(refIn(scrolled, 'Far away'))).toBe('button.far');
   expect(await selectorOf('input[aria-label=Note]')).toBe('input');
-  expect(await run('snapshot --css')).toEqual(['[sm-dev] ERROR: The snapshot command has no --css flag. It takes --visible, --out, --find, --up, --context, --limit, --timeout-seconds.']);
+  expect(await run('snapshot --css')).toEqual(['[sm-dev] ERROR: The snapshot command has no --css flag. It takes --visible, --out, --find, --up, --context, --limit, --timeout-seconds, --frame.']);
 
   // Refs reach into a frame and a shadow root, where selectors are
   // suggested for neither; and look-alike buttons get told apart.

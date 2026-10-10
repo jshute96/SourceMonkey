@@ -10,7 +10,7 @@ import { readFile, rename, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { Browser, BrowserContext, ConsoleMessage, Page } from '@playwright/test';
+import type { Browser, BrowserContext, ConsoleMessage, Frame, Page } from '@playwright/test';
 
 import { shellWord } from './command-lines.js';
 import {
@@ -30,6 +30,7 @@ import type { ErrorReport, ManualReport, PageLink, SkipReport, StartReport } fro
 import { attachPage, targetIdOf, type AttachOptions, type PageAttachment } from './page-watch.js';
 import { pageSays } from './page-commands.js';
 import { consoleSource, consoleText, decodeOwnRefs, formatConsoleArgs, isPreludeLine, pageErrorSource } from './page-output.js';
+import { FrameSessions, type FrameSession } from './frame-sessions.js';
 import {
   defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, preparedScriptPath, prepareScript, pushedFiles, shownPath, warningLines, type PreparedScript,
 } from './prepare.js';
@@ -1801,18 +1802,22 @@ function wirePageOutput(page: Page, n: number, emit: (fields: LogFields) => void
   // Under another manager, its worlds are the scripts'.
   const origin = host.external ? host.external.prefix.replace(/\/$/, '') : extensionOrigin;
   const stacks = Promise.race([ConsoleStacks.attach(page, origin), sleep(STACKS_ATTACH_MS).then(() => null)]);
-  const log = (msg: ConsoleMessage, text: string, call: ConsoleCall | null): void => {
+  // A line from an iframe names it (`T1.F3`).
+  const inFrame = (frame: Frame | undefined): { frame?: number } =>
+    (frame && frame !== page.mainFrame() && !frame.isDetached() ? { frame: host.frameIds.number(frame) } : {});
+  const log = async (msg: ConsoleMessage, text: string, call: ConsoleCall | null): Promise<void> => {
     const body = decodeOwnRefs(host.remapStack(text));
+    const where = inFrame(await call?.frame?.().catch(() => undefined));
     // SourceMonkey's own console lines repeat what the run logs from its
     // reports, so they're only part of the page's whole console.
     if (isPreludeLine(body)) {
-      emit({ source: 'page', kind: msg.type(), tab: n, text: body });
+      emit({ source: 'page', kind: msg.type(), tab: n, ...where, text: body });
       return;
     }
     const url = msg.location().url;
     const frames = call?.frames ?? [];
     const source = consoleSource({ type: msg.type(), text: body, url, frames, extensionWorld: call?.extensionWorld, argCount: msg.args().length }, host.external?.prefix);
-    emit({ source, ...SCRIPT_IN_PAGE[source], kind: msg.type(), tab: n, scriptId: source === 'script' ? host.scriptOf([url, ...frames]) : undefined, text: body });
+    emit({ source, ...SCRIPT_IN_PAGE[source], kind: msg.type(), tab: n, ...where, scriptId: source === 'script' ? host.scriptOf([url, ...frames]) : undefined, text: body });
   };
   // In order: a line that logs a DOM node is described from the page,
   // which takes a round trip, and each waits for its stack.
@@ -1832,30 +1837,76 @@ function wirePageOutput(page: Page, n: number, emit: (fields: LogFields) => void
     // fails is lost.
     pending = pending.then(async () => log(msg, await text, await call)).catch(() => undefined);
   });
-  // Which page load the lines after it came from.
+  // Which page load the lines after it came from, and an iframe's
+  // loads, under its own id. Playwright's `framenavigated` also fires
+  // for an iframe's hash changes, which aren't loads: a change of the
+  // fragment alone is skipped. (A frame's `pushState` still reads as a
+  // load; rare in frames.)
+  const frameUrls = new WeakMap<Frame, string>();
   page.on('framenavigated', (frame) => {
-    if (frame !== page.mainFrame()) return;
-    emit({ source: 'event', kind: 'load', tab: n, text: `Loaded ${frame.url()}`, streamed: false });
+    // In the lines' queue, so what the last page logged or threw comes
+    // before it.
+    const url = frame.url();
+    if (frame === page.mainFrame()) {
+      pending = pending.then(() => emit({ source: 'event', kind: 'load', tab: n, text: `Loaded ${url}`, streamed: false }));
+      return;
+    }
+    const before = frameUrls.get(frame);
+    frameUrls.set(frame, url);
+    if (before !== undefined && before !== url && before.split('#')[0] === url.split('#')[0]) return;
+    const where = inFrame(frame);
+    pending = pending.then(() => emit({ source: 'event', kind: 'load', tab: n, ...where, text: `Loaded ${url}`, streamed: false }));
   });
   // The uncaught error's stack is not mapped, and must not be:
   // `pageErrorSource` drops a script's throw the host already reported by
   // finding the script's `.user.js` URL in it (`SCRIPT_BODY_FRAME`), and
   // a throw inside a `@require` carries that URL only unmapped. Only the
   // message is printed anyway.
+  //
+  // The frame it was thrown in comes from the protocol's copy. A
+  // stackless error (no telling whose from its stack) in an iframe none
+  // of the run's scripts match is the page's: an ad frame's, say.
   page.on('pageerror', (err) => {
     const stack = err.stack ?? err.message;
+    // Its protocol copy is claimed even for an error not shown, so a
+    // later one with the same message doesn't take it.
+    const thrownIn = stacks.then((s) => s?.thrownIn(err.message)).catch(() => undefined);
     // Another manager reports no errors, so each is the page's to show.
-    const source = pageErrorSource(stack, !host.external, host.external?.prefix);
+    let source = pageErrorSource(stack, !host.external, host.external?.prefix);
     if (!source) return;
-    emit({ source, ...SCRIPT_IN_PAGE[source], kind: 'error', tab: n, scriptId: source === 'script' ? host.scriptOf([stack]) : undefined, text: decodeOwnRefs(err.message) });
+    pending = pending.then(async () => {
+      const thrown = await thrownIn;
+      const where = inFrame(thrown?.frame);
+      if (source === 'script' && where.frame !== undefined && !/\n\s+at /.test(stack) && host.scriptsFor(thrown!.url, true).length === 0) source = 'page';
+      emit({ source: source!, ...SCRIPT_IN_PAGE[source!], kind: 'error', tab: n, ...where, scriptId: source === 'script' ? host.scriptOf([stack]) : undefined, text: decodeOwnRefs(err.message) });
+    }).catch(() => undefined);
   });
 }
 
-/** A console call as the protocol reports it: its stack's URLs, and the world it ran in. */
+/**
+ * A console call as the protocol reports it: its stack's URLs, the world
+ * it ran in, and (looked up when asked) the frame it was logged in.
+ */
 interface ConsoleCall {
   frames: string[];
   extensionWorld: boolean;
+  frame?: () => Promise<Frame | undefined>;
 }
+
+// Where an uncaught error was thrown: its frame, and the frame's URL
+// then.
+type ThrownWhere = { frame: Frame | undefined; url: string };
+
+// An uncaught error as the protocol reports it.
+type ThrownDetails = {
+  text: string;
+  executionContextId?: number;
+  exception?: { description?: string; value?: unknown };
+};
+
+// How long an uncaught error heard over the protocol waits for
+// Playwright's copy.
+const THROWN_KEPT_MS = 5000;
 
 // How long a console line waits for the protocol's copy of its call,
 // and how many unclaimed copies are kept.
@@ -1882,25 +1933,30 @@ class ConsoleStacks {
   // Copies not yet claimed, and lines waiting for theirs, by timestamp.
   private readonly calls = new Map<number, ConsoleCall[]>();
   private readonly waiting = new Map<number, ((call: ConsoleCall) => void)[]>();
-  // The tab's JavaScript worlds that are SourceMonkey's (`USER_SCRIPT`).
-  private readonly extensionWorlds = new Set<number>();
+  // Uncaught errors heard lately, for `thrownIn`, and errors waiting for
+  // theirs. Each one's frame and its URL then, looked up as it's heard.
+  private readonly thrown: { first: string; texts: string[]; where: Promise<ThrownWhere>; at: number }[] = [];
+  private readonly thrownWaiting = new Set<() => void>();
+  // When each session started listening: what it reports from before
+  // is a replay of what came before it, not a new error.
+  private readonly opened = new WeakMap<FrameSession, number>();
 
-  /** Null when the tab can't be read so (closed already). */
+  private constructor(private readonly extensionOrigin: string) {}
+
+  /**
+   * Listens on each of the tab's sessions: the page's, and each
+   * out-of-process iframe's (frame-sessions.ts), whose lines the page's
+   * never hears. Null when the tab can't be read so (closed already).
+   */
   static async attach(page: Page, extensionOrigin: string): Promise<ConsoleStacks | null> {
-    try {
-      const session = await page.context().newCDPSession(page);
-      const stacks = new ConsoleStacks();
-      session.on('Runtime.executionContextCreated', ({ context }) => {
-        if (context.origin === extensionOrigin) stacks.extensionWorlds.add(context.id);
-      });
-      session.on('Runtime.executionContextDestroyed', ({ executionContextId }) => stacks.extensionWorlds.delete(executionContextId));
-      session.on('Runtime.executionContextsCleared', () => stacks.extensionWorlds.clear());
-      session.on('Runtime.consoleAPICalled', (event) => stacks.heard(event as ConsoleApiCalled));
-      await session.send('Runtime.enable');
-      return stacks;
-    } catch {
-      return null;
-    }
+    const stacks = new ConsoleStacks(extensionOrigin);
+    let sessions: FrameSessions | null = null;
+    sessions = await FrameSessions.attach(page, (session) => {
+      stacks.opened.set(session, Date.now());
+      session.cdp.on('Runtime.consoleAPICalled', (event) => stacks.heard(session, event as ConsoleApiCalled, () => sessions));
+      session.cdp.on('Runtime.exceptionThrown', ({ timestamp, exceptionDetails: d }) => stacks.threw(session, timestamp, d as ThrownDetails, () => sessions));
+    }).catch(() => null);
+    return sessions ? stacks : null;
   }
 
   /** The call Playwright reported at `timestamp`; null when its copy doesn't come in time. */
@@ -1926,10 +1982,52 @@ class ConsoleStacks {
     });
   }
 
-  private heard(event: ConsoleApiCalled): void {
+  /**
+   * Where an uncaught error with `message` was thrown (its frame, and
+   * the frame's URL then), from the protocol's copy, which this claims;
+   * undefined when none comes in time. One whose message is empty can't
+   * be told from another, so isn't looked for.
+   */
+  async thrownIn(message: string): Promise<ThrownWhere | undefined> {
+    if (!message) return undefined;
+    // The copy whose first line ends with the message, else one that
+    // has it anywhere, oldest first.
+    const take = (): Promise<ThrownWhere> | undefined => {
+      let i = this.thrown.findIndex((t) => t.first.endsWith(message));
+      if (i < 0) i = this.thrown.findIndex((t) => t.texts.some((text) => text.includes(message)));
+      return i < 0 ? undefined : this.thrown.splice(i, 1)[0].where;
+    };
+    const found = take() ?? await new Promise<Promise<ThrownWhere> | undefined>((resolve) => {
+      const check = (): void => {
+        const where = take();
+        if (where) finish(where);
+      };
+      const finish = (where?: Promise<ThrownWhere>): void => {
+        clearTimeout(timer);
+        this.thrownWaiting.delete(check);
+        resolve(where);
+      };
+      const timer = setTimeout(() => finish(), CALL_WAIT_MS);
+      this.thrownWaiting.add(check);
+    });
+    return found;
+  }
+
+  // The frame a context of `session` is in, looked up when asked.
+  private frameOf(session: FrameSession, contextId: number, sessions: () => FrameSessions | null): () => Promise<Frame | undefined> {
+    const frameId = session.contexts.get(contextId)?.frameId;
+    let found: Promise<Frame | undefined> | undefined;
+    return () => (found ??= frameId ? sessions()?.frameOf(session, frameId) ?? Promise.resolve(undefined) : Promise.resolve(undefined));
+  }
+
+  private heard(session: FrameSession, event: ConsoleApiCalled, sessions: () => FrameSessions | null): void {
     const frames: string[] = [];
     for (let trace = event.stackTrace; trace; trace = trace.parent) frames.push(...trace.callFrames.map((f) => f.url));
-    const call = { frames, extensionWorld: this.extensionWorlds.has(event.executionContextId) };
+    const call = {
+      frames,
+      extensionWorld: session.contexts.get(event.executionContextId)?.origin === this.extensionOrigin,
+      frame: this.frameOf(session, event.executionContextId, sessions),
+    };
     const waiter = this.waiting.get(event.timestamp)?.shift();
     if (waiter) {
       if (this.waiting.get(event.timestamp)?.length === 0) this.waiting.delete(event.timestamp);
@@ -1940,6 +2038,21 @@ class ConsoleStacks {
     // which no line will claim: the oldest go past a cap.
     this.calls.set(event.timestamp, [...this.calls.get(event.timestamp) ?? [], call]);
     if (this.calls.size > CALLS_KEPT) this.calls.delete(this.calls.keys().next().value!);
+  }
+
+  private threw(session: FrameSession, at: number, details: ThrownDetails, sessions: () => FrameSessions | null): void {
+    // Replayed as the session opened: Playwright reported it before.
+    if (at < (this.opened.get(session) ?? 0)) return;
+    const texts = [details.exception?.description, details.text, details.exception?.value === undefined ? undefined : String(details.exception.value)]
+      .filter((t): t is string => typeof t === 'string');
+    const now = Date.now();
+    // Looked up now, while the frame still shows the page that threw.
+    const frame = this.frameOf(session, details.executionContextId ?? 0, sessions);
+    const where = frame().then((f) => ({ frame: f, url: f?.url() ?? '' }), () => ({ frame: undefined, url: '' }));
+    this.thrown.push({ first: (texts[0] ?? '').split('\n')[0], texts, where, at: now });
+    // Only the latest matter: Playwright's copy follows within moments.
+    while (this.thrown.length > 0 && (this.thrown.length > CALLS_KEPT || now - this.thrown[0].at > THROWN_KEPT_MS)) this.thrown.shift();
+    for (const check of [...this.thrownWaiting]) check();
   }
 }
 

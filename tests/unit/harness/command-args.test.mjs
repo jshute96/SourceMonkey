@@ -50,7 +50,7 @@ test('flags take a value after them or after =, and are checked', () => {
   // A value only after =.
   assert.deepEqual(typed('status', '--json=multi').flags, { '--json': 'multi' });
   assert.deepEqual(typed('values', '2 --json').flags, { '--json': true });
-  assert.deepEqual(typed('snapshot', '--deep'), { error: 'The snapshot command has no --deep flag. It takes --visible, --out, --find, --up, --context, --limit, --timeout-seconds.', flag: '--deep' });
+  assert.deepEqual(typed('snapshot', '--deep'), { error: 'The snapshot command has no --deep flag. It takes --visible, --out, --find, --up, --context, --limit, --timeout-seconds, --frame.', flag: '--deep' });
   // A quoted word is never a flag.
   assert.deepEqual(typed('probe', `'--x' .y`).words, ['--x', '.y']);
   // Also on a command that takes few.
@@ -124,17 +124,17 @@ test('wait: a tab, then the form, and flags ending wait log\'s text', () => {
   assert.deepEqual(typed('wait', 'log ready --timeout-seconds 9'), { flags: { '--timeout-seconds': '9' }, form: 'log', words: [], text: 'ready' });
   assert.deepEqual(typed('wait', 'log ready --timeout-seconds=9').flags, { '--timeout-seconds': '9' });
   // A near miss of it is refused; other --words are text.
-  assert.equal(typed('wait', 'log ready --timeout 40').error, 'The wait command has no --timeout flag. It takes --timeout-seconds, --log-source, --find, --since.');
+  assert.equal(typed('wait', 'log ready --timeout 40').error, 'The wait command has no --timeout flag. It takes --timeout-seconds, --log-source, --find, --since, --frame.');
   assert.equal(typed('wait', 'log Running --dry-run mode').text, 'Running --dry-run mode');
   // Quoted, or a regex, it's all text.
   assert.equal(typed('wait', `log 'x --timeout 40'`).text, 'x --timeout 40');
   assert.equal(typed('wait', 'log /a --timeout b/').text, '/a --timeout b/');
   // From a shell, only a word of its own is a flag.
   assert.equal(sent('wait', 'log', 'Running --timeout mode').text, 'Running --timeout mode');
-  assert.equal(sent('wait', 'log', 'x', '--timeout', '40').error, 'The wait command has no --timeout flag. It takes --timeout-seconds, --log-source, --find, --since.');
+  assert.equal(sent('wait', 'log', 'x', '--timeout', '40').error, 'The wait command has no --timeout flag. It takes --timeout-seconds, --log-source, --find, --since, --frame.');
   assert.deepEqual(sent('wait', '2s').words, ['2s']);
   // A near miss is one that starts like a flag, or a flag's start.
-  assert.equal(typed('wait', 'log x --timeouts 4').error, 'The wait command has no --timeouts flag. It takes --timeout-seconds, --log-source, --find, --since.');
+  assert.equal(typed('wait', 'log x --timeouts 4').error, 'The wait command has no --timeouts flag. It takes --timeout-seconds, --log-source, --find, --since, --frame.');
   assert.equal(typed('wait', 'log x --help-me').text, 'x --help-me');
   // Only flags that end the text are taken.
   assert.deepEqual(typed('wait', 'log --timeout-seconds 4 x').flags, { '--timeout-seconds': '4' });

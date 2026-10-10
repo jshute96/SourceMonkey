@@ -15,12 +15,6 @@ A backlog of **candidates**, not a list of obligations.
 ## Skeleton
 
 - Frames follow-ups (see [docs/frames.md](docs/frames.md)):
-  - sm-dev reads a script's state and evaluates in its world in the top
-    frame only. A script that runs only in a frame needs a way to pick
-    the frame.
-  - More sm-dev frame work (`--frame` on `eval` and the page commands,
-    frame lines in the log): see "Later" in
-    [docs/sm-dev-frames.md](docs/sm-dev-frames.md).
   - Frames with no URL of their own (`about:blank`, `srcdoc`) get no
     injection: `chrome.userScripts` has no `matchOriginAsFallback`.
     Revisit if Chrome adds it.

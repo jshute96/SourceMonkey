@@ -19,13 +19,13 @@
 // short one that matters changes the DOM when it fires, which the
 // window catches, since it starts no earlier than the wait.
 
-import type { Page } from '@playwright/test';
+import type { Frame, Page } from '@playwright/test';
 
 import type { ConsoleContext, ControlledTab } from './console-commands.js';
 import type { HarnessHost } from './host.js';
 import type { ParsedArgs } from './command-args.js';
 import { MAX_TIMER_SECONDS, TIMEOUT_NEEDS_SECONDS, timeoutSecondsMs } from './command-list.js';
-import { countOf } from './page-commands.js';
+import { countOf, pickFrame, refFrameProblem } from './page-commands.js';
 import { explainMatch, preparedScriptName } from './prepare.js';
 import { ALL_LOG_SOURCES, foundAt, inSources, linesLost, parseLogSources, parsePosition, searchedUpTo, streamText, textMatcher, type LogRecord } from './run-logs.js';
 import { refProblem } from './snapshot.js';
@@ -230,6 +230,11 @@ export async function waitFor(ctx: ConsoleContext, parsed: ParsedArgs): Promise<
     ctx.out(`[sm-dev] ERROR: ${text}`);
     return false;
   };
+  // Only an element is looked for in a frame: settling, a delay and the
+  // log are the tab's.
+  if (parsed.flags['--frame'] !== undefined && parsed.form !== 'selector' && parsed.form !== 'selector-gone') {
+    return mistake('The --frame flag is for wait selector and wait selector-gone, which look for an element in a frame');
+  }
   const timeout = parsed.flags['--timeout-seconds'];
   const given = timeoutFlagMs(parsed.flags, ctx.out);
   if (given === null) return false;
@@ -292,7 +297,9 @@ export async function waitFor(ctx: ConsoleContext, parsed: ParsedArgs): Promise<
     const [first, ...more] = selector.split(/\s+/);
     const timed = timeout !== undefined ? ` --timeout-seconds ${timeout}` : '';
     if (more.length > 0 && TAB_ARG.test(first)) return mistake(`The tab goes before the word ${kind}: wait ${first} ${kind} ${more.join(' ')}${timed}`);
-    return waitForSelector(ctx, tabs[0], selector, kind === 'selector', timeoutMs);
+    const frame = await pickFrame(parsed.flags['--frame'], tabs[0], (line) => ctx.out(`[sm-dev] ${line}`));
+    if (frame === null) return false;
+    return waitForSelector(ctx, tabs[0], selector, kind === 'selector', timeoutMs, frame);
   }
   if (word === undefined || word === 'all') return waitToSettle(ctx, tabs, timeoutMs);
   return mistake(`The wait command takes a tab, all, selector, selector-gone, log, or a delay such as 500ms or 2s, not ${word}`);
@@ -322,12 +329,14 @@ async function waitToSettle(ctx: ConsoleContext, tabs: ControlledTab[], timeoutM
 // Each look is bounded, so the timeout holds, and a dialog that opens
 // meanwhile ends the wait rather than stopping it for good.
 async function waitForSelector(
-  ctx: ConsoleContext, tab: ControlledTab, selector: string, present: boolean, timeoutMs: number,
+  ctx: ConsoleContext, tab: ControlledTab, selector: string, present: boolean, timeoutMs: number, frame?: Frame,
 ): Promise<boolean> {
-  const name = tabName(tab);
+  // In an iframe, the frame on its tab: `T1.F3`.
+  const name = `${tabName(tab)}${frame ? `.F${tab.link.host.frameIds.number(frame)}` : ''}`;
   // A ref from a snapshot of another page matches nothing, which would
   // pass for gone.
-  const problem = await within(refProblem(tab.page, selector).catch(() => null), SELECTOR_LOOK_MS);
+  const problem = await within((async () => await refProblem(tab.page, selector)
+    ?? await refFrameProblem(tab.page, selector, frame, tab.link.host.frameIds))().catch(() => null), SELECTOR_LOOK_MS);
   if (typeof problem === 'string' && problem !== 'timeout') {
     ctx.out(`${WAIT_FAILED}${problem}`);
     return false;
@@ -335,14 +344,18 @@ async function waitForSelector(
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if (tab.page.isClosed()) {
-      ctx.out(`${WAIT_FAILED}${name} closed`);
+      ctx.out(`${WAIT_FAILED}${tabName(tab)} closed`);
+      return false;
+    }
+    if (frame?.isDetached()) {
+      ctx.out(`${WAIT_FAILED}${name} has gone from the page`);
       return false;
     }
     if (tab.dialogs?.current) {
       ctx.out(`${WAIT_FAILED}${dialogWaitingMessage(tab, currentTab(ctx))}`);
       return false;
     }
-    const count = await within(countOf(tab.page, selector), Math.max(1, Math.min(SELECTOR_LOOK_MS, deadline - Date.now())));
+    const count = await within(countOf(tab.page, selector, frame), Math.max(1, Math.min(SELECTOR_LOOK_MS, deadline - Date.now())));
     if (typeof count === 'string' && count !== 'timeout') {
       ctx.out(`${WAIT_FAILED}The selector ${selector} can't be used: ${count}`);
       return false;

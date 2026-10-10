@@ -79,7 +79,9 @@ export const SKIP_REASON_SM_DEV = 'tab controlled by sm-dev';
 // 2.1: scripts run in iframes, so report and menu events now come from
 //   frames too (`topFrame: false`); `fireActionContextMenuItem` takes
 //   the command's `documentId`.
-export const SM_DEV_PROTOCOL = { major: 2, minor: 1 } as const;
+// 2.2: `request`, `download`, `values` and a shown `notification` event
+//   carry the sending document's `documentId`, which says which frame.
+export const SM_DEV_PROTOCOL = { major: 2, minor: 2 } as const;
 
 export interface ProtocolVersion {
   major: number;

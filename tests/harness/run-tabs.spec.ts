@@ -324,7 +324,7 @@ test('start, update and load give a page --timeout-seconds to load', async ({ fi
   expect(lines.filter((l) => l === '[sm-dev] T1 could not be reloaded: The page did not finish loading within 1s')).toHaveLength(2);
 });
 
-test('a script running only in an iframe: its lines name the frame, and update reloads its tab', async ({ fixtureServer, scriptsDir }) => {
+test('a script running only in an iframe: its lines name the frame, a frame\'s stackless error is the page\'s, and update reloads its tab', async ({ fixtureServer, scriptsDir }) => {
   // The frames example's Frame B, which the page itself doesn't match.
   const file = scriptsDir.write({
     relativePath: 'in-frame.user.js',
@@ -333,9 +333,16 @@ test('a script running only in an iframe: its lines name the frame, and update r
   });
   const lines = await driveCli([file, `${fixtureServer.baseUrl}/frames/frames.html`], [
     ['[event] In frame started in an iframe on', 'status'],
-    ['Active on T1 (F', () => { touch(file); return 'update 1'; }],
+    // A stackless error in a frame no script runs in is the page's.
+    ['Active on T1 (F', 'eval --frame F3 --page setTimeout(() => { Promise.reject(\'stackless\') }); \'rejected\''],
+    ['"rejected"', 'wait log --log-source page stackless'],
+    ['Wait matched', 'logs --log-source page --find stackless'],
+    ['[page error] stackless', () => { touch(file); return 'update 1'; }],
     ['[sm-dev] Reloading T1', 'exit'],
   ]);
+  // Frame B is F2 (Frame A is F1, B's nested frame F3).
+  expect(lines).toContain('[T1.F2] [script log] [in-frame] on /frames/frame-b.html');
+  expect(lines.some((l) => / T1\.F3 \[page error\] stackless$/.test(l))).toBe(true);
   expect(lines.some((l) => /^\[T1\.F\d+\] \[event\] In frame started in an iframe on http:\/\/\S+\/frames\/frame-b\.html$/.test(l))).toBe(true);
   expect(lines.some((l) => /^\* T1: \S+\/frames\/frames\.html \(\+3 frames\)/.test(l))).toBe(true);
   expect(lines.some((l) => /^ {5}Active on T1 \(F\d+\)$/.test(l))).toBe(true);

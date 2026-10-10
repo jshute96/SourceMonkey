@@ -3912,9 +3912,11 @@ async function handleXhrStart(
     return;
   }
   // For sm-dev (sm-dev-link.ts), which reports what a run's scripts
-  // requested: once as it starts, and again with how it ended.
+  // requested: once as it starts, and again with how it ended. The
+  // sending document says which of the tab's frames asked.
+  const documentId = (sender as { documentId?: string }).documentId;
   const requestEvent = (event?: GmXhrEvent): void => emitSmDevEvent({
-    kind: 'request', scriptId: payload.scriptId, tabId, id: payload.id,
+    kind: 'request', scriptId: payload.scriptId, tabId, ...(documentId ? { documentId } : {}), id: payload.id,
     url: payload.request.url, method: (payload.request.method ?? 'GET').toUpperCase(),
     ...(event ? { outcome: event.kind } : {}),
     ...(event?.kind === 'load' ? { status: event.response.status } : {}),
@@ -4166,8 +4168,11 @@ async function handleNotificationShow(
   }
   const result = await showGmNotification(payload, originatorTabId);
   if (result.ok) {
+    // Which of the tab's frames showed it, for sm-dev.
+    const documentId = (sender as { documentId?: string }).documentId;
     emitSmDevEvent({
       kind: 'notification', op: 'shown', scriptId: payload.scriptId, tabId: originatorTabId, requestId: payload.requestId,
+      ...(documentId ? { documentId } : {}),
       notificationId: result.notificationId, text: payload.details.text, title: payload.details.title,
     });
   }
@@ -4307,8 +4312,9 @@ async function handleDownloadStart(
   }
   // For sm-dev, as for requests: once as it starts, and again with how
   // it ended.
+  const documentId = (sender as { documentId?: string }).documentId;
   const downloadEvent = (event?: GmDownloadEvent): void => emitSmDevEvent({
-    kind: 'download', scriptId: payload.scriptId, tabId, requestId: payload.requestId, url: payload.url, name: payload.name,
+    kind: 'download', scriptId: payload.scriptId, tabId, ...(documentId ? { documentId } : {}), requestId: payload.requestId, url: payload.url, name: payload.name,
     ...(event ? { outcome: event.kind } : {}),
     ...(event?.kind === 'load' ? { filename: event.filename } : {}),
     ...(event?.kind === 'error' ? { error: event.details.message ?? event.error } : {}),
@@ -4326,7 +4332,7 @@ async function handleDownloadStart(
   // callbacks, so there's nothing to deliver. sm-dev still hears how
   // it ended.
   if (result.error === 'download_canceled') {
-    emitSmDevEvent({ kind: 'download', scriptId: payload.scriptId, tabId, requestId: payload.requestId, url: payload.url, name: payload.name, outcome: 'abort' });
+    emitSmDevEvent({ kind: 'download', scriptId: payload.scriptId, tabId, ...(documentId ? { documentId } : {}), requestId: payload.requestId, url: payload.url, name: payload.name, outcome: 'abort' });
     return;
   }
   emit({
@@ -4665,11 +4671,12 @@ async function handleBatchWrite(
   // issued the writes); broadcasting back would be redundant and could
   // feed back through value-change listeners.
   const senderTabId = sender.tab?.id;
+  const writerDocument = (sender as { documentId?: string }).documentId;
   // The writer runs the script, so its document is one an update from
   // another frame of its tab should reach (`openerDocs`).
-  if (senderTabId != null) registerOpener(payload.scriptId, senderTabId, (sender as { documentId?: string }).documentId);
-  emitSmDevEvent({ kind: 'values', scriptId: payload.scriptId, tabId: senderTabId, writes: payload.writes });
-  await broadcastValueUpdate(payload.scriptId, payload.writes, senderTabId, (sender as { documentId?: string }).documentId);
+  if (senderTabId != null) registerOpener(payload.scriptId, senderTabId, writerDocument);
+  emitSmDevEvent({ kind: 'values', scriptId: payload.scriptId, tabId: senderTabId, ...(writerDocument ? { documentId: writerDocument } : {}), writes: payload.writes });
+  await broadcastValueUpdate(payload.scriptId, payload.writes, senderTabId, writerDocument);
   return { ok: true };
 }
 

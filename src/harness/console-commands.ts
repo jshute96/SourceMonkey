@@ -17,7 +17,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
-import type { BrowserContext, Dialog, Page } from '@playwright/test';
+import type { BrowserContext, Dialog, Frame, Page } from '@playwright/test';
 
 import { CommandAssembler, endsOutsideBlock, listed } from './command-lines.js';
 import { isJsonLine, jsonLayoutMistake, jsonResult, JSON_COMMANDS, markedLine, STDERR_LINE, withLayout, type JsonLayout } from './json-output.js';
@@ -33,7 +33,7 @@ import {
 import { parseCommandArgs, splitWords, unquoteWhole, type ParsedArgs } from './command-args.js';
 import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, SAME_COMMANDS, commandSyntax, commandsHelp, unsupportedCommand } from './command-list.js';
 import { errorSentence, readJsonFile, writeProblem } from './input-file.js';
-import { PAGE_COMMANDS, runPageCommand, type EvalIn } from './page-commands.js';
+import { CDP_FRAME_ARG, PAGE_COMMANDS, runPageCommand, type EvalIn } from './page-commands.js';
 import { editMultiLine } from './prompt-editor.js';
 import { appendHistory, HISTORY_SIZE, historyFile, loadHistory } from './prompt-history.js';
 import { frameNodes, parseFrameRef } from './frames.js';
@@ -45,7 +45,7 @@ import { runLogLabel } from './run-log.js';
 import {
   DEFAULT_LOG_SOURCES, isoTime, linesLost, logsLines, logsUpTo, inSources, noLogLines, nowMicros, parseLogSources, parsePosition, parseTail, streamText, textMatcher, type LogRecord, type RunLog,
 } from './run-logs.js';
-import { loadPage, PageNotLoaded, seconds, settleTabs, timeoutFlagMs, waitFor } from './wait.js';
+import { loadPage, PageNotLoaded, seconds, settleTabs, timeoutFlagMs, waitFor, within } from './wait.js';
 import { userscriptLabel, type SavedPageHeader } from './save-html.js';
 import {
   comparableUrl, openingSavedLine, pagesToOpen, routeSavedPage, savedPageServe,
@@ -519,7 +519,11 @@ export async function runConsoleCommand(
   // What the manager has turned off, for the commands that show what
   // the tabs are expected to run.
   if (ctx.predictedOff && SHOWS_ACTIVITY.has(command)) await ctx.predictedOff.refresh();
-  if (SHOWS_FRAMES.has(command)) await loadFrames(ctx);
+  // The trees and JSON show each frame's details too, which cost a call
+  // per frame.
+  if (SHOWS_FRAMES.has(command)) {
+    await loadFrames(ctx, command === 'frames' || parsed.flags['--frames'] === true || ctx.json === true || parsed.flags['--json'] !== undefined);
+  }
   // The command's own --json or --nojson over the sender's global one,
   // and its own layout over the client's. Its help is text either way.
   const ownJson = parsed.flags['--json'];
@@ -1534,16 +1538,24 @@ export interface FrameView {
   scripts: PreparedScript[];
   /** The extension's ids for its live documents, where it says. */
   documents: string[];
+  /** Read with `loadFrames`' details: its <iframe> isn't visible (no size, hidden). */
+  hidden?: true;
+  /** Read with `loadFrames`' details: its CDP frame id, in its target. */
+  frameId?: string;
+  /** Read with `loadFrames`' details: its CDP target, when it runs in a process of its own. */
+  targetId?: string;
 }
 
 // Reads each tab's frames and the scripts in them, for the command
 // about to show them. Says once why frames' scripts can't be shown
 // (an extension too old), listing the frames anyway.
-async function loadFrames(ctx: ConsoleContext): Promise<void> {
+//
+// With `details`, also whether each is hidden and its CDP target.
+async function loadFrames(ctx: ConsoleContext, details = false): Promise<void> {
   const views = new Map<ControlledTab, FrameView[]>();
   let problem: string | undefined;
   for (const tab of ctx.tabs()) {
-    views.set(tab, await tabFrames(ctx, tab, (why) => { problem ??= why; }).catch((): FrameView[] => []));
+    views.set(tab, await tabFrames(ctx, tab, (why) => { problem ??= why; }, details).catch((): FrameView[] => []));
   }
   ctx.frames = views;
   if (problem) ctx.out(`[sm-dev] ${problem}`);
@@ -1553,7 +1565,7 @@ async function loadFrames(ctx: ConsoleContext): Promise<void> {
 // scripts are those that started in its current document. Under another
 // manager, which reports nothing, those whose rules cover its URL, as
 // `activeOn` predicts for the top frame.
-async function tabFrames(ctx: ConsoleContext, tab: ControlledTab, unknown: (why: string) => void): Promise<FrameView[]> {
+async function tabFrames(ctx: ConsoleContext, tab: ControlledTab, unknown: (why: string) => void, details: boolean): Promise<FrameView[]> {
   const nodes = frameNodes(tab.page, ctx.host.frameIds);
   if (nodes.length === 0) return [];
   let scriptsIn = (_url: string, _frame: unknown): PreparedScript[] => [];
@@ -1579,10 +1591,28 @@ async function tabFrames(ctx: ConsoleContext, tab: ControlledTab, unknown: (why:
     }
     scriptsIn = (_url, frame) => ctx.scripts.filter((s) => s.id !== undefined && byFrame.get(frame)?.has(s.id) === true);
   }
-  return nodes.map((node) => ({
+  // All at once, each bounded: a frame's page that's busy only costs
+  // its own details.
+  const found = (id: string | undefined | 'timeout'): string | undefined => (id === 'timeout' ? undefined : id);
+  const detailOf = (frame: Frame): Promise<Pick<FrameView, 'hidden' | 'frameId' | 'targetId'>> => (details ? Promise.all([
+    within(frame.frameElement().then((el) => el.isVisible()), DETAIL_MS).catch(() => true),
+    within(tab.link.frameCdpId(frame), DETAIL_MS).catch(() => undefined),
+    within(tab.link.frameTargetId(frame), DETAIL_MS).catch(() => undefined),
+  ]).then(([visible, frameId, targetId]) => ({
+    // Unknown (too slow) counts as visible: only a frame known to be hidden is marked.
+    ...(visible === false ? { hidden: true as const } : {}),
+    ...(found(frameId) ? { frameId: found(frameId) } : {}),
+    ...(found(targetId) ? { targetId: found(targetId) } : {}),
+  })) : Promise.resolve({}));
+  const detailed = await Promise.all(nodes.map((node) => detailOf(node.frame)));
+  return nodes.map((node, i) => ({
     n: node.n, parent: node.parent, depth: node.depth, url: node.url, scripts: scriptsIn(node.url, node.frame), documents: documentsOf.get(node.frame) ?? [],
+    ...detailed[i],
   }));
 }
+
+// How long a frame's details (`loadFrames`) may take to read.
+const DETAIL_MS = 1000;
 
 // The numbers of a tab's frames a script runs in.
 function framesRunning(ctx: ConsoleContext, tab: ControlledTab, scriptId: string | undefined): number[] {
@@ -1627,7 +1657,9 @@ function frameTreeLines(ctx: ConsoleContext, tab: ControlledTab, indent: string,
   let base = 0;
   let shown = frames;
   if (from === undefined) {
-    lines.push(`${indent}${tabName(tab)}: ${tab.page.url()}`, scriptsLine(runningOn(ctx, tab), indent));
+    // The top frame's frame id is its tab's target id.
+    const ids = tab.targetId ? ` [frameId=${tab.targetId}]${targetIdSuffix(tab.targetId)}` : '';
+    lines.push(`${indent}${tabName(tab)}: ${tab.page.url()}${ids}`, scriptsLine(runningOn(ctx, tab), indent));
   } else {
     // The frame and those under it: those after it, until one no deeper.
     const at = frames.findIndex((f) => f.n === from);
@@ -1637,7 +1669,10 @@ function frameTreeLines(ctx: ConsoleContext, tab: ControlledTab, indent: string,
   }
   for (const frame of shown) {
     const pad = `${indent}${'  '.repeat(frame.depth - base)}`;
-    lines.push(`${pad}F${frame.n}: ${frame.url}`, scriptsLine(frame.scripts, pad));
+    // A frame's own target, when it has one, is the same id as its frame
+    // id; both are shown, so each is there to copy.
+    const ids = `${frame.frameId ? ` [frameId=${frame.frameId}]` : ''}${targetIdSuffix(frame.targetId)}`;
+    lines.push(`${pad}F${frame.n}: ${frame.url}${frame.hidden ? ' (hidden)' : ''}${ids}`, scriptsLine(frame.scripts, pad));
   }
   return lines;
 }
@@ -1649,6 +1684,7 @@ function framesJson(ctx: ConsoleContext, tab: ControlledTab): { frames?: J.Frame
   return {
     frames: frames.map((f) => ({
       id: `F${f.n}`, parent: f.parent === null ? tabName(tab) : `F${f.parent}`, url: f.url, scripts: f.scripts.map((s) => scriptNumber(ctx, s)),
+      ...(f.hidden ? { hidden: true as const } : {}), ...(f.frameId ? { frameId: f.frameId } : {}), ...(f.targetId ? { targetId: f.targetId } : {}),
     })),
   };
 }
@@ -1663,6 +1699,20 @@ function framesCommand(ctx: ConsoleContext, words: string[], current: Controlled
       return false;
     }
     tabs.push(...ctx.tabs().map((tab) => ({ tab })));
+  } else if (word && CDP_FRAME_ARG.test(word)) {
+    // An iframe by its CDP id, or a tab by its target id: its top frame's.
+    const id = CDP_FRAME_ARG.exec(word)![1];
+    const hits = [
+      ...ctx.tabs().filter((t) => t.targetId?.toUpperCase().startsWith(id.toUpperCase())).map((tab) => ({ tab, name: tabName(tab), from: undefined })),
+      ...framesWithId(ctx, id).map((h) => ({ tab: h.tab, name: `F${h.frame.n}`, from: h.frame.n })),
+    ];
+    if (hits.length !== 1) {
+      ctx.out(hits.length > 1
+        ? `[sm-dev] Several frames' ids start with ${id} (${hits.map((h) => h.name).join(', ')}). Give more of it.`
+        : `[sm-dev] No frame's id starts with ${id}. Use frames all to list them.`);
+      return false;
+    }
+    tabs.push({ tab: hits[0].tab, from: hits[0].from });
   } else if (word && parseFrameRef(word)) {
     const ref = parseFrameRef(word)!;
     const found = ctx.tabs().find((t) => (ctx.frames?.get(t) ?? []).some((f) => f.n === ref.frame));
@@ -1696,6 +1746,13 @@ function framesCommand(ctx: ConsoleContext, words: string[], current: Controlled
     for (const line of frameTreeLines(ctx, tab, '', from)) ctx.out(line);
     if (from === undefined && (ctx.frames?.get(tab)?.length ?? 0) === 0) ctx.out('  No iframes');
   }
+}
+
+// The iframes, of any tab, whose CDP frame id starts with `id`.
+function framesWithId(ctx: ConsoleContext, id: string): { tab: ControlledTab; frame: FrameView }[] {
+  const upper = id.toUpperCase();
+  return ctx.tabs().flatMap((tab) => (ctx.frames?.get(tab) ?? [])
+    .filter((frame) => frame.frameId?.toUpperCase().startsWith(upper)).map((frame) => ({ tab, frame })));
 }
 
 // A frame and those under it, from a tab's frames as JSON.

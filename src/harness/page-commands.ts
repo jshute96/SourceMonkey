@@ -12,7 +12,7 @@
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { Locator, Page, Request } from '@playwright/test';
+import type { CDPSession, Frame, Locator, Page, Request } from '@playwright/test';
 
 import type { ParsedArgs } from './command-args.js';
 import { PART_LIMIT, PROBE_MAX } from './command-list.js';
@@ -23,6 +23,7 @@ import { readInputFile, writeProblem } from './input-file.js';
 import { notSettledMessage, seconds, SETTLE_TIMEOUT_MS, settleTab, timeoutFlagMs } from './wait.js';
 import { savePageHtml } from './save-html.js';
 import { shownPath } from './prepare.js';
+import { findFrame, frameNodes, parseFrameRef, type FrameIds } from './frames.js';
 import { documentOf, locate, named, noteRefs, onScreen, probeMatches, refOf, refProblem, refsOf, tidy, treeParts, withoutDocument } from './snapshot.js';
 
 export const PAGE_COMMANDS = new Set(['click', 'hover', 'type', 'key', 'eval', 'snapshot', 'screenshot', 'savehtml', 'probe', 'cdp']);
@@ -113,6 +114,11 @@ export async function runPageCommand(
   const given = timeoutFlagMs(input.flags, out);
   if (given === null) return false;
   const within = (defaultMs: number): number => given ?? defaultMs;
+  // `--frame F2`: the iframe the selector or expression is for.
+  const frame = await pickFrame(input.flags['--frame'], tab, say);
+  if (frame === null) return false;
+  // After a selector in what a command says it did.
+  const inFrame = frame ? ` in F${tab.link.host.frameIds.number(frame)}` : '';
   const actionMs = within(ACTION_TIMEOUT_MS);
   // A file it names, from `cwd`, and as said back.
   const file = (name: string): string => path.resolve(cwd, name);
@@ -178,20 +184,20 @@ export async function runPageCommand(
         // nothing, sm-dev can't tell which.
         const noScope = typeof evalIn !== 'object' ? ''
           : evalIn.manager && evalIn.scope ? `sm-dev couldn't reach the scope of ${evalIn.name} under ${evalIn.manager}`
-          : `${evalIn.name} ${evalIn.scope ? 'hasn\'t run on this page' : 'isn\'t installed in the extension'}`;
+          : `${evalIn.name} ${evalIn.scope ? `hasn't run ${frame ? `in F${tab.link.host.frameIds.number(frame)}` : 'on this page'}` : 'isn\'t installed in the extension'}`;
         // A selected script with no scope runs its code in its fallback
         // world, as said. A named one was asked for, so that's a
         // failure.
         const evaluate = (): Promise<string> => {
           // --timeout-seconds (`given`): how long to wait for a document,
           // on a page between them.
-          if (typeof evalIn === 'string') return tab.link.evaluate(expression, evalIn, given);
-          const inScript = evalIn.scope ? tab.link.evaluate(expression, evalIn.scope, given) : Promise.reject(new NoEvalHook());
+          if (typeof evalIn === 'string') return tab.link.evaluate(expression, evalIn, given, frame);
+          const inScript = evalIn.scope ? tab.link.evaluate(expression, evalIn.scope, given, frame) : Promise.reject(new NoEvalHook());
           return inScript.catch((err: unknown) => {
             if (!(err instanceof NoEvalHook)) throw err;
             if (evalIn.named) throw err;
             say(`${noScope}, so this ran in ${WORLD_NAMES[evalIn.fallback]}`);
-            return tab.link.evaluate(expression, evalIn.fallback, given);
+            return tab.link.evaluate(expression, evalIn.fallback, given, frame);
           });
         };
         const evaluated = evaluate().then((r) => { result = r; });
@@ -241,9 +247,9 @@ export async function runPageCommand(
           say(`ERROR: The ${command} command needs a selector, e.g. ${command} '#submit'`);
           return;
         }
-        const count = await matches(page, selector, say);
+        const count = await matches(page, selector, say, frame, tab.link.host.frameIds);
         if (count === null) return false;
-        const target = locate(page, selector).first();
+        const target = locate(page, selector, frame).first();
         const action = (command === 'click'
           ? target.click({ ...options.click, timeout: actionMs })
           : target.hover({ modifiers: options.click.modifiers, position: options.click.position, timeout: actionMs }))
@@ -257,7 +263,7 @@ export async function runPageCommand(
             throw new Error(await placeProblem(page, target, options.click.position) ?? err.message);
           });
         const how = options.how.length > 0 ? ` with ${options.how.join(', ')}` : '';
-        await act(action, `${command === 'click' ? 'Clicked' : 'Hovered over'} ${named(page, selector)}${count > 1 ? ` (the first of ${count} matches)` : ''}${how}`);
+        await act(action, `${command === 'click' ? 'Clicked' : 'Hovered over'} ${named(page, selector)}${inFrame}${count > 1 ? ` (the first of ${count} matches)` : ''}${how}`);
         return;
       }
       case 'type': {
@@ -300,15 +306,15 @@ export async function runPageCommand(
           say('ERROR: The type command needs a selector and the text (or --clear), e.g. type \'input[name=q]\' \'hello world\'');
           return;
         }
-        const count = await matches(page, selector, say);
+        const count = await matches(page, selector, say, frame, tab.link.host.frameIds);
         if (count === null) return false;
-        const element = locate(page, selector).first();
+        const element = locate(page, selector, frame).first();
         const typing = (async () => {
           if (clear) await element.clear({ timeout: actionMs });
           if (text) await element.pressSequentially(text, { timeout: actionMs });
         })();
         const done = !text ? 'Cleared' : clear ? 'Cleared and typed into' : 'Typed into';
-        await act(typing, `${done} ${named(page, selector)}${count > 1 ? ` (the first of ${count} matches)` : ''}`);
+        await act(typing, `${done} ${named(page, selector)}${inFrame}${count > 1 ? ` (the first of ${count} matches)` : ''}`);
         return;
       }
       case 'key': {
@@ -347,18 +353,19 @@ export async function runPageCommand(
           say(`ERROR: ${parts}`);
           return;
         }
-        const count = selector ? await matches(page, selector, say) : 0;
+        const count = selector ? await matches(page, selector, say, frame, tab.link.host.frameIds) : 0;
         if (count === null) return false;
         let tree = '';
         const taking = (async () => {
           const doc = await documentOf(page);
           // The whole page is `:root`, not `body`: scripts often add their
           // panels to <html>, after <body>.
-          const whole = page.locator(':root');
+          const whole = (frame ?? page).locator(':root');
           tree = await whole.ariaSnapshot({ mode: 'ai', boxes: visible, timeout: actionMs });
-          noteRefs(page, tree, doc);
+          noteRefs(page, tree, doc, frame);
           if (visible) {
-            const [width, height] = await page.evaluate(() => [window.innerWidth, window.innerHeight]);
+            // A frame's boxes are from its own corner, so by its window.
+            const [width, height] = await (frame ?? page).evaluate(() => [window.innerWidth, window.innerHeight]);
             tree = onScreen(tree, width, height);
           }
           if (!parts) {
@@ -368,7 +375,7 @@ export async function runPageCommand(
           // Each match is found in the whole tree by its refs (an element
           // keeps its ref across snapshots). Only enough for the limit:
           // each costs a snapshot of the match.
-          const found = selector ? locate(page, selector) : null;
+          const found = selector ? locate(page, selector, frame) : null;
           const tops: string[][] = [];
           let rest: { total?: number; unsearched?: number } = {};
           for (let i = 0; found && i < count; i++) {
@@ -425,8 +432,15 @@ export async function runPageCommand(
             say('ERROR: The --full flag is for the whole page, not an element');
             return;
           }
-          if (await matches(page, selector, say) === null) return false;
-          await write(image, () => locate(page, selector).first().screenshot({ path: file(image), timeout: actionMs }));
+          if (await matches(page, selector, say, frame, tab.link.host.frameIds) === null) return false;
+          await write(image, () => locate(page, selector, frame).first().screenshot({ path: file(image), timeout: actionMs }));
+        } else if (frame) {
+          // The frame as it shows on the page: its <iframe> element.
+          if (input.flags['--full']) {
+            say('ERROR: The --full flag is for the whole page, not a frame');
+            return;
+          }
+          await write(image, async () => (await frame.frameElement()).screenshot({ path: file(image), timeout: actionMs }));
         } else {
           try {
             await write(image, () => page.screenshot({ path: file(image), fullPage: input.flags['--full'] === true, timeout: within(SCREENSHOT_TIMEOUT_MS) }));
@@ -436,7 +450,7 @@ export async function runPageCommand(
             return false;
           }
         }
-        say(`Wrote ${shown(image)}${selector ? ` (${named(page, selector)})` : ''} from ${page.url()}`);
+        say(`Wrote ${shown(image)}${selector ? ` (${named(page, selector)}${inFrame})` : frame ? ` (${inFrame.trim()})` : ''} from ${page.url()}`);
         return;
       }
       case 'savehtml': {
@@ -463,20 +477,20 @@ export async function runPageCommand(
           for (const selector of input.words) {
             const entry: ProbeData['selectors'][number] = { selector };
             const probing = (async () => {
-              const count = await refProblem(page, selector) ?? await countOf(page, selector);
+              const count = await refProblem(page, selector) ?? await refFrameProblem(page, selector, frame, tab.link.host.frameIds) ?? await countOf(page, selector, frame);
               if (typeof count === 'string') {
                 entry.error = count;
                 return;
               }
               entry.count = count;
               if (count === 0 || (!css && !html)) return;
-              const found = await probeMatches(page, selector, PROBE_MAX, actionMs).catch((err: Error) => plain(err));
+              const found = await probeMatches(page, selector, PROBE_MAX, actionMs, frame).catch((err: Error) => plain(err));
               if (typeof found === 'string') {
                 say(`The matches of ${selector} could not be read: ${found}`);
                 return;
               }
               entry.matches = found.matches.map((match) => ({
-                ...(css && !found.framed && !match.shadow && match.css ? { css: match.css } : {}),
+                ...(css && (!found.framed || frame) && !match.shadow && match.css ? { css: match.css } : {}),
                 ...(html ? { html: match.html } : {}),
               }));
             })();
@@ -492,20 +506,21 @@ export async function runPageCommand(
         for (const selector of input.words) {
           const lines: string[] = [];
           const probing = (async () => {
-            const count = await refProblem(page, selector) ?? await countOf(page, selector);
+            const count = await refProblem(page, selector) ?? await refFrameProblem(page, selector, frame, tab.link.host.frameIds) ?? await countOf(page, selector, frame);
             if (typeof count === 'string') lines.push(`invalid  ${selector}  (${count})`);
             else if (count === 0) lines.push(`missing  ${selector}`);
             else {
               lines.push(`found    ${selector}  (${count})`);
               if (!css && !html) return;
-              const found = await probeMatches(page, selector, PROBE_MAX, actionMs).catch((err: Error) => plain(err));
+              const found = await probeMatches(page, selector, PROBE_MAX, actionMs, frame).catch((err: Error) => plain(err));
               if (typeof found === 'string') {
                 lines.push(`    The matches could not be read: ${found}`);
                 return;
               }
               for (const match of found.matches) {
-                // One in a frame only works within it, so it isn't given.
-                const none = found.framed ? 'in a frame' : match.shadow ? 'in a shadow root' : null;
+                // One in a frame only works within it, so it isn't given,
+                // unless the probe is in that frame already (`--frame`).
+                const none = found.framed && !frame ? 'in a frame' : match.shadow ? 'in a shadow root' : null;
                 if (css) lines.push(`    selector: ${none ? `(none: ${none})` : match.css ?? '(none found)'}`);
                 if (html) lines.push(`    html: ${match.html}`);
               }
@@ -549,8 +564,27 @@ export async function runPageCommand(
         }
         // A session of its own, detached at the end, so what a call
         // sets for its session (Emulation.* overrides, enabled domains)
-        // ends with the command, as it does for any CDP client.
-        const session = await page.context().newCDPSession(page);
+        // ends with the command, as it does for any CDP client. With
+        // `--frame`, on the target the frame is in: its own, or for one
+        // in its parent's process (which Playwright refuses a session
+        // for) the nearest ancestor's that has one, the tab's at the top.
+        // That target reaches all its frames, so the calls name the
+        // frame themselves where they need to; said, with its id.
+        let session: CDPSession | undefined;
+        for (let at: Frame | null = frame ?? null; at && at !== page.mainFrame() && !session; at = at.parentFrame()) {
+          session = await page.context().newCDPSession(at).catch(() => undefined);
+          if (session && at !== frame) {
+            const frameId = await tab.link.frameCdpId(frame!);
+            say(`F${tab.link.host.frameIds.number(frame!)} is part of F${tab.link.host.frameIds.number(at)}'s target, so the calls go there.${frameId ? ` Name the frame in them by its frameId, ${frameId}.` : ''}`);
+          }
+        }
+        if (!session) {
+          session = await page.context().newCDPSession(page);
+          if (frame) {
+            const frameId = await tab.link.frameCdpId(frame);
+            say(`F${tab.link.host.frameIds.number(frame)} is part of T${tab.n}'s target, so the calls go there.${frameId ? ` Name the frame in them by its frameId, ${frameId}.` : ''}`);
+          }
+        }
         // A call that navigates the page is cut off, or never answers,
         // which is no failure when navigating was its point.
         // - Cut off: its error says so.
@@ -933,9 +967,9 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 // How many elements a selector matches, or why it can't be counted.
-export async function countOf(page: Page, selector: string): Promise<number | string> {
+export async function countOf(page: Page, selector: string, within?: Frame): Promise<number | string> {
   try {
-    return await locate(page, selector).count();
+    return await locate(page, selector, within).count();
   } catch (err) {
     if (page.isClosed()) return 'The tab closed';
     const message = (err as Error).message;
@@ -944,17 +978,89 @@ export async function countOf(page: Page, selector: string): Promise<number | st
   }
 }
 
+/**
+ * With `--frame` (`within`), why a ref doesn't do there: it names an
+ * element in another frame. Null when it's in that frame, or isn't a
+ * ref, or can't be found (which the count says).
+ */
+export async function refFrameProblem(page: Page, selector: string, within: Frame | undefined, ids: FrameIds): Promise<string | null> {
+  const ref = refOf(selector);
+  if (!within || !ref) return null;
+  const owner = await locate(page, selector).first().elementHandle({ timeout: 1000 })
+    .then((el) => el.ownerFrame()).catch(() => null);
+  if (!owner || owner === within) return null;
+  const where = owner === page.mainFrame() ? 'the top frame' : `F${ids.number(owner)}`;
+  return `The ref ${ref} is in ${where}, not F${ids.number(within)}. A ref names its own frame, so --frame can be left out.`;
+}
+
+/**
+ * The iframe a `--frame` flag names in `tab`: undefined for none given,
+ * or the tab's own (its top frame); null, having said why, for one that
+ * isn't there. It takes `F2`, `T1.F2`, the tab's own `T1`, or a CDP id
+ * as the output shows it (`frameId=...` or `targetId=...`, or the start
+ * of one).
+ */
+export async function pickFrame(word: string | true | undefined, tab: ControlledTab, say: (line: string) => void): Promise<Frame | undefined | null> {
+  if (word === undefined) return undefined;
+  const text = word === true ? '' : word;
+  // A tab's own ID is its top frame: the default, for this tab.
+  const tabWord = /^[Tt](\d+)$/.exec(text);
+  if (tabWord && Number(tabWord[1]) === tab.n) return undefined;
+  if (tabWord) {
+    say(`ERROR: The --frame flag names T${tabWord[1]}, but the command acts on T${tab.n}`);
+    return null;
+  }
+  const cdpId = CDP_FRAME_ARG.exec(text)?.[1];
+  if (cdpId) return frameByCdpId(cdpId, tab, say);
+  const ref = parseFrameRef(text);
+  if (!ref) {
+    say(`ERROR: The --frame flag takes a frame ID, such as F2 or T${tab.n}.F2, or a frameId=..., not ${text}. Use frames to list them.`);
+    return null;
+  }
+  if (ref.tab !== undefined && ref.tab !== tab.n) {
+    say(`ERROR: The --frame flag names a frame in T${ref.tab}, but the command acts on T${tab.n}`);
+    return null;
+  }
+  const frame = findFrame(tab.page, tab.link.host.frameIds, ref.frame);
+  if (!frame) say(`T${tab.n} has no frame F${ref.frame} now. Use frames to list its frames.`);
+  return frame ?? null;
+}
+
+/**
+ * A frame's CDP id as given, copied from the output or typed: `frameId=`
+ * or `targetId=`, with its brackets or not, or the start of one long
+ * enough not to be a slip.
+ */
+export const CDP_FRAME_ARG = /^\[?(?:frameId|targetId)=([0-9a-f]{6,})\]?$/i;
+
+// The frame of `tab` whose CDP frame id starts with `id`: the top frame
+// (undefined) for the tab's own target id, which is its frame id too.
+async function frameByCdpId(id: string, tab: ControlledTab, say: (line: string) => void): Promise<Frame | undefined | null> {
+  const upper = id.toUpperCase();
+  if (tab.targetId?.toUpperCase().startsWith(upper)) return undefined;
+  const hits: Frame[] = [];
+  for (const node of frameNodes(tab.page, tab.link.host.frameIds)) {
+    if ((await tab.link.frameCdpId(node.frame))?.toUpperCase().startsWith(upper)) hits.push(node.frame);
+  }
+  if (hits.length === 1) return hits[0];
+  const ids = tab.link.host.frameIds;
+  say(hits.length > 1
+    ? `Several of T${tab.n}'s frames' ids start with ${id} (${hits.map((f) => `F${ids.number(f)}`).join(', ')}). Give more of it.`
+    : `No frame of T${tab.n} has an id starting with ${id}. Use frames to list them.`);
+  return null;
+}
+
 // How many elements a selector matches, or null (said why) when none
 // does or it can't be counted.
-async function matches(page: Page, selector: string, say: (line: string) => void): Promise<number | null> {
-  const problem = await refProblem(page, selector);
+async function matches(page: Page, selector: string, say: (line: string) => void, within?: Frame, ids?: FrameIds): Promise<number | null> {
+  const problem = await refProblem(page, selector) ?? (ids ? await refFrameProblem(page, selector, within, ids) : null);
   if (problem) {
     say(problem);
     return null;
   }
-  const count = await countOf(page, selector);
+  const count = await countOf(page, selector, within);
   if (typeof count === 'string') say(`The selector ${selector} can't be used: ${count}`);
-  else if (count === 0) say(refOf(selector) ? `No element has the ref ${refOf(selector)}. Take a new snapshot for the page's refs.` : `No element matches ${selector}`);
+  else if (count === 0) say(refOf(selector) ? `No element has the ref ${refOf(selector)}. Take a new snapshot for the page's refs.` : `No element matches ${selector}${within && ids ? ` in F${ids.number(within)}` : ''}`);
   return typeof count === 'number' && count > 0 ? count : null;
 }
 

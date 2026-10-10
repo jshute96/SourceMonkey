@@ -10,8 +10,9 @@
 //   CDP-made world of its own, and evaluates `eval` in the page's world
 //   or the scripts' (the extension's user-script world).
 
-import type { CDPSession, Page, Request } from '@playwright/test';
+import type { CDPSession, Frame, Page, Request } from '@playwright/test';
 
+import { FrameSessions, type ContextInfo } from './frame-sessions.js';
 import type { HarnessHost, PageLink } from './host.js';
 import type { PreparedScript } from './prepare.js';
 import type { InjectionWorld } from '../script-world.js';
@@ -117,11 +118,12 @@ interface RemoteObject {
   className?: string;
 }
 
-interface ContextInfo {
-  frameId: string;
-  name: string;
-  isDefault: boolean;
-  origin: string;
+// Where an evaluation runs: a session, and the page's and the scripts'
+// worlds in one frame there (null where not set up).
+interface EvalContexts {
+  cdp: CDPSession;
+  page: number | null;
+  scripts: number | null;
 }
 
 export interface AttachOptions {
@@ -174,6 +176,8 @@ export class PageAttachment implements PageLink {
   private currentDocument: PageDocument = { url: '', spans: [[0, Infinity]] };
   // Execution contexts by id, to find a world's context in the main frame.
   private readonly contexts = new Map<number, ContextInfo>();
+  // Sessions for evaluating in iframes, opened on the first `eval` in one.
+  private frameSessions?: Promise<FrameSessions | null>;
   // Requests in flight, by when each started; see `network`.
   private readonly requests = new Map<Request, number>();
   private lastRequestEnd = 0;
@@ -374,20 +378,23 @@ export class PageAttachment implements PageLink {
   }
 
   /**
-   * Evaluates `expression` in the main frame, in the page's own world,
-   * the scripts' (the user-script world every script without `@grant
-   * none` shares), or one script's own scope, for `eval`. Resolves to
-   * the result as a line to print; rejects with a `ScriptThrew` for what
-   * the expression threw, a `NoEvalHook` for a script that hasn't run
-   * here, or an error of the evaluation's own (the page gone, say).
+   * Evaluates `expression` in the main frame, or in `frame` (one of the
+   * page's iframes), in the page's own world, the scripts' (the
+   * user-script world every script without `@grant none` shares), or
+   * one script's own scope, for `eval`. Resolves to the result as a
+   * line to print; rejects with a `ScriptThrew` for what the expression
+   * threw, a `NoEvalHook` for a script that hasn't run here, a
+   * `NoDocument` for a frame that has gone, or an error of the
+   * evaluation's own (the page gone, say).
    */
-  async evaluate(expression: string, world: 'page' | 'scripts' | ScriptScope, documentWaitMs = DOCUMENT_WAIT_MS): Promise<string> {
-    await this.documentReady(documentWaitMs);
-    if (typeof world === 'object') return this.evaluateInScript(expression, world);
-    const contextId = world === 'page' ? this.contextFor('') : this.scriptsContext();
+  async evaluate(expression: string, world: 'page' | 'scripts' | ScriptScope, documentWaitMs = DOCUMENT_WAIT_MS, frame?: Frame): Promise<string> {
+    const at = frame && frame !== this.page.mainFrame() ? await this.frameContexts(frame, documentWaitMs) : await this.topContexts(documentWaitMs);
+    if (typeof world === 'object') return this.evaluateInScript(at, expression, world);
+    const contextId = world === 'page' ? at.page : at.scripts;
     // The page context can go again between the wait and here.
     if (contextId === null) throw world === 'page' ? new NoDocument(BETWEEN_DOCUMENTS) : new Error('The scripts\' world isn\'t set up in this document');
-    let { result, exceptionDetails } = await this.cdp.send('Runtime.evaluate', {
+    const { cdp } = at;
+    let { result, exceptionDetails } = await cdp.send('Runtime.evaluate', {
       expression, contextId, awaitPromise: true, replMode: true, userGesture: true,
     });
     // Code written as a function body (`return` at the top level) is a
@@ -395,11 +402,61 @@ export class PageAttachment implements PageLink {
     // again as an async function's body, whose `return` is the value.
     // The newline keeps a trailing `// comment` off the closing `})`.
     if (exceptionDetails && isIllegalReturn(exceptionDetails)) {
-      ({ result, exceptionDetails } = await this.cdp.send('Runtime.evaluate', {
+      ({ result, exceptionDetails } = await cdp.send('Runtime.evaluate', {
         expression: `(async () => {\n${expression}\n})()`, contextId, awaitPromise: true, userGesture: true,
       }));
     }
-    return this.evaluated(result, exceptionDetails);
+    return this.evaluated(cdp, result, exceptionDetails);
+  }
+
+  // The top frame's page and scripts' worlds, once it has a document.
+  private async topContexts(documentWaitMs: number): Promise<EvalContexts> {
+    await this.documentReady(documentWaitMs);
+    return { cdp: this.cdp, page: this.contextFor(''), scripts: this.scriptsContext() };
+  }
+
+  /**
+   * The CDP target id of an iframe in a process of its own, for a raw
+   * CDP client; undefined for one in its parent's (see frame-sessions.ts).
+   */
+  async frameTargetId(frame: Frame): Promise<string | undefined> {
+    this.frameSessions ??= FrameSessions.attach(this.page);
+    return (await this.frameSessions)?.targetIdOf(frame);
+  }
+
+  /** An iframe's CDP frame id in the session that covers it, if found. */
+  async frameCdpId(frame: Frame): Promise<string | undefined> {
+    this.frameSessions ??= FrameSessions.attach(this.page);
+    return (await (await this.frameSessions)?.locate(frame))?.frameId;
+  }
+
+  // An iframe's page and scripts' worlds, through the session of the
+  // process it runs in (see frame-sessions.ts), opened the first time.
+  // A frame between documents (loading, or just moved to a process of
+  // its own) is looked for again until one comes, as for the top frame.
+  private async frameContexts(frame: Frame, waitMs: number): Promise<EvalContexts> {
+    this.frameSessions ??= FrameSessions.attach(this.page);
+    const sessions = await this.frameSessions;
+    const deadline = Date.now() + waitMs;
+    for (;;) {
+      const located = frame.isDetached() ? null : await sessions?.locate(frame);
+      if (located) {
+        const { session, frameId } = located;
+        let page: number | null = null;
+        let scripts: number | null = null;
+        for (const [id, info] of session.contexts) {
+          if (info.frameId !== frameId) continue;
+          if (info.isDefault) page = id;
+          else if (info.origin === this.options.watchOnly.extensionOrigin) scripts = id;
+        }
+        if (page !== null) return { cdp: session.cdp, page, scripts };
+      }
+      if (frame.isDetached() || Date.now() >= deadline) {
+        const name = `F${this.host.frameIds.number(frame)}`;
+        throw new NoDocument(frame.isDetached() ? `${name} has gone from the page` : `${name} has no document now. It is between pages.`);
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
   }
 
   // A page that is reloading or navigating has no document for a moment,
@@ -438,54 +495,55 @@ export class PageAttachment implements PageLink {
   //
   // A page-world script's hook `eval`s under the page's Content Security
   // Policy, but within a CDP evaluation, which Chrome exempts from it.
-  private async evaluateInScript(expression: string, scope: ScriptScope): Promise<string> {
-    const contextId = scope.world === 'MAIN' ? this.contextFor('') : this.scriptsContext();
+  private async evaluateInScript(at: EvalContexts, expression: string, scope: ScriptScope): Promise<string> {
+    const contextId = scope.world === 'MAIN' ? at.page : at.scripts;
     if (contextId === null) throw new NoEvalHook();
+    const { cdp } = at;
     const hook = `globalThis[${JSON.stringify(scope.key)}]?.[${JSON.stringify(scope.id)}]`;
-    const { result: found } = await this.cdp.send('Runtime.evaluate', {
+    const { result: found } = await cdp.send('Runtime.evaluate', {
       expression: `typeof ${hook} === 'function'`, contextId, returnByValue: true,
     });
     if (found.value !== true) throw new NoEvalHook();
-    const { exceptionDetails: compiled } = await this.cdp.send('Runtime.compileScript', {
+    const { exceptionDetails: compiled } = await cdp.send('Runtime.compileScript', {
       expression, sourceURL: '', persistScript: false, executionContextId: contextId,
     });
     let code = expression;
     if (compiled && needsFunctionBody(compiled)) {
       const asExpression = `(async () => (\n${expression}\n))()`;
-      const { exceptionDetails: notExpression } = await this.cdp.send('Runtime.compileScript', {
+      const { exceptionDetails: notExpression } = await cdp.send('Runtime.compileScript', {
         expression: asExpression, sourceURL: '', persistScript: false, executionContextId: contextId,
       });
       code = notExpression ? `(async () => {\n${expression}\n})()` : asExpression;
     }
-    const { result, exceptionDetails } = await this.cdp.send('Runtime.evaluate', {
+    const { result, exceptionDetails } = await cdp.send('Runtime.evaluate', {
       // Called detached, so its stack frame isn't named `[as <script id>]`.
       expression: `(0, ${hook})(${JSON.stringify(code)})`, contextId, awaitPromise: true, userGesture: true,
     });
-    return this.evaluated(result, exceptionDetails);
+    return this.evaluated(cdp, result, exceptionDetails);
   }
 
   // An evaluation's result as a line to print, or what it threw.
-  private async evaluated(result: RemoteObject, exceptionDetails: { text: string; exception?: unknown } | undefined): Promise<string> {
+  private async evaluated(cdp: CDPSession, result: RemoteObject, exceptionDetails: { text: string; exception?: unknown } | undefined): Promise<string> {
     if (exceptionDetails) throw threw(exceptionDetails);
     // A promise, as `eval fetch(url).then(...)` gives: what it settles
     // to, where the console would show the promise itself.
     if (result.subtype === 'promise' && result.objectId) {
-      const settled = await this.cdp.send('Runtime.awaitPromise', { promiseObjectId: result.objectId });
+      const settled = await cdp.send('Runtime.awaitPromise', { promiseObjectId: result.objectId });
       if (settled.exceptionDetails) throw threw(settled.exceptionDetails);
-      return this.describe(settled.result);
+      return this.describe(cdp, settled.result);
     }
-    return this.describe(result);
+    return this.describe(cdp, result);
   }
 
   // A result as `eval` prints it: JSON where it has one, else what
   // DevTools' console would show (an element, a Map, a function).
-  private async describe(result: RemoteObject): Promise<string> {
+  private async describe(cdp: CDPSession, result: RemoteObject): Promise<string> {
     if (result.type === 'undefined') return 'undefined';
     if (!result.objectId) return result.unserializableValue ?? JSON.stringify(result.value);
     try {
       if (result.type !== 'object' || (result.subtype && DESCRIBED.has(result.subtype))) return result.description ?? result.type;
       // Elements inside it as the console names them, not `{}`.
-      const { result: json } = await this.cdp.send('Runtime.callFunctionOn', {
+      const { result: json } = await cdp.send('Runtime.callFunctionOn', {
         objectId: result.objectId,
         functionDeclaration: `function () {
           return JSON.stringify(this, (key, value) => {
@@ -507,7 +565,7 @@ export class PageAttachment implements PageLink {
       // Circular, or a getter that throws: what the console would show.
       return result.description ?? result.type;
     } finally {
-      await this.cdp.send('Runtime.releaseObject', { objectId: result.objectId }).catch(() => undefined);
+      await cdp.send('Runtime.releaseObject', { objectId: result.objectId }).catch(() => undefined);
     }
   }
 
@@ -571,7 +629,11 @@ export class PageAttachment implements PageLink {
     attached.delete(this.page);
     // A page stopped on a dialog answers nothing until it is closed, so
     // this is not waited on for long; the session goes with the page.
-    await Promise.race([this.cdp.detach().catch(() => undefined), new Promise((r) => setTimeout(r, 1000).unref())]);
+    const frames = this.frameSessions?.then((f) => f?.dispose());
+    await Promise.race([
+      Promise.all([this.cdp.detach().catch(() => undefined), frames?.catch(() => undefined)]),
+      new Promise((r) => setTimeout(r, 1000).unref()),
+    ]);
   }
 }
 

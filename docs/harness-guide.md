@@ -1303,10 +1303,24 @@ A script runs in each iframe whose URL it matches (see
 - `menu` shows the script's menu for the tab, as SourceMonkey's popup
   does, with each command an iframe registered labeled with its frame:
   `M3: Toggle (F2)`. Firing it runs it in that frame.
-- A script's start, skip and error in a frame, and its menu commands,
-  are prefixed with the frame: `[T1.F2] [event] ... started in an
-  iframe on ...`. Other lines from a frame (console lines, other `GM_*`
-  events) have only the tab's id.
+- A line from a frame is prefixed with it: `[T1.F2] [event] ... started
+  in an iframe on ...`, `[T1.F2] [script log] ...`. Its loads show in
+  `logs` as `T1.F2 [event] Loaded <URL>`.
+- `eval --frame F2` runs in that frame, in the script's scope there (or
+  `--script=<script>`, or `--page` for the frame's own page world).
+  Cross-origin frames work too.
+- `click`, `hover`, `type`, `snapshot`, `screenshot`, `probe` and
+  `wait selector` take `--frame F2` for a selector in that frame. A
+  snapshot ref (`f2e4`) already names its frame, so it needs none.
+  `screenshot --frame F2` with no selector shows the whole frame.
+- `frames` marks an iframe that isn't visible `(hidden)`, and shows
+  each frame's CDP `[frameId=...]`, and the `[targetId=...]` of one
+  from another site (another domain, which Chrome runs in a process of
+  its own). `--frame` and `frames` take `frameId=...` too.
+  `cdp --frame F2` sends raw CDP calls to the target the frame is in.
+- `wait` and the settling after an action watch the top frame's page
+  and every frame's requests. For something a frame shows, use
+  `wait selector --frame F2 ...`.
 
 ### Tabs the page opens
 
@@ -2092,9 +2106,9 @@ that, since the answer is a function.
 - When Chrome restarts SourceMonkey's service worker (its background
   script) during a run, what the scripts did meanwhile may be missing
   from the run's output. The run says when this happens.
-- A script running in an iframe reports to the run (`started in an
-  iframe on <frame URL>`), but reading its state and evaluating in its
-  world reach the top frame only.
+- A log line from an iframe can lack its frame prefix: an event from a
+  SourceMonkey before protocol 2.2, or a console line logged before
+  sm-dev reached the frame's process.
 - `--lang` doesn't reach `GM_xmlhttpRequest` and `GM_download` in a
   connected browser (see [`start` options in detail](#start-options-in-detail)).
 - In specs, a worker's tests share the browser's context (see

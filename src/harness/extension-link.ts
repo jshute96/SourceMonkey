@@ -141,7 +141,9 @@ export type ExtensionEvent =
     kind: 'menu'; op: 'add' | 'remove'; tabId: number; documentId: string; topFrame?: boolean;
     scriptId: string; commandId: string; name?: string; at: number;
   }
-  | { kind: 'values'; scriptId: string; tabId?: number; writes: { key: string; value?: unknown; deleted?: boolean }[]; at: number }
+  // `documentId` on `values`, `request`, `download` and `notification`:
+  // the sending document, from protocol 2.2.
+  | { kind: 'values'; scriptId: string; tabId?: number; documentId?: string; writes: { key: string; value?: unknown; deleted?: boolean }[]; at: number }
   | {
     // `scriptId` and the rest are set for a `GM_openInTab`; a link or
     // `window.open` has none.
@@ -152,11 +154,11 @@ export type ExtensionEvent =
   // A request, download or notification of a script, once as it starts
   // (or shows) and again as it settles.
   | {
-    kind: 'request'; scriptId: string; tabId: number; id: string; url: string; method: string;
+    kind: 'request'; scriptId: string; tabId: number; documentId?: string; id: string; url: string; method: string;
     outcome?: 'load' | 'error' | 'timeout' | 'abort'; status?: number; error?: string; at: number;
   }
   | {
-    kind: 'download'; scriptId: string; tabId: number; requestId: string; url: string; name: string;
+    kind: 'download'; scriptId: string; tabId: number; documentId?: string; requestId: string; url: string; name: string;
     outcome?: 'load' | 'error' | 'timeout' | 'abort'; filename?: string; error?: string; at: number;
   }
   | {
@@ -166,7 +168,7 @@ export type ExtensionEvent =
     host: string; url?: string; method?: string; answer?: 'once' | 'cancel' | 'allow' | 'allow-all' | 'deny'; at: number;
   }
   | {
-    kind: 'notification'; op: 'shown' | 'clicked' | 'closed'; scriptId: string; tabId: number; requestId: string;
+    kind: 'notification'; op: 'shown' | 'clicked' | 'closed'; scriptId: string; tabId: number; documentId?: string; requestId: string;
     notificationId?: string; text?: string; title?: string; at: number;
   };
 

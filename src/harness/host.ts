@@ -18,7 +18,7 @@ import type { Frame } from '@playwright/test';
 import { WRAPPER_GM_RUNTIME } from '../generated-wrappers.js';
 import type { GmXhrEvent, GmXhrRequestPayload } from '../gm-xhr-types.js';
 import type { PreparedScript } from './prepare.js';
-import { NO_RULE_COVERS_URL, explainMatch, preparedScriptName } from './prepare.js';
+import { NO_RULE_COVERS_URL, explainMatch, preparedNoframes, preparedScriptName } from './prepare.js';
 import { FrameIds } from './frames.js';
 
 /** One watched page (a tab), as the host sees it. */
@@ -54,6 +54,8 @@ export interface MenuCommandRecord {
 
 export interface NotificationRecord {
   scriptId: string;
+  /** From an iframe: its frame id's number (`F3` is 3), when known. */
+  frameNumber?: number;
   requestId: string;
   text: string;
   title: string;
@@ -64,6 +66,8 @@ export interface NotificationRecord {
 
 export interface DownloadRecord {
   scriptId: string;
+  /** From an iframe: its frame id's number (`F3` is 3), when known. */
+  frameNumber?: number;
   requestId: string;
   url: string;
   name: string;
@@ -76,6 +80,8 @@ export interface DownloadRecord {
 
 export interface XhrRecord {
   scriptId: string;
+  /** From an iframe: its frame id's number (`F3` is 3), when known. */
+  frameNumber?: number;
   id: string;
   url: string;
   method: string;
@@ -386,6 +392,14 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
   }
 
   /**
+   * The ids of the scripts whose rules match `url`; in an iframe
+   * (`inFrame`), leaving out those `@noframes` keeps to the top frame.
+   */
+  scriptsFor(url: string, inFrame: boolean): string[] {
+    return [...this.scripts].filter(([, s]) => explainMatch(s.matching, url).matches && !(inFrame && preparedNoframes(s))).map(([id]) => id);
+  }
+
+  /**
    * `text` with each stack frame from a script's injected entry pointed
    * at the file and line it was written in: a `@require`, or the script
    * itself. Without this, a script with `@require`s reports lines
@@ -556,10 +570,10 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
   }
 
   /** A script in `from` wrote values. */
-  protected recordValueWrites(from: PageLink, scriptId: string, writes: WireWrite[]): void {
+  protected recordValueWrites(from: PageLink, scriptId: string, writes: WireWrite[], frame: { frameNumber?: number } = {}): void {
     if (!this.scripts.has(scriptId)) return;
     this.applyWrites(scriptId, writes);
-    const write = { scriptId, writes };
+    const write = { scriptId, writes, ...frame };
     this.recordPages.set(write, from);
     this.notify('value-write', write);
   }

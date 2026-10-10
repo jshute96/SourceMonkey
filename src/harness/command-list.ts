@@ -124,6 +124,8 @@ const TIMED = ['start', 'click', 'hover', 'type', 'key', 'eval', 'snapshot', 'pr
 // wait log, listed under both Logs and Waiting.
 const WAIT_LOG: HelpCommand = { usage: 'wait log [--find=]<text>', syntax: { args: 'text', trailingFlags: true }, about: [] };
 const WAIT_LOG_ABOUT = ['Wait for a log line with the text, or matching /regex/, logged since the previous command began.'];
+// The page commands that act in an iframe with `--frame`.
+const IN_FRAME = ['eval', 'click', 'hover', 'type', 'snapshot', 'screenshot', 'probe', 'wait', 'cdp'];
 // `status` and `tabs` print each tab's frame tree with this.
 const FRAMES_OPTION: HelpItem = { term: '--frames', about: 'Show each tab\'s iframes as a tree, with the scripts running in each (see frames).' };
 // The commands that work through SourceMonkey, which a run under
@@ -362,17 +364,35 @@ export const HELP_SECTIONS: HelpSection[] = [
   },
   {
     title: 'Frames',
+    helpHint: 'help frames',
+    text: [
+      'A script runs in each iframe whose own URL it matches, unless it has @noframes. Each iframe gets an ID, F1, F2 and so on across the run, which it keeps when it reloads. The top frame goes by its tab\'s ID (T1).',
+      '',
+      'Working in a frame:',
+      '  - frames: Show the frames tree, and the scripts running in each.',
+      '  - tabs or status with --frames: Include the frames tree.',
+      '  - snapshot: Show refs in frames too (f2e4), which work in any command',
+      '    as they are.',
+      '  - --frame F2: Make a command act on a frame.',
+      '      - A selector looks inside F2: click, hover, type, probe, snapshot,',
+      '        screenshot, wait selector.',
+      '      - eval runs there: in the script\'s copy in F2, or with --page in',
+      '        its page.',
+      '      - cdp sends CDP commands to F2\'s target.',
+      '  - match --frames: Show what each frame\'s own URL would match.',
+      '  - Log lines from a frame start with it: [T1.F2].',
+      '  - menu labels a frame\'s commands with it: M3: Toggle (F2).',
+      '',
+    ],
     commands: [
       {
         usage: 'frames [tab|frame|all]',
         syntax: { args: 'words', max: 1 },
-        about: [
-          'List the current tab\'s iframes, as a tree, with the scripts running in each.',
-          'Each iframe has an ID (F3), unique in the run, which it keeps when it navigates. The top frame is the tab\'s ID.',
-        ],
+        about: 'List the current tab\'s iframes, as a tree, with the scripts running in each.',
         args: [
           { term: 'T2', about: 'That tab\'s iframes.' },
           { term: 'F3, T2.F3', about: 'That frame and the frames in it.' },
+          { term: 'frameId=<id>', about: 'A frame by its CDP frame id, as the frames tree shows it, or the start of one.' },
           { term: 'all', about: 'Every tab\'s iframes.' },
         ],
       },
@@ -845,6 +865,11 @@ export const HELP_SECTIONS: HelpSection[] = [
         commands: TIMED,
       },
       {
+        term: '--frame <frame>',
+        about: ['Act in an iframe (F2) of the tab: a selector looks inside it, and eval runs there.', 'See help frames.'],
+        commands: IN_FRAME,
+      },
+      {
         term: '--json[=single|multi]',
         about: ['Print the result as JSON: on one line (single), or multi-line (multi).', '(Default: the global --json\'s, else multi at a terminal and single when piped)'],
         commands: JSON_COMMANDS,
@@ -899,6 +924,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         items: [
           { term: 'F2', about: 'Iframe ID in the frames list. The top frame is its tab\'s ID (T2).' },
           { term: 'T2.F2', about: 'Frame F2, on tab T2.' },
+          { term: 'frameId=<id>', about: ['Its CDP frame id, as the frames tree shows it, or its first 6 or more characters.', 'Frames with their own process get their own targetId, which is the same as their frameId.'] },
         ],
       },
       {

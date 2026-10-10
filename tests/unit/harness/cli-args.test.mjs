@@ -385,10 +385,10 @@ test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
   assert.deepEqual(cli('status', '--bad'), { code: 2, out: 'ERROR: The status command has no --bad flag. It takes --frames, --json, --nojson.' });
   for (const name of ['open', 'reload', 'newtab']) assert.match(cli(name, '--bogus').out, new RegExp(`^ERROR: The ${name} command has no --bogus flag\\. It takes --noscript, --script, `));
   // The flags it does take, for a near miss.
-  assert.deepEqual(cli('wait', '--timeout', '9'), { code: 2, out: 'ERROR: The wait command has no --timeout flag. It takes --timeout-seconds, --log-source, --find, --since.' });
-  assert.deepEqual(cli('snapshot --out f --bad'), { code: 2, out: 'ERROR: The snapshot command has no --bad flag. It takes --visible, --out, --find, --up, --context, --limit, --timeout-seconds.' });
+  assert.deepEqual(cli('wait', '--timeout', '9'), { code: 2, out: 'ERROR: The wait command has no --timeout flag. It takes --timeout-seconds, --log-source, --find, --since, --frame.' });
+  assert.deepEqual(cli('snapshot --out f --bad'), { code: 2, out: 'ERROR: The snapshot command has no --bad flag. It takes --visible, --out, --find, --up, --context, --limit, --timeout-seconds, --frame.' });
   // In free text, -- is content: eval's JavaScript here.
-  assert.deepEqual(cli('eval', 'T2', '--x'), { code: 2, out: 'ERROR: The eval command has no --x flag. It takes --page, --script, --file, --out, --timeout-seconds.' });
+  assert.deepEqual(cli('eval', 'T2', '--x'), { code: 2, out: 'ERROR: The eval command has no --x flag. It takes --page, --script, --file, --out, --timeout-seconds, --frame.' });
   assert.deepEqual(cli('eval', 'x', '--y'), { code: 1, out: 'No sm-dev runs are active. Start one with sm-dev start.' });
   // -h anywhere is help, even among a run's command's words.
   assert.deepEqual(cli('type', 'input', '-h'), { code: 0, out: 'Usage: sm-dev type [tab] <selector> <text> [options]' });
@@ -520,11 +520,11 @@ test('each run command takes the flags its help lists, and no others', async () 
   const json = ['--json', '--nojson'];
   const expected = {
     newtab: saved, open: saved, reload: loads,
-    closetab: ['--force', T], cdp: ['--file', T],
-    click: ['--at', '--button', '--count', '--modifiers', '--nowait', T], hover: ['--at', '--modifiers', '--nowait', T], type: ['--nowait', '--file', '--clear', T], key: ['--nowait', T],
-    eval: ['--page', '--script', '--file', '--out', T], snapshot: ['--visible', '--out', '--find', '--up', '--context', '--limit', T], screenshot: ['--full', T], probe: ['--css', '--html', ...json, T],
+    closetab: ['--force', T], cdp: ['--file', '--frame', T],
+    click: ['--at', '--button', '--count', '--modifiers', '--nowait', '--frame', T], hover: ['--at', '--modifiers', '--nowait', '--frame', T], type: ['--nowait', '--file', '--clear', '--frame', T], key: ['--nowait', T],
+    eval: ['--page', '--script', '--frame', '--file', '--out', T], snapshot: ['--visible', '--out', '--find', '--up', '--context', '--limit', '--frame', T], screenshot: ['--full', '--frame', T], probe: ['--css', '--html', '--frame', ...json, T],
     load: [T], update: [T],
-    wait: ['--timeout-seconds', '--log-source', '--find', '--since'], logs: ['--tail', '--log-source', '--find', '--since', ...json], status: ['--frames', ...json], values: json, set: ['--file', '--force'], menu: json, tabs: ['--frames', ...json], frames: json, focus: [],
+    wait: ['--timeout-seconds', '--log-source', '--find', '--since', '--frame'], logs: ['--tail', '--log-source', '--find', '--since', ...json], status: ['--frames', ...json], values: json, set: ['--file', '--force'], menu: json, tabs: ['--frames', ...json], frames: json, focus: [],
   };
   for (const [name, flags] of Object.entries(expected)) assert.deepEqual(commandFlags(name).sort(), [...flags].sort(), name);
 });

@@ -11,8 +11,11 @@ import { fileURLToPath } from 'node:url';
 
 import { chromium, test, expect, type BrowserContext } from '@playwright/test';
 import { fetchedVersion } from '../../lib/harness/manager-fetch.js';
+import { createFixtureServer } from '../fixtures/sourcemonkey-launch.js';
 
 const CLI = fileURLToPath(new URL('../../lib/harness/cli.js', import.meta.url));
+const EXAMPLES = fileURLToPath(new URL('../examples', import.meta.url));
+const PAGES = fileURLToPath(new URL('../fixtures/pages', import.meta.url));
 
 test.skip(fetchedVersion('tampermonkey') === null, 'No Tampermonkey fetched: run sm-dev --manager tm manager fetch');
 
@@ -131,6 +134,32 @@ test('a run doesn\'t replace a script installed apart from it', async () => {
   const start = await tm('--run', 'DT1', 'start', '--detach', 'hello.user.js');
   expect(start.stdout).toContain(`installed apart from this run, which a run doesn't replace. To load this one, uninstall that one first: script ${id} uninstall --force.\n`);
   expect((await tm('script', 'list')).stdout).toContain(`  ${id}: Hello 1.0\n`);
+});
+
+test('frames list the scripts each frame is expected to run, by its URL', async () => {
+  const server = await createFixtureServer(PAGES, EXAMPLES);
+  try {
+    const files = ['every-frame', 'frame-b-only', 'top-only'].map((name) => path.join(EXAMPLES, 'frames', `${name}.user.js`));
+    const page = `${server.baseUrl}/frames/frames.html`;
+    expect((await tm('--temp-browser', '--run', 'DT2', 'start', '--detach', ...files, page)).code).toBe(0);
+    // Frame B is on the other of localhost and 127.0.0.1.
+    const other = (u: string) => (u.includes('127.0.0.1') ? u.replace('127.0.0.1', 'localhost') : u.replace('localhost', '127.0.0.1'));
+    // By their rules, @noframes keeping top-only (3) to the top frame.
+    // Each frame has a CDP frame id; Frame B, on another site, has a
+    // target of its own too, as the tab has.
+    expect((await tm('--run', 'DT2', 'frames')).stdout.replace(/=\w+\]/g, '=X]')).toBe([
+      `T1: ${page} [frameId=X] [targetId=X]`, '    Expected: 1, 3',
+      `  F1: ${server.baseUrl}/frames/frame-a.html [frameId=X]`, '      Expected: 1',
+      `  F2: ${other(`${server.baseUrl}/frames/frame-b.html`)} [frameId=X] [targetId=X]`, '      Expected: 1, 2',
+      `    F3: ${other(`${server.baseUrl}/frames/frame-nested.html`)} [frameId=X]`, '        Expected: 1',
+      '',
+    ].join('\n'));
+    const status = (await tm('--run', 'DT2', 'status')).stdout;
+    expect(status).toMatch(/^\* T1: \S+ \(\+3 frames\)/m);
+    expect(status).toMatch(/^ {4}2: SourceMonkey example: frames: Frame B only \(.*\), E\d+ in Tampermonkey \(F2\)$/m);
+  } finally {
+    await server.close();
+  }
 });
 
 test('in a --temp-browser, scripts run on local pages', async () => {
