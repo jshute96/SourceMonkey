@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name        SourceMonkey example: frames: Frame B only
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.1
+// @version     1.0.2
 // @description Matches only the cross-origin frame, so it runs on a page it doesn't match.
-// @match       *://*/frames/frame-b.html
+// @match       *://*/*frames/frame-b.html
 // @match       file:///*/frames/frame-b.html
 // @run-at      document-end
 // @grant       GM_registerMenuCommand

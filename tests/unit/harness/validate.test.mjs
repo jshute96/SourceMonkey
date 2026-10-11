@@ -52,7 +52,7 @@ test('every script in tests/examples validates clean', () => {
   // Except one flagged on purpose: an @match naming a #hash never runs
   // here, while Violentmonkey runs it.
   assert.deepEqual(bad.map(([name, s]) => `${name}: ${s.lines[0]}`), [
-    'match-hash.user.js: @match *://*/headers-match-hash/headers-match-hash.html#part names a #hash that @match can\'t see, so this script would never run on any page; use @include to match on the hash (in tests/examples/headers-match-hash/match-hash.user.js, line 6)',
+    'match-hash.user.js: @match *://*/*headers-match-hash/headers-match-hash.html#part names a #hash that @match can\'t see, so this script would never run on any page; use @include to match on the hash (in tests/examples/headers-match-hash/match-hash.user.js, line 6)',
   ]);
   assert.equal(code, 1);
   // Guard against the walker silently matching nothing.

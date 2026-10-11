@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name        SourceMonkey example: frames: every frame
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.1
+// @version     1.0.2
 // @description Runs in the page and each of its frames, sharing a counter across them.
-// @match       *://*/frames/frames.html
-// @match       *://*/frames/frame-a.html
-// @match       *://*/frames/frame-b.html
-// @match       *://*/frames/frame-nested.html
+// @match       *://*/*frames/frames.html
+// @match       *://*/*frames/frame-a.html
+// @match       *://*/*frames/frame-b.html
+// @match       *://*/*frames/frame-nested.html
 // @match       file:///*/frames/*.html
 // @run-at      document-end
 // @grant       GM_getValue

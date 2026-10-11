@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name        SourceMonkey example: headers-match-hash: @match plus a regex @include
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.7
+// @version     1.0.8
 // @description @match names the page without a hash, plus a regex @include that matches nothing. This matches, with any hash or none.
-// @match       *://*/headers-match-hash/headers-match-hash.html
+// @match       *://*/*headers-match-hash/headers-match-hash.html
 // @match       file:///*/headers-match-hash/headers-match-hash.html
 // @include     /nomatch-xyz/
 // @grant       none
@@ -18,6 +18,6 @@
   // check has to ignore the hash too.
   const li = document.createElement('li');
   li.dataset.script = 'match-regex';
-  li.textContent = 'match-regex.user.js:   @match *://*/headers-match-hash/headers-match-hash.html + @include /nomatch-xyz/';
+  li.textContent = 'match-regex.user.js:   @match *://*/*headers-match-hash/headers-match-hash.html + @include /nomatch-xyz/';
   document.getElementById('log').appendChild(li);
 })();

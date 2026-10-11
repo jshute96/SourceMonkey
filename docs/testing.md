@@ -482,7 +482,7 @@ files into TM/VM, hit the same URLs, compare outcomes).
   alongside the main `tests/e2e/` suite. Specs cover the same
   ground as the targeted GM_* specs above but through the public,
   installable userscript surface.
-- Userscripts `@match *://*/<api>/page.html` so the same patterns
+- Userscripts `@match *://*/*<api>/page.html` so the same patterns
   work whether served at `${fixtureServer.baseUrl}` (random port) or
   by a developer's local `http-server`.
 - A directory may also hold **multiple** sibling userscripts for

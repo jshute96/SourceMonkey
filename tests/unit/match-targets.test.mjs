@@ -263,8 +263,8 @@ test('linkPathFromMatchPath: pure-literal paths pass through unchanged', () => {
 
 // ---------- sameDirLinkUrl ----------
 
-// The shape the bundled example scripts use: a host-wildcard pair
-// naming a page that ships in the script's own directory.
+// Scripts in the bundled examples' layout, naming with site-less
+// patterns a page that ships in the script's own directory.
 const FILE_SCRIPT = 'file:///home/u/dev/tests/examples/gm-menu/gm-menu.user.js';
 const HTTP_SCRIPT = 'https://example.com/tests/examples/gm-menu/gm-menu.user.js';
 
@@ -282,18 +282,37 @@ test('sameDirLinkUrl: host wildcard resolves against the script directory', () =
 test('sameDirLinkUrl: an http-hosted script keeps its own origin', () => {
   // The scheme and origin come from the script, not the pattern —
   // it is the only reading that can be right, and it is why the
-  // `*://` and `file://` members of a pair collapse to one URL.
+  // `*://` and `file://` patterns for the same page give one URL.
   assert.equal(
     sameDirLinkUrl('file:///*/gm-menu/gm-menu.html', HTTP_SCRIPT),
     'https://example.com/tests/examples/gm-menu/gm-menu.html',
   );
 });
 
-test('sameDirLinkUrl: needs at least one literal directory to anchor on', () => {
+test('sameDirLinkUrl: literal text after a wildcard anchors like a directory', () => {
+  // The examples' http form: `*gm-menu` lets any path prefix stand
+  // before the directory, so the page matches under any server root.
+  assert.equal(
+    sameDirLinkUrl('*://*/*gm-menu/gm-menu.html', FILE_SCRIPT),
+    'file:///home/u/dev/tests/examples/gm-menu/gm-menu.html',
+  );
+  // The suffix has to end the script's directory name...
+  assert.equal(sameDirLinkUrl('*://*/*other/gm-menu.html', FILE_SCRIPT), null);
+  // ...and the one in the right position when literal dirs follow.
+  assert.equal(
+    sameDirLinkUrl('*://*/*amples/gm-menu/gm-menu.html', FILE_SCRIPT),
+    'file:///home/u/dev/tests/examples/gm-menu/gm-menu.html',
+  );
+  assert.equal(sameDirLinkUrl('*://*/*menu/gm-menu/gm-menu.html', FILE_SCRIPT), null);
+});
+
+test('sameDirLinkUrl: needs a literal directory or directory suffix to anchor on', () => {
   // "a file with this name, somewhere" is not a hint that the file
   // sits beside the script.
   assert.equal(sameDirLinkUrl('*://*/gm-menu.html', FILE_SCRIPT), null);
   assert.equal(sameDirLinkUrl('file:///*/gm-menu.html', FILE_SCRIPT), null);
+  // A suffix in the filename segment doesn't name a directory.
+  assert.equal(sameDirLinkUrl('*://*/*gm-menu.html', FILE_SCRIPT), null);
 });
 
 test('sameDirLinkUrl: literal directories must match the script dir tail', () => {

@@ -38,7 +38,7 @@ test('match lists every rule that excluded or matched each URL', () => {
     `no match  M1 X2  ${page}#part`,
     'no match         http://127.0.0.1/other.html',
     'Rules:',
-    '  M1: @match *://*/headers-match-hash/headers-match-hash.html',
+    '  M1: @match *://*/*headers-match-hash/headers-match-hash.html',
     '  X2: @exclude *#part',
     '',
   ].join('\n'));
@@ -56,7 +56,7 @@ test('match takes several scripts and URLs in any order, a heading per script', 
     `match   M1     ${page}#part`,
     `match   M1     ${page}`,
     'Rules:',
-    '  M1: @match *://*/headers-match-hash/headers-match-hash.html',
+    '  M1: @match *://*/*headers-match-hash/headers-match-hash.html',
     '',
     rel('include-hash.user.js'),
     'Result    Rules  URL',
@@ -68,7 +68,7 @@ test('match takes several scripts and URLs in any order, a heading per script', 
   ].join('\n'));
   // A script or URL given twice is checked once.
   const twice = spawnSync(process.execPath, [CLI, 'match', path.join(dir, 'match-exact.user.js'), page, path.join(dir, 'match-exact.user.js'), page], { encoding: 'utf8' });
-  assert.equal(twice.stdout, `Result  Rules  URL\nmatch   M1     ${page}\nRules:\n  M1: @match *://*/headers-match-hash/headers-match-hash.html\n`);
+  assert.equal(twice.stdout, `Result  Rules  URL\nmatch   M1     ${page}\nRules:\n  M1: @match *://*/*headers-match-hash/headers-match-hash.html\n`);
   // Two spellings of one file are one script too.
   const spelled = spawnSync(process.execPath, [CLI, 'match', path.join(dir, 'match-exact.user.js'), `${dir}./x/../match-exact.user.js`, page], { encoding: 'utf8' });
   assert.equal(spelled.stdout, twice.stdout);
@@ -144,7 +144,7 @@ test('validate and match fetch a script given as a URL, and run refuses one', as
     assert.equal(validated.stdout, `ok       ${url}\n\n1 ok, 0 invalid\n`);
     const page = 'http://x.test/headers-match-hash/headers-match-hash.html';
     assert.equal((await cli('match', url, page)).stdout,
-      `Result  Rules  URL\nmatch   M1     ${page}\nRules:\n  M1: @match *://*/headers-match-hash/headers-match-hash.html\n`);
+      `Result  Rules  URL\nmatch   M1     ${page}\nRules:\n  M1: @match *://*/*headers-match-hash/headers-match-hash.html\n`);
     const missing = await cli('validate', `${base}/nope.user.js`);
     assert.equal(missing.code, 1);
     assert.equal(missing.stderr, `Could not fetch ${base}/nope.user.js: The server answered 404 Not Found\n`);

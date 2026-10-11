@@ -179,18 +179,20 @@ export function matchTargetInfo(pattern: string): MatchTarget | null {
 // the same directory as the script itself. Full rule, worked examples
 // and rationale in docs/script-viewer.md#same-directory-fallback; in
 // short, a pattern with no host whose literal trailing directories
+// (and any literal text ending a wildcard directory, like `*gm-menu`)
 // match the tail of the script's own directory D links to D + its
 // filename.
 //
-// The shape this exists for is the host-wildcard pair an example
-// script uses to name the page it ships beside:
+// It exists for the site-less patterns a script uses to name the page
+// it ships beside, such as:
 //
 //   @match *://*/gm-menu/gm-menu.html
+//   @match *://*/*gm-menu/gm-menu.html
 //   @match file:///*/gm-menu/gm-menu.html
 //
-// Neither yields a target above — one has a host of `*`, the other a
-// `file:` scheme — so both rows rendered as plain text even though the
-// page is sitting next to the script we're viewing.
+// None yields a target above (the `*://` ones have a host of `*`, the
+// other a `file:` scheme), so their rows rendered as plain text even
+// though the page is sitting next to the script we're viewing.
 //
 // Two properties worth keeping in mind when editing:
 //   - The result is D plus one literal filename, so no pattern can
@@ -225,14 +227,25 @@ export function sameDirLinkUrl(pattern: string, scriptUrl: string | undefined): 
     if (seg.includes('*')) lastWildcard = i;
   });
   const literalDirs = segments.slice(lastWildcard + 1);
-  if (literalDirs.length === 0 || literalDirs.some((s) => s === '')) return null;
+  // The text after that segment's last `*` (`gm-menu` in `*gm-menu`)
+  // still has to end the directory the wildcard stands in for.
+  const wildSuffix = lastWildcard < 0
+    ? ''
+    : segments[lastWildcard].slice(segments[lastWildcard].lastIndexOf('*') + 1);
+  if (literalDirs.length === 0 && !wildSuffix) return null;
+  if (literalDirs.some((s) => s === '')) return null;
 
   const dir = scriptDirUrl(scriptUrl);
   if (!dir) return null;
   const dirSegments = dir.pathname.split('/').filter(Boolean).map(decodeSegment);
-  if (dirSegments.length < literalDirs.length) return null;
+  const needed = literalDirs.length + (wildSuffix ? 1 : 0);
+  if (dirSegments.length < needed) return null;
   const tail = dirSegments.slice(dirSegments.length - literalDirs.length);
   if (tail.some((seg, i) => seg !== decodeSegment(literalDirs[i]))) return null;
+  if (wildSuffix
+      && !dirSegments[dirSegments.length - needed].endsWith(decodeSegment(wildSuffix))) {
+    return null;
+  }
 
   // Resolved through the URL parser rather than concatenated, so a
   // filename carrying a space or other raw character is escaped the

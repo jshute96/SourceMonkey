@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        SourceMonkey example: gm-info: GM_info
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     2.1.1
+// @version     2.1.2
 // @description Hand GM_info to the page, which renders it.
 // @author      SourceMonkey examples
 // @copyright   2026, SourceMonkey examples
@@ -9,11 +9,11 @@
 // @homepageURL https://github.com/jshute96/SourceMonkey
 // @supportURL  https://github.com/jshute96/SourceMonkey/issues
 // @icon        ./icon.svg
-// @match       *://*/gm-info/gm-info.html
+// @match       *://*/*gm-info/gm-info.html
 // @match       file:///*/gm-info/gm-info.html
 // @include     *://*/gm-info/gm-info.html?include=*
 // @exclude     *://*/gm-info/gm-info.html?exclude=*
-// @exclude-match *://*/gm-info/gm-info.html?exclude-match=*
+// @exclude-match *://*/*gm-info/gm-info.html?exclude-match=*
 // @require     ./lib.js
 // @resource    note ./resource.txt
 // @connect     example.com

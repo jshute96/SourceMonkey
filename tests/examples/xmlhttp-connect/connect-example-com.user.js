@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name        SourceMonkey example: xmlhttp-connect: GM_xmlhttpRequest with @connect example.com
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     2.0.1
+// @version     2.0.2
 // @description Declares @connect example.com, so requests there go without asking, and SourceMonkey asks before the others.
-// @match       *://*/xmlhttp-connect/xmlhttp-connect.html
+// @match       *://*/*xmlhttp-connect/xmlhttp-connect.html
 // @match       file:///*/xmlhttp-connect/xmlhttp-connect.html
 // @run-at      document-end
 // @grant       GM_xmlhttpRequest

@@ -1160,16 +1160,17 @@ so the body header and the details panel agree.
 
 ### Same-directory fallback
 
-A script that ships beside the page it acts on says so with a
-host-wildcard pair, and neither member names a site:
+A script that ships beside the page it acts on often names that page
+with patterns that name no site, such as any of these:
 
 ```
 // @match *://*/gm-menu/gm-menu.html
+// @match *://*/*gm-menu/gm-menu.html
 // @match file:///*/gm-menu/gm-menu.html
 ```
 
-`sameDirLinkUrl` (in `src/match-targets.ts`) links these to the page
-sitting next to the script. Given the script's own directory `D`:
+`sameDirLinkUrl` (in `src/match-targets.ts`) links each such pattern
+to the page sitting next to the script. Given the script's own directory `D`:
 
 - The pattern must name **no host** — `*`, or the empty host of a
   `file://` pattern. A concrete host is `matchTargetInfo`'s job.
@@ -1179,14 +1180,18 @@ sitting next to the script. Given the script's own directory `D`:
   the check is what keeps `ftp://*/…` from linking.
 - Its **last path segment must be a concrete filename** — non-empty,
   no `*`, no `?` or `#`, and carrying an extension.
-- The **directory segments after the last wildcard segment** must form
-  a non-empty run matching the tail of `D` exactly.
+- The **directory segments after the last wildcard segment** must
+  match the tail of `D` exactly.
+- Literal text ending that wildcard segment (`gm-menu` in `*gm-menu`)
+  must end the directory of `D` just before that run.
+- At least one of those two must be present, to anchor on.
 
 The link is then `D` + that filename.
 
 | Pattern (script in `…/examples/gm-menu/`) | Link |
 | --- | --- |
 | `*://*/gm-menu/gm-menu.html` | `<D>/gm-menu.html` |
+| `*://*/*gm-menu/gm-menu.html` | same URL |
 | `file:///*/gm-menu/gm-menu.html` | same URL |
 | `*://*/examples/gm-menu/gm-menu.html` | same URL (longer overlap) |
 | `*://*/gm-menu.html` | *(no link)* — nothing to anchor on |
@@ -1197,11 +1202,12 @@ The link is then `D` + that filename.
 Notes:
 
 - The **scheme and origin come from the script**, not the pattern, so
-  the `*://` and `file://` members of a pair collapse to one URL —
+  `*://` and `file://` patterns for the same page give one URL —
   and the rule works the same for an HTTP-hosted script.
-- Requiring at least one matching directory is what makes this a
-  deduction: `*://*/page.html` says only "a file with this name,
-  somewhere", which is no evidence it sits beside the script.
+- Requiring at least one matching directory (or directory suffix,
+  like `*gm-menu`) is what makes this a deduction: `*://*/page.html`
+  says only "a file with this name, somewhere", which is no evidence
+  it sits beside the script.
 - The result is `D` plus one literal filename, so no pattern can walk
   out of the script's own directory. It's resolved through the URL
   parser, so a filename carrying a space is escaped like the directory

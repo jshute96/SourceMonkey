@@ -128,7 +128,7 @@ test('frames: ids, the scripts in each frame, menus and match', async ({ page, f
   // @noframes keeps top-only out of every frame its rules match.
   const match = await run('match 3 --frames');
   expect(match).toContainEqual(expect.stringMatching(new RegExp(`^  ${a} +@noframes +M2 +\\S+$`)));
-  expect(match).toContain('  M2: @match *://*/frames/frame-a.html');
+  expect(match).toContain('  M2: @match *://*/*frames/frame-a.html');
   const matchJson = await json('match 2 --frames');
   expect(matchJson.results[0].pages[0].frames.map((f: { id: string; matches: boolean }) => [f.id, f.matches])).toEqual([
     [a, false], [b, true], [nested, false],

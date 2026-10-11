@@ -8,7 +8,7 @@ and pairs:
   optional details, and placeholder outputs. The userscript fills in
   the content.
 - `<api>.user.js` — a real userscript with the metadata header,
-  `@match`-ed at `*://*/<api>/<api>.html` (and a `file:///` variant)
+  `@match`-ed at `*://*/*<api>/<api>.html` (and a `file:///` variant)
   so it picks up the page regardless of how it's served.
 - `<api>.spec.ts` — the Playwright e2e coverage for this example.
   Lives next to the page + userscript so per-API work stays in one
@@ -104,8 +104,9 @@ node scripts/serve-examples.mjs --port 9000
 
 Then visit `http://127.0.0.1:8080/index.html` for the index, or jump
 straight to e.g. `http://127.0.0.1:8080/gm-info/gm-info.html`. The
-`@match *://*/<api>/<api>.html` pattern matches under any host and
-port.
+`@match *://*/*<api>/<api>.html` pattern matches under any host and
+port, and at any depth under the server root (the leading `*` in the
+path covers a prefix like `/SourceMonkey/tests/examples/`).
 
 The serve script is a static-file server plus one special route:
 `/__slow/<file>?ms=N` answers after N ms. `headers-run-at/` uses it
@@ -182,7 +183,7 @@ prose paragraphs. Mirrors the project-wide doc convention.
 
 1. Create `<api>/<api>.html`, `<api>/<api>.user.js`, and
    `<api>/<api>.spec.ts`.
-2. Use both `@match *://*/<api>/<api>.html` and
+2. Use both `@match *://*/*<api>/<api>.html` and
    `@match file:///*/<api>/<api>.html` so the script matches under
    any local server port and any host, plus direct file:// opens.
 3. Follow the *Page conventions* layout above. Header-demo dirs

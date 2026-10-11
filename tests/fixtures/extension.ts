@@ -27,7 +27,7 @@ const EXTENSION_PATH = path.resolve(__dirname, '../../dist');
 const FIXTURE_PAGES_DIR = path.resolve(__dirname, 'pages');
 // Mounted as a fallback root so `tests/examples/<api>/<api>.html` is
 // reachable at `/<api>/<api>.html` from the fixture server. Keeps the
-// example userscripts' `@match *://*/<api>/<api>.html` patterns working
+// example userscripts' `@match *://*/*<api>/<api>.html` patterns working
 // against both the test harness and a standalone http-server.
 const EXAMPLES_DIR = path.resolve(__dirname, '../examples');
 export const EXTENSION_ID = extensionIdFromPath(EXTENSION_PATH);
