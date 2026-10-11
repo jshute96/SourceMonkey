@@ -24,6 +24,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { processAlive } from './runs.js';
+import { quoted } from './output-style.js';
 
 // How long a started browser has to open its port.
 const START_TIMEOUT_MS = 10_000;
@@ -92,8 +93,8 @@ function profileInUse(dir: string): string | null {
   if (!match || match[1] !== os.hostname() || !processAlive(Number(match[2]))) return null;
   const port = debuggingPort(dir, Number(match[2]));
   return port
-    ? `The profile ${withTilde(dir)} is in use by the browser on port ${port}. Use --browser ${port}, or another --profile`
-    : `The profile ${withTilde(dir)} is in use by a browser without a debugging port (pid ${match[2]}). Close it, or use another --profile`;
+    ? `The profile ${withTilde(dir)} is in use by the browser on port ${port}. Use ${quoted(`--browser ${port}`)}, or another ${quoted('--profile')}`
+    : `The profile ${withTilde(dir)} is in use by a browser without a debugging port (pid ${match[2]}). Close it, or use another ${quoted('--profile')}`;
 }
 
 // Where the browser with this pid listens, if it does: the port in its

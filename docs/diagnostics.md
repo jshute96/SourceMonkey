@@ -239,6 +239,12 @@ Where it shows up:
 
 One message per problem, phrased to survive every place it lands.
 
+- **sm-dev quotes code in backticks.** In sm-dev's messages, commands
+  to run, flags, and the user's own input given back go in backticks
+  (`` Use `tabs` to list them ``). At a terminal they show in color;
+  plain, a backtick pair stays only where it sets the text apart (see
+  [sm-dev-design.md](sm-dev-design.md#output-color-output-stylets)).
+
 - **Capitalized, no trailing period, subject included.** The same
   string appears alone in the message bar and the Log tab, *and* after
   the preview's `This file cannot be installed: ` prefix. A capital

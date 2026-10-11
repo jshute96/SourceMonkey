@@ -58,7 +58,7 @@ test('--open-browser starts a lasting browser once, on a profile of its port', a
     const other = await freePort();
     expect(cli('--open-browser', '--browser', String(other), '--profile', profile)).toEqual({
       code: 1,
-      out: `The profile ${profile} is in use by the browser on port ${port}. Use --browser ${port}, or another --profile`,
+      out: `The profile ${profile} is in use by the browser on port ${port}. Use \`--browser ${port}\`, or another --profile`,
     });
   } finally {
     // The browser, by the lock on its profile, however far this got.

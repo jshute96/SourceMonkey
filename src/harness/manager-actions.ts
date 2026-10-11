@@ -13,7 +13,11 @@ import { withTilde } from './browser-launch.js';
 import { EXTENSION_DIR } from './extension-launch.js';
 import { fetchManager, fetchedDir, fetchedVersion } from './manager-fetch.js';
 import { MANAGERS, managerFlag, type ManagerName } from './managers.js';
+import { cmd, id as idRole, message, quoted, SM_DEV_PREFIX, ui, url } from './output-style.js';
 import { rebuildAdvice } from './rebuild-advice.js';
+
+// A line of sm-dev's own, as a note, without its `[sm-dev] ` prefix.
+const withoutPrefix = (line: string): string => (line.startsWith(SM_DEV_PREFIX) ? line.slice(SM_DEV_PREFIX.length) : line);
 
 export type ManagerVerb = 'fetch' | 'install' | 'enable' | 'disable';
 
@@ -39,14 +43,14 @@ export class ManagerUsageError extends Error {}
 export async function managerAction(o: ManagerActionOptions): Promise<boolean> {
   const { label } = MANAGERS[o.manager];
   if (o.verb === 'fetch') {
-    if (o.manager === 'sourcemonkey') throw new ManagerUsageError(`${label} comes with sm-dev, so there is nothing to fetch. Use --manager to name another.`);
-    const fetched = await fetchManager(o.manager, (line) => o.note(line.replace(/^\[sm-dev\] /, '')));
+    if (o.manager === 'sourcemonkey') throw new ManagerUsageError(`${label} comes with sm-dev, so there is nothing to fetch. Use ${quoted('--manager')} to name another.`);
+    const fetched = await fetchManager(o.manager, (line) => o.note(withoutPrefix(line)));
     if (!fetched.downloaded) {
-      o.out(`${label} ${fetched.version} is the newest version, and is already in ${withTilde(fetched.dir)}`);
+      o.out(ui`${label} ${fetched.version} is the newest version, and is already in ${url(withTilde(fetched.dir))}`);
       return true;
     }
-    o.out(`Fetched ${label} ${fetched.version} into ${withTilde(fetched.dir)}${fetched.replaced ? `, replacing ${fetched.replaced}` : ''}`);
-    if (fetched.replaced) o.out(`A browser with it installed from there gets the new version with sm-dev ${managerFlag(o.manager)} manager install.`);
+    o.out(ui`Fetched ${label} ${fetched.version} into ${url(withTilde(fetched.dir))}${fetched.replaced ? `, replacing ${fetched.replaced}` : ''}`);
+    if (fetched.replaced) o.out(message(`A browser with it installed from there gets the new version with ${quoted(`sm-dev ${managerFlag(o.manager)} manager install`)}.`));
     return true;
   }
   const endpoint = o.endpoint!;
@@ -56,13 +60,14 @@ export async function managerAction(o: ManagerActionOptions): Promise<boolean> {
     if (!await install(o, managers, copies)) return false;
   } else {
     if (copies.length === 0) {
-      o.note(`${label} is not installed in this browser. Install it with sm-dev${o.browserArg ?? ''} ${managerFlag(o.manager)} manager install`);
+      o.note(message(`${label} is not installed in this browser. Install it with ${quoted(`sm-dev${o.browserArg ?? ''} ${managerFlag(o.manager)} manager install`)}`));
       return false;
     }
     const enable = o.verb === 'enable';
     if (!enable && o.manager === 'sourcemonkey' && (o.runsUsing ?? []).length > 0) {
       const runs = o.runsUsing!;
-      o.note(`SourceMonkey can't be turned off while ${runs.length === 1 ? `run ${runs[0]} uses` : `runs ${runs.join(', ')} use`} it. Stop ${runs.length === 1 ? 'that run' : 'them'} first.`);
+      const ids = runs.map((run) => idRole(run)).join(', ');
+      o.note(ui`SourceMonkey can't be turned off while ${runs.length === 1 ? ui`run ${ids} uses` : ui`runs ${ids} use`} it. Stop ${runs.length === 1 ? 'that run' : 'them'} first.`);
       return false;
     }
     for (const copy of copies) {
@@ -75,7 +80,7 @@ export async function managerAction(o: ManagerActionOptions): Promise<boolean> {
       o.out(`${enable ? 'Enabled' : 'Disabled'} ${copy.name} ${copy.version}`);
     }
     if (enable && copies.some((c) => !c.userScripts)) {
-      o.note(`Its Allow User Scripts is off, so it can't run scripts. sm-dev${o.browserArg ?? ''} ${managerFlag(o.manager)} manager install turns it on.`);
+      o.note(message(`Its Allow User Scripts is off, so it can't run scripts. ${quoted(`sm-dev${o.browserArg ?? ''} ${managerFlag(o.manager)} manager install`)} turns it on.`));
     }
   }
   // Not after turning it off, when it's no longer in use either.
@@ -96,13 +101,13 @@ async function install(o: ManagerActionOptions, managers: InstalledManager[], co
   if (o.manager === 'sourcemonkey') {
     dir = EXTENSION_DIR;
     if (!existsSync(path.join(dir, 'manifest.json'))) {
-      o.note(`The built extension is missing from ${dir}. ${rebuildAdvice()}`);
+      o.note(ui`The built extension is missing from ${url(dir)}. ${message(rebuildAdvice())}`);
       return false;
     }
     version = null;
   } else {
     // Fetched the first time it's wanted, as `manager fetch` would.
-    version = fetchedVersion(o.manager) ?? (await fetchManager(o.manager, (line) => o.note(line.replace(/^\[sm-dev\] /, '')))).version;
+    version = fetchedVersion(o.manager) ?? (await fetchManager(o.manager, (line) => o.note(withoutPrefix(line)))).version;
     dir = fetchedDir(o.manager);
   }
   const ours = copies.find((m) => m.path !== undefined && path.resolve(m.path) === path.resolve(dir));
@@ -110,11 +115,11 @@ async function install(o: ManagerActionOptions, managers: InstalledManager[], co
   if (copy) {
     if (ours && version !== null && ours.version !== version) {
       await loadUnpacked(endpoint, dir);
-      o.out(`Updated ${copy.name} from ${copy.version} to ${version}, from ${withTilde(dir)}`);
+      o.out(ui`Updated ${copy.name} from ${copy.version} to ${version}, from ${url(withTilde(dir))}`);
     } else {
       // Where Chrome says it came from, when it says.
-      const from = copy.path ? `, from ${withTilde(copy.path)}` : copy.fromStore ? ', from the Chrome Web Store' : '';
-      o.out(`${copy.name} ${copy.version} is already installed${from}${copy.enabled ? '' : `, but disabled. Turn it on with sm-dev${o.browserArg ?? ''} ${managerFlag(o.manager)} manager enable.`}`);
+      const from = copy.path ? ui`, from ${url(withTilde(copy.path))}` : copy.fromStore ? ', from the Chrome Web Store' : '';
+      o.out(ui`${copy.name} ${copy.version} is already installed${from}${copy.enabled ? '' : ui`, but disabled. Turn it on with ${cmd(`sm-dev${o.browserArg ?? ''} ${managerFlag(o.manager)} manager enable`)}.`}`);
     }
     if (!copy.userScripts) {
       await allowUserScripts(endpoint, copy.id);
@@ -126,7 +131,7 @@ async function install(o: ManagerActionOptions, managers: InstalledManager[], co
   await allowUserScripts(endpoint, id);
   const loaded = (await browserManagers(endpoint)).find((m) => m.id === id);
   managers.push(...(loaded ? [loaded] : []));
-  o.out(`Installed ${label}${loaded ? ` ${loaded.version}` : ''} from ${withTilde(dir)}, with Allow User Scripts on`);
+  o.out(ui`Installed ${label}${loaded ? ` ${loaded.version}` : ''} from ${url(withTilde(dir))}, with Allow User Scripts on`);
   return true;
 }
 

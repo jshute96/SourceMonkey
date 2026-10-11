@@ -253,7 +253,9 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/checks.ts` | `match` and `validate`'s shared half: finding the scripts named, and the lines each prints |
 | `src/harness/path-args.ts` | Globs (`*`, `**`) and directory searches for sm-dev's file arguments |
 | `src/harness/command-lines.ts` | Input lines into a run's commands: multi-line `{{ ... }}` blocks (`eval`, `set`, `type`, `cdp`), comments, sent lists |
-| `src/harness/command-list.ts` | Every sm-dev command in one list, in `--help`'s sections, with each command's arguments and options, and its renderer |
+| `src/harness/command-list.ts` | Every sm-dev command in one list, in the help's named sections, with arguments, options, and the help views' layouts |
+| `src/harness/output-style.ts` | Output markup by role (IDs, URLs, commands), sm-dev's message prefixes, and painting lines for a terminal |
+| `src/harness/help-format.ts` | Help text layout: wrapping by shown width, bullets, `code` spans, and painting them in color for a terminal |
 | `src/harness/command-args.ts` | The one parser of every sm-dev command's words: quotes, flags, a leading tab, text, forms (and what one acts on), blocks |
 | `src/harness/prompt-editor.ts` | Multi-line editing of `{{` blocks at the `--interactive` prompt, on top of readline |
 | `src/harness/prompt-history.ts` | The `--interactive` prompt's history file (`~/.sm-dev-history`), shared by parallel sessions |
@@ -281,6 +283,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/manager-actions.ts` | The `manager` verbs: fetch, install, enable and disable a manager, with their messages |
 | `src/harness/extension-host.ts` | Fills a run's or fixture test's host (reports, values, menus) from the extension's events, and answers its commands |
 | `src/harness/frames.ts` | A run's iframe ids (`F3`), a tab's frame tree, and matching the extension's frames to Playwright's |
+| `src/harness/frame-sessions.ts` | A tab's CDP sessions per process, reaching cross-origin iframes, and finding a frame in them |
 | `src/harness/extension-backend.ts` | Finds SourceMonkey in a browser: its id and its service worker |
 | `src/harness/run-log.ts` | A run's log file and `--temp-browser` downloads folder: timestamped names in `/tmp/sm-dev-logs-<user>`, stamped lines, per-run links |
 | `src/harness/download-watch.ts` | Prints where a download from one of the run's tabs was saved, from Chrome's CDP download events |
@@ -579,7 +582,7 @@ built extension loaded; fixtures in `tests/fixtures/harness.ts`.
 | File | Description |
 |------|-------------|
 | `tests/harness/console-commands.spec.ts` | The commands typed into `sm-dev start`: `scripts`, `values`, `menu` by M number, dialogs, several tabs, stopped loads |
-| `tests/harness/frames.spec.ts` | sm-dev on the frames example: frame ids, `frames`, scripts per frame in `tabs`/`status`, menus, `match --frames`, JSON |
+| `tests/harness/frames.spec.ts` | sm-dev on the frames example: frame ids, `frames`, scripts per frame, menus, `match --frames`, `--frame`, JSON |
 | `tests/harness/run-tabs.spec.ts` | `sm-dev start` end to end: followed tabs, `--all`, `--notab`, `load` / `update` / `--watch` reloads, `--from-saved`, sandboxed pages, `--lang` |
 | `tests/harness/run-downloads.spec.ts` | Download lines from a run's tabs: a `--temp-browser` saves beside the run log, a connected browser by its own setting |
 | `tests/harness/page-commands.spec.ts` | The run commands that drive and read a page, in both worlds, with dialogs, quoting, and files |

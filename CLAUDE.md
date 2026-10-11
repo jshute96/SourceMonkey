@@ -63,6 +63,30 @@ entries, banners). Full rules in [docs/diagnostics.md](docs/diagnostics.md#wordi
   file the plumbing in TODO.md.
 - **`Internal error:` prefix** when the user can't act on it.
 
+### sm-dev output markup (color)
+sm-dev's output and help are marked up by role and painted at a
+terminal. How it works:
+[docs/sm-dev-design.md](docs/sm-dev-design.md#output-color-output-stylets).
+- **The roles and their looks** are `STYLES` in
+  `src/harness/output-style.ts`, the one place colors are set. Help's
+  own markup is in `src/harness/help-format.ts`, which maps its spans
+  onto those roles.
+- **Mark output by what it is** (`id`, `name`, `url`, `code`,
+  `heading`, `selected`) with `ui` and the role helpers, which escape
+  what goes in.
+- **Recognized prefixes stay plain, before any markup**: write
+  ``'[sm-dev] ' + ui`...` ``, and build `[sm-dev] ERROR: `, `ERROR: `,
+  `Warning: `, `INVALID  ` from the constants in `output-style.ts`.
+- **In messages we write, put commands, flags and the user's own input
+  in backticks** (`` Use `tabs` to list them ``). In a template literal,
+  write them with `quoted()` (`` `The ${quoted(flag)} flag` ``) rather
+  than escaped backticks. Text a script or page wrote goes in through
+  `ui` or `asError`, so its own backticks stay text.
+- **Never put markup in** Error messages, JSON, or strings code
+  compares. Plain output (pipes, tests) must read right with no color.
+- In help text (`command-list.ts`), commands, flags and values go in
+  backticks.
+
 ### Storage writes and the worker's row cache
 Only the service worker writes storage and places registrations. Why,
 and how it is built: [docs/worker-writes.md](docs/worker-writes.md).

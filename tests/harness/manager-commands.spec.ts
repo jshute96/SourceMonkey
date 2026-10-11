@@ -149,7 +149,7 @@ test('an installed script not on the tab can be picked, and its values read and 
   // A verb with no script acts on the selected one.
   expect(listed.stdout).toContain(`Disabled ${e}: Away\n`);
   const missing = await cli('start', '--notab', file, '--', 'script', 'E99');
-  expect(missing.stdout + missing.stderr).toContain('There is no script E99. Use script list to list the installed scripts.');
+  expect(missing.stdout + missing.stderr).toContain('There is no script E99. Use `script list` to list the installed scripts.');
 });
 
 test('show, print, enable, disable and refresh, with no run', async ({ scriptsDir }) => {
@@ -210,7 +210,7 @@ test('show, print, enable, disable and refresh, with no run', async ({ scriptsDi
   expect(JSON.parse((await cli('collection', 'list', '--json')).stdout).collections[0]).toMatchObject({ name: 'Mine', enabled: false });
 
   const missing = await cli('script', 'show');
-  expect(missing.stderr).toContain('The script show command needs a script: script <script> show. There is no selected script outside a run.');
+  expect(missing.stderr).toContain('The `script show` command needs a script: `script <script> show`. There is no selected script outside a run.');
   expect((await cli('script', 'enable', 'E1')).stderr).toContain('Name the script before the verb: script E1 enable');
 });
 
@@ -284,5 +284,5 @@ test('in a run, its own scripts and its test collection', async ({ scriptsDir })
   expect(uninstall.stdout + uninstall.stderr).toContain('1: Mine is one of this run\'s own scripts, which go when the run ends');
   // Never the selected one by leaving it out.
   const unnamed = await cli('start', '--notab', file, '--', 'script', 'uninstall');
-  expect(unnamed.stdout + unnamed.stderr).toContain('The script uninstall command needs a script: script <script> uninstall [--force]');
+  expect(unnamed.stdout + unnamed.stderr).toContain('The `script uninstall` command needs a script: `script <script> uninstall [--force]`');
 });

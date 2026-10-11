@@ -16,6 +16,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
+import { err as errorLine, escapeMarkup, heading, id as idRole, MARKUP, plainLine, quoted, url } from './output-style.js';
 import { LOG_SOURCES, type LogSource } from './run-logs.js';
 import { DEFAULT_MANAGER, MANAGERS, type ManagerName } from './managers.js';
 
@@ -268,9 +269,10 @@ export class RunControl {
 
   /**
    * A client's connection: JSON messages, a line each. The first may be
-   * `{"hello": {"follow": true, "pid": 123, "logSources": ["sm", ...]}}`:
-   * the run's whole stream, of those log sources if given, and which
-   * client it is. Then commands, `{"line": ..., "cwd": ...,
+   * `{"hello": {"follow": true, "pid": 123, "logSources": ["sm", ...], "markup": true}}`:
+   * the run's whole stream, of those log sources if given, which client
+   * it is, and that it takes lines with markup (output-style.ts), which
+   * others get as plain text. Then commands, `{"line": ..., "cwd": ...,
    * "words": [...], "source": "arg"}`, each
    * answered with its output and then a `COMMAND_DONE` line with its
    * exit code before the next is taken.
@@ -279,8 +281,10 @@ export class RunControl {
     this.sockets.add(socket);
     // A client that goes away mid-reply is no concern of the run's.
     socket.on('error', () => undefined);
+    // From the hello: whether the client paints markup itself.
+    let markup = false;
     const reply = (line: string): void => {
-      if (!socket.destroyed && socket.writable) socket.write(line + '\n');
+      if (!socket.destroyed && socket.writable) socket.write((markup ? line : plainLine(line)) + '\n');
     };
     let unfollow: (() => void) | null = null;
     socket.on('close', () => {
@@ -299,7 +303,7 @@ export class RunControl {
       const lines = buffered.split('\n');
       buffered = lines.pop()!;
       for (const text of lines) {
-        let message: { hello?: { follow?: unknown; pid?: unknown; logSources?: unknown }; line?: unknown; cwd?: unknown; words?: unknown; source?: unknown; json?: unknown };
+        let message: { hello?: { follow?: unknown; pid?: unknown; logSources?: unknown; markup?: unknown }; line?: unknown; cwd?: unknown; words?: unknown; source?: unknown; json?: unknown };
         try {
           message = JSON.parse(text.replace(/\r$/, '')) as typeof message;
         } catch {
@@ -308,6 +312,7 @@ export class RunControl {
         }
         if (message.hello) {
           if (typeof message.hello.pid === 'number') pid = message.hello.pid;
+          markup = message.hello.markup === true;
           const { logSources } = message.hello;
           const sources = Array.isArray(logSources) ? new Set(logSources.filter((s): s is LogSource => LOG_SOURCES.includes(s as LogSource))) : undefined;
           if (message.hello.follow === true && !unfollow) unfollow = handle.follow(reply, sources);
@@ -330,7 +335,7 @@ export class RunControl {
             if (code === 'hold') held = true;
             else reply(doneLine(code));
           } catch (err) {
-            reply(`[sm-dev] ${(err as Error).message}`);
+            reply(`[sm-dev] ${errorLine((err as Error).message)}`);
             reply(doneLine(1));
           }
         });
@@ -358,7 +363,7 @@ async function claimId(server: net.Server): Promise<string> {
 async function claimNamedId(server: net.Server, id: string): Promise<string> {
   if (await listenOn(server, socketPath(id))) return id;
   if (process.platform !== 'win32' && await takeStale(server, id)) return id;
-  throw new Error(`Run ${id} is running already`);
+  throw new Error(`Run ${quoted(id)} is running already`);
 }
 
 // Listens on `where`: false when something already holds it.
@@ -533,7 +538,12 @@ export class RunClient {
     });
   }
 
-  static open(id: string, out: (line: string) => void, { follow = false, logSources }: { follow?: boolean; logSources?: ReadonlySet<LogSource> } = {}): Promise<RunClient> {
+  /**
+   * Connects to run `id`, passing each line it sends to `out`. `markup`:
+   * lines come with their markup (output-style.ts), for an `out` that
+   * paints them; otherwise as plain text.
+   */
+  static open(id: string, out: (line: string) => void, { follow = false, logSources, markup = false }: { follow?: boolean; logSources?: ReadonlySet<LogSource>; markup?: boolean } = {}): Promise<RunClient> {
     return new Promise((resolve, reject) => {
       const socket = net.connect(socketPath(id));
       socket.setEncoding('utf8');
@@ -546,7 +556,8 @@ export class RunClient {
         // Lost later, it is said when a command was waiting on it.
         socket.on('error', () => undefined);
         // Which client this is, for the run to name where its commands came from.
-        socket.write(JSON.stringify({ hello: { follow, pid: process.pid, ...(logSources ? { logSources: [...logSources] } : {}) } }) + '\n');
+        // With `markup`, lines come with it, for writeOutputLine to paint.
+        socket.write(JSON.stringify({ hello: { follow, pid: process.pid, ...(markup ? { markup } : {}), ...(logSources ? { logSources: [...logSources] } : {}) } }) + '\n');
         resolve(new RunClient(id, socket, out));
       });
     });
@@ -605,9 +616,10 @@ export class RunClient {
  * Sends one command to a run over a connection of its own, passing each
  * line of its output to `out` as it arrives, and resolves to its exit
  * code. `signal` drops the connection, for a sender done waiting.
+ * `markup`: lines come with their markup, for an `out` that paints them.
  */
-export async function sendLine(id: string, line: string, out: (line: string) => void, signal?: AbortSignal, words?: string[]): Promise<number> {
-  const client = await RunClient.open(id, out);
+export async function sendLine(id: string, line: string, out: (line: string) => void, signal?: AbortSignal, words?: string[], markup = false): Promise<number> {
+  const client = await RunClient.open(id, out, { markup });
   const abort = (): void => { void client.close({ force: true }); };
   signal?.addEventListener('abort', abort, { once: true });
   try {
@@ -635,16 +647,16 @@ const TEARDOWN_WAIT_MS = 60_000;
  * SIGTERM: it ends one that never got the `stop` as Ctrl-C would, and
  * kills one stuck ending. A run found to have ended already is never
  * signalled, since its pid may be another process's by now. Resolves to
- * whether the run has gone.
+ * whether the run has gone. `markup`: as for sendLine.
  */
-export async function stopRun(record: RunRecord, out: (line: string) => void): Promise<boolean> {
+export async function stopRun(record: RunRecord, out: (line: string) => void, markup = false): Promise<boolean> {
   const abort = new AbortController();
   // It answers `stop` with a line straight away, then ends.
   let answered = false;
   const sent = sendLine(record.id, 'stop', (line) => {
     answered = true;
     out(line);
-  }, abort.signal).then(() => 'closed' as const, (err) => (err instanceof RunGoneError ? 'gone' as const : 'failed' as const));
+  }, abort.signal, undefined, markup).then(() => 'closed' as const, (err) => (err instanceof RunGoneError ? 'gone' as const : 'failed' as const));
   let outcome = await within(sent, STOP_WAIT_MS);
   if (outcome === 'timeout' && answered) outcome = await within(sent, TEARDOWN_WAIT_MS);
   // Closed without that first line: whatever took it, it wasn't a run
@@ -701,30 +713,47 @@ const LISTED_SCRIPTS = 3;
  * `sm-dev list`'s table: a heading row, then a row per run, in aligned
  * columns. Scripts are listed by file name, the first few and a count
  * of the rest, so the total shows without a column of its own. `-` is
- * none, or no tab count for a run that keeps none.
+ * none, or no tab count for a run that keeps none. `markup`: lines
+ * marked up for color (output-style.ts), for printing; otherwise plain,
+ * as an error message needs them.
  */
-export function runTable(records: RunRecord[], now = Date.now()): string[] {
-  const rows = [
-    ['Run', 'PID', 'Uptime', 'Browser', 'Manager', 'Tabs', 'Scripts'],
+export function runTable(records: RunRecord[], now = Date.now(), { markup = false }: { markup?: boolean } = {}): string[] {
+  // Each cell as plain text and as markup; columns line up by the plain.
+  type Cell = { plain: string; styled: string };
+  const plain = (text: string): Cell => ({ plain: text, styled: escapeMarkup(text) });
+  const as = (style: (text: string) => string, text: string): Cell => ({ plain: text, styled: style(text) });
+  const rows: Cell[][] = [
+    ['Run', 'PID', 'Uptime', 'Browser', 'Manager', 'Tabs', 'Scripts'].map((text) => as(heading, text)),
     ...records.map((r) => {
       const names = r.scripts.map((s) => path.basename(s));
-      const shown = names.length > LISTED_SCRIPTS
-        ? [...names.slice(0, LISTED_SCRIPTS), `(${names.length - LISTED_SCRIPTS} more)`]
-        : names;
+      const shown = names.slice(0, LISTED_SCRIPTS).map((n) => as(url, n));
+      if (names.length > LISTED_SCRIPTS) shown.push(plain(`(${names.length - LISTED_SCRIPTS} more)`));
+      const browser = browserLabel(r);
+      const where = browserAddress(r);
       return [
-        r.id,
-        String(r.pid),
-        uptime(now - r.started),
-        browserLabel(r),
-        MANAGERS[r.manager ?? DEFAULT_MANAGER].label,
-        r.tabs === undefined ? '-' : String(r.tabs),
-        shown.length > 0 ? shown.join(', ') : '-',
+        as(idRole, r.id),
+        plain(String(r.pid)),
+        plain(uptime(now - r.started)),
+        { plain: browser, styled: url(where) + escapeMarkup(browser.slice(where.length)) },
+        plain(MANAGERS[r.manager ?? DEFAULT_MANAGER].label),
+        plain(r.tabs === undefined ? '-' : String(r.tabs)),
+        shown.length > 0
+          ? { plain: shown.map((c) => c.plain).join(', '), styled: shown.map((c) => c.styled).join(', ') }
+          : plain('-'),
       ];
     }),
   ];
-  const widths = rows[0].map((_, i) => Math.max(...rows.map((row) => row[i].length)));
+  const widths = rows[0].map((_, i) => Math.max(...rows.map((row) => row[i].plain.length)));
   // The last column unpadded, so no line ends in spaces.
-  return rows.map((row) => row.map((cell, i) => (i < row.length - 1 ? cell.padEnd(widths[i]) : cell)).join('  ').trimEnd());
+  return rows.map((row) => {
+    const line = (text: (cell: Cell) => string): string => row.map((cell, i) => text(cell) + (i < row.length - 1 ? ' '.repeat(widths[i] - cell.plain.length) : '')).join('  ').trimEnd();
+    return markup ? MARKUP + line((cell) => cell.styled) : line((cell) => cell.plain);
+  });
+}
+
+// A run's browser address, without its scheme.
+function browserAddress(r: Pick<RunRecord, 'browser'>): string {
+  return r.browser.replace(/^https?:\/\//, '');
 }
 
 /**
@@ -734,7 +763,7 @@ export function runTable(records: RunRecord[], now = Date.now()): string[] {
  */
 export function browserLabel(r: Pick<RunRecord, 'browser' | 'owned' | 'headless'>): string {
   const marks = [r.owned && 'owned', r.headless && 'headless'].filter(Boolean);
-  const where = r.browser.replace(/^https?:\/\//, '');
+  const where = browserAddress(r);
   return marks.length > 0 ? `${where} (${marks.join(', ')})` : where;
 }
 
@@ -744,7 +773,7 @@ export function browserLabel(r: Pick<RunRecord, 'browser' | 'owned' | 'headless'
  */
 export function browserSentence(r: Pick<RunRecord, 'browser' | 'owned' | 'headless'>, how = 'connected to'): string {
   const marks = [r.owned && 'owned', r.headless && 'headless'].filter(Boolean);
-  return `${how} ${[...marks, 'browser'].join(' ')} ${r.browser.replace(/^https?:\/\//, '')}`;
+  return `${how} ${[...marks, 'browser'].join(' ')} ${browserAddress(r)}`;
 }
 
 function uptime(ms: number): string {

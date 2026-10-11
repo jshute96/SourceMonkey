@@ -135,6 +135,10 @@ interface Frame {
   url: string;
   scripts: string[];     // the ids of the run's scripts running in it
                          // (expected in it, under another manager)
+  hidden?: true;         // its <iframe> isn't visible
+  frameId?: string;      // its CDP frame id
+  targetId?: string;     // its CDP target, when it runs in a process of its own
+                         // (the same id as frameId)
 }
 
 // A script: one the run loaded ("1"), or one installed in the
@@ -503,7 +507,7 @@ JSON:
       "scripts": ["1", "3"],
       "frames": [
         { "id": "F1", "parent": "T1", "url": "http://localhost:8765/frames/frame-a.html", "scripts": ["1"] },
-        { "id": "F2", "parent": "T1", "url": "http://127.0.0.1:8765/frames/frame-b.html", "scripts": ["1", "2"] },
+        { "id": "F2", "parent": "T1", "url": "http://127.0.0.1:8765/frames/frame-b.html", "scripts": ["1", "2"], "targetId": "C1E043C264F12D216F204784C021C567" },
         { "id": "F3", "parent": "F2", "url": "http://127.0.0.1:8765/frames/frame-nested.html", "scripts": ["1"] }
       ]
     }

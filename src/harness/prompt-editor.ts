@@ -14,6 +14,7 @@
 // - Home / End and Ctrl-A / Ctrl-E go to the start and end of the line,
 //   Ctrl-U and Ctrl-K delete to them (Ctrl-Y brings it back).
 // - Esc clears the buffer, as Ctrl-C does.
+// - With `paint`, the prompts and the typed text are drawn in color.
 //
 // readline has no hooks for this. It calls these methods through the
 // instance (`_ttyWrite` for each key, `_refreshLine` to redraw,
@@ -49,6 +50,12 @@ interface Internals {
   getPrompt(): string;
 }
 
+/** How to color the prompts (`> `, `... `) and the typed text, at a terminal that has color. */
+export interface PromptPaint {
+  prompt: (text: string) => string;
+  text: (text: string) => string;
+}
+
 export interface PromptEditor {
   /** Empties the buffer, as Ctrl-C and Esc do. */
   clear(): void;
@@ -57,13 +64,15 @@ export interface PromptEditor {
 /**
  * Makes `rl` edit several lines as one buffer. `complete` says whether
  * a buffer is ready to send, rather than inside an unclosed block.
- * `cleared` gets the text of a buffer emptied by `clear`.
+ * `cleared` gets the text of a buffer emptied by `clear`. `paint`
+ * colors the prompts and the typed text as they are drawn.
  */
 export function editMultiLine(
   rl: readline.Interface,
   continuation: string,
   complete: (text: string) => boolean,
   cleared?: (text: string) => void,
+  paint?: PromptPaint,
 ): PromptEditor {
   const r = rl as unknown as Internals;
   const ttyWrite = r._ttyWrite.bind(r);
@@ -89,29 +98,65 @@ export function editMultiLine(
   // it, and the row and column just after it. A full row is followed by
   // an empty one, where the cursor goes, as readline counts it. A wide
   // character that doesn't fit at a row's end starts the next row.
-  const layout = (text: string): { rows: string[]; row: number; col: number } => {
+  // `starts`: where in `text` each row starts, for painting it.
+  const layout = (text: string): { rows: string[]; starts: number[]; row: number; col: number } => {
     const width = r.columns;
     const rows = [''];
+    const starts = [0];
     let col = 0;
+    let at = 0;
+    const newRow = (start: number): void => {
+      rows.push('');
+      starts.push(start);
+      col = 0;
+    };
     for (const ch of text) {
+      const next = at + ch.length;
       if (ch === '\n') {
-        rows.push('');
-        col = 0;
+        newRow(next);
+        at = next;
         continue;
       }
       const w = charWidth(ch, col);
-      if (col + w > width) {
-        rows.push('');
-        col = 0;
-      }
+      if (col + w > width) newRow(at);
       rows[rows.length - 1] += ch;
       col += w;
-      if (col >= width) {
-        rows.push('');
-        col = 0;
-      }
+      at = next;
+      if (col >= width) newRow(at);
     }
-    return { rows, row: rows.length - 1, col };
+    return { rows, starts, row: rows.length - 1, col };
+  };
+
+  // The rows of `text` (a prompt, then the shown buffer) in color: the
+  // prompt and each `... ` as prompts, the rest as typed text.
+  const painted = (text: string, rows: string[], starts: number[]): string[] => {
+    if (!paint) return rows;
+    const isPrompt = new Array<boolean>(text.length).fill(false);
+    const mark = (from: number, length: number): void => {
+      for (let i = from; i < from + length && i < text.length; i++) isPrompt[i] = true;
+    };
+    mark(0, r.getPrompt().length);
+    for (let i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) mark(i + 1, continuation.length);
+    return rows.map((row, n) => {
+      let out = '';
+      let run = '';
+      let prompt = false;
+      const flush = (): void => {
+        if (run) out += prompt ? paint.prompt(run) : paint.text(run);
+        run = '';
+      };
+      let at = starts[n];
+      for (const ch of row) {
+        if (isPrompt[at] !== prompt) {
+          flush();
+          prompt = isPrompt[at];
+        }
+        run += ch;
+        at += ch.length;
+      }
+      flush();
+      return out;
+    });
   };
 
   // The first buffer row drawn, when it is taller than the terminal.
@@ -128,7 +173,8 @@ export function editMultiLine(
   };
   // readline's own redraw, of the shown text and only the rows that fit.
   r._refreshLine = () => {
-    const all = layout(r.getPrompt() + shown(r.line));
+    const text = r.getPrompt() + shown(r.line);
+    const all = layout(text);
     const at = cursorAt();
     // One row spare, so the window never scrolls the terminal itself.
     const height = whole ? Infinity : Math.max(1, (r.output.rows || 24) - 1);
@@ -138,7 +184,7 @@ export function editMultiLine(
       if (at.row >= top + height) top = at.row - height + 1;
       top = Math.min(top, all.rows.length - height);
     }
-    const rows = all.rows.slice(top, top + height);
+    const rows = painted(text, all.rows, all.starts).slice(top, top + height);
     const out = r.output;
     if (r.prevRows) readline.moveCursor(out, 0, -r.prevRows);
     readline.cursorTo(out, 0);
@@ -323,7 +369,11 @@ export function editMultiLine(
       edit(r.line.slice(0, r.cursor) + r.line.slice(end), r.cursor, r.line.slice(r.cursor, end));
       return;
     }
+    // Typed at the buffer's end, readline writes the text straight out
+    // with no redraw, so in color it is redrawn to take the typed color.
+    const atEnd = typed && r.cursor === r.line.length;
     ttyWrite(s, key);
+    if (paint && atEnd) r._refreshLine();
   };
 
   return { clear };

@@ -3,8 +3,10 @@
 // `logs` and `wait log`, and streamed to the clients that asked for its
 // source. See docs/sm-dev-logs.md.
 //
-// Node built-ins only: runs.ts (which the sm-dev client loads) takes
-// the sources from here.
+// Light, importing only output-style.ts (which imports nothing):
+// runs.ts, which the sm-dev client loads, takes the sources from here.
+
+import { asError, asWarning, dim, ui } from './output-style.js';
 
 /**
  * Where a line came from, from narrowest to broadest:
@@ -254,25 +256,46 @@ export function lineOrigin(record: LogFields): string {
  * `whole` (`wait log` matches it whole).
  */
 export function streamText(record: LogFields, whole = false): string {
-  const console = record.source === 'script' || record.source === 'page';
-  const text = console && !whole ? shortConsoleText(record.text) : record.text;
   const shown = record.tab !== undefined && (record.tab > 1 || record.frame !== undefined);
-  return `${shown ? `[${lineOrigin(record)}] ` : ''}${sourcePrefix(record)} ${text}`;
+  return `${shown ? `[${lineOrigin(record)}] ` : ''}${sourcePrefix(record)} ${streamBody(record, whole)}`;
+}
+
+// A line's text as the stream shows it: a console line cut past a
+// length unless `whole`.
+function streamBody(record: LogFields, whole = false): string {
+  const console = record.source === 'script' || record.source === 'page';
+  return console && !whole ? shortConsoleText(record.text) : record.text;
+}
+
+// A line's text in color by its level: an error's, a warning's, or as
+// is. Taken as it is, since a script or page wrote it.
+function leveledText(record: LogFields, text: string): string {
+  const level = record.source === 'event' ? (record.kind === 'threw' ? 'error' : '') : record.kind;
+  return level === 'error' ? asError(text) : level === 'warning' || level === 'warn' ? asWarning(text) : text;
+}
+
+/** `streamText`'s line as the stream shows it: its prefix dimmed, an error or warning in color. */
+export function streamLine(record: LogFields): string {
+  const shown = record.tab !== undefined && (record.tab > 1 || record.frame !== undefined);
+  return ui`${dim(`${shown ? `[${lineOrigin(record)}] ` : ''}${sourcePrefix(record)}`)} ${leveledText(record, streamBody(record))}`;
 }
 
 /**
  * Lines as `logs` prints them: the time and tab, then the prefix and
- * text, each run of identical lines once, marked `(N times)`.
+ * text, each run of identical lines once, marked `(N times)`. In color
+ * as the stream shows them (see streamLine).
  */
 export function logsLines(records: readonly LogRecord[]): string[] {
   const width = Math.max(0, ...records.map((r) => lineOrigin(r).length));
-  const body = (r: LogRecord): string => `${lineOrigin(r).padEnd(width)}${width > 0 ? ' ' : ''}${sourcePrefix(r)} ${r.text}`;
+  const head = (r: LogRecord): string => `${lineOrigin(r).padEnd(width)}${width > 0 ? ' ' : ''}${sourcePrefix(r)}`;
+  const body = (r: LogRecord): string => `${head(r)} ${r.text}`;
   const lines: string[] = [];
   for (let i = 0; i < records.length;) {
-    const text = body(records[i]);
+    const r = records[i];
+    const text = body(r);
     let end = i + 1;
     while (end < records.length && body(records[end]) === text) end++;
-    lines.push(`${timeOfDay(records[i].id)} ${text}${end - i > 1 ? ` (${end - i} times)` : ''}`);
+    lines.push(ui`${dim(`${timeOfDay(r.id)} ${head(r)}`)} ${leveledText(r, r.text)}${end - i > 1 ? ` (${end - i} times)` : ''}`);
     i = end;
   }
   return lines;

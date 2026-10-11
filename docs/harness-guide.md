@@ -277,16 +277,44 @@ up:
 
 ### Help
 
-- `sm-dev --help` lists everything, in sections: command input,
-  examples, then all commands grouped by what they work on, then the
-  global and common options, and how to name scripts, tabs and the
+- The help is in sections, each a named topic: command input,
+  examples, then the commands grouped by what they work on, then the
+  flags (global and common), and how to name scripts, tabs and the
   rest.
+- `sm-dev help` (or `sm-dev --help`) lists the topics, with a line on
+  each.
+- `sm-dev help <topic>` shows one, e.g. `sm-dev help tabs`.
+  - A topic that is just one command (`frames`, `logs`) shows that
+    command's help.
+- `sm-dev help commands` lists each command with a line on what it
+  does, under its topics.
+- `sm-dev help all` (or `help full`) shows everything.
 - `sm-dev help start` (or `sm-dev start --help`) shows one command: its
   usage, arguments, and only the options it takes.
+  - `--help` on a command always gives the command, even where a
+    topic shares its name (`scripts --help`).
 - It takes several names at once: `sm-dev help status tabs`.
+- At a terminal with color, commands and flags show in cyan, and
+  headings in bold. `NO_COLOR` turns that off, and `FORCE_COLOR` on.
 - `--help` (or `-h`) anywhere on a line shows the help for each command
   on it, once each, and runs none of them.
 - In a run, `help [command]` or `?` does the same.
+
+### Color
+
+At a terminal with color, sm-dev's output is colored too:
+
+- The prompt is green, and the commands you type cyan, as are commands
+  echoed before their output (`stdin > status`).
+- Errors are bold red, warnings bold magenta.
+- Headings (`Tabs:`, `Scripts`) and the `*` marking what is selected
+  are bold; IDs (`T1`, `E3`, `e4`) are green; URLs and file paths are
+  underlined; script and menu names are italic.
+- Commands and code in messages are cyan (`` Use `tabs` to list them ``).
+  Without color, they keep their backticks where that helps them read.
+- Log lines' time and source prefix are dimmed.
+- `NO_COLOR` turns color off, and `FORCE_COLOR` on. `--json` results
+  are never colored.
 
 ## A browser to work in
 
@@ -1303,10 +1331,24 @@ A script runs in each iframe whose URL it matches (see
 - `menu` shows the script's menu for the tab, as SourceMonkey's popup
   does, with each command an iframe registered labeled with its frame:
   `M3: Toggle (F2)`. Firing it runs it in that frame.
-- A script's start, skip and error in a frame, and its menu commands,
-  are prefixed with the frame: `[T1.F2] [event] ... started in an
-  iframe on ...`. Other lines from a frame (console lines, other `GM_*`
-  events) have only the tab's id.
+- A line from a frame is prefixed with it: `[T1.F2] [event] ... started
+  in an iframe on ...`, `[T1.F2] [script log] ...`. Its loads show in
+  `logs` as `T1.F2 [event] Loaded <URL>`.
+- `eval --frame F2` runs in that frame, in the script's scope there (or
+  `--script=<script>`, or `--page` for the frame's own page world).
+  Cross-origin frames work too.
+- `click`, `hover`, `type`, `snapshot`, `screenshot`, `probe` and
+  `wait selector` take `--frame F2` for a selector in that frame. A
+  snapshot ref (`f2e4`) already names its frame, so it needs none.
+  `screenshot --frame F2` with no selector shows the whole frame.
+- `frames` marks an iframe that isn't visible `(hidden)`, and shows
+  each frame's CDP `[frameId=...]`, and the `[targetId=...]` of one
+  from another site (another domain, which Chrome runs in a process of
+  its own). `--frame` and `frames` take `frameId=...` too.
+  `cdp --frame F2` sends raw CDP calls to the target the frame is in.
+- `wait` and the settling after an action watch the top frame's page
+  and every frame's requests. For something a frame shows, use
+  `wait selector --frame F2 ...`.
 
 ### Tabs the page opens
 
@@ -2092,9 +2134,9 @@ that, since the answer is a function.
 - When Chrome restarts SourceMonkey's service worker (its background
   script) during a run, what the scripts did meanwhile may be missing
   from the run's output. The run says when this happens.
-- A script running in an iframe reports to the run (`started in an
-  iframe on <frame URL>`), but reading its state and evaluating in its
-  world reach the top frame only.
+- A log line from an iframe can lack its frame prefix: an event from a
+  SourceMonkey before protocol 2.2, or a console line logged before
+  sm-dev reached the frame's process.
 - `--lang` doesn't reach `GM_xmlhttpRequest` and `GM_download` in a
   connected browser (see [`start` options in detail](#start-options-in-detail)).
 - In specs, a worker's tests share the browser's context (see

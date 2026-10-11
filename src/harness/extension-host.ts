@@ -65,6 +65,8 @@ interface TabState {
   frames: Map<number, Frame>;
   // Each live iframe document's frame, as last matched.
   documents: Map<string, Frame>;
+  // The top frame's document, as last listed.
+  topDocument?: string;
   // Iframe documents that matched no frame when their first event came,
   // not looked for again: each look costs the event queue a wait.
   unmatched: Set<string>;
@@ -246,6 +248,7 @@ export class ExtensionHost extends HarnessHost {
       if (was && !matched.has(f.frameId) && !was.isDetached() && !taken.has(was)) matched.set(f.frameId, was);
     }
     state.frames = matched;
+    state.topDocument = listed.find((f) => f.frameId === 0)?.documentId;
     const live = new Map<string, Frame>();
     for (const f of listed) {
       const frame = matched.get(f.frameId);
@@ -263,11 +266,13 @@ export class ExtensionHost extends HarnessHost {
   private async frameNumberOf(tabId: number, state: TabState, documentId: string): Promise<number | undefined> {
     const known = state.documents.get(documentId);
     if (known && !known.isDetached()) return this.frameIds.number(known);
-    if (state.unmatched.has(documentId)) return undefined;
+    if (state.unmatched.has(documentId) || documentId === state.topDocument) return undefined;
     for (const wait of [0, 200]) {
       if (wait) await new Promise((r) => setTimeout(r, wait));
       const frame = (await this.matchFrames(tabId, state)).get(documentId);
       if (frame) return this.frameIds.number(frame);
+      // The top frame's, which names no frame.
+      if (documentId === state.topDocument) return undefined;
     }
     state.unmatched.add(documentId);
     return undefined;
@@ -445,15 +450,20 @@ export class ExtensionHost extends HarnessHost {
     }
     const runId = this.runIds.get(event.scriptId);
     if (!runId || !this.tabs.has(event.tabId!)) return;
-    // An iframe's report or menu command names its frame. Looked up
-    // only for what's recorded, after the events that are dropped.
-    const inFrame = (event.kind === 'report' || event.kind === 'menu') && event.topFrame === false;
+    // What came from an iframe names its frame. A report or menu event
+    // says whether it did; the others name their document (from
+    // protocol 2.2), which may be the top frame's. Looked up only for
+    // what's recorded, after the events that are dropped.
+    const documentId = 'documentId' in event ? event.documentId : undefined;
+    const inFrame = (event.kind === 'report' || event.kind === 'menu') ? event.topFrame === false
+      : documentId !== undefined && documentId !== state.documentId;
     const frameNumber = async (): Promise<{ frameNumber?: number }> => {
-      const n = inFrame && event.documentId ? await this.frameNumberOf(event.tabId!, state, event.documentId) : undefined;
+      const n = inFrame && documentId ? await this.frameNumberOf(event.tabId!, state, documentId) : undefined;
       return n === undefined ? {} : { frameNumber: n };
     };
     if (event.kind === 'request' || event.kind === 'download' || event.kind === 'notification') {
-      this.recordActivity(runId, state.page, event);
+      // Its frame is looked up only for the event that makes its record.
+      await this.recordActivity(runId, state.page, event, frameNumber);
       return;
     }
     if (event.kind === 'connect-prompt') {
@@ -461,7 +471,7 @@ export class ExtensionHost extends HarnessHost {
       return;
     }
     if (event.kind === 'values') {
-      this.recordValueWrites(state.page, runId, event.writes);
+      this.recordValueWrites(state.page, runId, event.writes, await frameNumber());
       return;
     }
     if (event.kind === 'menu') {
@@ -532,11 +542,14 @@ export class ExtensionHost extends HarnessHost {
   // A request, download or notification, recorded as the harness host
   // records its own: one record each, filled in as it settles, and
   // announced once it has (a notification as it shows).
-  private recordActivity(runId: string, page: WatchedPage, event: Extract<TabEvent, { kind: 'request' | 'download' | 'notification' }>): void {
+  private async recordActivity(
+    runId: string, page: WatchedPage, event: Extract<TabEvent, { kind: 'request' | 'download' | 'notification' }>,
+    frame: () => Promise<{ frameNumber?: number }>,
+  ): Promise<void> {
     if (event.kind === 'request') {
       let record = this.reports.requests.find((r) => r.id === event.id && r.scriptId === runId);
       if (!record) {
-        record = { scriptId: runId, id: event.id, url: event.url, method: event.method, at: event.at } satisfies XhrRecord;
+        record = { scriptId: runId, ...await frame(), id: event.id, url: event.url, method: event.method, at: event.at } satisfies XhrRecord;
         this.reports.requests.push(record);
         this.recordPages.set(record, page);
       }
@@ -548,7 +561,7 @@ export class ExtensionHost extends HarnessHost {
     if (event.kind === 'download') {
       let record = this.reports.downloads.find((r) => r.requestId === event.requestId && r.scriptId === runId);
       if (!record) {
-        record = { scriptId: runId, requestId: event.requestId, url: event.url, name: event.name, at: event.at } satisfies DownloadRecord;
+        record = { scriptId: runId, ...await frame(), requestId: event.requestId, url: event.url, name: event.name, at: event.at } satisfies DownloadRecord;
         this.reports.downloads.push(record);
         this.recordPages.set(record, page);
       }
@@ -559,7 +572,7 @@ export class ExtensionHost extends HarnessHost {
     }
     if (event.op === 'shown') {
       const record: NotificationRecord = {
-        scriptId: runId, requestId: event.requestId, text: event.text ?? '', title: event.title ?? '', at: event.at,
+        scriptId: runId, ...await frame(), requestId: event.requestId, text: event.text ?? '', title: event.title ?? '', at: event.at,
       };
       if (event.notificationId) this.notificationIds.set(event.requestId, event.notificationId);
       this.reports.notifications.push(record);

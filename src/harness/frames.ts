@@ -37,21 +37,29 @@ export interface FrameNode {
 }
 
 /**
- * The run's frame ids: `F1`, `F2`, ... in the order frames are first
- * seen, across all tabs, never reused. The top frame has none: the
- * tab's id names it.
+ * The run's frame ids: `F1`, `F2`, ... across all tabs, never reused,
+ * in the order frames are first seen (a page's together, in document
+ * order). The top frame has none: the tab's id names it.
  */
 export class FrameIds {
   private next = 1;
   private readonly numbers = new WeakMap<Frame, number>();
 
   number(frame: Frame): number {
-    let n = this.numbers.get(frame);
-    if (n === undefined) {
-      n = this.next++;
-      this.numbers.set(frame, n);
-    }
-    return n;
+    const known = this.numbers.get(frame);
+    if (known !== undefined) return known;
+    // The page's new frames are numbered together, down its tree, so
+    // ids read in document order whichever frame was heard from first.
+    const walk = (parent: Frame): void => {
+      for (const child of parent.childFrames()) {
+        if (!this.numbers.has(child) && !child.isDetached()) this.numbers.set(child, this.next++);
+        walk(child);
+      }
+    };
+    if (!frame.page().isClosed()) walk(frame.page().mainFrame());
+    // Detached already, or not in the tree yet.
+    if (!this.numbers.has(frame)) this.numbers.set(frame, this.next++);
+    return this.numbers.get(frame)!;
   }
 }
 
@@ -75,6 +83,11 @@ export function frameNodes(page: Page, ids: FrameIds): FrameNode[] {
   };
   if (!page.isClosed()) walk(page.mainFrame(), null, 1);
   return out;
+}
+
+/** The iframe `F<n>` names in `page`, while it's there. */
+export function findFrame(page: Page, ids: FrameIds, n: number): Frame | undefined {
+  return frameNodes(page, ids).find((node) => node.n === n)?.frame;
 }
 
 /**

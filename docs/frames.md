@@ -173,9 +173,10 @@ Status stays per tab, kept on the top document's state
 - A run reports a script in a frame as `started in an iframe on <frame
   URL>` (`frame` on the report).
 - A menu command records its document, and fires there.
-- Reading a script's state and evaluating in its world still reach the
-  top frame only.
-- Frame ids, the frames each script runs in, and the frames' menu
-  commands: [sm-dev-frames.md](sm-dev-frames.md).
+- Frame ids, the frames each script runs in, `--frame` on `eval` and
+  the page commands, and which frame each log line came from:
+  [sm-dev-frames.md](sm-dev-frames.md).
+- Protocol 2.2 adds the sending document to `GM_*` events
+  (requests, values, downloads, notifications).
 - Protocol 2.1 adds frame events and the document on a menu fire. An
   older extension fires the first matching command.

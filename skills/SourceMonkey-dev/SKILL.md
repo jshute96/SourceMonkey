@@ -48,8 +48,9 @@ Where to look:
   with the harness fixture.
 - [references/other-managers.md](references/other-managers.md): testing
   under Violentmonkey.
-- `pnpm sm-dev --help`, or `pnpm sm-dev help <command>`: the
-  authoritative, current reference.
+- `pnpm sm-dev help`: the authoritative, current reference. Alone it
+  lists the topics; `help <topic>` or `help <command>` shows one,
+  `help commands` lists the commands, and `help all` everything.
 - The `SourceMonkey-friction` skill, when installed: log where these
   tools got in the way once the task is done.
 - Full docs, when the above isn't enough:
@@ -556,9 +557,11 @@ of the script; they share stored values, and can talk to each other with
 ```sh
 $R frames                           # the tab's iframes as a tree, with the scripts in each
 $R match --frames                   # what each frame's URL would match, and @noframes
-$R snapshot --find Save             # refs in a frame carry its number: f2e4
+$R snapshot --find Save             # refs inside frames (f2e4) work in any command as they are
 $R click f2e4
-$R click '#player >> internal:control=enter-frame >> .play'   # a selector inside a frame
+$R eval --frame F2 'state'          # in the script's copy in F2 (--page: F2's page)
+$R click --frame F2 '.play'         # a selector inside F2: also hover, type, probe, snapshot, screenshot
+$R wait selector --frame F2 '.ready'
 ```
 
 - Iframes are named `F1`, `F2`, ... for the whole run; the top frame
@@ -566,32 +569,35 @@ $R click '#player >> internal:control=enter-frame >> .play'   # a selector insid
   stays the same frame across `--watch` reloads.
 - Where a script runs: `frames`, or `tabs` / `status`, which list a
   script not only in the top frame as `(T1, F2)` or `(F2)`.
+  - `frames` marks iframes that aren't visible `(hidden)`: often ad or
+    tracking frames.
   - A frame added after load (a widget opened by a click) shows up
     once it exists. Run `frames` again after the click.
   - A frame with no URL of its own (`about:blank`, `srcdoc`) never
     runs scripts.
-- A frame's starts, errors and menu commands are prefixed with it:
-  `[T1.F2] [event] ... started in an iframe on <frame URL>`. Console
-  lines from frames show with only the tab, so log enough in the
-  script to tell its copies apart.
+- To get at an element in a frame, a snapshot ref is the quickest: it
+  reaches into any frame, cross-origin ones included, with no
+  `--frame`. Refs change when the frame reloads, though, so for a
+  selector that lasts (in a spec, or across `--watch` reloads), use
+  `--frame F2 <selector>`.
+- `wait` and the actions' own settling watch the top frame's page (and
+  every frame's requests). After an action that makes a frame load or
+  change, `wait selector --frame F2 ...` for what you need there.
+- `eval --frame` reaches cross-origin frames too, and works like `eval`
+  in the top frame: the selected script's scope, `--script=<script>`,
+  or `--page`.
+- Lines from a frame are prefixed with it: `[T1.F2] [event] ...
+  started in an iframe on <frame URL>`, `[T1.F2] [script log] ...`.
 - `menu` shows the script's one menu for the tab, as SourceMonkey's
   popup does, with every frame's commands in it. sm-dev labels a
   command an iframe registered with its frame: `M3: Toggle (F2)`.
   Firing it runs it in that frame. A command registered by the copies
   in several frames is listed once per frame.
-- Selectors don't reach into frames on their own:
-  - Use a snapshot ref (`f2e4`). Refs inside a frame change on every
-    reload, so take a new `snapshot --find` after one.
-  - Or enter the frame in the selector, which survives reloads:
-    `<iframe selector> >> internal:control=enter-frame >> <selector
-    inside>`, repeated for a nested frame. It works with `click`,
-    `probe`, `snapshot` and `wait`.
-- `eval` and reading the script's state reach the top frame only.
-  - A same-origin frame: `eval --page
-    "document.querySelector('#frame').contentDocument.title"`.
-  - A cross-origin frame's DOM and the script copy there can't be
-    read. Check them through the script's log lines, `probe`/`snapshot`
-    with a frame selector, `values`, and `screenshot`.
+- For raw CDP, `frames` shows each frame's `[frameId=...]`, which CDP
+  calls on a frame take, and `--frame` accepts it too. A frame from
+  another site (another domain, not just another subdomain) also has a
+  `[targetId=...]` of its own to attach to. `cdp --frame F2 ...` sends
+  calls to the target the frame is in.
 
 ### Multi-step sequences
 

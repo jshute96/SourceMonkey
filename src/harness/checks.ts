@@ -9,6 +9,7 @@ import path from 'node:path';
 
 import { isMarkupContentType, looksLikeMarkup, markupResponseMessage } from '../markup-response.js';
 import { unusableMatchGroupKey } from '../url-match.js';
+import { asError, asWarning, code, heading, id, INVALID_PREFIX, quoted, ui, url, WARNING_LEVEL } from './output-style.js';
 import { HAS_SCHEME, globFiles, globMistake, isDirectory, isGlob, walkScripts } from './path-args.js';
 import { jsonResult, type MatchPage, type ValidateData } from './json-output.js';
 import { NO_RULE_COVERS_URL, explainMatch, isDirectoryMessage, noSuchFileMessage, parseCheckWarning, preparedNoframes, prepareScript, shownPath, warningLines, type PreparedScript } from './prepare.js';
@@ -83,13 +84,13 @@ export function expandPathArg(word: string, cwd = process.cwd(), opts: { scripts
     const mistake = globMistake(word);
     if (mistake) throw new UsageError(mistake);
     const found = globFiles(word, cwd);
-    if (found.length === 0) throw new UsageError(`No files match ${word}`);
+    if (found.length === 0) throw new UsageError(`No files match ${quoted(word)}`);
     return found;
   }
   if (opts.scripts && !HAS_SCHEME.test(word) && isDirectory(path.resolve(cwd, word))) {
     const found: string[] = [];
     walkScripts(path.resolve(cwd, word), word, found);
-    if (found.length === 0) throw new UsageError(`No .user.js files found under ${word}`);
+    if (found.length === 0) throw new UsageError(`No .user.js files found under ${quoted(word)}`);
     return found;
   }
   return [word];
@@ -129,14 +130,14 @@ async function fetchScript(url: string): Promise<{ url: string; text: string }> 
         : error.cause?.code === 'ECONNREFUSED' ? 'The server refused the connection'
           // Node's own message is only "fetch failed"; the cause says why.
           : capitalize(error.cause?.message ?? error.message);
-    throw new Error(`Could not fetch ${url}: ${why}`);
+    throw new Error(`Could not fetch ${quoted(url)}: ${why}`);
   }
-  if (!response.ok) throw new Error(`Could not fetch ${url}: The server answered ${response.status} ${response.statusText}`.trimEnd());
+  if (!response.ok) throw new Error(`Could not fetch ${quoted(url)}: The server answered ${response.status} ${response.statusText}`.trimEnd());
   const text = await response.text();
   // A login page or a forge's page about the file, not the file.
   const contentType = response.headers.get('content-type') ?? '';
   if (isMarkupContentType(contentType) || looksLikeMarkup(text)) {
-    throw new Error(`Could not fetch ${url}: ${markupResponseMessage(isMarkupContentType(contentType) ? { contentType } : {})}`);
+    throw new Error(`Could not fetch ${quoted(url)}: ${markupResponseMessage(isMarkupContentType(contentType) ? { contentType } : {})}`);
   }
   return { url: response.url || url, text };
 }
@@ -165,16 +166,17 @@ export type ValidateVerdict = 'ok' | 'invalid' | 'unchecked';
  */
 export function validateLines(label: string, prepared: PreparedScript): { lines: string[]; verdict: ValidateVerdict; error?: string; warnings: string[] } {
   const warnings = warningLines(prepared, { parseCheck: false });
-  const indented = warnings.map((line) => `    ${line}`);
+  // A warning's line in color, as when a run loads the script.
+  const indented = warnings.map((line) => (line.startsWith(WARNING_LEVEL) ? asWarning(`    ${line}`) : `    ${line}`));
   if (prepared.status !== 'ok') {
     const error = prepared.diagnostic ?? '';
-    return { lines: [`INVALID  ${label}`, `    ${error}`, ...indented], verdict: 'invalid', error, warnings };
+    return { lines: [`${INVALID_PREFIX}${label}`, asError(`    ${error}`), ...indented], verdict: 'invalid', error, warnings };
   }
   if (prepared.parseCheckNote) {
     const error = parseCheckWarning(prepared.parseCheckNote);
-    return { lines: [`UNCHECKED ${label}`, `    ${error}`, ...indented], verdict: 'unchecked', error, warnings };
+    return { lines: [ui`UNCHECKED ${url(label)}`, `    ${error}`, ...indented], verdict: 'unchecked', error, warnings };
   }
-  return { lines: [`ok       ${label}`, ...indented], verdict: 'ok', warnings };
+  return { lines: [ui`ok       ${url(label)}`, ...indented], verdict: 'ok', warnings };
 }
 
 /**
@@ -276,7 +278,7 @@ export function matchLines(
   label?: string,
 ): { lines: string[]; misses: number } {
   if (prepared.status !== 'ok' && !unmatchableScript(prepared)) {
-    return { lines: [label === undefined ? 'INVALID script' : `INVALID  ${label}`], misses: pages.length };
+    return { lines: [label === undefined ? 'INVALID script' : `${INVALID_PREFIX}${label}`], misses: pages.length };
   }
   const lines: string[] = [];
   let misses = 0;
@@ -284,22 +286,22 @@ export function matchLines(
   // miss shows what an @exclude overrode.
   const rulesOf = (verdict: ReturnType<typeof explainMatch>): string[] => {
     const rules = [
-      ...verdict.excludedBy.map((rule) => `Excluded by: ${rule}`),
+      ...verdict.excludedBy.map((rule) => ui`${heading('Excluded by')}: ${code(rule)}`),
       // Padded so its rules line up with the excludes'.
-      ...verdict.matchedBy.map((rule) => `Matched by:  ${rule}`),
+      ...verdict.matchedBy.map((rule) => ui`${heading('Matched by')}:  ${code(rule)}`),
     ];
     if (rules.length === 0) rules.push(NO_RULE_COVERS_URL);
     return rules;
   };
-  for (const { url, name, frames } of pages) {
-    const verdict = explainMatch(prepared.matching, url);
+  for (const { url: page, name, frames } of pages) {
+    const verdict = explainMatch(prepared.matching, page);
     if (!verdict.matches) misses++;
-    lines.push(`${verdict.matches ? 'match   ' : 'no match'} ${url}${name ? ` (${name})` : ''}`, ...rulesOf(verdict).map((r) => `    ${r}`));
+    lines.push(ui`${verdict.matches ? 'match   ' : 'no match'} ${url(page)}${name ? ui` (${id(name)})` : ''}`, ...rulesOf(verdict).map((r) => `    ${r}`));
     for (const frame of frames ?? []) {
       const v = frameVerdict(prepared, frame.url);
       const pad = '  '.repeat(frame.depth);
-      const rules = [...(v.noframes ? ['Kept out by: @noframes'] : []), ...rulesOf(v)];
-      lines.push(`${pad}${v.matches ? 'match   ' : 'no match'} ${frame.id}: ${frame.url}`, ...rules.map((r) => `${pad}    ${r}`));
+      const rules = [...(v.noframes ? [ui`${heading('Kept out by')}: ${code('@noframes')}`] : []), ...rulesOf(v)];
+      lines.push(ui`${pad}${v.matches ? 'match   ' : 'no match'} ${id(frame.id)}: ${url(frame.url)}`, ...rules.map((r) => `${pad}    ${r}`));
     }
   }
   return { lines, misses };

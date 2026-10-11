@@ -8,6 +8,7 @@
 import { installedManagers, openHiddenPage, type HiddenPage } from './browser-extensions.js';
 import type { ExternalManager, ExternalScript, InstallOptions } from './external-manager.js';
 import { MANAGERS } from './managers.js';
+import { quoted } from './output-style.js';
 
 // A script as `GetData` lists it: only the fields sm-dev reads.
 interface VmScript {
@@ -54,7 +55,7 @@ export class Violentmonkey implements ExternalManager {
     const copies = (await installedManagers(endpoint)).filter((m) => m.manager === 'violentmonkey');
     const copy = copies.find((m) => m.enabled);
     if (!copy) {
-      throw new Error(`${label} is ${copies.length > 0 ? 'turned off' : 'not installed'} in this browser. Use sm-dev${browserArg} --manager vm manager ${copies.length > 0 ? 'enable' : 'install'}.`);
+      throw new Error(`${label} is ${copies.length > 0 ? 'turned off' : 'not installed'} in this browser. Use ${quoted(`sm-dev${browserArg} --manager vm manager ${copies.length > 0 ? 'enable' : 'install'}`)}.`);
     }
     let page: HiddenPage;
     try {

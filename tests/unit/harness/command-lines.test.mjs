@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import {
   CommandAssembler, endsOutsideBlock, NOT_A_BLOCK_COMMAND, OPEN_NOT_LAST, TEXT_AFTER_CLOSE, echoCommand, parseCommandList, unclosedBlockMessage,
 } from '../../../lib/harness/command-lines.js';
+import { plainLine } from '../../../lib/harness/output-style.js';
 
 const texts = (result) => result.commands.map((c) => c.text);
 
@@ -127,7 +128,7 @@ test('the assembler reports an open block, and drop forgets it', () => {
 
 test('echoCommand shows a block as the prompt does', () => {
   const [command] = parseCommandList('  eval T2 {{\n  1 + 1\n}}').commands;
-  assert.deepEqual(echoCommand(command), ['> eval T2 {{', '...   1 + 1', '... }}']);
+  assert.deepEqual(echoCommand(command).map(plainLine), ['> eval T2 {{', '...   1 + 1', '... }}']);
 });
 
 test('endsOutsideBlock: whether typed lines are ready to run', () => {

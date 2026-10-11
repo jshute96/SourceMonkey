@@ -19,6 +19,7 @@
 
 import { commandSyntax, noSuchFlag, type ArgSyntax, type CommandSyntax } from './command-list.js';
 import { TAB_ARG } from './tab-refs.js';
+import { quoted } from './output-style.js';
 
 /** A word of a line, where it is in the line, and whether it was quoted. */
 export interface Word {
@@ -137,7 +138,7 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
   }
   const parsed: ParsedArgs = { flags: {}, words: [] };
   if (block !== undefined) {
-    if (!syntax.base.block) return { error: `The ${command} command takes no {{ block` };
+    if (!syntax.base.block) return { error: `The ${quoted(command)} command takes no {{ block` };
     parsed.block = block;
   }
 
@@ -193,12 +194,12 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
   }
   switch (shape.args) {
     case 'none':
-      if (own.length > 0) return { error: `The ${command} command takes ${shape.tab ? 'nothing besides a tab' : 'no arguments'}` };
+      if (own.length > 0) return { error: `The ${quoted(command)} command takes ${shape.tab ? 'nothing besides a tab' : 'no arguments'}` };
       break;
     case 'words':
       if (shape.max !== undefined && own.length > shape.max) {
         const count = COUNTS[shape.max] ?? String(shape.max);
-        return { error: `The ${command} command takes at most ${count} argument${shape.max === 1 ? '' : 's'}${shape.tab ? ' besides a tab' : ''} (${syntax.usage.join(' | ')})` };
+        return { error: `The ${quoted(command)} command takes at most ${count} argument${shape.max === 1 ? '' : 's'}${shape.tab ? ' besides a tab' : ''} (${syntax.usage.join(' | ')})` };
       }
       parsed.words = own.map((w) => w.text);
       break;
@@ -245,7 +246,7 @@ function takeFlag(command: string, syntax: CommandSyntax, parsed: ParsedArgs, li
   }
   const what = syntax.values[name];
   const needsValue = {
-    error: `The ${name} flag needs a value${what ? `: ${name}${kind === 'optional' ? '=' : ' '}${what}` : ''}`,
+    error: `The ${quoted(name)} flag needs a value${what ? `: ${quoted(`${name}${kind === 'optional' ? '=' : ' '}${what}`)}` : ''}`,
     flag: name,
   };
   if (eq > 0) {

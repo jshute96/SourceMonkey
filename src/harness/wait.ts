@@ -19,13 +19,14 @@
 // short one that matters changes the DOM when it fires, which the
 // window catches, since it starts no earlier than the wait.
 
-import type { Page } from '@playwright/test';
+import type { Frame, Page } from '@playwright/test';
 
 import type { ConsoleContext, ControlledTab } from './console-commands.js';
 import type { HarnessHost } from './host.js';
 import type { ParsedArgs } from './command-args.js';
 import { MAX_TIMER_SECONDS, TIMEOUT_NEEDS_SECONDS, timeoutSecondsMs } from './command-list.js';
-import { countOf } from './page-commands.js';
+import { MISTAKE_PREFIX, quoted, WAIT_FAILED } from './output-style.js';
+import { countOf, pickFrame, refFrameProblem } from './page-commands.js';
 import { explainMatch, preparedScriptName } from './prepare.js';
 import { ALL_LOG_SOURCES, foundAt, inSources, linesLost, parseLogSources, parsePosition, searchedUpTo, streamText, textMatcher, type LogRecord } from './run-logs.js';
 import { refProblem } from './snapshot.js';
@@ -55,7 +56,6 @@ const SELECTOR_LOOK_MS = 1000;
 // How the replies of the waits with something to match start, so each
 // says plainly whether it got it.
 const WAIT_DONE = '[sm-dev] Wait done: ';
-const WAIT_FAILED = '[sm-dev] Wait failed: ';
 const LOG_MATCHED = '[sm-dev] Wait matched log line: ';
 // The flags only `wait log` takes.
 const LOG_FLAGS = ['--find', '--log-source', '--since'];
@@ -163,7 +163,7 @@ export function timeoutFlagMs(flags: Record<string, string | true>, out: (line: 
   const timeout = flags['--timeout-seconds'];
   if (timeout === undefined) return undefined;
   const ms = timeoutSecondsMs(timeout);
-  if (ms === null) out(`[sm-dev] ERROR: ${TIMEOUT_NEEDS_SECONDS}`);
+  if (ms === null) out(`${MISTAKE_PREFIX}${TIMEOUT_NEEDS_SECONDS}`);
   return ms;
 }
 
@@ -227,16 +227,21 @@ export function notSettledMessage(tab: { n: number }, timeoutMs: number, busy: s
  */
 export async function waitFor(ctx: ConsoleContext, parsed: ParsedArgs): Promise<boolean> {
   const mistake = (text: string): false => {
-    ctx.out(`[sm-dev] ERROR: ${text}`);
+    ctx.out(`${MISTAKE_PREFIX}${text}`);
     return false;
   };
+  // Only an element is looked for in a frame: settling, a delay and the
+  // log are the tab's.
+  if (parsed.flags['--frame'] !== undefined && parsed.form !== 'selector' && parsed.form !== 'selector-gone') {
+    return mistake('The `--frame` flag is for `wait selector` and `wait selector-gone`, which look for an element in a frame');
+  }
   const timeout = parsed.flags['--timeout-seconds'];
   const given = timeoutFlagMs(parsed.flags, ctx.out);
   if (given === null) return false;
   const timeoutMs = given ?? SETTLE_TIMEOUT_MS;
 
   if (parsed.form === 'log') {
-    if (parsed.tab !== undefined) return mistake('The wait log command takes no tab, since it watches all of the run\'s output');
+    if (parsed.tab !== undefined) return mistake('The `wait log` command takes no tab, since it watches all of the run\'s output');
     return waitForLog(ctx, parsed, timeoutMs);
   }
   const logFlag = LOG_FLAGS.find((flag) => parsed.flags[flag] !== undefined);
@@ -265,7 +270,7 @@ export async function waitFor(ctx: ConsoleContext, parsed: ParsedArgs): Promise<
       return mistake(`The wait ${more[0]} command looks in one tab. Name it (T2), or leave it out for the current one.`);
     }
     const valid = word === 'all' || parseDelay(word) !== null;
-    return mistake(`The wait command takes a tab, all, selector, selector-gone, log, or a delay such as 500ms or 2s, not ${valid ? more.join(' ') : word}`);
+    return mistake(`The ${quoted('wait')} command takes a tab, ${quoted('all')}, ${quoted('selector')}, ${quoted('selector-gone')}, ${quoted('log')}, or a delay such as ${quoted('500ms')} or ${quoted('2s')}, not ${quoted(valid ? more.join(' ') : word)}`);
   }
 
   // The tab, or all of them.
@@ -288,14 +293,16 @@ export async function waitFor(ctx: ConsoleContext, parsed: ParsedArgs): Promise<
   const kind = parsed.form;
   if (kind === 'selector' || kind === 'selector-gone') {
     const selector = parsed.text ?? '';
-    if (!selector) return mistake(`The wait ${kind} command needs a selector, e.g. wait ${kind} '#results'`);
+    if (!selector) return mistake(`The ${quoted(`wait ${kind}`)} command needs a selector, e.g. ${quoted(`wait ${kind} '#results'`)}`);
     const [first, ...more] = selector.split(/\s+/);
     const timed = timeout !== undefined ? ` --timeout-seconds ${timeout}` : '';
-    if (more.length > 0 && TAB_ARG.test(first)) return mistake(`The tab goes before the word ${kind}: wait ${first} ${kind} ${more.join(' ')}${timed}`);
-    return waitForSelector(ctx, tabs[0], selector, kind === 'selector', timeoutMs);
+    if (more.length > 0 && TAB_ARG.test(first)) return mistake(`The tab goes before the word ${kind}: ${quoted(`wait ${first} ${kind} ${more.join(' ')}${timed}`)}`);
+    const frame = await pickFrame(parsed.flags['--frame'], tabs[0], (line) => ctx.out(`[sm-dev] ${line}`));
+    if (frame === null) return false;
+    return waitForSelector(ctx, tabs[0], selector, kind === 'selector', timeoutMs, frame);
   }
   if (word === undefined || word === 'all') return waitToSettle(ctx, tabs, timeoutMs);
-  return mistake(`The wait command takes a tab, all, selector, selector-gone, log, or a delay such as 500ms or 2s, not ${word}`);
+  return mistake(`The ${quoted('wait')} command takes a tab, ${quoted('all')}, ${quoted('selector')}, ${quoted('selector-gone')}, ${quoted('log')}, or a delay such as ${quoted('500ms')} or ${quoted('2s')}, not ${quoted(word)}`);
 }
 
 // `wait [T<n>|all]`: each tab settling, all at once.
@@ -322,12 +329,14 @@ async function waitToSettle(ctx: ConsoleContext, tabs: ControlledTab[], timeoutM
 // Each look is bounded, so the timeout holds, and a dialog that opens
 // meanwhile ends the wait rather than stopping it for good.
 async function waitForSelector(
-  ctx: ConsoleContext, tab: ControlledTab, selector: string, present: boolean, timeoutMs: number,
+  ctx: ConsoleContext, tab: ControlledTab, selector: string, present: boolean, timeoutMs: number, frame?: Frame,
 ): Promise<boolean> {
-  const name = tabName(tab);
+  // In an iframe, the frame on its tab: `T1.F3`.
+  const name = `${tabName(tab)}${frame ? `.F${tab.link.host.frameIds.number(frame)}` : ''}`;
   // A ref from a snapshot of another page matches nothing, which would
   // pass for gone.
-  const problem = await within(refProblem(tab.page, selector).catch(() => null), SELECTOR_LOOK_MS);
+  const problem = await within((async () => await refProblem(tab.page, selector)
+    ?? await refFrameProblem(tab.page, selector, frame, tab.link.host.frameIds))().catch(() => null), SELECTOR_LOOK_MS);
   if (typeof problem === 'string' && problem !== 'timeout') {
     ctx.out(`${WAIT_FAILED}${problem}`);
     return false;
@@ -335,14 +344,18 @@ async function waitForSelector(
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if (tab.page.isClosed()) {
-      ctx.out(`${WAIT_FAILED}${name} closed`);
+      ctx.out(`${WAIT_FAILED}${tabName(tab)} closed`);
+      return false;
+    }
+    if (frame?.isDetached()) {
+      ctx.out(`${WAIT_FAILED}${name} has gone from the page`);
       return false;
     }
     if (tab.dialogs?.current) {
       ctx.out(`${WAIT_FAILED}${dialogWaitingMessage(tab, currentTab(ctx))}`);
       return false;
     }
-    const count = await within(countOf(tab.page, selector), Math.max(1, Math.min(SELECTOR_LOOK_MS, deadline - Date.now())));
+    const count = await within(countOf(tab.page, selector, frame), Math.max(1, Math.min(SELECTOR_LOOK_MS, deadline - Date.now())));
     if (typeof count === 'string' && count !== 'timeout') {
       ctx.out(`${WAIT_FAILED}The selector ${selector} can't be used: ${count}`);
       return false;
@@ -366,15 +379,15 @@ async function waitForSelector(
 // Matched in the form the stream prints it, whole.
 async function waitForLog(ctx: ConsoleContext, parsed: ParsedArgs, timeoutMs: number): Promise<boolean> {
   const mistake = (text: string): false => {
-    ctx.out(`[sm-dev] ERROR: ${text}`);
+    ctx.out(`${MISTAKE_PREFIX}${text}`);
     return false;
   };
   const { flags } = parsed;
   const typed = parsed.text ?? '';
   const flag = flags['--find'];
-  if (typed && typeof flag === 'string') return mistake('The wait log command takes its text either after log or with --find, not both');
+  if (typed && typeof flag === 'string') return mistake('The `wait log` command takes its text either after `log` or with `--find`, not both');
   const text = typeof flag === 'string' ? flag : typed;
-  if (!text) return mistake('The wait log command needs the text to look for, e.g. wait log ready');
+  if (!text) return mistake('The `wait log` command needs the text to look for, e.g. `wait log ready`');
   const logs = ctx.logs;
   if (!logs) {
     ctx.out(`${WAIT_FAILED}This run cannot watch its log`);

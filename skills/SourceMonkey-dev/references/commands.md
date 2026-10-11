@@ -1,7 +1,9 @@
 # sm-dev commands by task
 
-A summary. `pnpm sm-dev help <command>` shows a command's exact
-options; `pnpm sm-dev --help` lists everything.
+A summary. `pnpm sm-dev help` lists the help topics, and
+`help <topic>` shows one. `help <command>` (or `<command> --help`)
+shows a command's exact options; `help commands` lists the commands,
+and `help all` everything.
 
 ## Shape of a command line
 
@@ -57,7 +59,8 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | Installed script | `E1` | SourceMonkey's own number, the same in every run |
 | Collection | `C1`, its name or a unique piece, `id=<id>` | A run's test collection: its run, `D1` |
 | Menu command | `M1`, `T2.M1`, or its label | |
-| Element | CSS or Playwright selector, or a ref (`e4`, `f2e6`) | Refs from the latest `snapshot` |
+| Element | CSS or Playwright selector, or a ref (`e4`, `f2e6`) | Refs from the latest `snapshot`. A selector in an iframe: `--frame F2` |
+| Frame | `F2`, `T1.F2`, `frameId=<id>`; the top frame is its tab, `T1` | From `frames`; kept across the frame's reloads |
 | Page | URL, file, glob, or script number (its default page) | Scheme optional for hosts |
 
 ## Browsers
@@ -170,7 +173,7 @@ own: change them only when asked to.
 | Command | Does |
 | --- | --- |
 | `tabs`, `tab T2` | List (with targetIds); pick the current tab. `--frames`: each tab's iframes too |
-| `frames [T2\|F3\|all]` | A tab's iframes (`F1`, ...) as a tree, with the scripts running in each |
+| `frames [T2\|F3\|all]` | A tab's iframes (`F1`, ...) as a tree, with the scripts running in each, `(hidden)` ones marked, each one's CDP `frameId`, and the `targetId` of one from another site |
 | `newtab [page...]` | Open a controlled tab (becomes current) |
 | `newtab --noscript <url>` | A tab the scripts stay out of (sticky) |
 | `closetab [T2 T3...\|all]` | Close the current tab, the ones named, or all. A page's "Leave site?" dialog waits for `accept`/`dismiss`; `--force` skips it |
@@ -191,9 +194,11 @@ own: change them only when asked to.
 | `eval <js>` | Evaluate inside the selected script, where its `GM_*` APIs, `@require` libraries, top-level declarations and IIFE locals are visible; prints JSON (promises awaited). In the page when no script is selected or it hasn't run there |
 | `eval --page <js>` | Evaluate in the page, where the page's own globals are |
 | `eval --script=<script> <js>` | Evaluate inside the named script |
+| `eval --frame F2 <js>` | Evaluate in an iframe: the script's copy there, or its page with `--page`. Cross-origin frames too |
 | `eval --file <path>` | Evaluate a JavaScript file |
 | `eval --out FILE <js>` | Write the result to a file; printed results are cut past 10,000 characters |
 | `cdp <Method> [json]` | A raw CDP call on the tab; the result as JSON. A `{{` block or `--file` holds several, one per line (see [cdp.md](cdp.md)) |
+| `cdp --frame F2 <Method> [json]` | The same on the target an iframe is in: its own (one from another site), else its page's |
 | `screenshot [sel] [--full] <file>` | PNG of the view, the page, or an element |
 | `savehtml <file>` | Save the DOM for `--from-saved` / `serveHtml` |
 | `logs [T2\|all] [script]` | The run's log for the tab (its scripts' lines and events), timestamped and whole (the stream cuts a line past 1000 characters) |

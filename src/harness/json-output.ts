@@ -148,6 +148,12 @@ export interface Frame {
   url: string;
   /** The ids of the run's scripts running in it; under another manager, expected in it. */
   scripts: string[];
+  /** Its <iframe> isn't visible: no size, or hidden. */
+  hidden?: true;
+  /** Its CDP frame id, in its target. */
+  frameId?: string;
+  /** Its CDP target, when Chrome runs it in a process of its own (a frame from another site); the same id as `frameId`. */
+  targetId?: string;
 }
 
 export type ScriptStatus = 'ok' | 'invalid';

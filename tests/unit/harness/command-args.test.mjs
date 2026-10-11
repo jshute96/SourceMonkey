@@ -43,18 +43,18 @@ test('flags take a value after them or after =, and are checked', () => {
   assert.deepEqual(typed('snapshot', '--out tree.txt --visible main').flags, { '--out': 'tree.txt', '--visible': true });
   assert.deepEqual(typed('snapshot', '--out=tree.txt').flags, { '--out': 'tree.txt' });
   assert.deepEqual(typed('snapshot', '--visible=yes'), { error: 'The --visible flag takes no value', flag: '--visible' });
-  assert.deepEqual(typed('snapshot', '--out'), { error: 'The --out flag needs a value: --out FILE', flag: '--out' });
-  assert.deepEqual(typed('snapshot', '--out='), { error: 'The --out flag needs a value: --out FILE', flag: '--out' });
-  assert.deepEqual(typed('snapshot', '--out --visible'), { error: 'The --out flag needs a value: --out FILE', flag: '--out' });
+  assert.deepEqual(typed('snapshot', '--out'), { error: 'The `--out` flag needs a value: `--out FILE`', flag: '--out' });
+  assert.deepEqual(typed('snapshot', '--out='), { error: 'The `--out` flag needs a value: `--out FILE`', flag: '--out' });
+  assert.deepEqual(typed('snapshot', '--out --visible'), { error: 'The `--out` flag needs a value: `--out FILE`', flag: '--out' });
   assert.deepEqual(typed('snapshot', '--visible --visible'), { error: 'The --visible flag can be given once', flag: '--visible' });
   // A value only after =.
   assert.deepEqual(typed('status', '--json=multi').flags, { '--json': 'multi' });
   assert.deepEqual(typed('values', '2 --json').flags, { '--json': true });
-  assert.deepEqual(typed('snapshot', '--deep'), { error: 'The snapshot command has no --deep flag. It takes --visible, --out, --find, --up, --context, --limit, --timeout-seconds.', flag: '--deep' });
+  assert.deepEqual(typed('snapshot', '--deep'), { error: 'The `snapshot` command has no `--deep` flag. It takes `--visible`, `--out`, `--find`, `--up`, `--context`, `--limit`, `--timeout-seconds`, `--frame`.', flag: '--deep' });
   // A quoted word is never a flag.
   assert.deepEqual(typed('probe', `'--x' .y`).words, ['--x', '.y']);
   // Also on a command that takes few.
-  assert.deepEqual(typed('status', '--bad'), { error: 'The status command has no --bad flag. It takes --frames, --json, --nojson.', flag: '--bad' });
+  assert.deepEqual(typed('status', '--bad'), { error: 'The `status` command has no `--bad` flag. It takes `--frames`, `--json`, `--nojson`.', flag: '--bad' });
 });
 
 test('a flag with an optional value takes it only after =', () => {
@@ -62,18 +62,18 @@ test('a flag with an optional value takes it only after =', () => {
   // Bare, it never takes the next word: that's the tab, or the code.
   assert.deepEqual(typed('eval', '--script T2 x'), { flags: { '--script': true }, tab: 'T2', words: [], text: 'x' });
   assert.deepEqual(typed('eval', '--script GM_info'), { flags: { '--script': true }, words: [], text: 'GM_info' });
-  assert.deepEqual(typed('eval', '--script='), { error: 'The --script flag needs a value: --script=<script>', flag: '--script' });
+  assert.deepEqual(typed('eval', '--script='), { error: 'The `--script` flag needs a value: `--script=<script>`', flag: '--script' });
   assert.deepEqual(typed('eval', '--script=a --script'), { error: 'The --script flag can be given once', flag: '--script' });
   // Sent as words, as `sm-dev eval --script=2 x` does.
   assert.deepEqual(sent('eval', '--script=2', 'x').flags, { '--script': '2' });
 });
 
 test('arguments a command doesn\'t take are refused, with its usage', () => {
-  assert.deepEqual(typed('status', 'extra'), { error: 'The status command takes no arguments' });
-  assert.deepEqual(typed('focus', 'T1 T2 T3'), { error: 'The focus command takes at most one argument besides a tab (focus [T<n>])' });
-  assert.deepEqual(typed('attach', 'D1 D2'), { error: 'The attach command takes at most one argument (attach [ID])' });
-  assert.deepEqual(typed('logs', 'all 1 x'), { error: 'The logs command takes at most two arguments besides a tab (logs [tab|all] [script])' });
-  assert.deepEqual(typed('status', '\nline'), { error: 'The status command takes no {{ block' });
+  assert.deepEqual(typed('status', 'extra'), { error: 'The `status` command takes no arguments' });
+  assert.deepEqual(typed('focus', 'T1 T2 T3'), { error: 'The `focus` command takes at most one argument besides a tab (focus [T<n>])' });
+  assert.deepEqual(typed('attach', 'D1 D2'), { error: 'The `attach` command takes at most one argument (attach [ID])' });
+  assert.deepEqual(typed('logs', 'all 1 x'), { error: 'The `logs` command takes at most two arguments besides a tab (logs [tab|all] [script])' });
+  assert.deepEqual(typed('status', '\nline'), { error: 'The `status` command takes no {{ block' });
 });
 
 test('--help asks for the command\'s help, where a flag can go', () => {
@@ -100,7 +100,7 @@ test('text is the rest of the line, its --words its own', () => {
   assert.deepEqual(typed('set', `k '["a"]'`), { flags: {}, words: ['k'], text: '["a"]' });
   assert.equal(typed('set', 'k "metric"').text, '"metric"');
   assert.deepEqual(typed('set', 'k --file v.json'), { flags: { '--file': 'v.json' }, words: ['k'], text: '' });
-  assert.equal(typed('set', 'k --flie v.json').error, 'The set command has no --flie flag. It takes --file, --force.');
+  assert.equal(typed('set', 'k --flie v.json').error, 'The `set` command has no `--flie` flag. It takes `--file`, `--force`.');
   // set's flags can also end its JSON, which can't end with one.
   for (const line of ['k "def" --force', '--force k "def"', 'k --force "def"']) {
     assert.deepEqual(typed('set', line), { flags: { '--force': true }, words: ['k'], text: '"def"' }, line);
@@ -124,17 +124,17 @@ test('wait: a tab, then the form, and flags ending wait log\'s text', () => {
   assert.deepEqual(typed('wait', 'log ready --timeout-seconds 9'), { flags: { '--timeout-seconds': '9' }, form: 'log', words: [], text: 'ready' });
   assert.deepEqual(typed('wait', 'log ready --timeout-seconds=9').flags, { '--timeout-seconds': '9' });
   // A near miss of it is refused; other --words are text.
-  assert.equal(typed('wait', 'log ready --timeout 40').error, 'The wait command has no --timeout flag. It takes --timeout-seconds, --log-source, --find, --since.');
+  assert.equal(typed('wait', 'log ready --timeout 40').error, 'The `wait` command has no `--timeout` flag. It takes `--timeout-seconds`, `--log-source`, `--find`, `--since`, `--frame`.');
   assert.equal(typed('wait', 'log Running --dry-run mode').text, 'Running --dry-run mode');
   // Quoted, or a regex, it's all text.
   assert.equal(typed('wait', `log 'x --timeout 40'`).text, 'x --timeout 40');
   assert.equal(typed('wait', 'log /a --timeout b/').text, '/a --timeout b/');
   // From a shell, only a word of its own is a flag.
   assert.equal(sent('wait', 'log', 'Running --timeout mode').text, 'Running --timeout mode');
-  assert.equal(sent('wait', 'log', 'x', '--timeout', '40').error, 'The wait command has no --timeout flag. It takes --timeout-seconds, --log-source, --find, --since.');
+  assert.equal(sent('wait', 'log', 'x', '--timeout', '40').error, 'The `wait` command has no `--timeout` flag. It takes `--timeout-seconds`, `--log-source`, `--find`, `--since`, `--frame`.');
   assert.deepEqual(sent('wait', '2s').words, ['2s']);
   // A near miss is one that starts like a flag, or a flag's start.
-  assert.equal(typed('wait', 'log x --timeouts 4').error, 'The wait command has no --timeouts flag. It takes --timeout-seconds, --log-source, --find, --since.');
+  assert.equal(typed('wait', 'log x --timeouts 4').error, 'The `wait` command has no `--timeouts` flag. It takes `--timeout-seconds`, `--log-source`, `--find`, `--since`, `--frame`.');
   assert.equal(typed('wait', 'log x --help-me').text, 'x --help-me');
   // Only flags that end the text are taken.
   assert.deepEqual(typed('wait', 'log --timeout-seconds 4 x').flags, { '--timeout-seconds': '4' });
@@ -148,8 +148,8 @@ test('sm-dev\'s own commands read the same way', () => {
   assert.deepEqual(sent('start', 'a.user.js', '--watch', '--browser=9300', 'https://x.com/'), {
     flags: { '--watch': true, '--browser': '9300' }, words: ['a.user.js', 'https://x.com/'],
   });
-  assert.equal(sent('stop', '--watch').error, 'The stop command has no --watch flag. It takes --all.');
-  assert.equal(sent('list', 'x').error, 'The list command takes no arguments');
+  assert.equal(sent('stop', '--watch').error, 'The `stop` command has no `--watch` flag. It takes `--all`.');
+  assert.equal(sent('list', 'x').error, 'The `list` command takes no arguments');
 });
 
 test('a form can name what it acts on before its keyword, or leave it out', () => {

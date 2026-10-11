@@ -22,8 +22,8 @@ the output in `console-commands.ts`.
 
 - **The frame list is Playwright's** (`mainFrame().childFrames()`,
   down the tree), for every manager.
-  - It covers cross-origin frames, which the page's own CDP frame tree
-    leaves out.
+  - It covers frames in processes of their own, which the page's own
+    CDP frame tree leaves out.
   - Playwright keeps one `Frame` per frame across its navigations,
     which is what an id is given to (`FrameIds`).
 - **Which scripts run in a frame**, under SourceMonkey, comes from the
@@ -95,7 +95,28 @@ the frames, so it ignores the flag.
 
 ## `frames [tab|frame|all]`
 
-Shows a tab's frame tree, with the scripts running in each frame:
+Shows a tab's frame tree, with the scripts running in each frame, and
+for each frame:
+
+- `(hidden)` when its `<iframe>` isn't visible: no size, or hidden by
+  CSS. Ad and tracking frames often are.
+- `[frameId=...]`: its CDP frame id, which CDP calls that act on a
+  frame take (`Page.navigate`, `Page.createIsolatedWorld`), and which a
+  context's `auxData.frameId` names.
+- `[targetId=...]` too, for one Chrome runs in a process of its own: one
+  from another site than its parent (another registrable domain, so
+  not `explorer.apis.google.com` in `developers.google.com`), and none
+  on `file://` pages. That's the CDP target a raw CDP client attaches to
+  (`Target.attachToTarget`), as a tab's `targetId` is. It's the same id
+  as its `frameId`; both are shown so each is there to copy.
+  - A frame without one is part of the target of its nearest ancestor
+    that has one: the tab's, or a frame from another site.
+- The tab's own line has both too: a page's top frame's frame id is its
+  target id.
+
+These details cost a call per frame, so only the trees show them
+(`frames`, `tabs --frames`, `status --frames`), and the JSON.
+
 
 ```
 T1: http://localhost:8765/frames/frames.html
@@ -148,20 +169,113 @@ T1: http://localhost:8765/frames/frames.html
 
 ## Log lines
 
-- A script's start, skip or error in an iframe, and a menu command it
-  registers, name the frame where the tab id goes: `[T1.F3] [event]
-  ...` in the stream, `T1.F3` in `logs`, and `frame` in the JSON line.
-  - These are the extension's events that carry the reporting
-    document, which is how the frame is found.
+- A line from an iframe names the frame where the tab id goes:
+  `[T1.F3] [event] ...` in the stream, `T1.F3` in `logs`, and `frame`
+  in the JSON line.
   - In the stream, a T1 frame's lines are prefixed too, where T1's own
     aren't.
-- Other lines from an iframe have only the tab id, so a line without a
-  frame isn't necessarily the top frame's:
-  - console lines and page errors: Playwright's console messages don't
-    say which frame logged them;
-  - other `GM_*` events (requests, values, downloads, ...): the
-    extension sends them without the document;
-  - a report whose frame couldn't be matched.
+- Where each kind of line's frame comes from:
+  - a script's start, skip or error, and its menu commands: the
+    reporting document, on the extension's event;
+  - `GM_xmlhttpRequest`, `GM_setValue`, `GM_download` and a shown
+    `GM_notification`: the sending document, on the event from
+    protocol 2.2;
+  - console lines and page errors: the JavaScript context they came
+    from, over the frame's own session (see
+    [Frame sessions](#frame-sessions));
+    - a page error is paired with the protocol's copy by its message:
+      the copy whose first line ends with it, else one containing it.
+      Copies replayed as a session opens are ignored, and an empty
+      message isn't paired;
+  - a frame's load: Playwright's `framenavigated`.
+- A frame's load is a line like a page's: `T1.F3 [event] Loaded <URL>`,
+  in `logs` only, not the stream (ad frames load often).
+  - Load lines go through the same queue as console lines and errors,
+    so what a page logged or threw comes before the next page's load.
+  - A change of the frame URL's fragment alone isn't a load.
+- A line can still lack its frame: an event from an older extension, a
+  document no frame matched, or a console line whose frame's session
+  isn't open yet. So a line without a frame isn't necessarily the top
+  frame's.
+
+## Frame sessions
+
+`src/harness/frame-sessions.ts`: the DevTools (CDP) sessions that reach
+inside a tab's iframes.
+
+- Chrome runs an iframe from another site (another registrable domain)
+  in a process of its own (an out-of-process iframe). One from the
+  page's site, even another origin of it, shares the page's process. The page's session sees nothing inside it:
+  not its execution contexts, console calls or errors.
+- So a tab has a session per process: the page's, and one per such
+  iframe, opened through Playwright (`newCDPSession(frame)`, which
+  refuses a frame that shares its parent's process).
+  - New iframes are tried as they attach or navigate, since a
+    navigation can move a frame into a process of its own or out of
+    one.
+- A frame is found in its session's CDP frame tree from the session's
+  root (the page, or the iframe the session is for, which is exact),
+  then down by URL among its siblings in the same process.
+  - A session's tree is read once until a frame attaches, navigates or
+    detaches: each console line asks for its frame.
+- A frame's session is opened again when the frame navigates, which
+  can move it between processes, and closed when it detaches.
+- Two users, each with sessions of its own:
+  - `ConsoleStacks` (run.ts), for console lines and errors, from the
+    tab's start;
+  - `PageAttachment` (page-watch.ts), for `eval --frame`, opened on
+    the first one.
+
+## Refs in frames
+
+- A snapshot ref names its element wherever it is, iframes included
+  (`f2e4`): it works in any command as it is, with no `--frame`.
+  - Playwright prefixes a frame's refs with its own frame number,
+    which isn't the `F` id.
+- `snapshot --frame F2` shows that frame alone. Its refs are the same
+  as in a whole-page snapshot, and are noted as that frame's, added to
+  the page's earlier refs rather than replacing them
+  (`noteRefs`, snapshot.ts).
+
+## `--frame` on `eval` and the page commands
+
+- `eval --frame F2` runs in that iframe, in the same world it would in
+  the top frame: the selected script's scope there, a named one's
+  (`--script=2`), the scripts' shared world, or the page's (`--page`).
+  - The worlds are found among the frame's session's contexts: its
+    default one is the page's, and one with the extension's origin
+    the scripts'.
+  - A frame between documents is looked for again until
+    `--timeout-seconds`, as for the top frame.
+- `click`, `hover`, `type`, `snapshot`, `screenshot`, `probe` and
+  `wait selector` take `--frame` for a selector inside that frame.
+  - A ref with `--frame` works when it's in that frame, and is an error
+    naming its own frame when it isn't.
+  - `screenshot --frame F2` with no selector is the frame as it shows
+    on the page: its `<iframe>` element.
+  - `--frame T1` (the tab's own id) is the top frame, as with none.
+  - A frame can also be named by its CDP id as `frames` shows it,
+    `frameId=...` or `targetId=...`, or by the first 6 or more
+    characters of one. So can `frames frameId=...`; a tab's target id
+    there is its tab.
+  - `wait` takes it only with `selector` or `selector-gone`. Settling,
+    a delay and the log are the tab's.
+- `cdp --frame F2` sends its calls to the target the frame is in: its
+  own, if it has one, else its nearest ancestor's that has one (the
+  tab's at the top).
+  - A target reaches all its frames, so calls that act on a frame name
+    it by `frameId`. For a frame without its own target, the command
+    says which target the calls went to, and the frame's id.
+- What a command says names the frame: `Clicked #play in F2`, `The
+  selector .x matches on T1.F2`.
+
+## What `wait` waits for
+
+- Settling (`wait`, and the wait after an action) watches the top
+  frame's load state and DOM changes and the top frame's scripts
+  starting, but requests from every frame.
+- So for something an iframe shows after a click, use
+  `wait selector --frame F2 <selector>`.
 
 ## JSON
 
@@ -172,7 +286,7 @@ Types are in [sm-dev-json.md](sm-dev-json.md).
   ```json
   "frames": [
     { "id": "F1", "parent": "T1", "url": "http://localhost:8765/frames/frame-a.html", "scripts": ["1"] },
-    { "id": "F2", "parent": "T1", "url": "http://127.0.0.1:8765/frames/frame-b.html", "scripts": ["1", "2"] },
+    { "id": "F2", "parent": "T1", "url": "http://127.0.0.1:8765/frames/frame-b.html", "scripts": ["1", "2"], "targetId": "C1E043C264F12D216F204784C021C567" },
     { "id": "F3", "parent": "F2", "url": "http://127.0.0.1:8765/frames/frame-nested.html", "scripts": ["1"] }
   ]
   ```
@@ -191,18 +305,3 @@ Types are in [sm-dev-json.md](sm-dev-json.md).
 
   - `state` is `running` when the script runs in any of the tab's
     frames.
-
-## Later
-
-- `--frame <id>` on `eval` and the script-state commands, reaching the
-  frame's script world. Cross-origin frames need a CDP session on the
-  frame's own target.
-- `--frame <id>` on `click`, `fill`, `hover`, `wait` and `snapshot`,
-  for selectors (CSS, `text=`) inside a frame.
-  - A snapshot ref already names its frame, so it needs no `--frame`.
-    A ref with a `--frame` it isn't in is an error.
-- A frame navigation's line: `T1.F3 [event] Loaded <frame URL>`.
-- Console lines and page errors naming their frame, through the CDP
-  execution context they came from.
-- Other `GM_*` events naming their frame: the extension would send the
-  sender's document with them (a protocol minor).

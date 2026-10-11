@@ -24,6 +24,7 @@ import {
 } from './json-output.js';
 import type * as J from './json-output.js';
 import { commandSyntax } from './command-list.js';
+import { asError, cmd, code, heading, id as idRole, MISTAKE_PREFIX, name as nameRole, quoted, selected, ui, url } from './output-style.js';
 
 /**
  * The calls these commands make into the manager: SourceMonkey's
@@ -158,8 +159,8 @@ export const MANAGER_VERBS = {
 /** Said for `collection <words>` with no verb it takes: `C3 frob`, or one word alone. */
 export function noSuchVerb(words: readonly string[]): string {
   const verbs = MANAGER_VERBS.collection.join(', ');
-  if (words.length === 1) return `The collection command needs a verb: collection ${words[0]} <verb>. It takes ${verbs}.`;
-  return `The collection command has no ${words[1]} verb. It takes ${verbs}.`;
+  if (words.length === 1) return `The ${quoted('collection')} command needs a verb: ${quoted(`collection ${words[0]} <verb>`)}. It takes ${verbs}.`;
+  return `The ${quoted('collection')} command has no ${quoted(words[1])} verb. It takes ${verbs}.`;
 }
 
 /** `collection list`: each collection, numbered ones first. */
@@ -170,14 +171,14 @@ export async function collectionList(manager: ManagerControl, out: (line: string
     out(jsonResult('collection list', { collections: collections.map((c) => collectionJson(c, disk)) } satisfies CollectionListData));
     return;
   }
-  out(`Collections in ${manager.label}:`);
+  out(ui`${heading(`Collections in ${manager.label}`)}:`);
   if (collections.length === 0) out('  None');
   for (const c of collections) {
     const notes = [count(c.scriptCount, 'script'), ...(c.enabled ? [] : ['disabled'])];
-    out(`  ${collectionLabel(c)}: ${c.name} (${c.kind}): ${notes.join(', ')}`);
+    out(ui`  ${collectionMarked(c)} (${c.kind}): ${notes.join(', ')}`);
     // Not when its name is its location, as a directory's is by default.
-    if (c.location !== undefined && c.location !== c.name) out(`      ${c.location}`);
-    if (c.error) out(`      Failed to load: ${c.error}`);
+    if (c.location !== undefined && c.location !== c.name) out(ui`      ${url(c.location)}`);
+    if (c.error) out(asError(`      Failed to load: ${c.error}`));
     const pending = pendingText(c, disk);
     if (pending) out(`      ${pending}`);
   }
@@ -191,7 +192,6 @@ function pendingText(c: ManagedCollection, disk: ManagedOnDisk | null): string |
 
 // A script's line in `script list` and `collection show`: `* E3: Name 1.2 (disabled): INVALID`.
 function scriptLine(s: ManagedScript, view: RunView | undefined, disk: ManagedOnDisk | null): string {
-  const name = s.version ? `${s.name} ${s.version}` : s.name;
   const label = scriptLabel(s, view);
   const onDisk = disk?.scripts[s.id];
   const notes = [
@@ -201,7 +201,7 @@ function scriptLine(s: ManagedScript, view: RunView | undefined, disk: ManagedOn
     ...(s.run !== undefined ? [`run ${s.run}'s${view?.own.has(s.id) ? ` script ${view.own.get(s.id)}` : ''}`] : []),
     ...(s.leftBy !== undefined ? [`left by run ${s.leftBy}, which ended`] : []),
   ];
-  return `${isSelected(s, view) ? '* ' : '  '}${label !== undefined ? `${label}: ` : ''}${name}${notes.length > 0 ? ` (${notes.join(', ')})` : ''}${s.status === 'invalid' ? ': INVALID' : ''}`;
+  return ui`${isSelected(s, view) ? ui`${selected('*')} ` : '  '}${label !== undefined ? ui`${idRole(label)}: ` : ''}${nameRole(s.name)}${s.version ? ` ${s.version}` : ''}${notes.length > 0 ? ` (${notes.join(', ')})` : ''}${s.status === 'invalid' ? ': INVALID' : ''}`;
 }
 
 /**
@@ -213,12 +213,12 @@ export function pickCollection(collections: readonly ManagedCollection[], name: 
   const numbered = /^[Cc](\d+)$/.exec(name);
   if (numbered) {
     const found = collections.find((c) => c.number === Number(numbered[1]));
-    if (!found) throw new Error(`There is no collection C${numbered[1]}. Use collection list to list them.`);
+    if (!found) throw new Error(`There is no collection ${quoted(`C${numbered[1]}`)}. Use ${quoted('collection list')} to list them.`);
     return found;
   }
   if (name.startsWith('id=')) {
     const found = collections.find((c) => c.id === name.slice(3));
-    if (!found) throw new Error(`There is no collection with ${name}. Use collection list to list them.`);
+    if (!found) throw new Error(`There is no collection with ${quoted(name)}. Use ${quoted('collection list')} to list them.`);
     return found;
   }
   const lower = name.toLowerCase();
@@ -229,9 +229,9 @@ export function pickCollection(collections: readonly ManagedCollection[], name: 
   // Not runs' test collections by a part: they all share most of a name.
   const found = whole.length > 0 ? whole : collections.filter((c) => c.run === undefined && c.name.toLowerCase().includes(lower));
   if (found.length === 1) return found[0];
-  if (found.length === 0) throw new Error(`No collection is named ${name}. Use collection list to list them.`);
+  if (found.length === 0) throw new Error(`No collection is named ${quoted(name)}. Use ${quoted('collection list')} to list them.`);
   const which = sortedCollections(found).map((c) => `${collectionLabel(c)} (${c.name})`).join(', ');
-  throw new Error(`${name} names more than one collection: ${which}. Name one by its number (C1), or id=<id>.`);
+  throw new Error(`${quoted(name)} names more than one collection: ${which}. Name one by its number (${quoted('C1')}), or ${quoted('id=<id>')}.`);
 }
 
 /**
@@ -257,7 +257,7 @@ export async function scriptList(
   const listed = shown.filter((c) => picked || byCollection.get(c.id)!.length > 0);
   if (listed.length === 0) out(`No scripts are installed in ${manager.label}`);
   for (const c of listed) {
-    out(`${collectionLabel(c)}: ${c.name}`);
+    out(ui`${collectionMarked(c)}`);
     const these = byCollection.get(c.id)!;
     if (these.length === 0) out('  No scripts');
     for (const s of these) {
@@ -265,9 +265,9 @@ export async function scriptList(
       // A run's script by its path as the run was given it, rather than
       // its `scratch:` URL.
       const where = s.loadedAs ?? s.location;
-      if (where) out(`      ${where}`);
+      if (where) out(ui`      ${url(where)}`);
       if (s.error) out(`      ${s.error}`);
-      if (s.refreshError) out(`      Its last refresh failed: ${s.refreshError}`);
+      if (s.refreshError) out(asError(`      Its last refresh failed: ${s.refreshError}`));
     }
   }
 }
@@ -314,7 +314,7 @@ export function pickManagedScript(scripts: readonly ManagedScript[], name: strin
   if (/^\d+$/.test(name)) {
     const id = [...view?.own ?? []].find(([, n]) => n === name)?.[0];
     const found = id === undefined ? undefined : scripts.find((s) => s.id === id);
-    if (!found) throw new Error(view ? none : `There is no script ${name}: A number names one of a run's scripts, in that run. Name an installed script as E1.`);
+    if (!found) throw new Error(view ? none : `There is no script ${quoted(name)}: A number names one of a run's scripts, in that run. Name an installed script as ${quoted('E1')}.`);
     return found;
   }
   const numbered = /^[Ee](\d+)$/.exec(name);
@@ -332,9 +332,9 @@ export function pickManagedScript(scripts: readonly ManagedScript[], name: strin
   const whole = scripts.filter((s) => s.name.toLowerCase() === lower);
   const found = whole.length > 0 ? whole : scripts.filter((s) => s.name.toLowerCase().includes(lower));
   if (found.length === 1) return found[0];
-  if (found.length === 0) throw new Error(`No script is named ${name}. Use script list to list them.`);
+  if (found.length === 0) throw new Error(`No script is named ${quoted(name)}. Use ${quoted('script list')} to list them.`);
   const which = found.map((s) => scriptShown(s, view)).join(', ');
-  throw new Error(`${name} names more than one script: ${which}. Name one by its number (E1), or id=<id>.`);
+  throw new Error(`${quoted(name)} names more than one script: ${which}. Name one by its number (${quoted('E1')}), or ${quoted('id=<id>')}.`);
 }
 
 /** Another manager won't replace the person's own script `shown` (`E3: Name`) without `replace`. */
@@ -346,7 +346,7 @@ export class ReplaceRefused extends Error {
 
 /** Said for a script name that names none. */
 export function noSuchScript(name: string): string {
-  return `There is no script ${name}. Use script list to list the installed scripts.`;
+  return `There is no script ${quoted(name)}. Use ${quoted('script list')} to list the installed scripts.`;
 }
 
 // The run's selected script, for a script verb given none.
@@ -354,7 +354,7 @@ function selectedScript(scripts: readonly ManagedScript[], view: RunView): Manag
   const selected = view.selected!;
   if ('label' in selected) return pickManagedScript(scripts, selected.label, view);
   const found = scripts.find((s) => s.id === selected.internalId);
-  if (!found) throw new Error('The selected script is not installed. Name one: script <script> <verb>.');
+  if (!found) throw new Error('The selected script is not installed. Name one: `script <script> <verb>`.');
   return found;
 }
 
@@ -367,6 +367,16 @@ function scriptShown(s: ManagedScript, view: RunView | undefined): string {
 // `C3: Name`.
 function collectionShown(c: ManagedCollection): string {
   return `${collectionLabel(c)}: ${c.name}`;
+}
+
+// scriptShown and collectionShown marked up, for output lines (not errors).
+function scriptMarked(s: ManagedScript, view: RunView | undefined): string {
+  const label = scriptLabel(s, view);
+  return label !== undefined ? ui`${idRole(label)}: ${nameRole(s.name)}` : nameRole(s.name);
+}
+
+function collectionMarked(c: ManagedCollection): string {
+  return ui`${idRole(collectionLabel(c))}: ${nameRole(c.name)}`;
 }
 
 /**
@@ -385,19 +395,19 @@ export async function managerVerb(
   const selectable = command === 'script' && verb !== 'uninstall' && ctx.run?.selected !== undefined;
   // The old order: `collection rename C3 New name`.
   if (command === 'collection' && subject === undefined && args.length > 0) {
-    ctx.out(`[sm-dev] ERROR: Name the collection before the verb: collection ${args[0]} ${verb}${args.slice(1).map((w) => ` ${w}`).join('')}`);
+    ctx.out(`${MISTAKE_PREFIX}Name the collection before the verb: ${quoted(`collection ${args[0]} ${verb}${args.slice(1).map((w) => ` ${w}`).join('')}`)}`);
     return false;
   }
   if (verb !== 'install' && subject === undefined && !selectable) {
     // Named, not optional, in the usage shown: it is needed here.
     const named = usage?.replace(`${command} [${command}]`, `${command} <${command}>`);
     const why = command === 'script' && verb !== 'uninstall' ? ` There is no selected script ${ctx.run ? 'in this run' : 'outside a run'}.` : '';
-    ctx.out(`[sm-dev] ERROR: The ${command} ${verb} command needs ${command === 'script' ? 'a script' : 'a collection'}: ${named}${why ? `.${why}` : ''}`);
+    ctx.out(`${MISTAKE_PREFIX}The ${quoted(`${command} ${verb}`)} command needs ${command === 'script' ? 'a script' : 'a collection'}: ${quoted(named)}${why ? `.${why}` : ''}`);
     return false;
   }
   const need = NEEDS[`${command} ${verb}`];
   if (need && args.length === 0) {
-    ctx.out(`[sm-dev] ERROR: The ${command} ${verb} command needs ${need}: ${usage}`);
+    ctx.out(`${MISTAKE_PREFIX}The ${quoted(`${command} ${verb}`)} command needs ${need}: ${quoted(usage)}`);
     return false;
   }
   try {
@@ -423,7 +433,7 @@ async function attempt<T>(what: string, change: Promise<T>): Promise<T> {
 // Refused, saying why, when `--force` is needed and wasn't given.
 function forced(ctx: ManagerContext, flags: Record<string, string | true>, what: string, change: string): boolean {
   if (!ctx.guarded || flags['--force'] === true) return true;
-  ctx.out(`[sm-dev] ERROR: ${what} is installed in ${ctx.manager.label} in this browser, so this would ${change} for real. Use --force to continue.`);
+  ctx.out(`${MISTAKE_PREFIX}${what} is installed in ${ctx.manager.label} in this browser, so this would ${change} for real. Use ${quoted('--force')} to continue.`);
   return false;
 }
 
@@ -445,12 +455,12 @@ async function collectionVerb(ctx: ManagerContext, verb: string, subject: string
       // Refused whatever --force says, so said first.
       if (picked.run !== undefined) throw new Error(`Could not ${verb} ${shown}: ${RUN_COLLECTION_LOCKED}`);
       const next = await attempt(`${verb} ${shown}`, ctx.manager.setCollectionEnabled(picked.id, enabled));
-      changed(next, `${enabled ? 'Enabled' : 'Disabled'} ${collectionShown(next)}`);
+      changed(next, ui`${enabled ? 'Enabled' : 'Disabled'} ${collectionMarked(next)}`);
       return true;
     }
     case 'rename': {
       const next = await attempt(`rename ${shown}`, ctx.manager.renameCollection(picked.id, args.join(' ')));
-      changed(next, `Renamed ${collectionLabel(next)} to ${next.name}`);
+      changed(next, ui`Renamed ${idRole(collectionLabel(next))} to ${nameRole(next.name)}`);
       return true;
     }
     case 'refresh': {
@@ -469,15 +479,15 @@ async function collectionVerb(ctx: ManagerContext, verb: string, subject: string
       const failed = result.failed ?? [];
       const notes = [`${result.updated.length} updated`, `${result.unchanged} unchanged`, ...(result.removed.length > 0 ? [`${result.removed.length} removed`] : []),
         ...(failed.length > 0 ? [`${failed.length} failed`] : [])];
-      ctx.out(`Refreshed ${collectionShown(result.collection)}: ${notes.join(', ')}`);
-      if (result.collection.error) ctx.out(`  Failed to load: ${result.collection.error}`);
+      ctx.out(ui`Refreshed ${collectionMarked(result.collection)}: ${notes.join(', ')}`);
+      if (result.collection.error) ctx.out(asError(`  Failed to load: ${result.collection.error}`));
       for (const s of result.updated) {
-        ctx.out(`  Updated ${scriptShown(s, view)}${s.status === 'invalid' ? ': INVALID' : ''}`);
+        ctx.out(ui`  Updated ${scriptMarked(s, view)}${s.status === 'invalid' ? ': INVALID' : ''}`);
         if (s.error) ctx.out(`      ${s.error}`);
-        if (s.refreshError) ctx.out(`      Its last refresh failed: ${s.refreshError}`);
+        if (s.refreshError) ctx.out(asError(`      Its last refresh failed: ${s.refreshError}`));
       }
-      for (const s of result.removed) ctx.out(`  Removed ${scriptShown(s, view)}`);
-      for (const s of failed) ctx.out(`  Failed to refresh ${scriptShown(s, view)}: ${s.refreshError ?? ''}`);
+      for (const s of result.removed) ctx.out(ui`  Removed ${scriptMarked(s, view)}`);
+      for (const s of failed) ctx.out(asError(ui`  Failed to refresh ${scriptMarked(s, view)}: ${s.refreshError ?? ''}`));
       return true;
     }
   }
@@ -494,16 +504,17 @@ async function collectionShow(ctx: ManagerContext, picked: ManagedCollection): P
     } satisfies J.CollectionShowData));
     return;
   }
-  ctx.out(collectionShown(picked));
+  ctx.out(collectionMarked(picked));
+  // Values are markup.
   const rows: [string, string][] = [
     ['Kind', picked.kind],
-    ...(picked.location !== undefined ? [['Location', picked.location] as [string, string]] : []),
-    ...(picked.run !== undefined ? [['Run', `the test collection of run ${runOfLinkId(picked.run)}`] as [string, string]] : []),
+    ...(picked.location !== undefined ? [['Location', url(picked.location)] as [string, string]] : []),
+    ...(picked.run !== undefined ? [['Run', ui`The test collection of run ${idRole(runOfLinkId(picked.run))}`] as [string, string]] : []),
     ['Status', `${picked.enabled ? 'Enabled' : 'Disabled'}${picked.error ? `, failed to load: ${picked.error}` : ''}`],
     ...(disk?.collections[picked.id] ? [['On disk', `${pendingSummary(disk.collections[picked.id])}, not loaded yet`] as [string, string]] : []),
     ['Scripts', scripts.length === 0 ? 'None' : count(scripts.length, 'script')],
   ];
-  for (const [name, value] of rows) ctx.out(`  ${`${name}:`.padEnd(12)}${value}`);
+  for (const [name, value] of rows) ctx.out(ui`  ${heading(name)}:${' '.repeat(Math.max(0, 11 - name.length))}${value}`);
   for (const s of scripts) ctx.out(scriptLine(s, ctx.run, disk));
 }
 
@@ -554,7 +565,7 @@ async function scriptVerb(
       const enabled = verb === 'enable';
       if (othersRun !== undefined) throw new Error(`${shown} is a script of run ${othersRun}, which only that run changes`);
       const next = await attempt(`${verb} ${shown}`, ctx.manager.setScriptEnabled(picked.id, enabled));
-      enableChanged(next, `${enabled ? 'Enabled' : 'Disabled'} ${scriptShown(next.script, view)}`);
+      enableChanged(next, ui`${enabled ? 'Enabled' : 'Disabled'} ${scriptMarked(next.script, view)}`);
       return true;
     }
     case 'refresh': {
@@ -576,7 +587,7 @@ async function scriptVerb(
         ctx.out(jsonResult('script refresh', { script: scriptJson(s, collection, view), updated: result.updated } satisfies J.ScriptRefreshData));
         return true;
       }
-      ctx.out(`Refreshed ${scriptShown(s, view)}: ${result.updated ? 'updated' : 'no change'}${s.status === 'invalid' ? ', and it is INVALID' : ''}`);
+      ctx.out(ui`Refreshed ${scriptMarked(s, view)}: ${result.updated ? 'updated' : 'no change'}${s.status === 'invalid' ? ', and it is INVALID' : ''}`);
       if (s.error) ctx.out(`  ${s.error}`);
       if (s.refreshError) ctx.out(`  The refresh failed, so its last good copy still runs: ${s.refreshError}`);
       return true;
@@ -588,7 +599,7 @@ async function scriptVerb(
       if (collection && collection.kind !== 'container') throw new Error(`Could not uninstall ${shown}: ${LISTED_BY_LOCATION}`);
       if (!forced(ctx, flags, shown, 'remove it')) return false;
       const was = await attempt(`uninstall ${shown}`, ctx.manager.uninstallScript(picked.id));
-      changed(was, `Uninstalled ${scriptShown(was, view)}${collection ? ` from ${collectionShown(collection)}` : ''}`, { removed: true });
+      changed(was, ui`Uninstalled ${scriptMarked(was, view)}${collection ? ui` from ${collectionMarked(collection)}` : ''}`, { removed: true });
       return true;
     }
     case 'move': {
@@ -596,7 +607,7 @@ async function scriptVerb(
       const target = pickCollection(collections, args[0]);
       if (target.id === picked.collectionId) throw new Error(`${shown} is already in ${collectionShown(target)}`);
       const moved = await attempt(`move ${shown} to ${collectionShown(target)}`, ctx.manager.moveScript(picked.id, target.id));
-      enableChanged(moved, `Moved ${scriptShown(moved.script, view)} to ${collectionShown(target)}`);
+      enableChanged(moved, ui`Moved ${scriptMarked(moved.script, view)} to ${collectionMarked(target)}`);
       return true;
     }
   }
@@ -609,7 +620,7 @@ async function scriptInstall(ctx: ManagerContext, given: string, flags: Record<s
     ? given
     : pathToFileURL(path.resolve(ctx.cwd, given)).href;
   if (!/\.user\.js$/i.test(new URL(location).pathname)) {
-    throw new Error(`${given} is not a .user.js file or URL, so it can't be installed as a script`);
+    throw new Error(`${quoted(given)} is not a .user.js file or URL, so it can't be installed as a script`);
   }
   const collections = await ctx.manager.collections();
   const into = typeof flags['--collection'] === 'string' ? pickCollection(collections, flags['--collection']) : null;
@@ -617,7 +628,7 @@ async function scriptInstall(ctx: ManagerContext, given: string, flags: Record<s
   const replace = !ctx.guarded || flags['--force'] === true;
   let result: ScriptInstall;
   try {
-    result = await attempt(`install ${given}`, ctx.manager.installScript(location, into?.id ?? null, replace));
+    result = await attempt(`install ${quoted(given)}`, ctx.manager.installScript(location, into?.id ?? null, replace));
   } catch (err) {
     const refused = (err as Error).cause;
     if (!(refused instanceof ReplaceRefused)) throw err;
@@ -636,12 +647,12 @@ async function scriptInstall(ctx: ManagerContext, given: string, flags: Record<s
     } satisfies J.ScriptInstallData));
     return true;
   }
-  const where = holder ? ` in ${collectionShown(holder)}` : '';
+  const where = holder ? ui` in ${collectionMarked(holder)}` : '';
   if (result.already) {
-    ctx.out(`${scriptShown(s, ctx.run)} is already installed${where}`);
+    ctx.out(ui`${scriptMarked(s, ctx.run)} is already installed${where}`);
     return true;
   }
-  ctx.out(`${result.replaced ? 'Replaced the script with the same name and namespace: ' : 'Installed '}${scriptShown(s, ctx.run)}${where}${s.enabled ? '' : ', disabled'}${s.status === 'invalid' ? ', but it is INVALID' : ''}`);
+  ctx.out(ui`${result.replaced ? 'Replaced the script with the same name and namespace: ' : 'Installed '}${scriptMarked(s, ctx.run)}${where}${s.enabled ? '' : ', disabled'}${s.status === 'invalid' ? ', but it is INVALID' : ''}`);
   if (s.error) ctx.out(`  ${s.error}`);
   for (const line of enableEffects(result, holder, collections, ctx.run)) ctx.out(`  ${line}`);
   return true;
@@ -652,19 +663,20 @@ function inDisabledCollection(s: ManagedScript, collection: ManagedCollection | 
   return s.enabled && collection !== undefined && !collection.enabled;
 }
 
-// What turning a script on did besides, one line each: its other copies
-// it turned off, as the viewer does, and whether it runs at all.
+// What turning a script on did besides, one line each, marked up for
+// output: its other copies it turned off, as the viewer does, and
+// whether it runs at all.
 function enableEffects(
   result: ScriptEnable, collection: ManagedCollection | undefined, collections: readonly ManagedCollection[], view: RunView | undefined,
 ): string[] {
   const lines = result.turnedOff.map((s) => {
     const label = scriptLabel(s, view);
-    const shown = s.version !== undefined ? `Version ${s.version}${label !== undefined ? ` (${label})` : ''}` : scriptShown(s, view);
+    const shown = s.version !== undefined ? ui`Version ${s.version}${label !== undefined ? ui` (${idRole(label)})` : ''}` : scriptMarked(s, view);
     const holder = collections.find((c) => c.id === s.collectionId);
-    return `Another version of this script was disabled: ${shown}${holder ? ` in collection ${collectionShown(holder)}` : ''}`;
+    return ui`Another version of this script was disabled: ${shown}${holder ? ui` in collection ${collectionMarked(holder)}` : ''}`;
   });
   if (inDisabledCollection(result.script, collection)) {
-    lines.push(`${scriptShown(result.script, view)} is enabled, but won't run because it's inside disabled collection ${collectionShown(collection)}`);
+    lines.push(ui`${scriptMarked(result.script, view)} is enabled, but won't run because it's inside disabled collection ${collectionMarked(collection)}`);
   }
   return lines;
 }
@@ -695,11 +707,11 @@ function fileJson(f: ManagedFile): J.FileStatus {
   };
 }
 
-// `https://x/lib.js (ok)`, with its local stand-in. No status when the
-// manager doesn't say.
+// `https://x/lib.js (ok)`, with its local stand-in, marked up. No
+// status when the manager doesn't say.
 function fileText(f: ManagedFile): string {
-  const status = f.loaded === undefined ? undefined : f.loaded ? (f.local !== undefined ? `ok, read from ${f.local}` : 'ok') : 'not loaded';
-  return `${f.name !== undefined ? `${f.name} ` : ''}${f.url}${status ? ` (${status})` : ''}`;
+  const status = f.loaded === undefined ? undefined : f.loaded ? (f.local !== undefined ? ui`ok, read from ${url(f.local)}` : 'ok') : 'not loaded';
+  return ui`${f.name !== undefined ? ui`${code(f.name)} ` : ''}${url(f.url)}${status ? ui` (${status})` : ''}`;
 }
 
 // `script show`: one script in full.
@@ -727,36 +739,41 @@ async function scriptShow(ctx: ManagerContext, picked: ManagedScript, collection
     } satisfies J.ScriptShowData));
     return;
   }
-  ctx.out(`${label !== undefined ? `${label}: ` : ''}${details.name}${details.version ? ` ${details.version}` : ''}`);
+  ctx.out(ui`${scriptMarked(details, ctx.run)}${details.version ? ` ${details.version}` : ''}`);
+  // Values are markup.
   const rows: [string, string | string[]][] = [];
   const add = (name: string, value: string | string[] | undefined): void => {
     if (value !== undefined && value.length > 0) rows.push([name, value]);
   };
-  add('Namespace', details.namespace);
-  add('Description', details.description);
-  add('Author', details.author);
-  add('Collection', collection ? collectionShown(collection) : undefined);
-  add('Run', details.run !== undefined ? `A script of run ${details.run}` : details.leftBy !== undefined ? `Left by run ${details.leftBy}, which ended` : undefined);
-  add('Location', details.loadedAs ?? details.location);
-  add('Status', `${details.enabled ? 'Enabled' : 'Disabled'}, ${details.status === 'invalid' ? 'INVALID' : 'ok'}${onDisk ? `, ${onDisk} on disk` : ''}`);
-  add('Error', details.error);
-  add('Refresh', details.refreshError ? `The last refresh failed, so its last good copy runs: ${details.refreshError}` : undefined);
-  add('Updated', details.updatedAt !== undefined ? shortTime(details.updatedAt) : undefined);
-  add('@match', details.match);
-  add('@include', details.include);
-  add('@exclude', details.exclude);
-  add('@exclude-match', details.excludeMatch);
-  add('@run-at', details.runAt);
-  add('@grant', details.grants.length > 0 ? details.grants.join(', ') : undefined);
+  // Plain text, escaped as markup; none when empty, as `add` skips.
+  const plain = (text: string | undefined): string | undefined => (text ? ui`${text}` : undefined);
+  const codes = (values: string[]): string[] => values.map((v) => code(v));
+  add('Namespace', plain(details.namespace));
+  add('Description', plain(details.description));
+  add('Author', plain(details.author));
+  add('Collection', collection ? collectionMarked(collection) : undefined);
+  add('Run', details.run !== undefined ? ui`A script of run ${idRole(details.run)}` : details.leftBy !== undefined ? ui`Left by run ${idRole(details.leftBy)}, which ended` : undefined);
+  const location = details.loadedAs ?? details.location;
+  add('Location', location ? url(location) : undefined);
+  add('Status', plain(`${details.enabled ? 'Enabled' : 'Disabled'}, ${details.status === 'invalid' ? 'INVALID' : 'ok'}${onDisk ? `, ${onDisk} on disk` : ''}`));
+  add('Error', details.error ? asError(details.error) : undefined);
+  add('Refresh', details.refreshError ? asError(`The last refresh failed, so its last good copy runs: ${details.refreshError}`) : undefined);
+  add('Updated', details.updatedAt !== undefined ? plain(shortTime(details.updatedAt)) : undefined);
+  add('@match', codes(details.match));
+  add('@include', codes(details.include));
+  add('@exclude', codes(details.exclude));
+  add('@exclude-match', codes(details.excludeMatch));
+  add('@run-at', details.runAt ? code(details.runAt) : undefined);
+  add('@grant', details.grants.length > 0 ? details.grants.map((g) => code(g)).join(', ') : undefined);
   add('@require', details.requires.map(fileText));
   add('@resource', details.resources.map(fileText));
-  if (ctx.run) add('Tabs', tabs.length > 0 ? tabs.map((t) => `${t.activity.tab}: ${t.text}`) : 'None open');
+  if (ctx.run) add('Tabs', tabs.length > 0 ? tabs.map((t) => ui`${idRole(t.activity.tab)}: ${t.text}`) : 'None open');
   if (details.valueCount !== undefined) {
-    add('Values', details.valueCount === 0 ? 'None' : `${details.valueCount} stored${ctx.run && label !== undefined ? ` (values ${label} to see them)` : ''}`);
+    add('Values', details.valueCount === 0 ? 'None' : ui`${details.valueCount} stored${ctx.run && label !== undefined ? ui` (${cmd(`values ${label}`)} to see them)` : ''}`);
   }
   const width = Math.max(...rows.map(([name]) => name.length)) + 2;
   for (const [name, value] of rows) {
     const lines = typeof value === 'string' ? [value] : value;
-    lines.forEach((line, i) => ctx.out(`  ${(i === 0 ? `${name}:` : '').padEnd(width)}${line}`));
+    lines.forEach((line, i) => ctx.out(ui`  ${i === 0 ? ui`${heading(name)}:` : ''}${' '.repeat(Math.max(0, width - (i === 0 ? name.length + 1 : 0)))}${line}`));
   }
 }

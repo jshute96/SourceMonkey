@@ -21,7 +21,7 @@ test('an extension with no version, or an older major, is refused as too old', (
 test('an extension with a newer major is refused, saying to update sm-dev', () => {
   const { error } = compareProtocol({ major: major + 1, minor: 0 });
   assert.match(error, /^This sm-dev is older than SourceMonkey in this browser/);
-  assert.match(error, /Update sm-dev: Run pnpm run build/);
+  assert.match(error, /Update sm-dev: Run `pnpm run build`/);
 });
 
 test('a minor that differs starts the run with a note naming the older side and its fix', () => {

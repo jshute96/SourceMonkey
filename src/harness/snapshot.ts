@@ -11,7 +11,7 @@
 // frame) only. An element keeps its ref from one snapshot to the next,
 // unless its role or name changed, which gives it a new one.
 
-import type { FrameLocator, Locator, Page } from '@playwright/test';
+import type { Frame, FrameLocator, Locator, Page } from '@playwright/test';
 
 import { CONTEXT_LINES } from './command-list.js';
 
@@ -23,10 +23,17 @@ export function refOf(selector: string): string | null {
   return REF.exec(selector)?.[1] ?? null;
 }
 
-// Per page, its latest snapshot: for each ref, the refs of the iframes
-// it's inside, outermost first, and what its line calls it; and which
-// document it was of.
-const snapshots = new WeakMap<Page, { frames: Map<string, string[]>; labels: Map<string, string>; document: number }>();
+// Per page, its latest snapshots: for each ref, the refs of the iframes
+// it's inside, outermost first, what its line calls it, and the frame
+// whose snapshot it's from when that's an iframe's (`snapshot
+// --frame`); and which document they were of.
+interface NotedRefs {
+  frames: Map<string, string[]>;
+  labels: Map<string, string>;
+  roots: Map<string, Frame>;
+  document: number;
+}
+const snapshots = new WeakMap<Page, NotedRefs>();
 
 /**
  * The elements a selector names, or the element a ref does.
@@ -38,22 +45,41 @@ const snapshots = new WeakMap<Page, { frames: Map<string, string[]>; labels: Map
  * ("Invalid frame in aria-ref selector"). Starting from `:root` keeps
  * Playwright from reading the prefix at all.
  */
-export function locate(page: Page, selector: string): Locator {
+export function locate(page: Page, selector: string, within?: Frame): Locator {
   const ref = refOf(selector);
-  if (!ref) return page.locator(selector);
-  let scope: Page | FrameLocator = page;
-  for (const frame of snapshots.get(page)?.frames.get(ref) ?? []) scope = scope.locator(`:root >> aria-ref=${frame}`).contentFrame();
+  // A selector looks in `within` (`--frame`), else the page's own frame.
+  if (!ref) return (within ?? page).locator(selector);
+  const noted = snapshots.get(page);
+  let scope: Page | Frame | FrameLocator = noted?.roots.get(ref) ?? page;
+  for (const frame of noted?.frames.get(ref) ?? []) scope = scope.locator(`:root >> aria-ref=${frame}`).contentFrame();
   return scope.locator(`:root >> aria-ref=${ref}`);
 }
 
 /**
- * Notes where each ref of a snapshot is, for `locate`: the latest
- * snapshot is the only one Playwright resolves refs against. `tree` is
- * the whole page's; `document`, the page's document it was of, from
- * `documentOf`.
+ * Notes where each ref of a snapshot is, for `locate`: each frame's
+ * latest snapshot is the only one Playwright resolves its refs against.
+ * `tree` is the whole page's, or with `within` an iframe's; `document`,
+ * the page's document it was of, from `documentOf`.
+ *
+ * An iframe's snapshot adds to the page's latest of the same document
+ * rather than replacing it: the page's other frames keep theirs, and an
+ * element keeps its ref from one snapshot to the next.
  */
-export function noteRefs(page: Page, tree: string, document: number): void {
-  snapshots.set(page, { frames: framePaths(tree), labels: refLabels(tree), document });
+export function noteRefs(page: Page, tree: string, document: number, within?: Frame): void {
+  const paths = framePaths(tree);
+  const labels = refLabels(tree);
+  const before = snapshots.get(page);
+  if (!within || before?.document !== document) {
+    const roots = new Map<string, Frame>();
+    if (within) for (const ref of paths.keys()) roots.set(ref, within);
+    snapshots.set(page, { frames: paths, labels, roots, document });
+    return;
+  }
+  for (const [ref, path] of paths) {
+    before.frames.set(ref, path);
+    before.roots.set(ref, within);
+  }
+  for (const [ref, label] of labels) before.labels.set(ref, label);
 }
 
 /**
@@ -368,9 +394,9 @@ const HTML_MAX = 500;
  * a selector would only work within it.
  */
 export async function probeMatches(
-  page: Page, selector: string, max: number, timeout: number,
+  page: Page, selector: string, max: number, timeout: number, within?: Frame,
 ): Promise<{ framed: boolean; count: number; matches: Match[] }> {
-  const locator = locate(page, selector);
+  const locator = locate(page, selector, within);
   const limits = { max, htmlMax: HTML_MAX };
   // Playwright finds a ref's element in the world it took the snapshot
   // in, which `evaluate` looks in and `evaluateAll` doesn't.

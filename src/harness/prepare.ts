@@ -49,6 +49,7 @@ import { buildParseCheckSource } from '../composed-source.js';
 import { resolveScriptWorld, type InjectionWorld } from '../script-world.js';
 import { checkParseNode } from './parse-check-node.js';
 import { MANIFEST_FILENAME } from '../collection-scan.js';
+import { WARNING_LEVEL } from './output-style.js';
 
 export type { InjectionWorld };
 
@@ -326,7 +327,7 @@ export function parseCheckWarning(note: ParseCheckNote): string {
  */
 export function warningLines(prepared: PreparedScript, { parseCheck = true } = {}): string[] {
   const lines = prepared.startupLogs.map((l) => `${l.level}: ${describeDiagnostic(l.message, l.location)}`);
-  if (parseCheck && prepared.parseCheckNote) lines.push(`warn: ${parseCheckWarning(prepared.parseCheckNote)}`);
+  if (parseCheck && prepared.parseCheckNote) lines.push(`${WARNING_LEVEL}${parseCheckWarning(prepared.parseCheckNote)}`);
   return lines;
 }
 

@@ -13,6 +13,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const CLI = fileURLToPath(new URL('../../../lib/harness/cli.js', import.meta.url));
+// Help is checked as plain text, whatever this environment asks for.
+delete process.env.FORCE_COLOR;
 const SCRIPT = fileURLToPath(new URL('../../examples/gm-menu/gm-menu.user.js', import.meta.url));
 
 function run(...args) {
@@ -71,7 +73,7 @@ test('match takes several scripts and URLs in any order, a heading per script', 
   // With no .user.js argument, and no run to take the script from.
   const none = spawnSync(process.execPath, [CLI, 'match', page], { encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
   assert.equal(none.status, 2);
-  assert.match(none.stderr, /^ERROR: The match command needs a script \(a \.user\.js file\) and at least one URL, or a run to take them from$/m);
+  assert.match(none.stderr, /^ERROR: The `match` command needs a script \(a \.user\.js file\) and at least one URL, or a run to take them from$/m);
 });
 
 test('match expands a glob in the examples directory into its script and pages; * in a URL needs its scheme', () => {
@@ -255,7 +257,7 @@ test('piped stdin is commands with none on the line, or with --stdin, checked in
     stdout: '',
     stderr: [
       'stdin > evel 1',
-      'ERROR: evel is not a command a run takes. Use sm-dev help to list them.',
+      'ERROR: `evel` is not a command a run takes. Use `sm-dev help commands` to list them.',
       'ERROR: Line 3: Only the cdp, eval, set and type commands take a {{ block, so its lines up to }} are skipped',
       'ERROR: The {{ block on line 5 has no }} line to end it',
       'None of the commands were run.',
@@ -263,17 +265,17 @@ test('piped stdin is commands with none on the line, or with --stdin, checked in
     ].join('\n'),
   });
   // Checked, then sent: here to no run.
-  assert.deepEqual(piped('tabs\n', '--stdin'), { code: 1, stdout: '', stderr: 'No sm-dev runs are active. Start one with sm-dev start.\n' });
+  assert.deepEqual(piped('tabs\n', '--stdin'), { code: 1, stdout: '', stderr: 'No sm-dev runs are active. Start one with `sm-dev start`.\n' });
   // Not read without --stdin once the line has a command.
   assert.deepEqual(piped('evel\n', 'list'), { code: 0, stdout: 'No sm-dev runs are active\n', stderr: '' });
   // A line of only --run names the run stdin's commands go to.
-  const noD9 = { code: 1, stdout: '', stderr: 'There is no run D9. Use sm-dev list to see the runs.\n' };
+  const noD9 = { code: 1, stdout: '', stderr: 'There is no run D9. Use `sm-dev list` to see the runs.\n' };
   assert.deepEqual(piped('status\n', '--run', 'D9'), noD9);
   assert.deepEqual(piped('status\n', '--run=D9', '--stdin'), noD9);
   assert.deepEqual(piped('status\n', '--run', '9'), { code: 2, stdout: '', stderr: 'ERROR: Runs are named D1, D2 and so on. Did you mean --run D9?\n' });
   // A line-wide flag goes first.
   assert.deepEqual(piped('', 'list', '--stdin'), {
-    code: 2, stdout: '', stderr: 'ERROR: The --stdin flag is for the whole command line, so it goes first, before any command: sm-dev --stdin <command>\n',
+    code: 2, stdout: '', stderr: 'ERROR: The --stdin flag is for the whole command line, so it goes first, before any command: `sm-dev --stdin <command>`\n',
   });
 });
 
@@ -285,7 +287,7 @@ test('stdin from a file is checked in full; lines a pipe sends later run as read
   const r = spawnSync(process.execPath, [CLI], { stdio: [fd, 'pipe', 'pipe'], encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
   closeSync(fd);
   assert.equal(r.status, 2);
-  assert.equal(r.stderr, 'stdin > evel 1\nERROR: evel is not a command a run takes. Use sm-dev help to list them.\nNone of the commands were run.\n');
+  assert.equal(r.stderr, 'stdin > evel 1\nERROR: `evel` is not a command a run takes. Use `sm-dev help commands` to list them.\nNone of the commands were run.\n');
   // A pipe: a command first, then later a mistake, said as it comes,
   // which stops the rest, as a failed command does. The mistake is
   // sent only once `list` has answered: a fixed pause raced a slow
@@ -308,7 +310,7 @@ test('stdin from a file is checked in full; lines a pipe sends later run as read
   assert.equal(code, 1);
   assert.equal(stderr, [
     'stdin > evel 1',
-    'ERROR: evel is not a command a run takes. Use sm-dev help to list them.',
+    'ERROR: `evel` is not a command a run takes. Use `sm-dev help commands` to list them.',
     'That command failed, so the commands after it were not run',
     '',
   ].join('\n'));
@@ -320,49 +322,49 @@ test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
   assert.deepEqual(cli('tabs {{\n}}'), {
     code: 2, out: 'ERROR: Line 1: Only the cdp, eval, set and type commands take a {{ block, so its lines up to }} are skipped. None of the commands were run.',
   });
-  const none = { code: 1, out: 'No sm-dev runs are active. Start one with sm-dev start.' };
+  const none = { code: 1, out: 'No sm-dev runs are active. Start one with `sm-dev start`.' };
   assert.deepEqual(cli('tabs'), none);
   // status needs no run: it shows the browser, and says there are no runs.
   const status = spawnSync(process.execPath, [CLI, '--browser', '1', 'status'], { encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
   assert.equal(status.status, 0);
   assert.equal(status.stdout, [
-    'No current run. (Use start or attach to connect to one.)',
-    'Browser: none answering at 127.0.0.1:1. Start one with sm-dev --open-browser --browser 127.0.0.1:1.',
+    'No current run. (Use `start` or `attach` to connect to one.)',
+    'Browser: None answering at 127.0.0.1:1. Start one with `sm-dev --open-browser --browser 127.0.0.1:1`.',
     '',
     'No other active runs',
     '',
   ].join('\n'));
-  const noD9 = { code: 1, out: 'There is no run D9. Use sm-dev list to see the runs.' };
+  const noD9 = { code: 1, out: 'There is no run D9. Use `sm-dev list` to see the runs.' };
   assert.deepEqual(cli('--run', 'D9', 'status'), noD9);
   assert.deepEqual(cli('--run=d9', 'status'), noD9);
   assert.deepEqual(cli('--run', '9', 'status'), { code: 2, out: 'ERROR: Runs are named D1, D2 and so on. Did you mean --run D9?' });
   assert.deepEqual(cli('--run', 'x', 'status'), { code: 2, out: 'ERROR: The run ID x is not valid. Run IDs are D and then letters, digits, _ or -.' });
-  assert.deepEqual(cli('--run'), { code: 2, out: 'ERROR: The --run flag needs a run ID, e.g. --run D2' });
-  assert.deepEqual(cli('--run=', 'status'), { code: 2, out: 'ERROR: The --run flag needs a run ID, e.g. --run D2' });
+  assert.deepEqual(cli('--run'), { code: 2, out: 'ERROR: The --run flag needs a run ID, e.g. `--run D2`' });
+  assert.deepEqual(cli('--run=', 'status'), { code: 2, out: 'ERROR: The --run flag needs a run ID, e.g. `--run D2`' });
   // Line-wide flags go first, before any command.
   assert.deepEqual(cli('status', '--run', 'D9'), {
-    code: 2, out: 'ERROR: The --run flag is for the whole command line, so it goes first, before any command: sm-dev --run ... <command>',
+    code: 2, out: 'ERROR: The --run flag is for the whole command line, so it goes first, before any command: `sm-dev --run ... <command>`',
   });
   assert.deepEqual(cli('validate', 'x', '--root', '.'), {
-    code: 2, out: 'ERROR: The --root flag is for the whole command line, so it goes first, before any command: sm-dev --root ... <command>',
+    code: 2, out: 'ERROR: The --root flag is for the whole command line, so it goes first, before any command: `sm-dev --root ... <command>`',
   });
   // stop and attach take a run by its ID.
   assert.deepEqual(cli('stop', 'D9'), noD9);
   assert.deepEqual(cli('stop', '9'), { code: 2, out: 'ERROR: Runs are named D1, D2 and so on. Did you mean stop D9?' });
   assert.deepEqual(cli('stop', 'x'), { code: 2, out: 'ERROR: The run ID x is not valid. Run IDs are D and then letters, digits, _ or -.' });
-  assert.deepEqual(cli('stop', 'D1', 'D2'), { code: 2, out: 'ERROR: The stop command takes at most one argument (stop [ID|--all])' });
+  assert.deepEqual(cli('stop', 'D1', 'D2'), { code: 2, out: 'ERROR: The `stop` command takes at most one argument (stop [ID|--all])' });
   // An unknown name is said to be one, whatever flags come with it.
-  assert.match(cli('frob', '--x').out, /^ERROR: Unknown command: frob\./);
-  assert.match(cli('--detach', 'frob').out, /^ERROR: Unknown command: frob\./);
+  assert.match(cli('frob', '--x').out, /^ERROR: Unknown command: `frob`\./);
+  assert.match(cli('--detach', 'frob').out, /^ERROR: Unknown command: `frob`\./);
   assert.match(cli('D1', 'status', '--x').out, /^ERROR: Name the run with --run/);
   // A run command's flag before the command is moved after it; one it
   // doesn't take is said to be unknown.
-  assert.deepEqual(cli('--timeout-seconds', '9', 'open', 'http://x/'), { code: 2, out: 'ERROR: The --timeout-seconds flag goes after the command: open http://x/ --timeout-seconds 9' });
-  assert.match(cli('--log-source', 'all', 'open', 'http://x/').out, /^ERROR: The open command has no --log-source flag\./);
+  assert.deepEqual(cli('--timeout-seconds', '9', 'open', 'http://x/'), { code: 2, out: 'ERROR: The --timeout-seconds flag goes after the command: `open http://x/ --timeout-seconds 9`' });
+  assert.match(cli('--log-source', 'all', 'open', 'http://x/').out, /^ERROR: The `open` command has no --log-source flag\./);
   // Checked alone, since after a command's text it would be text.
-  assert.match(cli('--nowait', 'eval', '1').out, /^ERROR: The eval command has no --nowait flag\./);
+  assert.match(cli('--nowait', 'eval', '1').out, /^ERROR: The `eval` command has no --nowait flag\./);
   // A flag's value that is also the command's name isn't taken for it.
-  assert.match(cli('--find', 'open', 'open', 'http://x/').out, /^ERROR: The open command has no --find flag\./);
+  assert.match(cli('--find', 'open', 'open', 'http://x/').out, /^ERROR: The `open` command has no --find flag\./);
   // A line-wide flag after a command's text isn't taken as part of it,
   // unless quoted with the text, or the command takes it itself.
   assert.match(cli('eval', '1', '--run', 'D1').out, /^ERROR: The --run flag is for the whole command line/);
@@ -374,22 +376,22 @@ test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
   assert.deepEqual(cli('stop', '--all', 'D1'), { code: 2, out: 'ERROR: The --all flag stops every run, so the stop command can\'t take a run ID too' });
   assert.deepEqual(cli('attach', 'D9'), noD9);
   assert.deepEqual(cli('attach'), none);
-  assert.deepEqual(cli('list', 'x'), { code: 2, out: 'ERROR: The list command takes no arguments' });
-  assert.deepEqual(cli('exit', 'x'), { code: 2, out: 'ERROR: The exit command takes no arguments' });
-  assert.deepEqual(cli('D1', 'status'), { code: 2, out: 'ERROR: Name the run with --run, before the command: sm-dev --run D1 status' });
+  assert.deepEqual(cli('list', 'x'), { code: 2, out: 'ERROR: The `list` command takes no arguments' });
+  assert.deepEqual(cli('exit', 'x'), { code: 2, out: 'ERROR: The `exit` command takes no arguments' });
+  assert.deepEqual(cli('D1', 'status'), { code: 2, out: 'ERROR: Name the run with --run, before the command: `sm-dev --run D1 status`' });
   // wait has nothing to watch without a run.
-  assert.deepEqual(cli('wait', '1s'), { code: 2, out: 'ERROR: The wait command needs a run to watch. Start or attach one first.' });
+  assert.deepEqual(cli('wait', '1s'), { code: 2, out: 'ERROR: The `wait` command needs a run to watch. Start or attach one first.' });
   // Only line-wide flags: stdin is read for commands, and has none.
   assert.deepEqual(cli('--root', '.'), { code: 2, out: `ERROR: ${NO_COMMANDS}` });
   // A run's command with a flag it doesn't take, refused before any run is looked for.
-  assert.deepEqual(cli('status', '--bad'), { code: 2, out: 'ERROR: The status command has no --bad flag. It takes --frames, --json, --nojson.' });
-  for (const name of ['open', 'reload', 'newtab']) assert.match(cli(name, '--bogus').out, new RegExp(`^ERROR: The ${name} command has no --bogus flag\\. It takes --noscript, --script, `));
+  assert.deepEqual(cli('status', '--bad'), { code: 2, out: 'ERROR: The `status` command has no --bad flag. It takes --frames, --json, --nojson.' });
+  for (const name of ['open', 'reload', 'newtab']) assert.match(cli(name, '--bogus').out, new RegExp(`^ERROR: The \`${name}\` command has no --bogus flag\\. It takes --noscript, --script, `));
   // The flags it does take, for a near miss.
-  assert.deepEqual(cli('wait', '--timeout', '9'), { code: 2, out: 'ERROR: The wait command has no --timeout flag. It takes --timeout-seconds, --log-source, --find, --since.' });
-  assert.deepEqual(cli('snapshot --out f --bad'), { code: 2, out: 'ERROR: The snapshot command has no --bad flag. It takes --visible, --out, --find, --up, --context, --limit, --timeout-seconds.' });
+  assert.deepEqual(cli('wait', '--timeout', '9'), { code: 2, out: 'ERROR: The `wait` command has no --timeout flag. It takes --timeout-seconds, --log-source, --find, --since, --frame.' });
+  assert.deepEqual(cli('snapshot --out f --bad'), { code: 2, out: 'ERROR: The `snapshot` command has no --bad flag. It takes --visible, --out, --find, --up, --context, --limit, --timeout-seconds, --frame.' });
   // In free text, -- is content: eval's JavaScript here.
-  assert.deepEqual(cli('eval', 'T2', '--x'), { code: 2, out: 'ERROR: The eval command has no --x flag. It takes --page, --script, --file, --out, --timeout-seconds.' });
-  assert.deepEqual(cli('eval', 'x', '--y'), { code: 1, out: 'No sm-dev runs are active. Start one with sm-dev start.' });
+  assert.deepEqual(cli('eval', 'T2', '--x'), { code: 2, out: 'ERROR: The `eval` command has no --x flag. It takes --page, --script, --file, --out, --timeout-seconds, --frame.' });
+  assert.deepEqual(cli('eval', 'x', '--y'), { code: 1, out: 'No sm-dev runs are active. Start one with `sm-dev start`.' });
   // -h anywhere is help, even among a run's command's words.
   assert.deepEqual(cli('type', 'input', '-h'), { code: 0, out: 'Usage: sm-dev type [tab] <selector> <text> [options]' });
 });
@@ -402,10 +404,10 @@ test('several commands on a line are checked before any runs, then run in order,
   assert.equal(bad.stdout, '');
   assert.equal(bad.stderr, [
     'arg > evel 1',
-    'ERROR: Unknown command: evel. Use sm-dev --help to list the commands.',
+    'ERROR: Unknown command: `evel`. Use `sm-dev help commands` to list the commands.',
     'arg > \'status',
     'bogus\'',
-    'ERROR: bogus is not a command a run takes. Use sm-dev help to list them.',
+    'ERROR: `bogus` is not a command a run takes. Use `sm-dev help commands` to list them.',
     'arg > stop x',
     'ERROR: The run ID x is not valid. Run IDs are D and then letters, digits, _ or -.',
     'None of the commands were run.',
@@ -415,7 +417,7 @@ test('several commands on a line are checked before any runs, then run in order,
   const r = line('--', 'list', '--', 'tabs', '--', 'list');
   assert.equal(r.status, 1);
   assert.equal(r.stdout, 'arg > list\nNo sm-dev runs are active\narg > tabs\n');
-  assert.equal(r.stderr, 'No sm-dev runs are active. Start one with sm-dev start.\nThat command failed, so the commands after it were not run\n');
+  assert.equal(r.stderr, 'No sm-dev runs are active. Start one with `sm-dev start`.\nThat command failed, so the commands after it were not run\n');
 });
 
 test('start needs something to keep it going, and --interactive a terminal', () => {
@@ -447,27 +449,100 @@ test('--lang takes language tags, alone or in a list, and refuses anything else'
   ]) assert.deepEqual(run(SCRIPT, '--lang', given), { code: 2, out: message });
 });
 
-test('--help lists every command, in sections, and how to name things', () => {
-  const r = spawnSync(process.execPath, [CLI, '--help'], { encoding: 'utf8' });
-  assert.equal(r.status, 0);
-  assert.match(r.stdout, /^Global options:$/m);
-  assert.match(r.stdout, /^Concurrent runs:$/m);
-  assert.match(r.stdout, /^ {2}Checking scripts:$/m);
-  // A section's own help command, as a hint.
-  assert.match(r.stdout, /^Logs \[help logs\]:$/m);
-  assert.match(r.stdout, /^ {2}click \[tab\] <selector>\n {20}Click an element\.$/m);
-  assert.match(r.stdout, /^ {4}menu \[what\] /m);
-  // Unindented, beside the commands.
-  assert.match(r.stdout, /^Specifying objects:$/m);
-  assert.match(r.stdout, /^ {4}Dname {11}A user-chosen/m);
-  // Every line fits a terminal.
-  for (const line of r.stdout.split('\n')) assert.ok(line.length <= 79, line);
-});
-
 function help(...args) {
   const r = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8' });
   return { code: r.status, out: r.stdout + r.stderr };
 }
+
+test('--help and help list the topics by name, and no commands', () => {
+  const r = spawnSync(process.execPath, [CLI, '--help'], { encoding: 'utf8' });
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /^- help commands +Short list of all commands$/m);
+  assert.match(r.stdout, /^## Topics\n- input /m);
+  assert.match(r.stdout, /^- runs +Run IDs, /m);
+  // A subtopic under its topic, its bullet indented.
+  assert.match(r.stdout, /^ {2}- checking +Match and validate scripts$/m);
+  assert.doesNotMatch(r.stdout, /click \[tab\]/);
+  assert.equal(help('help').out, r.stdout);
+});
+
+test('help all lists every command, in sections, and how to name things', () => {
+  const r = spawnSync(process.execPath, [CLI, 'help', 'all'], { encoding: 'utf8' });
+  assert.equal(r.status, 0);
+  assert.equal(help('help', 'full').out, r.stdout);
+  assert.match(r.stdout, /^## Flags \[`help flags`\]\n\n### Global options \[`help global-flags`\]$/m);
+  assert.match(r.stdout, /^## Concurrent runs \[`help runs`\]$/m);
+  assert.match(r.stdout, /^### Checking scripts \[`help checking`\]$/m);
+  assert.match(r.stdout, /^## Logs \[`help logs`\]\n\nA run tracks/m);
+  // A term too long for the column gets a line of its own.
+  assert.match(r.stdout, /^ {2}click \[tab\] <selector>\n {22}Click an element\.$/m);
+  assert.match(r.stdout, /^ {2}menu \[what\] +List the tab's menu commands/m);
+  // A command's arguments, bulleted under it.
+  assert.match(r.stdout, /^ {4}all-scripts +In a run: all loaded scripts\.$/m);
+  // Text lists wrap under their own text.
+  assert.match(r.stdout, /^ {2}- A selector looks inside F2: .*\n {4}`screenshot`/m);
+  // Example commands are a code block, as is.
+  assert.match(r.stdout, /^ {4}sm-dev status$/m);
+  assert.match(r.stdout, /^## Specifying objects \[`help objects`\]$/m);
+  assert.match(r.stdout, /^ {2}Dname +A user-chosen/m);
+  // Every line fits a terminal.
+  for (const line of r.stdout.split('\n')) assert.ok(line.length <= 79, line);
+});
+
+test('help commands lists each command once, with a line on it, under its sections', () => {
+  const { out, code } = help('help', 'commands');
+  assert.equal(code, 0);
+  assert.match(out, /^## Scripts \[`help scripts`\]\n- scripts +List the loaded scripts/m);
+  assert.match(out, /^### Waiting \[`help waiting`\]\n- wait +Wait for the page to settle/m);
+  // Each command's first sentence only, and wait (of several forms) once.
+  assert.match(out, /^- status +Show overall status, script list, and tab list\.$/m);
+  assert.equal(out.match(/^- wait/gm).length, 1);
+  assert.doesNotMatch(out, /Global options/);
+  for (const line of out.split('\n')) assert.ok(line.length <= 79, line);
+});
+
+test('help <topic> shows that section; one that is just a command shows its help', () => {
+  const tabs = help('help', 'tabs').out;
+  assert.match(tabs, /^## Tabs \[`help tabs`\]\n {2}tabs /);
+  assert.match(tabs, /^### Saved pages \[`help saved-pages`\]$/m);
+  assert.doesNotMatch(tabs, /Frames/);
+  // A subsection alone, as a top heading.
+  assert.match(help('help', 'waiting').out, /^## Waiting \[`help waiting`\]\n/);
+  // frames and logs are their command's sections: the command's help.
+  assert.equal(help('help', 'frames').out, help('frames', '--help').out);
+  assert.match(help('help', 'logs').out, /^Usage: sm-dev logs /);
+  // --help on a command is its help, even where a section has its name.
+  assert.match(help('scripts', '--help').out, /^Usage: sm-dev scripts\n/);
+});
+
+test('help in color shows code in cyan and headings bold, without backticks, laid out to fit', () => {
+  const r = spawnSync(process.execPath, [CLI, 'help', 'all'], { encoding: 'utf8', env: { ...process.env, FORCE_COLOR: '1' } });
+  assert.equal(r.status, 0);
+  assert.doesNotMatch(r.stdout, /`/);
+  assert.match(r.stdout, /^\x1b\[1m## Logs \[\x1b\[36mhelp logs\x1b\[39m\]\x1b\[22m$/m);
+  const plain = r.stdout.replace(/\x1b\[\d+m/g, '');
+  // List terms show without backticks either way, so the column is the same.
+  assert.match(plain, /^ {2}menu \[what\] +List the tab's menu commands/m);
+  assert.equal(plain.split('\n').find((line) => line.startsWith('  menu [what] ')).indexOf('List'), 22);
+  for (const line of plain.split('\n')) assert.ok(line.length <= 79, line);
+  // FORCE_COLOR=0, or output that isn't a terminal: backticks, no color.
+  const off = spawnSync(process.execPath, [CLI, 'help', 'all'], { encoding: 'utf8', env: { ...process.env, FORCE_COLOR: '0' } });
+  assert.doesNotMatch(off.stdout, /\x1b/);
+  assert.equal(off.stdout, help('help', 'all').out);
+});
+
+test('help topic names are unique, and none is a topic help has of its own', async () => {
+  const { HELP_SECTIONS } = await import('../../../lib/harness/command-list.js');
+  const all = (sections) => sections.flatMap((s) => [s, ...all(s.subsections ?? [])]);
+  const names = all(HELP_SECTIONS).map((s) => s.name).filter(Boolean);
+  assert.equal(new Set(names).size, names.length);
+  for (const reserved of ['all', 'full', 'commands']) assert.ok(!names.includes(reserved), reserved);
+});
+
+test('an unknown name given twice is named once', () => {
+  assert.deepEqual(help('frob', '--help', '--', 'frob', '-h'), { code: 2, out: 'ERROR: `frob` is not a command. Use `sm-dev help commands` to list the commands.\n' });
+  assert.match(help('help', 'nope', 'nope').out, /^ERROR: `nope` is not a command or help topic\./);
+});
 
 test('help for one command shows its entry and only its flags', () => {
   const match = help('help', 'match');
@@ -476,7 +551,7 @@ test('help for one command shows its entry and only its flags', () => {
   assert.match(match.out, /^Arguments:\n {2}all-scripts +In a run/m);
   // Its section's note comes along.
   assert.match(match.out, /^Without a run, these check script files and URLs\./m);
-  assert.doesNotMatch(match.out, /--browser|--watch|^ {2}start /m);
+  assert.doesNotMatch(match.out, /--browser|--watch|`start /m);
   // A section's options, only for the commands that take them.
   assert.match(help('help', 'click').out, /^Common options:\n {2}--nowait /m);
   assert.doesNotMatch(help('help', 'eval').out, /--nowait/);
@@ -509,7 +584,7 @@ test('--help anywhere on a line shows each command\'s help once, and runs nothin
   assert.ok(all.indexOf('Usage: sm-dev newtab') < all.indexOf('Usage: sm-dev eval'));
   assert.match(r.out, /^Usage: sm-dev eval \[tab\] <js> \[options\]$/m);
   assert.doesNotMatch(r.out, /No sm-dev runs|has no --bad flag/);
-  assert.deepEqual(help('list', '--', 'frob', '-h'), { code: 2, out: 'ERROR: frob is not a command. Use sm-dev --help to list them.\n' });
+  assert.deepEqual(help('list', '--', 'frob', '-h'), { code: 2, out: 'ERROR: `frob` is not a command. Use `sm-dev help commands` to list the commands.\n' });
 });
 
 test('each run command takes the flags its help lists, and no others', async () => {
@@ -520,11 +595,11 @@ test('each run command takes the flags its help lists, and no others', async () 
   const json = ['--json', '--nojson'];
   const expected = {
     newtab: saved, open: saved, reload: loads,
-    closetab: ['--force', T], cdp: ['--file', T],
-    click: ['--at', '--button', '--count', '--modifiers', '--nowait', T], hover: ['--at', '--modifiers', '--nowait', T], type: ['--nowait', '--file', '--clear', T], key: ['--nowait', T],
-    eval: ['--page', '--script', '--file', '--out', T], snapshot: ['--visible', '--out', '--find', '--up', '--context', '--limit', T], screenshot: ['--full', T], probe: ['--css', '--html', ...json, T],
+    closetab: ['--force', T], cdp: ['--file', '--frame', T],
+    click: ['--at', '--button', '--count', '--modifiers', '--nowait', '--frame', T], hover: ['--at', '--modifiers', '--nowait', '--frame', T], type: ['--nowait', '--file', '--clear', '--frame', T], key: ['--nowait', T],
+    eval: ['--page', '--script', '--frame', '--file', '--out', T], snapshot: ['--visible', '--out', '--find', '--up', '--context', '--limit', '--frame', T], screenshot: ['--full', '--frame', T], probe: ['--css', '--html', '--frame', ...json, T],
     load: [T], update: [T],
-    wait: ['--timeout-seconds', '--log-source', '--find', '--since'], logs: ['--tail', '--log-source', '--find', '--since', ...json], status: ['--frames', ...json], values: json, set: ['--file', '--force'], menu: json, tabs: ['--frames', ...json], frames: json, focus: [],
+    wait: ['--timeout-seconds', '--log-source', '--find', '--since', '--frame'], logs: ['--tail', '--log-source', '--find', '--since', ...json], status: ['--frames', ...json], values: json, set: ['--file', '--force'], menu: json, tabs: ['--frames', ...json], frames: json, focus: [],
   };
   for (const [name, flags] of Object.entries(expected)) assert.deepEqual(commandFlags(name).sort(), [...flags].sort(), name);
 });
@@ -535,25 +610,27 @@ test('help covers a run\'s commands and aliases, and refuses unknown names', () 
   assert.match(typed.out, /^Usage: sm-dev status \[options\]$/m);
   // `script` is `scripts`'s singular, so its help is the same.
   assert.match(typed.out, /^Usage: sm-dev scripts\n {7}sm-dev script <script>$/m);
-  assert.equal(help('help', 'script').out, help('help', 'scripts').out);
+  assert.equal(help('help', 'script').out, help('scripts', '--help').out);
   assert.match(typed.out, /^Usage: sm-dev get <key> \[options\]$/m);
   assert.doesNotMatch(typed.out, /menu \[what\]/);
   // Every form of a command of several.
-  assert.equal(help('help', 'wait').out.match(/^ {2}wait /gm).length, 5);
+  // help's own, with the row for --help after it.
+  assert.match(help('help', 'help').out, /^ {7}sm-dev <command> --help$/m);
+  assert.equal(help('help', 'wait').out.match(/^ {2}wait/gm).length, 5);
   // ? is help, and keys is key.
   assert.equal(help('?', 'keys').out, help('help', 'key').out);
-  assert.deepEqual(help('help', 'nope'), { code: 2, out: 'ERROR: nope is not a command. Use sm-dev --help to list them.\n' });
+  assert.deepEqual(help('help', 'nope'), { code: 2, out: 'ERROR: `nope` is not a command or help topic. Use `sm-dev help` to list the topics, or `sm-dev help commands` for the commands.\n' });
 });
 
 test('the browser options are global, and only one browser is chosen', () => {
   assert.deepEqual(run(SCRIPT, '--open-browser'), {
     code: 2,
-    out: 'ERROR: The --open-browser flag is for the whole command line, so it goes first, before any command: sm-dev --open-browser <command>',
+    out: 'ERROR: The --open-browser flag is for the whole command line, so it goes first, before any command: `sm-dev --open-browser <command>`',
   });
   for (const flag of ['--temp-browser', '--headed']) {
-    assert.deepEqual(run(SCRIPT, flag), { code: 2, out: `ERROR: The ${flag} flag is for the whole command line, so it goes first, before any command: sm-dev ${flag} <command>` });
+    assert.deepEqual(run(SCRIPT, flag), { code: 2, out: `ERROR: The ${flag} flag is for the whole command line, so it goes first, before any command: \`sm-dev ${flag} <command>\`` });
   }
-  assert.deepEqual(run(SCRIPT, '--profile', 'x'), { code: 2, out: 'ERROR: The --profile flag is for the whole command line, so it goes first, before any command: sm-dev --profile ... <command>' });
+  assert.deepEqual(run(SCRIPT, '--profile', 'x'), { code: 2, out: 'ERROR: The --profile flag is for the whole command line, so it goes first, before any command: `sm-dev --profile ... <command>`' });
   assert.deepEqual(cliLine('--headed', 'start', SCRIPT), { code: 2, out: 'ERROR: The --headed flag only applies with --temp-browser' });
   assert.deepEqual(cliLine('--mute', 'start', SCRIPT), { code: 2, out: 'ERROR: The --mute flag only applies with --temp-browser or --open-browser' });
   assert.deepEqual(cliLine('--temp-browser', '--mute', '--nomute', 'start', SCRIPT), { code: 2, out: 'ERROR: The command line takes --mute or --nomute, not both' });
@@ -564,7 +641,7 @@ test('the browser options are global, and only one browser is chosen', () => {
   // Given on a line with no start, they'd do nothing.
   assert.deepEqual(cliLine('--temp-browser', 'eval', '1'), { code: 2, out: 'ERROR: The --temp-browser flag is for the runs a start begins, and this line has no start' });
   // start's own --browser would go elsewhere than the browser --open-browser starts.
-  assert.deepEqual(cliLine('--open-browser', 'start', SCRIPT, '--browser', '9300', '--detach'), { code: 2, out: 'ERROR: The start command connects to the browser --open-browser starts, so give --browser once, first: sm-dev --open-browser --browser ... start ...' });
+  assert.deepEqual(cliLine('--open-browser', 'start', SCRIPT, '--browser', '9300', '--detach'), { code: 2, out: 'ERROR: The `start` command connects to the browser --open-browser starts, so give --browser once, first: `sm-dev --open-browser --browser ... start ...`' });
   // A value in the same word, and not the next option taken for one.
   assert.deepEqual(cliLine('--browser=9222', '--temp-browser', 'start', SCRIPT), { code: 2, out: 'ERROR: The --temp-browser flag can\'t be used with --browser' });
   assert.deepEqual(cliLine('--browser', '--open-browser'), { code: 2, out: 'ERROR: The --browser flag needs a value' });

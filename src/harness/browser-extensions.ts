@@ -12,6 +12,7 @@
 // - Loading an unpacked extension is CDP's `Extensions.loadUnpacked`,
 //   which works over a debugging port in Chrome and Chromium alike.
 
+import { quoted, WARNING_PREFIX } from './output-style.js';
 import { MANAGERS, MANAGER_NAMES, managerFlag, type ManagerName } from './managers.js';
 import { sourceMonkeyExtensionId } from './extension-backend.js';
 
@@ -288,7 +289,7 @@ export async function loadUnpacked(endpoint: string, dir: string): Promise<strin
 export function otherManagersWarning(managers: InstalledManager[], chosen: ManagerName, browserArg = ''): string[] {
   const others = [...new Set(managers.filter((m) => m.enabled && m.manager !== chosen).map((m) => m.manager))];
   return others.map((manager) =>
-    `Warning: ${MANAGERS[manager].label} is also enabled in this browser, so its scripts run too. To turn it off, use sm-dev${browserArg} ${managerFlag(manager)} manager disable.`);
+    `${WARNING_PREFIX}${MANAGERS[manager].label} is also enabled in this browser, so its scripts run too. To turn it off, use ${quoted(`sm-dev${browserArg} ${managerFlag(manager)} manager disable`)}.`);
 }
 
 /**

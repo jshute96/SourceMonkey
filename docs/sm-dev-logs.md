@@ -217,9 +217,11 @@ until the year 2255.
   started with `[name]`. The `[name]` rule passed many sites' own lines
   (`[Analytics] ...`) into the stream.
 - Now the run reads raw CDP console events (the Chrome DevTools
-  Protocol's `Runtime.consoleAPICalled`) on a session of its own per
-  tab (`ConsoleStacks` in run.ts). They carry the JavaScript context
-  the call ran in and its stack.
+  Protocol's `Runtime.consoleAPICalled`) on sessions of its own per
+  tab (`ConsoleStacks` in run.ts): the page's, and one per
+  cross-origin iframe Chrome runs in a process of its own
+  (frame-sessions.ts). They carry the JavaScript context the call ran
+  in, and so its frame, and its stack.
   - Each is paired with Playwright's console event by the call's
     timestamp, which both carry. A line waits up to 250ms for its
     copy, then falls back to the call site.
@@ -233,6 +235,12 @@ until the year 2255.
 - Uncaught errors go by their stack's text: the scripts' when it
   names SourceMonkey's code, or has no frames at all (a thrown
   string). A script body's throw prints as its `threw` event instead.
+  - A stackless error thrown in an iframe none of the run's scripts
+    match (by URL, `@noframes` counted) is the page's: an ad frame's
+    cross-origin `SecurityError`, say.
+  - The frame comes from the protocol's copy of the error
+    (`Runtime.exceptionThrown`), paired with Playwright's by its
+    message.
 - The `[name]` rule is gone.
 - Under Violentmonkey or Tampermonkey, the same with its URLs
   (`ExtensionHost.external`): its worlds and its code

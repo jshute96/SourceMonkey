@@ -27,19 +27,21 @@ import { fileURLToPath } from 'node:url';
 
 import { CommandAssembler, NONE_RUN, echoCommand, parseCommandList, shellWord, unclosedBlockMessage, type AssembledCommand } from './command-lines.js';
 import {
-  commandWords, managerCommandOf, managerCommand, onlyInspects, readPromptCommands, runCommandHelp, runCommandMistake, setJsonOutput, writeOutputLine,
+  commandWords, managerCommandOf, managerCommand, onlyInspects, readPromptCommands, runCommandHelp, runCommandMistake, runLogLabelUi, setJsonOutput, writeOutputLine,
 } from './console-commands.js';
 import { parseLang } from './browser-lang.js';
 import { parseCommandArgs, splitWords } from './command-args.js';
 import { DEFAULT_MANAGER, MANAGERS, managerMistake, managerNamed, type ManagerName } from './managers.js';
 import type { ManagerVerb } from './manager-actions.js';
 import type { ManagerControl } from './manager-commands.js';
-import { MAX_TIMER_SECONDS, OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, TIMEOUT_NEEDS_SECONDS, commandNamed, commandSyntax, commandsHelp, fullHelp, timeoutSecondsMs, unsupportedCommand } from './command-list.js';
+import { MAX_TIMER_SECONDS, OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, TIMEOUT_NEEDS_SECONDS, commandNamed, commandSyntax, commandsHelp, helpText, timeoutSecondsMs, unsupportedCommand } from './command-list.js';
 import { readJsonFile } from './input-file.js';
+import { echoLine, err as errorLine, ERROR_PREFIX, paintOutput, quoted, SM_DEV_PREFIX, streamHasColor } from './output-style.js';
+// The roles for marked-up output, as S.id(...): their names are common locals here.
+import * as S from './output-style.js';
 import { isJsonLine, jsonLayoutMistake, jsonResult, jsonResultData, STDERR_LINE, withLayout, type JsonLayout, type BrowserStatus, type ListData, type MatchData, type RunConnection, type StatusData, type StatusRunsData } from './json-output.js';
 // Node built-ins only, so as cheap to load as the rest here.
 import { runIdOf, type CommandSource, type RunClient, type RunRecord } from './runs.js';
-import { runLogLabel } from './run-log.js';
 import { parseLogSources, type LogSource } from './run-logs.js';
 import { preparedScriptName, withDefaultScheme } from './prepare.js';
 import { pagesToOpen, type PageWord, type SavedPageStart } from './saved-pages.js';
@@ -49,13 +51,29 @@ import {
 } from './checks.js';
 
 
-// After a mistake, in place of the whole help, which would bury it.
-const LIST_COMMANDS = 'Use sm-dev --help to list the commands.';
+// A line to stderr, painted for it as writeOutputLine paints stdout's.
+function writeErr(line: string): void {
+  process.stderr.write(paintOutput(line, streamHasColor(process.stderr)) + '\n');
+}
 
-// `sm-dev help <command>...`, or the mistake for a name that is no command.
-function commandHelp(names: string[]): string {
-  const { text, unknown } = commandsHelp(names);
-  if (unknown.length > 0) throw new UsageError(`${unknown.join(', ')} ${unknown.length === 1 ? 'is' : 'are'} not ${unknown.length === 1 ? 'a command' : 'commands'}. Use sm-dev --help to list them.`);
+// After a mistake, in place of the whole help, which would bury it.
+const LIST_COMMANDS = 'Use `sm-dev help commands` to list the commands.';
+
+// Whether help goes to a terminal that shows color (see streamHasColor).
+function helpInColor(): boolean {
+  return streamHasColor(process.stdout);
+}
+
+// `sm-dev help [topic]...`, and the help of `commands` (`scripts
+// --help`), or the mistake for a name that is none.
+function commandHelp(topics: string[], commands: string[] = []): string {
+  const { text, unknown } = helpText(topics, commands, helpInColor());
+  // Unknown topics are named first, alone: their message covers both kinds.
+  const asTopics = unknown.filter((name) => topics.includes(name));
+  const asCommands = unknown.filter((name) => !topics.includes(name));
+  const are = (names: string[], one: string, many: string): string => `${names.map((n) => quoted(n)).join(', ')} ${names.length === 1 ? `is not ${one}` : `are not ${many}`}`;
+  if (asTopics.length > 0) throw new UsageError(`${are(asTopics, 'a command or help topic', 'commands or help topics')}. Use ${quoted('sm-dev help')} to list the topics, or ${quoted('sm-dev help commands')} for the commands.`);
+  if (asCommands.length > 0) throw new UsageError(`${are(asCommands, 'a command', 'commands')}. ${LIST_COMMANDS}`);
   return text;
 }
 
@@ -143,7 +161,7 @@ function parseArgs(argv: string[]): Opts {
   opts.args = parsed.words;
   // A single-dash word is no argument of these commands' (`-x`).
   const dashed = opts.args.find((word) => /^-./.test(word));
-  if (dashed) throw new UsageError(`Unknown option: ${dashed}`);
+  if (dashed) throw new UsageError(`Unknown option: ${quoted(dashed)}`);
   for (const [flag, value] of Object.entries(parsed.flags)) {
     // Each flag's syntax, value or none, is its help's (command-list.ts).
     const text = typeof value === 'string' ? value : '';
@@ -154,7 +172,7 @@ function parseArgs(argv: string[]): Opts {
       case '--watch': opts.watch = true; break;
       case '--values':
       case '--values-file': {
-        if (opts.valuesFlag) throw new UsageError(`The ${flag} flag can't be used with ${opts.valuesFlag}`);
+        if (opts.valuesFlag) throw new UsageError(`The ${quoted(flag)} flag can't be used with ${quoted(opts.valuesFlag)}`);
         let given: unknown;
         if (flag === '--values') {
           try {
@@ -249,7 +267,7 @@ function scriptsAndUrls(words: string[]): { scripts: string[]; urls: string[]; p
   for (const word of args.filter((a) => !SCRIPT_ARG.test(a))) {
     // A script misnamed would otherwise be opened as a page, leaving
     // the run with no scripts.
-    if (/\.js$/i.test(word) && !/^[a-z][a-z0-9+.-]*:/i.test(word)) throw new UsageError(`${word} is not a userscript: Its name doesn't end in .user.js`);
+    if (/\.js$/i.test(word) && !/^[a-z][a-z0-9+.-]*:/i.test(word)) throw new UsageError(`${quoted(word)} is not a userscript: Its name doesn't end in .user.js`);
     const url = withDefaultScheme(word);
     if (!pages.has(url)) pages.set(url, { word, url });
   }
@@ -323,8 +341,8 @@ async function startCommand(opts: Opts, words: string[], client: Client): Promis
   await client.disconnect();
   for (const old of replaced) {
     // Named, stopRun's own line says enough.
-    if (id === undefined) print(`[sm-dev] Stopping the earlier detached run ${old.id}`);
-    await stopRun(old, print);
+    if (id === undefined) print(`[sm-dev] ${S.ui`Stopping the earlier detached run ${S.id(old.id)}`}`);
+    await stopRun(old, print, true);
     client.stopped(old.id);
   }
   // The values as read here, not the file again: a pipe or `<(...)`
@@ -336,8 +354,8 @@ async function startCommand(opts: Opts, words: string[], client: Client): Promis
   client.started(started.id, started.log, started.exited, { detached: opts.detach, lasting: opts.seconds !== undefined, hold: started.hold });
   if (opts.detach) {
     const idle = opts.idleSeconds ?? DEFAULT_IDLE_SECONDS;
-    print(`[sm-dev] Run ${started.id} now running detached, with ${idle > 0 ? `idle timeout ${duration(idle)}` : 'no idle timeout'}`);
-    print(`[sm-dev] Output log: ${runLogLabel(started.log, started.id)}`);
+    print(`[sm-dev] ${S.ui`Run ${S.id(started.id)} now running detached, with ${idle > 0 ? `idle timeout ${duration(idle)}` : 'no idle timeout'}`}`);
+    print(`[sm-dev] ${S.ui`Output log: ${runLogLabelUi(started.log, started.id)}`}`);
   }
   // Following its stream from here, when the line does more than look.
   if (client.follow) await client.connect();
@@ -355,7 +373,7 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
   // Flags that contradict another, or would silently do nothing with it.
   const clash = (flag: string, others: [boolean, string][]): void => {
     const used = others.filter(([on]) => on).map(([, name]) => name);
-    if (used.length > 0) throw new UsageError(`The ${flag} flag can't be used with ${used.join(' or ')}`);
+    if (used.length > 0) throw new UsageError(`The ${quoted(flag)} flag can't be used with ${used.map((f) => (f.startsWith('--') ? quoted(f) : f)).join(' or ')}`);
   };
   if (opts.noTab) clash('--notab', [[opts.all, '--all'], [urls.length > 0, 'a URL']]);
   // With no scripts, just a browser to drive: the flags that act on
@@ -368,11 +386,11 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
     if (used.length > 0) throw new UsageError(`The start command was given no scripts, so it can't take ${used.join(' or ')}`);
   }
   if (lineManager !== undefined && lineManager !== 'sourcemonkey' && opts.values) {
-    throw new UsageError(`The ${opts.valuesFlag ?? '--values'} flag works with SourceMonkey only, and --manager names ${MANAGERS[lineManager].label}`);
+    throw new UsageError(`The ${quoted(opts.valuesFlag ?? '--values')} flag works with SourceMonkey only, and ${quoted('--manager')} names ${MANAGERS[lineManager].label}`);
   }
   if (lineTempBrowser && opts.cdp !== undefined) throw new UsageError('The --temp-browser flag can\'t be used with --browser');
-  if (lineOpenBrowser && opts.cdp !== undefined) throw new UsageError('The start command connects to the browser --open-browser starts, so give --browser once, first: sm-dev --open-browser --browser ... start ...');
-  if (!opts.detach && !detachedLog && opts.newRun) throw new UsageError('The --new flag only applies with --detach');
+  if (lineOpenBrowser && opts.cdp !== undefined) throw new UsageError('The `start` command connects to the browser `--open-browser` starts, so give `--browser` once, first: `sm-dev --open-browser --browser ... start ...`');
+  if (!opts.detach && !detachedLog && opts.newRun) throw new UsageError('The `--new` flag only applies with `--detach`');
   const files = await Promise.all(scripts.map((s) => scriptFile(s)));
   if (opts.fromSaved) clash('--from-saved', [[opts.all, '--all'], [opts.noTab, '--notab']]);
   // Read before the run starts, so a file that can't be opened is said now.
@@ -458,6 +476,7 @@ async function runHere(
       collectionRoot: lineRoots.collectionRoot,
       localRoots: lineRoots.localRoots,
       out: writeOutputLine,
+      markup: true,
       until,
       onStop: () => stop(),
       onActivity: touch,
@@ -533,7 +552,8 @@ async function detachRun(words: string[], runId: string | undefined): Promise<{ 
     stdio: ['ignore', writing.fd, writing.fd, 'ipc'],
     // This process, as the client that started the run, whose commands
     // it marks as the primary's.
-    env: { ...process.env, SM_DEV_DETACHED_LOG: log, SM_DEV_PRIMARY_PID: String(process.pid) },
+    // Never color in its log, whatever FORCE_COLOR asks of this process.
+    env: { ...process.env, SM_DEV_DETACHED_LOG: log, SM_DEV_PRIMARY_PID: String(process.pid), FORCE_COLOR: '0' },
   });
   await writing.close();
   let ready: { id: string | null } | null = null;
@@ -646,7 +666,7 @@ async function listCommand(opts: Opts): Promise<number> {
     return 0;
   }
   if (runs.length === 0) print(NO_RUNS);
-  else for (const line of runTable(runs)) print(line);
+  else for (const line of runTable(runs, Date.now(), { markup: true })) print(line);
   return 0;
 }
 
@@ -696,7 +716,7 @@ class Client {
     await checkRunBrowser(target);
     checkRunManager(target);
     const { RunClient } = await import('./runs.js');
-    const connection = await RunClient.open(target.id, print, { follow: this.follow, logSources: this.logSources });
+    const connection = await RunClient.open(target.id, print, { follow: this.follow, logSources: this.logSources, markup: true });
     await this.disconnect();
     this.connection = connection;
     this.runId = target.id;
@@ -779,7 +799,7 @@ class Client {
     const code = await run.exited;
     this.owned.delete(id!);
     await this.disconnect();
-    print(`[sm-dev] Output log: ${runLogLabel(run.log, id)}`);
+    print(`[sm-dev] ${S.ui`Output log: ${runLogLabelUi(run.log, id)}`}`);
     return code;
   }
 
@@ -804,15 +824,15 @@ class Client {
     let code = 0;
     for (const [id, { log }] of this.owned) {
       const record = (await liveRuns()).find((r) => r.id === id);
-      if (record && !await stopRun(record, print)) code = 1;
-      print(`[sm-dev] Output log: ${runLogLabel(log, id)}`);
+      if (record && !await stopRun(record, print, true)) code = 1;
+      print(`[sm-dev] ${S.ui`Output log: ${runLogLabelUi(log, id)}`}`);
     }
     this.owned.clear();
     return code;
   }
 }
 
-const NO_RUN_TO_USE = `${NO_RUNS}. Start one with sm-dev start.`;
+const NO_RUN_TO_USE = `${NO_RUNS}. Start one with ${quoted('sm-dev start')}.`;
 
 // The run a command acts on: the one named, else the only one going.
 async function targetRun(wanted: string | undefined): Promise<RunRecord> {
@@ -820,7 +840,7 @@ async function targetRun(wanted: string | undefined): Promise<RunRecord> {
   const runs = await liveRuns();
   if (wanted !== undefined) {
     const found = runs.find((r) => r.id === wanted);
-    if (!found) throw new Error(`There is no run ${wanted}. Use sm-dev list to see the runs.`);
+    if (!found) throw new Error(`There is no run ${quoted(wanted)}. Use ${quoted('sm-dev list')} to see the runs.`);
     return found;
   }
   if (runs.length === 0) throw new Error(NO_RUN_TO_USE);
@@ -866,7 +886,7 @@ async function sendCommand(words: string[], client: Client): Promise<number> {
       for (const line of echoed('arg', command)) echo(line);
       code = await client.send(command.text, 'arg');
       if (stopsLine(code, commandWords(command.text))) {
-        if (i < list.commands.length - 1) process.stderr.write(`${LINE_STOPPED}\n`);
+        if (i < list.commands.length - 1) writeErr(LINE_STOPPED);
         return code;
       }
     }
@@ -903,15 +923,15 @@ async function statusWithoutRun(words: string[], source: CommandSource): Promise
   };
   const runs = await liveRuns();
   if (!json) {
-    print('No current run. (Use start or attach to connect to one.)');
-    print(version ? `Browser: ${address} (Chrome ${version.version}${version.headless ? ', headless' : ''})`
-      : `Browser: none answering at ${address}. Start one with sm-dev --open-browser${browserArg(endpoint)}.`);
+    print(S.message('No current run. (Use `start` or `attach` to connect to one.)'));
+    print(version ? S.ui`${S.heading('Browser')}: ${address} (Chrome ${version.version}${version.headless ? ', headless' : ''})`
+      : S.ui`${S.heading('Browser')}: ${S.message(`None answering at ${address}. Start one with ${quoted(`sm-dev --open-browser${browserArg(endpoint)}`)}.`)}`);
     if (managers) {
-      print(`Managers: ${managersText(managers, chosen, 'chosen')}`);
+      print(S.ui`${S.heading('Managers')}: ${managersText(managers, chosen, 'chosen')}`);
       for (const line of otherManagersWarning(managers, chosen, browserArg(endpoint))) print(line);
     }
     print('');
-    print(runs.length === 0 ? 'No other active runs' : 'Other active runs:');
+    print(runs.length === 0 ? 'No other active runs' : S.ui`${S.heading('Other active runs')}:`);
   }
   const statuses: StatusData[] = [];
   // The command's own --json=, which the runs' results carry too, but
@@ -927,7 +947,7 @@ async function statusWithoutRun(words: string[], source: CommandSource): Promise
       layout ??= result.layout;
     };
     try {
-      const connection = await RunClient.open(run.id, out);
+      const connection = await RunClient.open(run.id, out, { markup: true });
       code = Math.max(code, await connection.send(words.join(' '), { words, source, json: lineJson, rewrite: statusHeading('other', run.detached === true) }));
       await connection.close();
     } catch (err) {
@@ -948,9 +968,13 @@ async function statusWithoutRun(words: string[], source: CommandSource): Promise
  * becomes `Attached run:` and the like, and its JSON gets `connection`.
  */
 function statusHeading(how: RunConnection, detached: boolean): (line: string) => string {
-  const heading = { started: detached ? 'Started run (detached):' : 'Started run:', attached: 'Attached run:', selected: 'Selected run:', other: 'Other run:' }[how];
+  const label = { started: 'Started run', attached: 'Attached run', selected: 'Selected run', other: 'Other run' }[how];
+  const note = how === 'started' && detached ? ' (detached)' : '';
+  // The line as a run sends it: plain from an older run, else marked up.
+  const markedRun = `${S.MARKUP}<h>Run</h>: `;
   return (line) => {
-    if (line.startsWith('Run: ')) return `${heading} ${line.slice('Run: '.length)}`;
+    if (line.startsWith('Run: ')) return `${label}${note}: ${line.slice('Run: '.length)}`;
+    if (line.startsWith(markedRun)) return S.ui`${S.heading(label)}${note}: ` + line.slice(markedRun.length);
     const result = jsonResultData(line);
     const run = result?.data.run as Record<string, unknown> | undefined;
     if (!result || !run) return line;
@@ -959,14 +983,14 @@ function statusHeading(how: RunConnection, detached: boolean): (line: string) =>
   };
 }
 
-const MATCH_FRAMES_NEEDS_RUN = 'The --frames flag checks the iframes of a run\'s tab, so match needs a run for it. Name a frame\'s URL to check it.';
-const MATCH_NEEDS = 'The match command needs a script (a .user.js file) and at least one URL, or a run to take them from';
-const VALIDATE_NEEDS = 'The validate command needs at least one path, or a run to take the script from';
+const MATCH_FRAMES_NEEDS_RUN = 'The `--frames` flag checks the iframes of a run\'s tab, so `match` needs a run for it. Name a frame\'s URL to check it.';
+const MATCH_NEEDS = 'The `match` command needs a script (a .user.js file) and at least one URL, or a run to take them from';
+const VALIDATE_NEEDS = 'The `validate` command needs at least one path, or a run to take the script from';
 const NEEDS_A_RUN: Record<string, string> = {
   match: MATCH_NEEDS,
   validate: VALIDATE_NEEDS,
   // It would only pause, with nothing to show meanwhile.
-  wait: 'The wait command needs a run to watch. Start or attach one first.',
+  wait: 'The `wait` command needs a run to watch. Start or attach one first.',
 };
 
 // The words `match` and `validate` take in a run only: a loaded
@@ -1058,7 +1082,7 @@ function checkedList(text: string): { commands: AssembledCommand[] } {
 }
 
 function unknownRunCommand(name: string): string {
-  return `${name} is not a command a run takes. Use sm-dev help to list them.`;
+  return `${quoted(name)} is not a command a run takes. Use ${quoted('sm-dev help commands')} to list them.`;
 }
 
 /**
@@ -1067,8 +1091,7 @@ function unknownRunCommand(name: string): string {
  * commands with who sent them too (see commandMark in run.ts).
  */
 function echoed(source: CommandSource, command: AssembledCommand): string[] {
-  const [first, ...rest] = echoCommand(command);
-  return [`${source} ${first}`, ...rest];
+  return echoCommand(command, `${source} >`);
 }
 
 const NO_COMMANDS = 'No commands given on either the command line or stdin';
@@ -1106,7 +1129,7 @@ async function runTyped(command: { words: string[]; text: string }, client: Clie
   const help = runCommandHelp({ line: command.text });
   if (help) {
     echo();
-    print(commandsHelp([help]).text.trimEnd());
+    print(commandsHelp([help], helpInColor()).text.trimEnd());
     return 0;
   }
   if (runsHere(command.words)) {
@@ -1186,12 +1209,12 @@ async function stdinCommands(client: Client): Promise<number | null> {
   // when one stopped the rest.
   const run = async (commands: { words: string[]; text: string }[], source: AssembledCommand, more: boolean): Promise<boolean> => {
     for (const [i, command] of commands.entries()) {
-      const heading = commands.length > 1 ? [`stdin > ${command.text}`] : echoed('stdin', source);
+      const heading = commands.length > 1 ? [echoLine('stdin >', command.text)] : echoed('stdin', source);
       code = await runTyped(command, client, 'stdin', () => { for (const l of heading) echo(l); });
       ran++;
       if (client.exiting) return false;
       if (stopsLine(code, command.words)) {
-        if (more || i < commands.length - 1 || !ended || queue.length > 0) process.stderr.write(`${LINE_STOPPED}\n`);
+        if (more || i < commands.length - 1 || !ended || queue.length > 0) writeErr(LINE_STOPPED);
         return false;
       }
     }
@@ -1204,7 +1227,7 @@ async function stdinCommands(client: Client): Promise<number | null> {
     while (typeof line === 'string') {
       n++;
       const got = blocks.push(line);
-      if (got && 'error' in got) mistakes.push(`ERROR: Line ${n}: ${got.error}`);
+      if (got && 'error' in got) mistakes.push(`${ERROR_PREFIX}Line ${n}: ${got.error}`);
       else if (got) {
         const commands = typedCommands(got.command.text);
         let wrong = false;
@@ -1213,7 +1236,7 @@ async function stdinCommands(client: Client): Promise<number | null> {
           if (!mistake) continue;
           if (!wrong) mistakes.push(...echoed('stdin', got.command));
           wrong = true;
-          mistakes.push(`ERROR: ${mistake}`);
+          mistakes.push(`${ERROR_PREFIX}${mistake}`);
         }
         if (!wrong) batch.push({ commands, source: got.command });
       }
@@ -1221,11 +1244,11 @@ async function stdinCommands(client: Client): Promise<number | null> {
     }
     if (line === null) {
       const unclosed = blocks.drop();
-      if (unclosed !== null) mistakes.push(`ERROR: ${unclosedBlockMessage(unclosed)}`);
+      if (unclosed !== null) mistakes.push(`${ERROR_PREFIX}${unclosedBlockMessage(unclosed)}`);
     }
     if (mistakes.length > 0) {
-      for (const m of mistakes) process.stderr.write(`${m}\n`);
-      process.stderr.write(`${NONE_RUN}\n`);
+      for (const m of mistakes) writeErr(m);
+      writeErr(NONE_RUN);
       return 2;
     }
     for (const [i, { commands, source }] of batch.entries()) {
@@ -1237,22 +1260,24 @@ async function stdinCommands(client: Client): Promise<number | null> {
       const assembled = blocks.push(got);
       if (!assembled) continue;
       if ('error' in assembled) {
-        process.stderr.write(`ERROR: Line ${n}: ${assembled.error}\n${LINE_STOPPED}\n`);
+        writeErr(`${ERROR_PREFIX}Line ${n}: ${assembled.error}`);
+        writeErr(LINE_STOPPED);
         return 1;
       }
       const commands = typedCommands(assembled.command.text);
       for (const command of commands) {
         const mistake = await typedMistake(command);
         if (!mistake) continue;
-        for (const l of echoed('stdin', assembled.command)) process.stderr.write(`${l}\n`);
-        process.stderr.write(`ERROR: ${mistake}\n${LINE_STOPPED}\n`);
+        for (const l of echoed('stdin', assembled.command)) writeErr(l);
+        writeErr(`${ERROR_PREFIX}${mistake}`);
+        writeErr(LINE_STOPPED);
         return 1;
       }
       if (!await run(commands, assembled.command, false)) return code;
     }
     const unclosed = blocks.drop();
     if (unclosed !== null) {
-      process.stderr.write(`ERROR: ${unclosedBlockMessage(unclosed)}, so it was not run\n`);
+      writeErr(`${ERROR_PREFIX}${unclosedBlockMessage(unclosed)}, so it was not run`);
       return 1;
     }
   } finally {
@@ -1294,7 +1319,7 @@ function promptCommands(client: Client): Promise<number> {
         for (const command of commands) {
           const mistake = await typedMistake(command);
           if (mistake) {
-            print(`ERROR: ${mistake}`);
+            print(`${ERROR_PREFIX}${mistake}`);
             code = 2;
             return;
           }
@@ -1347,13 +1372,13 @@ async function managerVerbHere(words: string[], client: Client): Promise<number>
   const parsed = parseCommandArgs('manager', { words: words.slice(1) });
   if ('error' in parsed) throw new UsageError(parsed.error);
   if (parsed.help) {
-    print(commandsHelp(['manager']).text.trimEnd());
+    print(commandsHelp(['manager'], helpInColor()).text.trimEnd());
     return 0;
   }
   const verb = parsed.form as ManagerVerb | undefined;
   if (verb === undefined) {
-    throw new UsageError(parsed.words.length > 0 ? `The manager command has no ${parsed.words[0]} verb. It takes fetch, install, enable or disable.`
-      : 'The manager command needs a verb: fetch, install, enable or disable');
+    throw new UsageError(parsed.words.length > 0 ? `The ${quoted('manager')} command has no ${quoted(parsed.words[0])} verb. It takes ${quoted('fetch')}, ${quoted('install')}, ${quoted('enable')} or ${quoted('disable')}.`
+      : 'The `manager` command needs a verb: `fetch`, `install`, `enable` or `disable`');
   }
   const { liveRuns } = await import('./runs.js');
   const { browserArg, browserSetting, sameBrowser } = await import('./run.js');
@@ -1371,11 +1396,11 @@ async function managerVerbHere(words: string[], client: Client): Promise<number>
     : [];
   const { ManagerUsageError, managerAction } = await import('./manager-actions.js');
   try {
-    const done = await managerAction({ verb, manager, endpoint, browserArg: browserArg(endpoint), runsUsing, out: print, note: (line) => process.stderr.write(`${line}\n`) });
+    const done = await managerAction({ verb, manager, endpoint, browserArg: browserArg(endpoint), runsUsing, out: print, note: writeErr });
     return done ? 0 : 1;
   } catch (err) {
     if (err instanceof ManagerUsageError) throw new UsageError(err.message);
-    process.stderr.write(`${(err as Error).message}\n`);
+    writeErr(errorLine((err as Error).message));
     return 1;
   }
 }
@@ -1390,7 +1415,7 @@ async function managerHere(words: string[]): Promise<number> {
   const parsed = parseCommandArgs(name, { words: rest });
   if ('error' in parsed) throw new UsageError(parsed.error);
   if (parsed.help) {
-    print(commandsHelp([name]).text.trimEnd());
+    print(commandsHelp([name], helpInColor()).text.trimEnd());
     return 0;
   }
   const chosen = lineManager ?? DEFAULT_MANAGER;
@@ -1408,13 +1433,13 @@ async function managerHere(words: string[]): Promise<number> {
   const { connectWithoutRun } = await import('./run.js');
   const { firstLine, openManagerLink } = await import('./extension-link.js');
   // What went wrong connecting goes to stderr, as other mistakes do.
-  const session = await connectWithoutRun(lineCdp, (line) => process.stderr.write(`${line}\n`));
+  const session = await connectWithoutRun(lineCdp, (line) => writeErr(errorLine(line)));
   if (!session) return 1;
   let closeManager: (() => Promise<void>) | undefined;
   try {
     const { managersIn, otherManagersWarning } = await import('./browser-extensions.js');
     const { browserArg } = await import('./run.js');
-    for (const line of otherManagersWarning(await managersIn(session.endpoint) ?? [], chosen, browserArg(session.endpoint))) process.stderr.write(`${line}\n`);
+    for (const line of otherManagersWarning(await managersIn(session.endpoint) ?? [], chosen, browserArg(session.endpoint))) writeErr(line);
     let manager: ManagerControl;
     if (chosen !== 'sourcemonkey') {
       const { externalControl, openExternalManager } = await import('./external-manager.js');
@@ -1423,17 +1448,17 @@ async function managerHere(words: string[]): Promise<number> {
       manager = externalControl(external);
     } else {
       const link = await openManagerLink(session.context);
-      if (link.versionNote) process.stderr.write(`${link.versionNote}\n`);
+      if (link.versionNote) writeErr(S.message(link.versionNote));
       manager = link.manager;
     }
     // Its failures go to stderr, as sm-dev's own commands' do.
     const said = (line: string): void => {
-      if (line.startsWith('[sm-dev] ')) process.stderr.write(`${line.slice('[sm-dev] '.length)}\n`);
+      if (line.startsWith(SM_DEV_PREFIX)) writeErr(errorLine(line.slice(SM_DEV_PREFIX.length)));
       else out(line);
     };
     return await managerCommand({ manager, out: said, json }, name, parsed) === false ? 1 : 0;
   } catch (err) {
-    process.stderr.write(`${firstLine(err)}\n`);
+    writeErr(errorLine(firstLine(err)));
     return 1;
   } finally {
     await closeManager?.().catch(() => undefined);
@@ -1494,10 +1519,10 @@ async function stopCommand(opts: Opts, client: Client): Promise<number> {
   // Together, each run's lines tagged with its id when there are
   // several.
   const several = targets.length > 1;
-  const stopped = await Promise.all(targets.map((r) => stopRun(r, several ? (line) => print(`[${r.id}] ${line}`) : print)));
+  const stopped = await Promise.all(targets.map((r) => stopRun(r, several ? (line) => print(`[${r.id}] ${line}`) : print, true)));
   for (const r of targets) {
     const log = client.stopped(r.id);
-    if (log) print(`[sm-dev] Output log: ${runLogLabel(log, r.id)}`);
+    if (log) print(`[sm-dev] ${S.ui`Output log: ${runLogLabelUi(log, r.id)}`}`);
   }
   return stopped.every(Boolean) ? 0 : 1;
 }
@@ -1520,14 +1545,14 @@ async function attachCommand(opts: Opts, client: Client): Promise<number> {
   const { id } = await client.connect(named ?? globalRun);
   client.own = false;
   client.attachedTo = id;
-  print(`[sm-dev] Attached to run ${id}`);
+  print(`[sm-dev] ${S.ui`Attached to run ${S.id(id)}`}`);
   return 0;
 }
 
 const HELP_FLAGS = new Set(['--help', '-h']);
 
 // The `help` command's topics, or null for another command; empty for
-// the whole help. `--help` is handled for the whole line (`lineHelp`).
+// the help index. `--help` is handled for the whole line (`lineHelp`).
 function helpTopics(argv: string[]): string[] | null {
   if (argv[0] !== 'help' && argv[0] !== '?') return null;
   // `help --help`: help's own help, as for any command.
@@ -1539,21 +1564,23 @@ function helpTopics(argv: string[]): string[] | null {
  * `--help` (or `-h`) anywhere on the line: the help for each command
  * the line names, once each, and nothing run. Looked for before the
  * commands are checked, so a mistake elsewhere doesn't stand in the
- * way. With no command named, the whole help. Null when not asked.
+ * way. With no command named, the help index. Null when not asked.
  */
 function lineHelp(commands: string[][]): string | null {
   if (!commands.some((words) => words.some((w) => HELP_FLAGS.has(w)))) return null;
+  const topics: string[] = [];
   const names: string[] = [];
   for (const words of commands) {
     const rest = words.filter((w) => !HELP_FLAGS.has(w));
     // `help status`: its topics. Otherwise the command's name, which
     // may come after its flags (`--detach start`).
     // `help --help` alone: help's own.
-    const topics = rest.length === 1 ? ['help'] : rest.slice(1);
-    const named = rest[0] === 'help' || rest[0] === '?' ? topics : rest.filter((w) => !w.startsWith('-')).slice(0, 1);
-    for (const name of named) if (!names.includes(name)) names.push(name);
+    if (rest[0] === 'help' || rest[0] === '?') {
+      if (rest.length === 1) names.push('help');
+      else topics.push(...rest.slice(1));
+    } else names.push(...rest.filter((w) => !w.startsWith('-')).slice(0, 1));
   }
-  return names.length === 0 ? fullHelp() : commandHelp(names);
+  return commandHelp(topics, names);
 }
 
 // The signals that end sm-dev: Ctrl-C, kill, and a closed terminal.
@@ -1627,7 +1654,7 @@ let lineManager: ManagerName | undefined;
 const GLOBAL_FLAGS = ['--run', '--root', '--local', '--stdin', '--interactive', '--browser', '--manager', '--open-browser', '--profile', '--temp-browser', '--headed', '--mute', '--nomute', '--json'];
 
 function globalFlagMistake(flag: string): string {
-  return `The ${flag} flag is for the whole command line, so it goes first, before any command: sm-dev ${flag}${VALUE_GLOBALS.has(flag) ? ' ...' : ''} <command>`;
+  return `The ${quoted(flag)} flag is for the whole command line, so it goes first, before any command: ${quoted(`sm-dev ${flag}${VALUE_GLOBALS.has(flag) ? ' ...' : ''} <command>`)}`;
 }
 
 const VALUE_GLOBALS = new Set(['--run', '--root', '--local', '--browser', '--manager', '--profile']);
@@ -1674,7 +1701,7 @@ function takeGlobalFlags(argv: string[]): GlobalFlags {
       const value = inline ?? argv[++i];
       // Not the next option taken for this one's value (`--browser --open-browser`).
       if (value === undefined || value === '' || value === SEPARATOR || (inline === undefined && value.startsWith('--'))) {
-        throw new UsageError(word === '--run' ? 'The --run flag needs a run ID, e.g. --run D2' : `The ${word} flag needs a value`);
+        throw new UsageError(word === '--run' ? 'The `--run` flag needs a run ID, e.g. `--run D2`' : `The ${quoted(word)} flag needs a value`);
       }
       if (word === '--run') globalRun = checkedRunId(value);
       else if (word === '--browser') lineCdp = value;
@@ -1694,13 +1721,13 @@ function takeGlobalFlags(argv: string[]): GlobalFlags {
   // The browser: one of --browser, --open-browser and --temp-browser's own.
   if (lineTempBrowser) {
     const others = [[lineCdp !== undefined, '--browser'], [lineOpenBrowser, '--open-browser']].filter(([on]) => on).map(([, name]) => name);
-    if (others.length > 0) throw new UsageError(`The --temp-browser flag can't be used with ${others.join(' or ')}`);
+    if (others.length > 0) throw new UsageError(`The ${quoted('--temp-browser')} flag can't be used with ${others.map((f) => quoted(f)).join(' or ')}`);
   }
-  if (lineHeaded && !lineTempBrowser) throw new UsageError('The --headed flag only applies with --temp-browser');
+  if (lineHeaded && !lineTempBrowser) throw new UsageError('The `--headed` flag only applies with `--temp-browser`');
   if (lineMuted !== undefined && !lineTempBrowser && !lineOpenBrowser) {
-    throw new UsageError(`The ${lineMuted ? '--mute' : '--nomute'} flag only applies with --temp-browser or --open-browser`);
+    throw new UsageError(`The ${quoted(lineMuted ? '--mute' : '--nomute')} flag only applies with ${quoted('--temp-browser')} or ${quoted('--open-browser')}`);
   }
-  if (lineProfile !== undefined && !lineOpenBrowser) throw new UsageError('The --profile flag only applies with --open-browser');
+  if (lineProfile !== undefined && !lineOpenBrowser) throw new UsageError('The `--profile` flag only applies with `--open-browser`');
   return flags;
 }
 
@@ -1763,7 +1790,7 @@ function isVerdict(words: string[]): boolean {
 // A command's own words, sorted out: help, a command sent to a run, or
 // one of sm-dev's own.
 type ParsedCommand =
-  | { kind: 'help'; topics: string[] }
+  | { kind: 'help'; topics: string[]; commands?: string[] }
   | { kind: 'send'; words: string[] }
   | { kind: 'cli'; opts: Opts; words: string[] };
 
@@ -1782,11 +1809,11 @@ function parseCommand(words: string[]): ParsedCommand {
   if (words.length === 1 && OWN_COMMANDS.has(head) && head !== words[0]) return parseCommand(commandWords(words[0]));
   const opts = parseArgs(words);
   if (opts.command === null) throw new UsageError(`A command is needed. ${LIST_COMMANDS}`);
-  if (opts.help) return { kind: 'help', topics: [opts.command] };
+  if (opts.help) return { kind: 'help', topics: [], commands: [opts.command] };
   if (!OWN_COMMANDS.has(opts.command)) {
     // A run's ID where the command goes: the old `sm-dev D1 status`.
     const run = runIdOf(opts.command);
-    if (run) throw new UsageError(`Name the run with --run, before the command: sm-dev --run ${run} ${words.slice(1).map(shellWord).join(' ')}`.trimEnd());
+    if (run) throw new UsageError(`Name the run with ${quoted('--run')}, before the command: ${quoted(`sm-dev --run ${run} ${words.slice(1).map(shellWord).join(' ')}`.trimEnd())}`);
     // A run's command after one of its flags: only the line's own flags go first.
     if (isTypedCommand(opts.command) && words[0].startsWith('-')) {
       const at = commandIndex(words);
@@ -1794,11 +1821,11 @@ function parseCommand(words: string[]): ParsedCommand {
       // alone, since after a command's text it would be text.
       const own = commandSyntax(commandNamed(opts.command)!).flags;
       const unknown = words.slice(0, at).find((w) => w.startsWith('-') && !Object.hasOwn(own, w.split('=')[0]));
-      if (unknown) throw new UsageError(commandMistake({ words: [opts.command, unknown] }) ?? `Unknown option: ${unknown}`);
+      if (unknown) throw new UsageError(commandMistake({ words: [opts.command, unknown] }) ?? `Unknown option: ${quoted(unknown)}`);
       const moved = [opts.command, ...words.slice(at + 1), ...words.slice(0, at)];
-      throw new UsageError(`The ${words[0]} flag goes after the command: ${moved.map(shellWord).join(' ')}`);
+      throw new UsageError(`The ${quoted(words[0])} flag goes after the command: ${quoted(moved.map(shellWord).join(' '))}`);
     }
-    throw new UsageError(`Unknown command: ${opts.command}. ${LIST_COMMANDS}`);
+    throw new UsageError(`Unknown command: ${quoted(opts.command)}. ${LIST_COMMANDS}`);
   }
   return { kind: 'cli', opts, words };
 }
@@ -1812,7 +1839,7 @@ function parseCommand(words: string[]): ParsedCommand {
 async function checkCommand(words: string[]): Promise<void> {
   const parsed = parseCommand(words);
   if (parsed.kind === 'help') {
-    if (parsed.topics.length > 0) commandHelp(parsed.topics);
+    if (parsed.topics.length > 0 || parsed.commands) commandHelp(parsed.topics, parsed.commands);
     return;
   }
   if (parsed.kind === 'send') return checkSend(parsed.words);
@@ -1830,7 +1857,8 @@ async function checkCommand(words: string[]): Promise<void> {
 // command was typed is marked as such, apart from a failure doing it.
 function printMistake(err: unknown): number {
   const usage = err instanceof UsageError;
-  process.stderr.write(`${usage ? 'ERROR: ' : ''}${(err as Error).message}\n`);
+  const text = (err as Error).message;
+  writeErr(usage ? `${ERROR_PREFIX}${text}` : errorLine(text));
   return usage ? 2 : 1;
 }
 
@@ -1839,7 +1867,7 @@ async function runOne(words: string[], client: Client): Promise<number> {
   try {
     const parsed = parseCommand(words);
     if (parsed.kind === 'help') {
-      for (const line of (parsed.topics.length === 0 ? fullHelp() : commandHelp(parsed.topics)).trimEnd().split('\n')) print(line);
+      for (const line of commandHelp(parsed.topics, parsed.commands).trimEnd().split('\n')) print(line);
       return 0;
     }
     if (parsed.kind === 'send') return await sendCommand(parsed.words, client);
@@ -1917,7 +1945,7 @@ async function main(): Promise<void> {
   // `--open-browser` alone, which is a whole line: start a browser.)
   const stdin = flags.stdin || (commands.length === 0 && !flags.interactive && !lineOpenBrowser && !process.stdin.isTTY);
   if (commands.length === 0 && !stdin && !flags.interactive && !lineOpenBrowser) {
-    process.stdout.write(fullHelp());
+    process.stdout.write(commandHelp([]));
     process.exitCode = 2;
     return;
   }
@@ -1928,12 +1956,12 @@ async function main(): Promise<void> {
     try {
       await checkCommand(words);
     } catch (err) {
-      if (commands.length > 1) process.stderr.write(`arg > ${words.map(shellWord).join(' ')}\n`);
+      if (commands.length > 1) writeErr(echoLine('arg >', words.map(shellWord).join(' ')));
       failed = Math.max(failed, printMistake(err));
     }
   }
   if (failed) {
-    if (commands.length > 1) process.stderr.write(`${NONE_RUN}\n`);
+    if (commands.length > 1) writeErr(NONE_RUN);
     process.exitCode = failed;
     return;
   }
@@ -2001,13 +2029,13 @@ async function main(): Promise<void> {
   try {
     // In order, stopping at the first that fails, as a shell's && would.
     for (const [i, words] of commands.entries()) {
-      if (commands.length > 1) echo(`arg > ${words.map(shellWord).join(' ')}`);
+      if (commands.length > 1) echo(echoLine('arg >', words.map(shellWord).join(' ')));
       code = await runOne(words, client);
       if (client.exiting) break;
       // A miss from match or validate is an answer, not a failure: the
       // line goes on, and it only sets the exit code if it is last.
       if (stopsLine(code, words)) {
-        if (i < commands.length - 1 || stdin || flags.interactive) process.stderr.write(`${LINE_STOPPED}\n`);
+        if (i < commands.length - 1 || stdin || flags.interactive) writeErr(LINE_STOPPED);
         stopped = true;
         break;
       }

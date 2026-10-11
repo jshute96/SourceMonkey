@@ -17,7 +17,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
-import type { BrowserContext, Dialog, Page } from '@playwright/test';
+import type { BrowserContext, Dialog, Frame, Page } from '@playwright/test';
 
 import { CommandAssembler, endsOutsideBlock, listed } from './command-lines.js';
 import { isJsonLine, jsonLayoutMistake, jsonResult, JSON_COMMANDS, markedLine, STDERR_LINE, withLayout, type JsonLayout } from './json-output.js';
@@ -33,7 +33,7 @@ import {
 import { parseCommandArgs, splitWords, unquoteWhole, type ParsedArgs } from './command-args.js';
 import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, SAME_COMMANDS, commandSyntax, commandsHelp, unsupportedCommand } from './command-list.js';
 import { errorSentence, readJsonFile, writeProblem } from './input-file.js';
-import { PAGE_COMMANDS, runPageCommand, type EvalIn } from './page-commands.js';
+import { CDP_FRAME_ARG, PAGE_COMMANDS, runPageCommand, type EvalIn } from './page-commands.js';
 import { editMultiLine } from './prompt-editor.js';
 import { appendHistory, HISTORY_SIZE, historyFile, loadHistory } from './prompt-history.js';
 import { frameNodes, parseFrameRef } from './frames.js';
@@ -45,7 +45,10 @@ import { runLogLabel } from './run-log.js';
 import {
   DEFAULT_LOG_SOURCES, isoTime, linesLost, logsLines, logsUpTo, inSources, noLogLines, nowMicros, parseLogSources, parsePosition, parseTail, streamText, textMatcher, type LogRecord, type RunLog,
 } from './run-logs.js';
-import { loadPage, PageNotLoaded, seconds, settleTabs, timeoutFlagMs, waitFor } from './wait.js';
+import { err as errorLine, message, MISTAKE_PREFIX, paintAs, paintOutput, quoted, streamHasColor, ui } from './output-style.js';
+// The roles for marked-up output, as S.id(...): their names are common locals here.
+import * as S from './output-style.js';
+import { loadPage, PageNotLoaded, seconds, settleTabs, timeoutFlagMs, waitFor, within } from './wait.js';
 import { userscriptLabel, type SavedPageHeader } from './save-html.js';
 import {
   comparableUrl, openingSavedLine, pagesToOpen, routeSavedPage, savedPageServe,
@@ -274,8 +277,8 @@ export function waitingReminders(ctx: ConsoleContext, before: WaitingState, said
   for (const prompt of waitingPrompts(ctx)) {
     if (!before.prompts.has(prompt.promptId)) continue;
     const script = ctx.scripts.find((s) => s.id === prompt.scriptId);
-    const select = script && script !== selected && ctx.scripts.length > 1 ? ` (select it first with script ${ctx.scripts.indexOf(script) + 1})` : '';
-    lines.push(`[sm-dev] *PERMISSION PROMPT* still waiting: ${prompt.name} requests permission to connect to ${prompt.host}. Answer using connect once|cancel|allow|deny|allow-all${select}.`);
+    const select = script && script !== selected && ctx.scripts.length > 1 ? ` (select it first with ${quoted(`script ${ctx.scripts.indexOf(script) + 1}`)})` : '';
+    lines.push(`[sm-dev] *PERMISSION PROMPT* still waiting: ${prompt.name} requests permission to connect to ${prompt.host}. Answer using ${quoted('connect once|cancel|allow|deny|allow-all')}${select}.`);
   }
   const current = currentTab(ctx);
   for (const tab of ctx.tabs()) {
@@ -284,7 +287,7 @@ export function waitingReminders(ctx: ConsoleContext, before: WaitingState, said
     const refusal = dialogWaitingMessage(tab, current);
     if (said.some((l) => l.includes(refusal))) continue;
     const named = tab === current ? '' : ` ${tabName(tab)}`;
-    lines.push(`[sm-dev] *DIALOG* still waiting: ${tab === current ? 'The page' : tabName(tab)} is showing ${dialogKind(dialog)} dialog. Answer using accept${named} or dismiss${named}.`);
+    lines.push(`[sm-dev] *DIALOG* still waiting: ${tab === current ? 'The page' : tabName(tab)} is showing ${dialogKind(dialog)} dialog. Answer using ${quoted(`accept${named}`)} or ${quoted(`dismiss${named}`)}.`);
   }
   return lines;
 }
@@ -308,7 +311,7 @@ export function waitingState(ctx: ConsoleContext): WaitingState {
 async function answerConnectCommand(ctx: ConsoleContext, args: string[]): Promise<false | void> {
   const [choice, host] = args;
   if (choice !== 'once' && choice !== 'cancel' && choice !== 'allow' && choice !== 'deny' && choice !== 'allow-all') {
-    ctx.out('[sm-dev] ERROR: The connect command takes once, cancel, allow, deny or allow-all, then optionally the host.');
+    ctx.out(MISTAKE_PREFIX + 'The `connect` command takes `once`, `cancel`, `allow`, `deny` or `allow-all`, then optionally the host.');
     return false;
   }
   // The selected script's, as for `get` and `set`. A prompt is per
@@ -322,7 +325,7 @@ async function answerConnectCommand(ctx: ConsoleContext, args: string[]): Promis
     const other = waiting.find((r) => r.scriptId !== script?.id);
     const otherScript = other && ctx.scripts.find((s) => s.id === other.scriptId);
     ctx.out(otherScript
-      ? `[sm-dev] No permission prompt${forHost} is waiting for ${name}. ${preparedScriptName(otherScript)} has one: select it with script ${ctx.scripts.indexOf(otherScript) + 1}, then use connect again.`
+      ? `[sm-dev] No permission prompt${forHost} is waiting for ${name}. ${preparedScriptName(otherScript)} has one: select it with ${quoted(`script ${ctx.scripts.indexOf(otherScript) + 1}`)}, then use ${quoted('connect')} again.`
       : `[sm-dev] No permission prompt${forHost} is waiting for ${name}`);
     return;
   }
@@ -330,7 +333,7 @@ async function answerConnectCommand(ctx: ConsoleContext, args: string[]): Promis
   try {
     answered = await ctx.host.answerConnectPrompt(prompt.promptId, choice);
   } catch (err) {
-    ctx.out(`[sm-dev] ERROR: ${(err as Error).message}`);
+    ctx.out(`${MISTAKE_PREFIX}${(err as Error).message}`);
     return false;
   }
   if (!answered) {
@@ -353,7 +356,7 @@ export function runCommandHelp(input: { line: string } | { words: string[] }): s
 
 // The error for a word that names no command a run takes.
 function notACommand(word: string): string {
-  return `${word} is not a command. Use help to list them.`;
+  return `${quoted(word)} is not a command. Use ${quoted('help commands')} to list them.`;
 }
 
 // A run command's name, aliases resolved, and its words after the name;
@@ -468,7 +471,7 @@ export function hasJsonForm(line: string): boolean {
 export const commandOutput = new AsyncLocalStorage<{ line: (line: string) => void; live: boolean }>();
 
 /** How a line saying a command was invalid starts. */
-export const MISTAKE_PREFIX = '[sm-dev] ERROR: ';
+export { MISTAKE_PREFIX };
 
 /**
  * Set while a command runs, in its own async work: what it prints is
@@ -507,26 +510,30 @@ export async function runConsoleCommand(
   // command sent as one word is read like a typed one.
   const own = ownWords(words?.[0] === typedCommand ? { words } : { line: trimmed });
   if (!own) {
-    ctx.out(`[sm-dev] ERROR: ${notACommand(typedCommand)}`);
+    ctx.out(`${MISTAKE_PREFIX}${notACommand(typedCommand)}`);
     return false;
   }
   const { command } = own;
   const parsed = parseCommandArgs(command, own.rest);
   if ('error' in parsed) {
-    ctx.out(`[sm-dev] ERROR: ${parsed.error}`);
+    ctx.out(`${MISTAKE_PREFIX}${parsed.error}`);
     return false;
   }
   // What the manager has turned off, for the commands that show what
   // the tabs are expected to run.
   if (ctx.predictedOff && SHOWS_ACTIVITY.has(command)) await ctx.predictedOff.refresh();
-  if (SHOWS_FRAMES.has(command)) await loadFrames(ctx);
+  // The trees and JSON show each frame's details too, which cost a call
+  // per frame.
+  if (SHOWS_FRAMES.has(command)) {
+    await loadFrames(ctx, command === 'frames' || parsed.flags['--frames'] === true || ctx.json === true || parsed.flags['--json'] !== undefined);
+  }
   // The command's own --json or --nojson over the sender's global one,
   // and its own layout over the client's. Its help is text either way.
   const ownJson = parsed.flags['--json'];
   if (typeof ownJson === 'string') {
     const mistake = jsonLayoutMistake(ownJson);
     if (mistake) {
-      ctx.out(`[sm-dev] ERROR: ${mistake}`);
+      ctx.out(`${MISTAKE_PREFIX}${mistake}`);
       return false;
     }
     if (ctx.json !== undefined) ctx.jsonLayout = ownJson as JsonLayout;
@@ -539,7 +546,7 @@ export async function runConsoleCommand(
   }
   const unsupported = unsupportedCommand(command, ctx.managerName ?? DEFAULT_MANAGER, 'this run uses');
   if (unsupported) {
-    ctx.out(`[sm-dev] ERROR: ${unsupported}`);
+    ctx.out(`${MISTAKE_PREFIX}${unsupported}`);
     return false;
   }
   // Its arguments, its text (the rest of its line, for the commands
@@ -594,7 +601,7 @@ export async function runConsoleCommand(
         return;
       }
       if (text === 'all') {
-        ctx.out('Menu commands:');
+        ctx.out(ui`${S.heading('Menu commands')}:`);
         printPerTab(ctx, tab, (t) => menuLines(ctx, t), 'None registered');
         return;
       }
@@ -606,7 +613,7 @@ export async function runConsoleCommand(
           ctx.out(noMenusMessage(ctx, ref.tab));
           return;
         }
-        ctx.out(`Menu commands${onTab(ctx, ref.tab)}:`);
+        ctx.out(ui`${S.heading('Menu commands')}${onTabUi(ctx, ref.tab)}:`);
         for (const l of lines) ctx.out(l);
         return;
       }
@@ -633,13 +640,13 @@ export async function runConsoleCommand(
       }
       // `tabs new` was newtab's old name.
       if (named === 'new') {
-        ctx.out('[sm-dev] ERROR: The tabs command picks a tab. To open one, use newtab.');
+        ctx.out(MISTAKE_PREFIX + 'The `tabs` command picks a tab. To open one, use `newtab`.');
         return false;
       }
       const picked = pickTab(ctx, named);
       if (!picked) return false;
       ctx.tab = picked;
-      ctx.out(`[sm-dev] The page commands now act on ${tabName(picked)} (${picked.page.url()})`);
+      ctx.out(`[sm-dev] ${ui`The page commands now act on ${S.id(tabName(picked))} (${S.url(picked.page.url())})`}`);
       return;
     }
     case 'scripts': {
@@ -658,7 +665,7 @@ export async function runConsoleCommand(
         return;
       }
       if (!text) {
-        ctx.out(`Loaded scripts${activityHeading(picked)}:`);
+        ctx.out(ui`${S.heading('Loaded scripts')}${activityHeading(picked)}:`);
         if (ctx.scripts.length === 0) ctx.out(`  ${NO_SCRIPTS}`);
         for (const script of ctx.scripts) {
           ctx.out(scriptRow(ctx, script));
@@ -672,21 +679,21 @@ export async function runConsoleCommand(
       if (own) {
         ctx.current = own;
         ctx.currentOther = undefined;
-        ctx.out(`[sm-dev] Selected ${scriptLabel(own)}`);
+        ctx.out(`[sm-dev] ${ui`Selected ${scriptLabelUi(own)}`}`);
         return;
       }
       if (OTHER_LABEL.test(text)) {
         const found = await pickOther(ctx, text, picked);
         if (!found) return false;
         ctx.currentOther = found;
-        const away = await otherOnTab(ctx, found, picked) ? '' : picked ? `. It isn't on ${tabName(picked)}'s page.` : '. No tab is open.';
-        ctx.out(`[sm-dev] Selected ${found.label}: ${found.name}${away}`);
+        const away = await otherOnTab(ctx, found, picked) ? '' : picked ? ui`. It isn't on ${S.id(tabName(picked))}'s page.` : '. No tab is open.';
+        ctx.out(`[sm-dev] ${ui`Selected ${S.id(found.label)}: ${S.name(found.name)}${away}`}`);
         return;
       }
       const ref = tabRef(ctx, text, tab);
       if (!ref) return false;
       if (!ref.rest) {
-        ctx.out('[sm-dev] ERROR: The scripts command needs a script after the tab, e.g. scripts T2.2');
+        ctx.out(MISTAKE_PREFIX + 'The `scripts` command needs a script after the tab, e.g. `scripts T2.2`');
         return false;
       }
       const found = pickScript(ctx, ref.rest);
@@ -694,11 +701,11 @@ export async function runConsoleCommand(
       ctx.current = found;
       ctx.currentOther = undefined;
       if (!ref.named) {
-        ctx.out(`[sm-dev] Selected ${scriptLabel(found)}`);
+        ctx.out(`[sm-dev] ${ui`Selected ${scriptLabelUi(found)}`}`);
         return;
       }
       ctx.tab = ref.tab;
-      ctx.out(`[sm-dev] Selected ${scriptLabel(found)}, and ${tabName(ref.tab)} for the page commands`);
+      ctx.out(`[sm-dev] ${ui`Selected ${scriptLabelUi(found)}, and ${S.id(tabName(ref.tab))} for the page commands`}`);
       return;
     }
     case 'status': {
@@ -711,17 +718,17 @@ export async function runConsoleCommand(
         const chosen = ctx.managerName ?? DEFAULT_MANAGER;
         const managers = ctx.browser ? await ctx.managers?.() ?? null : null;
         const extension = managers ? stateLabel(managerState(managers, chosen), chosen) : '';
-        ctx.out(`Run: ${ctx.runId} (pid ${process.pid})${ctx.browser ? `, ${ctx.browser}${extension ? ` (${extension})` : ''}` : ''}`);
+        ctx.out(ui`${S.heading('Run')}: ${S.id(ctx.runId)} (pid ${process.pid})${ctx.browser ? `, ${ctx.browser}${extension ? ` (${extension})` : ''}` : ''}`);
         if (managers) {
-          ctx.out(`Managers: ${managersText(managers, chosen)}`);
+          ctx.out(ui`${S.heading('Managers')}: ${managersText(managers, chosen)}`);
           for (const line of otherManagersWarning(managers, chosen, ctx.browserArg)) ctx.out(line);
         }
       }
-      if (ctx.backend) ctx.out(`Backend: ${ctx.backend()}`);
-      if (ctx.log) ctx.out(`Log: ${runLogLabel(ctx.log, ctx.runId)}`);
+      if (ctx.backend) ctx.out(ui`${S.heading('Backend')}: ${ctx.backend()}`);
+      if (ctx.log) ctx.out(ui`${S.heading('Log')}: ${runLogLabelUi(ctx.log, ctx.runId)}`);
       // Chrome makes the folder with the first download, so it's only
       // worth a line once there is one.
-      if (ctx.downloadsDir && existsSync(ctx.downloadsDir)) ctx.out(`Downloads: ${ctx.downloadsDir}`);
+      if (ctx.downloadsDir && existsSync(ctx.downloadsDir)) ctx.out(ui`${S.heading('Downloads')}: ${S.url(ctx.downloadsDir)}`);
       // The tabs first, each with its URL, ids and any dialog; then
       // the scripts on the current one, which is marked there. With no
       // tab, still the scripts and what they have stored.
@@ -738,8 +745,8 @@ export async function runConsoleCommand(
           ctx.out(jsonResult('values', { scripts: [{ script: found.label, name: found.name, values: await found.values() }] } satisfies J.ValuesData));
           return;
         }
-        ctx.out('Stored values:');
-        ctx.out(`  ${otherLabel(found)}`);
+        ctx.out(ui`${S.heading('Stored values')}:`);
+        ctx.out(ui`  ${otherLabelUi(found)}`);
         for (const l of valueEntries(await found.values())) ctx.out(l);
         return;
       }
@@ -760,7 +767,7 @@ export async function runConsoleCommand(
       } else if (ref.named) {
         scripts = runningOn(ctx, ref.tab);
         if (scripts.length === 0 && !ctx.json) {
-          ctx.out(`[sm-dev] No script is running on ${tabName(ref.tab)}`);
+          ctx.out(`[sm-dev] ${ui`No script is running on ${S.id(tabName(ref.tab))}`}`);
           return;
         }
       }
@@ -775,7 +782,7 @@ export async function runConsoleCommand(
         ctx.out(jsonResult('values', { ...onTab, scripts: entries } satisfies J.ValuesData));
         return;
       }
-      ctx.out('Stored values:');
+      ctx.out(ui`${S.heading('Stored values')}:`);
       for (const l of await valueLines(ctx, scripts)) ctx.out(l);
       return;
     }
@@ -785,7 +792,7 @@ export async function runConsoleCommand(
         return;
       }
       if (!text) {
-        ctx.out('[sm-dev] ERROR: The get command needs a key');
+        ctx.out(MISTAKE_PREFIX + 'The `get` command needs a key');
         return false;
       }
       await settleWrites();
@@ -797,7 +804,7 @@ export async function runConsoleCommand(
         } satisfies J.GetData));
         return;
       }
-      ctx.out(`  ${text} = ${JSON.stringify(values[text])}`);
+      ctx.out(ui`  ${S.code(text)} = ${S.code(String(JSON.stringify(values[text])))}`);
       return;
     }
     case 'set': {
@@ -814,19 +821,19 @@ export async function runConsoleCommand(
       let value: unknown;
       if (typeof from === 'string') {
         if (!key || raw) {
-          ctx.out('[sm-dev] ERROR: The set command takes a key and one file, e.g. set units --file units.json');
+          ctx.out(MISTAKE_PREFIX + 'The `set` command takes a key and one file, e.g. `set units --file units.json`');
           return false;
         }
         const file = path.resolve(cwd, from);
         try {
           value = readJsonFile(file, shownPath(file, cwd));
         } catch (err) {
-          ctx.out(`[sm-dev] ERROR: ${(err as Error).message}`);
+          ctx.out(`${MISTAKE_PREFIX}${(err as Error).message}`);
           return;
         }
       } else {
         if (!key || !raw) {
-          ctx.out('[sm-dev] ERROR: The set command needs a key and a JSON value, e.g. set units "metric"');
+          ctx.out(MISTAKE_PREFIX + 'The `set` command needs a key and a JSON value, e.g. `set units "metric"`');
           return false;
         }
         try {
@@ -835,13 +842,13 @@ export async function runConsoleCommand(
           // A bare word typed inline is most likely a string without
           // its quotes; a block's JSON is just broken.
           ctx.out(parsed.block !== undefined
-            ? `[sm-dev] ERROR: The value of ${key} is not JSON: ${(err as Error).message}`
-            : `[sm-dev] ERROR: ${raw} is not JSON. A string needs quotes.`);
+            ? `${MISTAKE_PREFIX}The value of ${quoted(key)} is not JSON: ${(err as Error).message}`
+            : `${MISTAKE_PREFIX}${quoted(raw)} is not JSON. A string needs quotes.`);
           return;
         }
       }
       if (flags['--force'] === true && !other) {
-        ctx.out('[sm-dev] ERROR: The --force flag is for SourceMonkey-managed scripts only (E1, ...)');
+        ctx.out(MISTAKE_PREFIX + 'The --force flag is for SourceMonkey-managed scripts only (E1, ...)');
         return false;
       }
       // A SourceMonkey-managed script never runs in the run's tabs, so a
@@ -852,7 +859,7 @@ export async function runConsoleCommand(
       // would.
       if (other) {
         if (ctx.others?.guarded && flags['--force'] !== true) {
-          ctx.out(`[sm-dev] ERROR: ${other.label} is a SourceMonkey-managed script, so this would change its real stored data. Use --force to continue.`);
+          ctx.out(`${MISTAKE_PREFIX}${other.label} is a SourceMonkey-managed script, so this would change its real stored data. Use ${quoted('--force')} to continue.`);
           return false;
         }
         await other.setValues({ [key]: value });
@@ -886,7 +893,7 @@ export async function runConsoleCommand(
     }
     case 'load': {
       if (args.length === 0) {
-        ctx.out('[sm-dev] ERROR: The load command needs a script file');
+        ctx.out(MISTAKE_PREFIX + 'The `load` command needs a script file');
         return false;
       }
       if (!ctx.loadScript) {
@@ -947,11 +954,11 @@ export async function runConsoleCommand(
       }
       // Rather than a page at http://all.
       if (page[0] === 'all' && page.length === 1) {
-        ctx.out('[sm-dev] ERROR: The open command navigates one tab. To open a tab for each script, use newtab all.');
+        ctx.out(MISTAKE_PREFIX + 'The `open` command navigates one tab. To open a tab for each script, use `newtab all`.');
         return false;
       }
       if (page.length > 1) {
-        ctx.out('[sm-dev] ERROR: The open command opens one page, so it takes one URL, file or script. To open several, use newtab.');
+        ctx.out(MISTAKE_PREFIX + 'The `open` command opens one page, so it takes one URL, file or script. To open several, use `newtab`.');
         return false;
       }
       const where = page[0] ?? '';
@@ -966,7 +973,7 @@ export async function runConsoleCommand(
       const url = opening?.url ?? (mode !== undefined ? target.tab.page.url()
         : current ? scriptPage(ctx, current) : null);
       if (!url) {
-        if (!current) ctx.out('[sm-dev] ERROR: The open command needs a URL, since no script is loaded');
+        if (!current) ctx.out(MISTAKE_PREFIX + 'The `open` command needs a URL, since no script is loaded');
         return false;
       }
       if (blockedByDialog([target.tab])) return false;
@@ -1004,12 +1011,12 @@ export async function runConsoleCommand(
       if (!dialog) {
         const elsewhere = ctx.tabs().find((t) => t.dialogs?.current);
         ctx.out(elsewhere
-          ? `[sm-dev] No dialog is open on ${tabName(target)}. ${tabName(elsewhere)} has one; use ${[command, tabName(elsewhere), text].filter(Boolean).join(' ')}.`
+          ? `[sm-dev] No dialog is open on ${tabName(target)}. ${tabName(elsewhere)} has one; use ${quoted([command, tabName(elsewhere), text].filter(Boolean).join(' '))}.`
           : '[sm-dev] No dialog is open');
         return;
       }
       if (text && dialog.type() !== 'prompt') {
-        ctx.out(`[sm-dev] ERROR: Only a prompt dialog takes text. This one is ${dialogKind(dialog)}.`);
+        ctx.out(`${MISTAKE_PREFIX}Only a prompt dialog takes text. This one is ${dialogKind(dialog)}.`);
         target.dialogs!.putBack(dialog);
         return;
       }
@@ -1026,7 +1033,7 @@ export async function runConsoleCommand(
     }
     default: {
       if (!PAGE_COMMANDS.has(command)) {
-        ctx.out(`[sm-dev] ERROR: ${notACommand(command)}`);
+        ctx.out(`${MISTAKE_PREFIX}${notACommand(command)}`);
         return false;
       }
       // The tab named first, or the current one.
@@ -1060,7 +1067,7 @@ export async function runConsoleCommand(
  */
 function namedTab(ctx: ConsoleContext, command: string, parsed: ParsedArgs): string | undefined | null {
   if (parsed.tab !== undefined && parsed.words.length > 0) {
-    ctx.out(`[sm-dev] ERROR: The ${command} command takes one tab`);
+    ctx.out(`${MISTAKE_PREFIX}The ${quoted(command)} command takes one tab`);
     return null;
   }
   return parsed.tab ?? parsed.words[0];
@@ -1075,13 +1082,30 @@ function scriptLabel(script: PreparedScript): string {
   return name === script.script.relativePath || name === file ? file : `${name} (${file})`;
 }
 
+/** `runLogLabel` marked up, for output: the log's path as one. */
+export function runLogLabelUi(file: string, id: string | undefined): string {
+  return ui`${S.url(file)}${runLogLabel(file, id).slice(file.length)}`;
+}
+
+// `scriptLabel` marked up, for output.
+function scriptLabelUi(script: PreparedScript): string {
+  const name = preparedScriptName(script);
+  const file = preparedScriptPath(script);
+  return name === script.script.relativePath || name === file ? S.url(file) : ui`${S.name(name)} (${S.url(file)})`;
+}
+
+// `* ` on the selected item in a list, or its spaces, marked up.
+function selectMark(isSelected: boolean): string {
+  return isSelected ? ui`${S.selected('*')} ` : '  ';
+}
+
 // One script's row in any list of them: its number in the `scripts` list,
 // with `*` on the one `get` and `set` act on. Under another manager,
-// with its E-id there.
+// with its E-id there. Marked up, so only for output.
 function scriptRow(ctx: ConsoleContext, script: PreparedScript): string {
   const id = ctx.predicted ? ctx.extensionIdOf?.(script) : undefined;
-  const there = id !== undefined ? `, E${id} in ${MANAGERS[ctx.managerName ?? DEFAULT_MANAGER].label}` : '';
-  return `${script === selectedScript(ctx) ? '* ' : '  '}${ctx.scripts.indexOf(script) + 1}: ${scriptLabel(script)}${there}`;
+  const there = id !== undefined ? ui`, ${S.id(`E${id}`)} in ${MANAGERS[ctx.managerName ?? DEFAULT_MANAGER].label}` : '';
+  return ui`${selectMark(script === selectedScript(ctx))}${S.id(ctx.scripts.indexOf(script) + 1)}: ${scriptLabelUi(script)}${there}`;
 }
 
 // Under another manager, the run's own script with E-id `label`.
@@ -1109,7 +1133,7 @@ function selectedScript(ctx: ConsoleContext): PreparedScript | undefined {
 function evalScope(ctx: ConsoleContext, flag: string | true | undefined, page: boolean): EvalIn | null {
   if (page) {
     if (flag === undefined) return 'page';
-    ctx.out(`${MISTAKE_PREFIX}The eval command takes --page or --script, not both`);
+    ctx.out(`${MISTAKE_PREFIX}The ${quoted('eval')} command takes ${quoted('--page')} or ${quoted('--script')}, not both`);
     return null;
   }
   const fallback = flag === undefined ? 'page' : 'scripts';
@@ -1134,7 +1158,7 @@ function pickScript(ctx: ConsoleContext, arg: string): PreparedScript | null {
   if (own) return own;
   if (/^\d+$/.test(arg)) {
     const script = ctx.scripts[Number(arg) - 1];
-    if (!script) ctx.out(`[sm-dev] There is no script ${arg}. Use scripts to list them.`);
+    if (!script) ctx.out(`[sm-dev] There is no script ${quoted(arg)}. Use ${quoted('scripts')} to list them.`);
     return script ?? null;
   }
   const exact = ctx.scripts.filter((script) => preparedScriptMatches(script, arg));
@@ -1145,10 +1169,10 @@ function pickScript(ctx: ConsoleContext, arg: string): PreparedScript | null {
     || script.script.relativePath.toLowerCase().includes(needle));
   if (hits.length === 1) return hits[0];
   if (hits.length === 0) {
-    ctx.out(`[sm-dev] No loaded script matches ${arg}. Use scripts to list them.`);
+    ctx.out(`[sm-dev] No loaded script matches ${quoted(arg)}. Use ${quoted('scripts')} to list them.`);
   } else {
     const numbers = hits.map((script) => ctx.scripts.indexOf(script) + 1).join(', ');
-    ctx.out(`[sm-dev] Several loaded scripts match ${arg} (${numbers}). Name one by its number.`);
+    ctx.out(`[sm-dev] Several loaded scripts match ${quoted(arg)} (${numbers}). Name one by its number.`);
   }
   return null;
 }
@@ -1179,7 +1203,7 @@ export async function managerCommand(
 ): Promise<boolean | void> {
   const { form, subject, words: args, flags } = parsed;
   if (form === undefined && args.length > 0) {
-    ctx.out(`[sm-dev] ERROR: ${noSuchVerb(args)}`);
+    ctx.out(`${MISTAKE_PREFIX}${noSuchVerb(args)}`);
     return false;
   }
   if (!ctx.manager) {
@@ -1417,7 +1441,7 @@ async function validateCommand(ctx: ConsoleContext, words: string[], cwd: string
 // why) for both.
 function scriptsMode(ctx: ConsoleContext, command: string, flags: Record<string, string | true>): boolean | undefined | null {
   if (flags['--noscript'] && flags['--script']) {
-    ctx.out(`[sm-dev] ERROR: The ${command} command takes --noscript or --script, not both`);
+    ctx.out(`${MISTAKE_PREFIX}The ${quoted(command)} command takes ${quoted('--noscript')} or ${quoted('--script')}, not both`);
     return null;
   }
   return flags['--noscript'] ? true : flags['--script'] ? false : undefined;
@@ -1429,7 +1453,7 @@ function scriptsMode(ctx: ConsoleContext, command: string, flags: Record<string,
 function savedFlags(ctx: ConsoleContext, flags: Record<string, string | true>): { fromSaved: boolean; url?: string; offline: boolean } | null {
   const url = flags['--url'];
   if (url === '') {
-    ctx.out('[sm-dev] ERROR: The --url flag needs a URL, e.g. --url https://example.com/page');
+    ctx.out(MISTAKE_PREFIX + 'The --url flag needs a URL, e.g. --url https://example.com/page');
     return null;
   }
   return { fromSaved: flags['--from-saved'] === true, url: typeof url === 'string' ? url : undefined, offline: flags['--offline'] === true };
@@ -1516,6 +1540,11 @@ function onTab(ctx: ConsoleContext, tab: ControlledTab): string {
   return ctx.tabs().length > 1 ? ` on ${tabName(tab)}` : '';
 }
 
+// `onTab` marked up, for output.
+function onTabUi(ctx: ConsoleContext, tab: ControlledTab): string {
+  return ctx.tabs().length > 1 ? ui` on ${S.id(tabName(tab))}` : '';
+}
+
 function fromTab<T extends object>(ctx: ConsoleContext, tab: ControlledTab, records: T[]): T[] {
   return records.filter((r) => ctx.host.pageOf(r) === tab.link);
 }
@@ -1534,16 +1563,24 @@ export interface FrameView {
   scripts: PreparedScript[];
   /** The extension's ids for its live documents, where it says. */
   documents: string[];
+  /** Read with `loadFrames`' details: its <iframe> isn't visible (no size, hidden). */
+  hidden?: true;
+  /** Read with `loadFrames`' details: its CDP frame id, in its target. */
+  frameId?: string;
+  /** Read with `loadFrames`' details: its CDP target, when it runs in a process of its own. */
+  targetId?: string;
 }
 
 // Reads each tab's frames and the scripts in them, for the command
 // about to show them. Says once why frames' scripts can't be shown
 // (an extension too old), listing the frames anyway.
-async function loadFrames(ctx: ConsoleContext): Promise<void> {
+//
+// With `details`, also whether each is hidden and its CDP target.
+async function loadFrames(ctx: ConsoleContext, details = false): Promise<void> {
   const views = new Map<ControlledTab, FrameView[]>();
   let problem: string | undefined;
   for (const tab of ctx.tabs()) {
-    views.set(tab, await tabFrames(ctx, tab, (why) => { problem ??= why; }).catch((): FrameView[] => []));
+    views.set(tab, await tabFrames(ctx, tab, (why) => { problem ??= why; }, details).catch((): FrameView[] => []));
   }
   ctx.frames = views;
   if (problem) ctx.out(`[sm-dev] ${problem}`);
@@ -1553,7 +1590,7 @@ async function loadFrames(ctx: ConsoleContext): Promise<void> {
 // scripts are those that started in its current document. Under another
 // manager, which reports nothing, those whose rules cover its URL, as
 // `activeOn` predicts for the top frame.
-async function tabFrames(ctx: ConsoleContext, tab: ControlledTab, unknown: (why: string) => void): Promise<FrameView[]> {
+async function tabFrames(ctx: ConsoleContext, tab: ControlledTab, unknown: (why: string) => void, details: boolean): Promise<FrameView[]> {
   const nodes = frameNodes(tab.page, ctx.host.frameIds);
   if (nodes.length === 0) return [];
   let scriptsIn = (_url: string, _frame: unknown): PreparedScript[] => [];
@@ -1579,10 +1616,28 @@ async function tabFrames(ctx: ConsoleContext, tab: ControlledTab, unknown: (why:
     }
     scriptsIn = (_url, frame) => ctx.scripts.filter((s) => s.id !== undefined && byFrame.get(frame)?.has(s.id) === true);
   }
-  return nodes.map((node) => ({
+  // All at once, each bounded: a frame's page that's busy only costs
+  // its own details.
+  const found = (id: string | undefined | 'timeout'): string | undefined => (id === 'timeout' ? undefined : id);
+  const detailOf = (frame: Frame): Promise<Pick<FrameView, 'hidden' | 'frameId' | 'targetId'>> => (details ? Promise.all([
+    within(frame.frameElement().then((el) => el.isVisible()), DETAIL_MS).catch(() => true),
+    within(tab.link.frameCdpId(frame), DETAIL_MS).catch(() => undefined),
+    within(tab.link.frameTargetId(frame), DETAIL_MS).catch(() => undefined),
+  ]).then(([visible, frameId, targetId]) => ({
+    // Unknown (too slow) counts as visible: only a frame known to be hidden is marked.
+    ...(visible === false ? { hidden: true as const } : {}),
+    ...(found(frameId) ? { frameId: found(frameId) } : {}),
+    ...(found(targetId) ? { targetId: found(targetId) } : {}),
+  })) : Promise.resolve({}));
+  const detailed = await Promise.all(nodes.map((node) => detailOf(node.frame)));
+  return nodes.map((node, i) => ({
     n: node.n, parent: node.parent, depth: node.depth, url: node.url, scripts: scriptsIn(node.url, node.frame), documents: documentsOf.get(node.frame) ?? [],
+    ...detailed[i],
   }));
 }
+
+// How long a frame's details (`loadFrames`) may take to read.
+const DETAIL_MS = 1000;
 
 // The numbers of a tab's frames a script runs in.
 function framesRunning(ctx: ConsoleContext, tab: ControlledTab, scriptId: string | undefined): number[] {
@@ -1606,7 +1661,12 @@ function framesWhere(ctx: ConsoleContext, tab: ControlledTab, scriptId: string |
 // `framesWhere` after a tab's name or a script's: ` (T1, F1, F3)`.
 function framesSuffix(ctx: ConsoleContext, tab: ControlledTab, scriptId: string | undefined): string {
   const where = framesWhere(ctx, tab, scriptId);
-  return where ? ` (${where.join(', ')})` : '';
+  return where ? ui` (${idList(where)})` : '';
+}
+
+// IDs joined by commas, each marked up.
+function idList(ids: string[]): string {
+  return ui`${ids.map((i) => S.id(i)).join(', ')}`;
 }
 
 // After a tab's URL: how many iframes it has.
@@ -1621,13 +1681,15 @@ function frameCountSuffix(ctx: ConsoleContext, tab: ControlledTab): string {
 function frameTreeLines(ctx: ConsoleContext, tab: ControlledTab, indent: string, from?: number): string[] {
   const label = ctx.predicted ? 'Expected' : 'Scripts';
   const scriptsLine = (scripts: PreparedScript[], pad: string): string =>
-    `${pad}    ${label}: ${scripts.length === 0 ? 'none' : scripts.map((s) => scriptNumber(ctx, s)).join(', ')}`;
+    ui`${pad}    ${S.heading(label)}: ${scripts.length === 0 ? 'None' : idList(scripts.map((s) => scriptNumber(ctx, s)))}`;
   const frames = ctx.frames?.get(tab) ?? [];
   const lines: string[] = [];
   let base = 0;
   let shown = frames;
   if (from === undefined) {
-    lines.push(`${indent}${tabName(tab)}: ${tab.page.url()}`, scriptsLine(runningOn(ctx, tab), indent));
+    // The top frame's frame id is its tab's target id.
+    const ids = tab.targetId ? ` [frameId=${tab.targetId}]${targetIdSuffix(tab.targetId)}` : '';
+    lines.push(ui`${indent}${S.id(tabName(tab))}: ${S.url(tab.page.url())}${ids}`, scriptsLine(runningOn(ctx, tab), indent));
   } else {
     // The frame and those under it: those after it, until one no deeper.
     const at = frames.findIndex((f) => f.n === from);
@@ -1637,7 +1699,10 @@ function frameTreeLines(ctx: ConsoleContext, tab: ControlledTab, indent: string,
   }
   for (const frame of shown) {
     const pad = `${indent}${'  '.repeat(frame.depth - base)}`;
-    lines.push(`${pad}F${frame.n}: ${frame.url}`, scriptsLine(frame.scripts, pad));
+    // A frame's own target, when it has one, is the same id as its frame
+    // id; both are shown, so each is there to copy.
+    const ids = `${frame.frameId ? ` [frameId=${frame.frameId}]` : ''}${targetIdSuffix(frame.targetId)}`;
+    lines.push(ui`${pad}${S.id(`F${frame.n}`)}: ${S.url(frame.url)}${frame.hidden ? ' (hidden)' : ''}${ids}`, scriptsLine(frame.scripts, pad));
   }
   return lines;
 }
@@ -1649,6 +1714,7 @@ function framesJson(ctx: ConsoleContext, tab: ControlledTab): { frames?: J.Frame
   return {
     frames: frames.map((f) => ({
       id: `F${f.n}`, parent: f.parent === null ? tabName(tab) : `F${f.parent}`, url: f.url, scripts: f.scripts.map((s) => scriptNumber(ctx, s)),
+      ...(f.hidden ? { hidden: true as const } : {}), ...(f.frameId ? { frameId: f.frameId } : {}), ...(f.targetId ? { targetId: f.targetId } : {}),
     })),
   };
 }
@@ -1663,11 +1729,25 @@ function framesCommand(ctx: ConsoleContext, words: string[], current: Controlled
       return false;
     }
     tabs.push(...ctx.tabs().map((tab) => ({ tab })));
+  } else if (word && CDP_FRAME_ARG.test(word)) {
+    // An iframe by its CDP id, or a tab by its target id: its top frame's.
+    const id = CDP_FRAME_ARG.exec(word)![1];
+    const hits = [
+      ...ctx.tabs().filter((t) => t.targetId?.toUpperCase().startsWith(id.toUpperCase())).map((tab) => ({ tab, name: tabName(tab), from: undefined })),
+      ...framesWithId(ctx, id).map((h) => ({ tab: h.tab, name: `F${h.frame.n}`, from: h.frame.n })),
+    ];
+    if (hits.length !== 1) {
+      ctx.out(hits.length > 1
+        ? `[sm-dev] Several frames' ids start with ${quoted(id)} (${hits.map((h) => h.name).join(', ')}). Give more of it.`
+        : `[sm-dev] No frame's id starts with ${quoted(id)}. Use ${quoted('frames all')} to list them.`);
+      return false;
+    }
+    tabs.push({ tab: hits[0].tab, from: hits[0].from });
   } else if (word && parseFrameRef(word)) {
     const ref = parseFrameRef(word)!;
     const found = ctx.tabs().find((t) => (ctx.frames?.get(t) ?? []).some((f) => f.n === ref.frame));
     if (!found || (ref.tab !== undefined && found.n !== ref.tab)) {
-      ctx.out(`[sm-dev] ERROR: ${ref.tab !== undefined ? `T${ref.tab} has no frame F${ref.frame}` : `No tab has a frame F${ref.frame}`}. Use frames all to list them.`);
+      ctx.out(`${MISTAKE_PREFIX}${ref.tab !== undefined ? `T${ref.tab} has no frame F${ref.frame}` : `No tab has a frame F${ref.frame}`}. Use ${quoted('frames all')} to list them.`);
       return false;
     }
     tabs.push({ tab: found, from: ref.frame });
@@ -1696,6 +1776,13 @@ function framesCommand(ctx: ConsoleContext, words: string[], current: Controlled
     for (const line of frameTreeLines(ctx, tab, '', from)) ctx.out(line);
     if (from === undefined && (ctx.frames?.get(tab)?.length ?? 0) === 0) ctx.out('  No iframes');
   }
+}
+
+// The iframes, of any tab, whose CDP frame id starts with `id`.
+function framesWithId(ctx: ConsoleContext, id: string): { tab: ControlledTab; frame: FrameView }[] {
+  const upper = id.toUpperCase();
+  return ctx.tabs().flatMap((tab) => (ctx.frames?.get(tab) ?? [])
+    .filter((frame) => frame.frameId?.toUpperCase().startsWith(upper)).map((frame) => ({ tab, frame })));
 }
 
 // A frame and those under it, from a tab's frames as JSON.
@@ -1868,17 +1955,19 @@ async function loadInTab(
 // With `frames`, each tab's frame tree in place of its scripts.
 function printTabs(ctx: ConsoleContext, frames = false): void {
   const current = currentTab(ctx);
-  ctx.out('Tabs:');
+  ctx.out(ui`${S.heading('Tabs')}:`);
   if (ctx.tabs().length === 0) ctx.out('  No active tabs');
   for (const tab of ctx.tabs()) {
-    const opener = tab.openedBy ? ` (opened by T${tab.openedBy})` : '';
+    const opener = tab.openedBy ? ui` (opened by ${S.id(`T${tab.openedBy}`)})` : '';
     const none = tab.noScript ? ' (no scripts)' : '';
-    ctx.out(`${tab === current ? '* ' : '  '}${tabName(tab)}: ${tab.page.url()}${frameCountSuffix(ctx, tab)}${savedSuffix(tab)}${none}${opener}${targetIdSuffix(tab.targetId)}`);
+    ctx.out(ui`${selectMark(tab === current)}${S.id(tabName(tab))}: ${S.url(tab.page.url())}${frameCountSuffix(ctx, tab)}${savedSuffix(tab)}${none}${opener}${targetIdSuffix(tab.targetId)}`);
     const dialog = tab.dialogs?.current;
-    if (dialog) ctx.out(`    Waiting on ${dialogKind(dialog)} dialog: ${JSON.stringify(dialog.message())}`);
+    if (dialog) ctx.out(ui`    Waiting on ${dialogKind(dialog)} dialog: ${S.code(JSON.stringify(dialog.message()))}`);
     if (frames) {
       // The tab's own line is above; the tree's first line repeats it.
-      for (const line of frameTreeLines(ctx, tab, '    ').slice(1)) ctx.out(line.slice(2));
+      // Its lines are indented as the tab's frames, two deeper than its
+      // scripts' lines would be.
+      for (const line of frameTreeLines(ctx, tab, '  ').slice(1)) ctx.out(line);
       continue;
     }
     // In its top frame or any of its iframes, with where when not only
@@ -1888,7 +1977,7 @@ function printTabs(ctx: ConsoleContext, frames = false): void {
     // for the whole run, so its `*` goes only under the current tab.
     const selected = tab === current ? selectedScript(ctx) : undefined;
     for (const script of running) {
-      ctx.out(`   ${script === selected ? '* ' : '  '}${ctx.scripts.indexOf(script) + 1}: ${preparedScriptName(script)}${framesSuffix(ctx, tab, script.id)}`);
+      ctx.out(ui`   ${selectMark(script === selected)}${S.id(ctx.scripts.indexOf(script) + 1)}: ${S.name(preparedScriptName(script))}${framesSuffix(ctx, tab, script.id)}`);
     }
   }
 }
@@ -2058,7 +2147,7 @@ async function closeTabs(ctx: ConsoleContext, words: string[], force: boolean, c
     tabs = [];
     for (let i = 0; i < words.length; i++) {
       if (words[i] === 'all') {
-        ctx.out('[sm-dev] ERROR: The closetab command takes all by itself, to close all tabs');
+        ctx.out(MISTAKE_PREFIX + 'The `closetab` command takes all by itself, to close all tabs');
         return false;
       }
       const picked = pickTab(ctx, words[i]);
@@ -2070,7 +2159,7 @@ async function closeTabs(ctx: ConsoleContext, words: string[], force: boolean, c
   // open, as `reload all` leaves it; the rest still close.
   const waiting = force ? [] : tabs.filter((t) => t.dialogs?.current);
   for (const t of waiting) {
-    ctx.out(`[sm-dev] ${tabName(t)} is waiting on ${dialogKind(t.dialogs!.current!)} dialog, so it was not closed. Answer it, or use closetab ${tabName(t)} --force.`);
+    ctx.out(`[sm-dev] ${tabName(t)} is waiting on ${dialogKind(t.dialogs!.current!)} dialog, so it was not closed. Answer it, or use ${quoted(`closetab ${tabName(t)} --force`)}.`);
   }
   await Promise.all(tabs.filter((t) => !waiting.includes(t)).map((t) => closeTab(ctx, t, force, timeoutMs)));
   // Says where the page commands act now, if their tab closed.
@@ -2108,7 +2197,7 @@ async function closeTab(ctx: ConsoleContext, tab: ControlledTab, force: boolean,
   clearTimeout(timer);
   page.off('close', onClose);
   if (!asked && !page.isClosed()) {
-    ctx.out(`[sm-dev] ${tabName(tab)} didn't close within ${seconds(timeoutMs)}. Use closetab --force to close it without running its beforeunload handlers.`);
+    ctx.out(`[sm-dev] ${tabName(tab)} didn't close within ${seconds(timeoutMs)}. Use ${quoted('closetab --force')} to close it without running its beforeunload handlers.`);
   }
 }
 
@@ -2134,14 +2223,14 @@ async function openNewTab(ctx: ConsoleContext, rest: string[], given: Record<str
   }
   if (rest.includes('all')) {
     if (rest.length > 1 || flags.fromSaved || flags.url !== undefined || flags.offline) {
-      ctx.out('[sm-dev] ERROR: The newtab command takes all by itself, to open each script\'s page');
+      ctx.out(MISTAKE_PREFIX + 'The `newtab` command takes all by itself, to open each script\'s page');
       return false;
     }
     return openScriptPages(ctx, noScript, noWait, timeoutMs);
   }
   const tabRef = rest.find((w) => TAB_REF.test(w));
   if (tabRef) {
-    ctx.out(`[sm-dev] ERROR: The newtab command opens a tab of its own, so it takes URLs, files or script numbers, not ${tabRef}`);
+    ctx.out(`${MISTAKE_PREFIX}The ${quoted('newtab')} command opens a tab of its own, so it takes URLs, files or script numbers, not ${quoted(tabRef)}`);
     return false;
   }
   const named: PageWord[] = [];
@@ -2219,7 +2308,7 @@ async function pageFor(ctx: ConsoleContext, arg: string, cwd: string): Promise<s
 // having said why.
 async function installedPage(ctx: ConsoleContext, label: string): Promise<string | null> {
   if (!ctx.manager) {
-    ctx.out(`[sm-dev] ERROR: ${label} names an installed script, which this run can't look up`);
+    ctx.out(`${MISTAKE_PREFIX}${quoted(label)} names an installed script, which this run can't look up`);
     return null;
   }
   try {
@@ -2282,7 +2371,7 @@ function printPerTab(
   empty?: string,
 ): void {
   for (const tab of ctx.tabs()) {
-    ctx.out(`${tab === current ? '* ' : '  '}Tab ${tabName(tab)}: ${tab.page.url()}`);
+    ctx.out(ui`${selectMark(tab === current)}${S.heading('Tab')} ${S.id(tabName(tab))}: ${S.url(tab.page.url())}`);
     const lines = body(tab);
     if (lines.length === 0 && empty) ctx.out(`    ${empty}`);
     for (const l of lines) ctx.out(`  ${l}`);
@@ -2316,7 +2405,7 @@ function logsCommand(ctx: ConsoleContext, parsed: ParsedArgs, current: Controlle
   for (const word of parsed.words) {
     if (word === 'all' && !all && parsed.tab === undefined && scriptWord === undefined) all = true;
     else if (scriptWord === undefined) scriptWord = word;
-    else return mistake('The logs command takes a tab or all, then a script, e.g. logs T2 1');
+    else return mistake('The `logs` command takes a tab or all, then a script, e.g. `logs T2 1`');
   }
   let tab: ControlledTab | undefined;
   if (parsed.tab !== undefined) {
@@ -2432,7 +2521,7 @@ function menuLines(ctx: ConsoleContext, tab: ControlledTab): string[] {
   for (const group of menuGroups(ctx, tab)) {
     lines.push(group.label);
     // One an iframe registered names it: each frame has its own copy.
-    for (const c of group.commands) lines.push(`    M${++n}: ${c.name}${'record' in c && c.record.frameNumber !== undefined ? ` (F${c.record.frameNumber})` : ''}`);
+    for (const c of group.commands) lines.push(ui`    ${S.id(`M${++n}`)}: ${S.name(c.name)}${'record' in c && c.record.frameNumber !== undefined ? ui` (${S.id(`F${c.record.frameNumber}`)})` : ''}`);
   }
   return lines;
 }
@@ -2443,7 +2532,7 @@ function noMenusMessage(ctx: ConsoleContext, tab: ControlledTab): string {
   return others.length === 0
     ? '[sm-dev] No menu commands are registered on any tab'
     : `[sm-dev] No menu commands are registered on ${tabName(tab)}. ${listed(others.map(tabName))} ${others.length === 1 ? 'has' : 'have'} some; `
-      + `use menu all or menu ${tabName(others[0])} to list them.`;
+      + `use ${quoted('menu all')} or ${quoted(`menu ${tabName(others[0])}`)} to list them.`;
 }
 
 // A script registers its commands as it starts, and commands are only
@@ -2467,7 +2556,7 @@ async function fireMenu(ctx: ConsoleContext, tab: ControlledTab, argument: strin
     if (entry && 'run' in entry) {
       // Each manual script has one, so the label alone may not say which.
       if (!byNumber && commands.filter((c) => 'run' in c).length > 1) {
-        ctx.out(`[sm-dev] More than one script here has "${RUN_SCRIPT_LABEL}". Use menu to list them, and fire one by its M number.`);
+        ctx.out(`[sm-dev] More than one script here has "${RUN_SCRIPT_LABEL}". Use ${quoted('menu')} to list them, and fire one by its M number.`);
         return false;
       }
       return runManual(ctx, tab, entry.scriptId);
@@ -2490,14 +2579,14 @@ async function fireMenu(ctx: ConsoleContext, tab: ControlledTab, argument: strin
     await new Promise((r) => setTimeout(r, 100));
   }
   const elsewhere = numbered ? [] : elsewhereFor(ctx, tab, argument);
-  if (/^\d+$/.test(argument) && elsewhere.length === 0) ctx.out(`[sm-dev] ERROR: Menu commands are named M1, M2 and so on. Did you mean M${argument}?`);
+  if (/^\d+$/.test(argument) && elsewhere.length === 0) ctx.out(`${MISTAKE_PREFIX}Menu commands are named M1, M2 and so on. Did you mean ${quoted(`M${argument}`)}?`);
   else if (elsewhere.length > 0) {
     ctx.out(`[sm-dev] "${argument}" is registered on ${listed(elsewhere.map(tabName))}, not ${tabName(tab)}. `
-      + `Use menu ${tabName(elsewhere[0])}.${argument} to fire it ${elsewhere.length === 1 ? 'there' : 'on one of them'}.`);
+      + `Use ${quoted(`menu ${tabName(elsewhere[0])}.${argument}`)} to fire it ${elsewhere.length === 1 ? 'there' : 'on one of them'}.`);
   }
   else if (all().length === 0) ctx.out(noMenusMessage(ctx, tab));
-  else if (numbered) ctx.out(`[sm-dev] There is no menu command M${numbered[1]}${onTab(ctx, tab)}. Use menu to list them.`);
-  else ctx.out(`[sm-dev] No menu command named "${argument}" is registered${onTab(ctx, tab)}. Use menu to list them.`);
+  else if (numbered) ctx.out(`[sm-dev] There is no menu command M${numbered[1]}${onTab(ctx, tab)}. Use ${quoted('menu')} to list them.`);
+  else ctx.out(`[sm-dev] No menu command named "${argument}" is registered${onTab(ctx, tab)}. Use ${quoted('menu')} to list them.`);
   return false;
 }
 
@@ -2511,7 +2600,7 @@ async function runManual(ctx: ConsoleContext, tab: ControlledTab, scriptId: stri
   const run = ctx.host.runManualScript(tab.link, scriptId).then(() => null, (err: unknown) => err as Error);
   const failed = await fire(tab, run.then((err) => err === null)) === false ? await run : null;
   if (failed) {
-    ctx.out(`[sm-dev] ERROR: ${name} did not run: ${failed.message}`);
+    ctx.out(`${MISTAKE_PREFIX}${name} did not run: ${failed.message}`);
     return false;
   }
   ctx.out(`[sm-dev] Ran ${name}`);
@@ -2543,7 +2632,7 @@ async function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined):
   // expected on the tab.
   if (ctx.predicted && tab && scripts.length > 0) return predictedLines(ctx, tab, 'Scripts');
   const lines: string[] = [];
-  lines.push(`Scripts${activityHeading(tab)}:`);
+  lines.push(ui`${S.heading('Scripts')}${activityHeading(tab)}:`);
   if (scripts.length === 0) lines.push(`  ${NO_SCRIPTS}`);
   for (const script of scripts) {
     const id = script.id;
@@ -2551,7 +2640,7 @@ async function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined):
     // First under the script, on any tab: the script is stuck until
     // it's answered.
     for (const prompt of waitingPrompts(ctx).filter((r) => r.scriptId === id)) {
-      lines.push(`${DETAIL}*PERMISSION PROMPT* waiting: ${prompt.host} (${prompt.method} ${withoutQuery(prompt.url)}). Answer using connect.`);
+      lines.push(message(`${DETAIL}*PERMISSION PROMPT* waiting: ${prompt.host} (${prompt.method} ${withoutQuery(prompt.url)}). Answer using ${quoted('connect')}.`));
     }
     if (!tab) {
       // Errors are the script's, from tabs since closed, so still told.
@@ -2560,7 +2649,7 @@ async function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined):
       const counts = [count(values, 'stored value'), count(errors.length, 'error')].filter((c) => !c.startsWith('0 '));
       if (counts.length > 0) lines.push(`${DETAIL}${counts.join(', ')}`);
       const last = errors.at(-1);
-      if (last) lines.push(`${DETAIL}Last error: ${last.message}`);
+      if (last) lines.push(ui`${DETAIL}${S.heading('Last error')}: ${last.message}`);
       continue;
     }
     lines.push(activityLine(ctx, tab, id));
@@ -2573,7 +2662,7 @@ async function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined):
       .filter((c) => !c.startsWith('0 '));
     if (counts.length > 0) lines.push(`${DETAIL}${counts.join(', ')}`);
     const last = errors.at(-1);
-    if (last) lines.push(`${DETAIL}Last error: ${last.message}`);
+    if (last) lines.push(ui`${DETAIL}${S.heading('Last error')}: ${last.message}`);
   }
   return lines;
 }
@@ -2593,9 +2682,9 @@ function predictedLines(ctx: ConsoleContext, tab: ControlledTab, heading: string
   const expected = ctx.scripts.filter((s) => activeInTab(ctx, tab, s.id));
   const rest = ctx.scripts.filter((s) => !expected.includes(s));
   return [
-    `${heading}:`,
-    ...(expected.length > 0 ? [`  Expected on tab ${tabName(tab)} using match rules:`, ...expected.map((s) => `  ${scriptRow(ctx, s)}${framesSuffix(ctx, tab, s.id)}`)] : []),
-    ...(rest.length > 0 ? [`  Not expected on tab ${tabName(tab)}:`, ...rest.map((s) => `  ${scriptRow(ctx, s)}`)] : []),
+    ui`${S.heading(heading)}:`,
+    ...(expected.length > 0 ? [ui`  Expected on tab ${S.id(tabName(tab))} using match rules:`, ...expected.map((s) => ui`  ${scriptRow(ctx, s)}${framesSuffix(ctx, tab, s.id)}`)] : []),
+    ...(rest.length > 0 ? [ui`  Not expected on tab ${S.id(tabName(tab))}:`, ...rest.map((s) => ui`  ${scriptRow(ctx, s)}`)] : []),
   ];
 }
 
@@ -2606,7 +2695,7 @@ const DETAIL = '     ';
 // A script list's heading names the tab its `activityLine`s are about.
 // None with no tab.
 function activityHeading(tab: ControlledTab | undefined): string {
-  return tab ? ` (with status on active tab ${tabName(tab)})` : '';
+  return tab ? ui` (with status on active tab ${S.id(tabName(tab))})` : '';
 }
 
 // Whether a script is active on the tab the heading names, and on
@@ -2617,11 +2706,12 @@ function activityHeading(tab: ControlledTab | undefined): string {
 // `Not active on T1. Active on T2.`.
 function activityLine(ctx: ConsoleContext, tab: ControlledTab, id: string | undefined): string {
   const active = activeInTab(ctx, tab, id);
-  const places = ctx.tabs().filter((t) => activeInTab(ctx, t, id)).map((t) => `${tabName(t)}${framesSuffix(ctx, t, id)}`);
-  if (active) return `${DETAIL}${places.length === 1 && framesWhere(ctx, tab, id) === undefined ? 'Active' : `Active on ${places.join(', ')}`}`;
+  const tabs = ctx.tabs().filter((t) => activeInTab(ctx, t, id));
+  const places = ui`${tabs.map((t) => ui`${S.id(tabName(t))}${framesSuffix(ctx, t, id)}`).join(', ')}`;
+  if (active) return ui`${DETAIL}${tabs.length === 1 && framesWhere(ctx, tab, id) === undefined ? 'Active' : ui`Active on ${places}`}`;
   const here = waitingOn(ctx, tab, id, active) ? WAITING_FOR_MENU : 'Not active';
-  if (places.length === 0) return `${DETAIL}${here}`;
-  return `${DETAIL}${here === 'Not active' ? `Not active on ${tabName(tab)}` : here}. Active on ${places.join(', ')}.`;
+  if (tabs.length === 0) return `${DETAIL}${here}`;
+  return ui`${DETAIL}${here === 'Not active' ? ui`Not active on ${S.id(tabName(tab))}` : here}. Active on ${places}.`;
 }
 
 async function valueLines(ctx: ConsoleContext, scripts: PreparedScript[]): Promise<string[]> {
@@ -2638,7 +2728,7 @@ async function valueLines(ctx: ConsoleContext, scripts: PreparedScript[]): Promi
 function valueEntries(values: Record<string, unknown>): string[] {
   const keys = Object.keys(values);
   if (keys.length === 0) return ['    Nothing stored'];
-  return keys.map((key) => `    ${key} = ${JSON.stringify(values[key])}`);
+  return keys.map((key) => ui`    ${S.code(key)} = ${S.code(String(JSON.stringify(values[key])))}`);
 }
 
 // `E1`: a SourceMonkey-managed script (see `OtherScript`).
@@ -2650,7 +2740,7 @@ const OTHER_LABEL = /^E\d+$/i;
 async function pickOther(ctx: ConsoleContext, label: string, tab: ControlledTab | undefined): Promise<OtherScript | null> {
   const name = label.toUpperCase();
   if (!ctx.others) {
-    ctx.out(`[sm-dev] ERROR: ${name} names a SourceMonkey-managed script, which only a run lists`);
+    ctx.out(`${MISTAKE_PREFIX}${quoted(name)} names a SourceMonkey-managed script, which only a run lists`);
     return null;
   }
   if (!ctx.others.byLabel(name) && tab) {
@@ -2704,8 +2794,8 @@ const OTHER_STATUS: Record<string, string> = {
 
 // `E1: Name (Collection)`, without the parentheses for a script whose
 // collection isn't known (one deleted since the page loaded).
-function otherLabel(o: OtherScript): string {
-  return `${o.label}: ${o.name}${o.collection ? ` (${o.collection})` : ''}`;
+function otherLabelUi(o: OtherScript): string {
+  return ui`${S.id(o.label)}: ${S.name(o.name)}${o.collection ? ui` (${S.name(o.collection)})` : ''}`;
 }
 
 // How the other scripts' list is headed.
@@ -2718,7 +2808,7 @@ function othersKind(ctx: ConsoleContext): string {
 async function otherLines(ctx: ConsoleContext, tab: ControlledTab | undefined): Promise<string[]> {
   if (!ctx.others) return [];
   // With no tab, only the picked one, which is on no page.
-  if (!tab) return ctx.currentOther ? [`${othersKind(ctx)}:`, `* ${otherLabel(ctx.currentOther)}: No tab is open`] : [];
+  if (!tab) return ctx.currentOther ? [ui`${S.heading(othersKind(ctx))}:`, ui`${selectMark(true)}${otherLabelUi(ctx.currentOther)}: No tab is open`] : [];
   let others: OtherScript[];
   try {
     others = await ctx.others.onTab(tab);
@@ -2729,10 +2819,10 @@ async function otherLines(ctx: ConsoleContext, tab: ControlledTab | undefined): 
   const away = ctx.currentOther && !others.includes(ctx.currentOther) ? ctx.currentOther : undefined;
   if (others.length === 0 && !away) return [];
   return [
-    `${othersKind(ctx)} on ${tabName(tab)}:`,
+    ui`${S.heading(othersKind(ctx))} on ${S.id(tabName(tab))}:`,
     // By label: each listing gets the scripts afresh.
-    ...others.map((o) => `${o.label === ctx.currentOther?.label ? '* ' : '  '}${otherLabel(o)}: ${OTHER_STATUS[o.status] ?? o.status}`),
-    ...(away ? [`* ${otherLabel(away)}: Not on this page`] : []),
+    ...others.map((o) => ui`${selectMark(o.label === ctx.currentOther?.label)}${otherLabelUi(o)}: ${OTHER_STATUS[o.status] ?? o.status}`),
+    ...(away ? [ui`${selectMark(true)}${otherLabelUi(away)}: Not on this page`] : []),
   ];
 }
 
@@ -2876,9 +2966,10 @@ export class DialogTracker {
     const ordinal = ++this.openedCount;
     for (const wake of this.waiters) wake();
     const message = dialog.message();
-    const what = `The page opened ${dialogKind(dialog)} dialog${message ? `: ${JSON.stringify(message)}` : ''}`;
+    // As markup, so backticks in the page's text are only text.
+    const what = ui`The page opened ${dialogKind(dialog)} dialog${message ? `: ${JSON.stringify(message)}` : ''}`;
     if (!this.visible && !this.commandsListening) {
-      this.say(`${what}. Dismissed it, since nothing can answer it in a headless run that takes no commands.`);
+      this.say(ui`${what}. Dismissed it, since nothing can answer it in a headless run that takes no commands.`);
       void dialog.dismiss().catch(() => undefined);
       return;
     }
@@ -2887,12 +2978,12 @@ export class DialogTracker {
     const tab = this.tabRef();
     const accept = tab ? `accept ${tab}` : 'accept';
     const dismiss = tab ? `dismiss ${tab}` : 'dismiss';
-    const answer = dialog.type() === 'beforeunload' ? `use ${accept} to leave the page or ${dismiss} to stay`
-      : `use ${dialog.type() === 'prompt' ? `${accept} [text]` : accept} or ${dismiss}`;
+    const answer = dialog.type() === 'beforeunload' ? `use ${quoted(accept)} to leave the page or ${quoted(dismiss)} to stay`
+      : `use ${quoted(dialog.type() === 'prompt' ? `${accept} [text]` : accept)} or ${quoted(dismiss)}`;
     const how = !this.visible ? `${answer[0].toUpperCase()}${answer.slice(1)}`
       : this.commandsListening ? `Answer it in the browser, or ${answer}`
         : 'Answer it in the browser';
-    this.say(`${what}. ${how}.`);
+    this.say(ui`${what}. ${S.message(how)}.`);
   }
 }
 
@@ -2946,8 +3037,9 @@ export function writeOutputLine(line: string): void {
   const marked = markedLine(line, jsonLayout ?? (process.stdout.isTTY ? 'multi' : 'single'));
   // In JSON mode, other log messages go to stderr, keeping stdout for
   // the results (see docs/sm-dev-json.md).
-  const out = marked?.stderr || (!marked && jsonLogs && line.startsWith('[sm-dev] ')) ? process.stderr : process.stdout;
+  const out = marked?.stderr || (!marked && jsonLogs && line.startsWith(S.SM_DEV_PREFIX)) ? process.stderr : process.stdout;
   if (marked) line = marked.text;
+  line = paintOutput(line, streamHasColor(out));
   const rl = activePrompt;
   if (!rl) {
     out.write(line + '\n');
@@ -3031,7 +3123,8 @@ export function commandRunner(ctx: ConsoleContext): CommandRunner {
         // An invalid command is 2, even when it also said it failed.
         if (mistaken) code = 2;
       } catch (err) {
-        ctx.out(`${err instanceof UsageError ? MISTAKE_PREFIX : '[sm-dev] '}${(err as Error).message}`);
+        // A failure, apart from a mistake in the command: in error color too.
+        ctx.out(err instanceof UsageError ? `${MISTAKE_PREFIX}${(err as Error).message}` : `[sm-dev] ${errorLine((err as Error).message)}`);
         code = err instanceof UsageError ? 2 : 1;
       } finally {
         ctx.json = undefined;
@@ -3090,7 +3183,7 @@ export interface PromptIO {
  * Returns a function that closes the prompt.
  */
 export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?: { start?: () => void }) => Promise<unknown>): () => void {
-  io.out('[sm-dev] Ready for commands. Use help to list them.');
+  io.out('[sm-dev] Ready for commands. Use `help commands` to list them.');
   // A dumb terminal can't move the cursor, so writeOutputLine couldn't
   // redraw around a prompt there.
   const terminal = Boolean(process.stdout.isTTY) && process.env.TERM !== 'dumb';
@@ -3100,7 +3193,7 @@ export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?:
   // A message in the commands' turn, after the ones before it. The
   // empty line runs nothing.
   const say = (message: string): void => {
-    void runLine('', { start: () => io.out(`[sm-dev] ERROR: ${message}`) });
+    void runLine('', { start: () => io.out(`${MISTAKE_PREFIX}${message}`) });
   };
   const names = [...COMMAND_NAMES].sort();
   // Kept across sessions (see prompt-history.ts). Newest first.
@@ -3130,9 +3223,11 @@ export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?:
   // A command of several lines (a {{ block, or lines joined with
   // Alt-Enter) cleared by Ctrl-C or Esc is kept, unfinished, to take
   // up again. Not one brought back from the history unchanged.
+  // The prompts and typed commands in color, apart from the output.
+  const paint = streamHasColor(process.stdout) ? { prompt: (t: string) => paintAs('prompt', t), text: (t: string) => paintAs('typed', t) } : undefined;
   const editor = terminal ? editMultiLine(lines, BLOCK_PROMPT, endsOutsideBlock, (text) => {
     if (text.includes('\n') && !history.includes(text)) remember(text);
-  }) : null;
+  }, paint) : null;
   // readline adds each typed line to the history itself, but a {{
   // block should be one entry of all its lines, so its additions are
   // taken back out here and `remember` adds whole entries instead.

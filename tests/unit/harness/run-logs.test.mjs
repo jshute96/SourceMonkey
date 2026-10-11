@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import {
   DEFAULT_LOG_SOURCES, inSources, logsLines, parseLogSources, parsePosition, parseTail, RunLog, shortConsoleText, streamText, textMatcher, timeOfDay,
 } from '../../../lib/harness/run-logs.js';
+import { plainLine } from '../../../lib/harness/output-style.js';
 
 test('--log-source takes a comma list, or all', () => {
   assert.deepEqual([...parseLogSources('sm,page')], ['sm', 'page']);
@@ -103,16 +104,18 @@ test('logs prints the time and tab, and each run of identical lines once', () =>
     { id: at + 3, source: 'sm', kind: 'error', text: 'A: no' },
     { id: at + 4, source: 'page', kind: 'log', tab: 12, text: 'x' },
   ];
-  assert.deepEqual(logsLines(records), [
+  assert.deepEqual(logsLines(records).map(plainLine), [
     '14:05:12.345 T1  [event] A started',
     '14:05:12.345 T1  [script log] tick (2 times)',
     '14:05:12.345     [sm error] A: no',
     '14:05:12.345 T12 [page log] x',
   ]);
   assert.equal(timeOfDay(at), '14:05:12.345');
-  assert.deepEqual(logsLines([{ id: at, source: 'sm', kind: 'info', text: 'A: ok' }]), ['14:05:12.345 [sm info] A: ok']);
+  assert.deepEqual(logsLines([{ id: at, source: 'sm', kind: 'info', text: 'A: ok' }]).map(plainLine), ['14:05:12.345 [sm info] A: ok']);
+  // A script's own text keeps its backticks, error or not.
+  assert.deepEqual(logsLines([{ id: at, source: 'script', kind: 'error', text: 'bad `42` and `--x`' }]).map(plainLine), ['14:05:12.345 [script error] bad `42` and `--x`']);
   // An iframe's line: its tab and frame.
-  assert.deepEqual(logsLines([records[0], { id: at + 5, source: 'event', kind: 'started', tab: 1, frame: 4, text: 'A started' }]), [
+  assert.deepEqual(logsLines([records[0], { id: at + 5, source: 'event', kind: 'started', tab: 1, frame: 4, text: 'A started' }]).map(plainLine), [
     '14:05:12.345 T1    [event] A started',
     '14:05:12.345 T1.F4 [event] A started',
   ]);

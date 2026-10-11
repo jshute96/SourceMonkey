@@ -12,7 +12,7 @@
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { Locator, Page, Request } from '@playwright/test';
+import type { CDPSession, Frame, Locator, Page, Request } from '@playwright/test';
 
 import type { ParsedArgs } from './command-args.js';
 import { PART_LIMIT, PROBE_MAX } from './command-list.js';
@@ -23,6 +23,8 @@ import { readInputFile, writeProblem } from './input-file.js';
 import { notSettledMessage, seconds, SETTLE_TIMEOUT_MS, settleTab, timeoutFlagMs } from './wait.js';
 import { savePageHtml } from './save-html.js';
 import { shownPath } from './prepare.js';
+import { findFrame, frameNodes, parseFrameRef, type FrameIds } from './frames.js';
+import { asError, cmd, code, ERROR_PREFIX, escapeMarkup, heading, id as idRole, MARKUP, message, name as nameRole, quoted, ui, url } from './output-style.js';
 import { documentOf, locate, named, noteRefs, onScreen, probeMatches, refOf, refProblem, refsOf, tidy, treeParts, withoutDocument } from './snapshot.js';
 
 export const PAGE_COMMANDS = new Set(['click', 'hover', 'type', 'key', 'eval', 'snapshot', 'screenshot', 'savehtml', 'probe', 'cdp']);
@@ -91,7 +93,7 @@ function shortEvalResult(text: string): string {
   // cut in half. Sliced, not split into code points, since the text can
   // be megabytes.
   const end = /[\uD800-\uDBFF]/.test(text[EVAL_SHOWN_CHARS - 1]) ? EVAL_SHOWN_CHARS - 1 : EVAL_SHOWN_CHARS;
-  return `${text.slice(0, end)}... (${text.length} chars; eval --out FILE writes it all)`;
+  return ui`${text.slice(0, end)}... (${text.length} chars; ${cmd('eval --out FILE')} writes it all)`;
 }
 
 /**
@@ -107,12 +109,20 @@ export async function runPageCommand(
   command: string, input: PageInput, tab: ControlledTab, out: (line: string) => void, cwd = process.cwd(),
 ): Promise<boolean | void> {
   const say = (line: string): void => out(`[sm-dev] ${line}`);
+  // A mistake in the command: `[sm-dev] ERROR: ...`, which ends it with exit code 2.
+  const sayMistake = (text: string): void => say(`${ERROR_PREFIX}${text}`);
   const { page } = tab;
   // `--timeout-seconds`: each wait the command does, in place of that
   // wait's default.
   const given = timeoutFlagMs(input.flags, out);
   if (given === null) return false;
   const within = (defaultMs: number): number => given ?? defaultMs;
+  // `--frame F2`: the iframe the selector or expression is for.
+  const frame = await pickFrame(input.flags['--frame'], tab, say);
+  if (frame === null) return false;
+  // After a selector in what a command says it did, marked up.
+  const frameShown = frame ? idRole(`F${tab.link.host.frameIds.number(frame)}`) : '';
+  const inFrame = frame ? ui` in ${frameShown}` : '';
   const actionMs = within(ACTION_TIMEOUT_MS);
   // A file it names, from `cwd`, and as said back.
   const file = (name: string): string => path.resolve(cwd, name);
@@ -128,11 +138,11 @@ export async function runPageCommand(
     return !await tab.dialogs.untilDialog(finished.then(() => false));
   };
   // An action, then the page settling (see wait.ts), each stopping at
-  // a dialog. A page that doesn't settle in time says why, and the
+  // a dialog. `what` is markup. A page that doesn't settle in time says why, and the
   // action still counts as done.
   const act = async (work: Promise<unknown>, what: string): Promise<void> => {
     if (!await done(work)) {
-      say(`${what}. It opened a dialog, which is waiting for an answer.`);
+      say(ui`${what}. It opened a dialog, which is waiting for an answer.`);
       return;
     }
     if (input.flags['--nowait']) {
@@ -141,7 +151,7 @@ export async function runPageCommand(
     }
     const settled = await settleTab(tab, tab.link.host, within(SETTLE_TIMEOUT_MS));
     if (!settled.settled && 'dialog' in settled) {
-      say(`${what}. The page opened a dialog, which is waiting for an answer.`);
+      say(ui`${what}. The page opened a dialog, which is waiting for an answer.`);
       return;
     }
     say(what);
@@ -157,18 +167,18 @@ export async function runPageCommand(
         let expression = [input.text, input.block].filter((part) => part).join('\n');
         if (typeof from === 'string') {
           if (expression) {
-            say('ERROR: The eval command takes JavaScript or --file, not both');
+            sayMistake('The `eval` command takes JavaScript or `--file`, not both');
             return;
           }
           try {
             expression = readInputFile(file(from), shown(from));
           } catch (err) {
-            say(`ERROR: ${(err as Error).message}`);
+            sayMistake(`${(err as Error).message}`);
             return;
           }
         }
         if (!expression) {
-          say('ERROR: The eval command needs an expression, e.g. eval document.title');
+          sayMistake('The `eval` command needs an expression, e.g. `eval document.title`');
           return;
         }
         let result = '';
@@ -176,22 +186,23 @@ export async function runPageCommand(
         // at all (it failed to install), or not run in this document.
         // Under another manager (`manager`, its label), which reports
         // nothing, sm-dev can't tell which.
+        // Marked up.
         const noScope = typeof evalIn !== 'object' ? ''
-          : evalIn.manager && evalIn.scope ? `sm-dev couldn't reach the scope of ${evalIn.name} under ${evalIn.manager}`
-          : `${evalIn.name} ${evalIn.scope ? 'hasn\'t run on this page' : 'isn\'t installed in the extension'}`;
+          : evalIn.manager && evalIn.scope ? ui`sm-dev couldn't reach the scope of ${nameRole(evalIn.name)} under ${evalIn.manager}`
+          : ui`${nameRole(evalIn.name)} ${evalIn.scope ? ui`hasn't run ${frame ? ui`in ${frameShown}` : 'on this page'}` : 'isn\'t installed in the extension'}`;
         // A selected script with no scope runs its code in its fallback
         // world, as said. A named one was asked for, so that's a
         // failure.
         const evaluate = (): Promise<string> => {
           // --timeout-seconds (`given`): how long to wait for a document,
           // on a page between them.
-          if (typeof evalIn === 'string') return tab.link.evaluate(expression, evalIn, given);
-          const inScript = evalIn.scope ? tab.link.evaluate(expression, evalIn.scope, given) : Promise.reject(new NoEvalHook());
+          if (typeof evalIn === 'string') return tab.link.evaluate(expression, evalIn, given, frame);
+          const inScript = evalIn.scope ? tab.link.evaluate(expression, evalIn.scope, given, frame) : Promise.reject(new NoEvalHook());
           return inScript.catch((err: unknown) => {
             if (!(err instanceof NoEvalHook)) throw err;
             if (evalIn.named) throw err;
-            say(`${noScope}, so this ran in ${WORLD_NAMES[evalIn.fallback]}`);
-            return tab.link.evaluate(expression, evalIn.fallback, given);
+            say(ui`${noScope}, so this ran in ${WORLD_NAMES[evalIn.fallback]}`);
+            return tab.link.evaluate(expression, evalIn.fallback, given, frame);
           });
         };
         const evaluated = evaluate().then((r) => { result = r; });
@@ -209,9 +220,9 @@ export async function runPageCommand(
             if (err instanceof NoEvalHook && typeof evalIn === 'object') {
               // Under another manager, the cause isn't known, so no fix is offered.
               say(evalIn.manager && evalIn.scope ? noScope
-                : evalIn.scope ? `${noScope}, so its scope can't be reached. Load a page it matches, or reload this one.`
-                : `${noScope}, so its scope can't be reached`);
-            } else if (err instanceof ScriptThrew) say(`The expression threw: ${err.message}`);
+                : evalIn.scope ? ui`${noScope}, so its scope can't be reached. Load a page it matches, or reload this one.`
+                : ui`${noScope}, so its scope can't be reached`);
+            } else if (err instanceof ScriptThrew) say(asError(`The expression threw: ${err.message}`));
             else if (err instanceof NoDocument) say(err.message);
             else say(`Internal error: ${(err as Error).message}`);
             return false;
@@ -223,7 +234,7 @@ export async function runPageCommand(
         const outFile = input.flags['--out'];
         if (typeof outFile === 'string') {
           await write(outFile, () => writeFile(file(outFile), result + '\n'));
-          say(`Wrote ${shown(outFile)} (${result.length} chars)`);
+          say(ui`Wrote ${url(shown(outFile))} (${result.length} chars)`);
           return;
         }
         out(shortEvalResult(result));
@@ -233,17 +244,17 @@ export async function runPageCommand(
       case 'hover': {
         const options = clickOptions(input.flags, input.text ?? '');
         if (typeof options === 'string') {
-          say(`ERROR: ${options}`);
+          sayMistake(`${options}`);
           return;
         }
         const { selector } = options;
         if (!selector) {
-          say(`ERROR: The ${command} command needs a selector, e.g. ${command} '#submit'`);
+          sayMistake(`The ${quoted(command)} command needs a selector, e.g. ${quoted(`${command} '#submit'`)}`);
           return;
         }
-        const count = await matches(page, selector, say);
+        const count = await matches(page, selector, say, frame, tab.link.host.frameIds);
         if (count === null) return false;
-        const target = locate(page, selector).first();
+        const target = locate(page, selector, frame).first();
         const action = (command === 'click'
           ? target.click({ ...options.click, timeout: actionMs })
           : target.hover({ modifiers: options.click.modifiers, position: options.click.position, timeout: actionMs }))
@@ -257,7 +268,7 @@ export async function runPageCommand(
             throw new Error(await placeProblem(page, target, options.click.position) ?? err.message);
           });
         const how = options.how.length > 0 ? ` with ${options.how.join(', ')}` : '';
-        await act(action, `${command === 'click' ? 'Clicked' : 'Hovered over'} ${named(page, selector)}${count > 1 ? ` (the first of ${count} matches)` : ''}${how}`);
+        await act(action, ui`${command === 'click' ? 'Clicked' : 'Hovered over'} ${namedMarked(page, selector)}${inFrame}${count > 1 ? ` (the first of ${count} matches)` : ''}${how}`);
         return;
       }
       case 'type': {
@@ -270,11 +281,11 @@ export async function runPageCommand(
         let text: string;
         if (typeof from === 'string') {
           if (input.text || input.block !== undefined) {
-            say('ERROR: The type command takes text or --file, not both');
+            sayMistake('The `type` command takes text or `--file`, not both');
             return;
           }
           if (!selector) {
-            say('ERROR: The type command takes a selector and one file, e.g. type \'#notes\' --file notes.txt');
+            sayMistake('The `type` command takes a selector and one file, e.g. `type \'#notes\' --file notes.txt`');
             return;
           }
           try {
@@ -282,12 +293,12 @@ export async function runPageCommand(
             // Windows line breaks as one Enter each, not two.
             text = readInputFile(file(from), shown(from), { blankOk: true }).replace(/\r\n?/g, '\n');
           } catch (err) {
-            say(`ERROR: ${(err as Error).message}`);
+            sayMistake(`${(err as Error).message}`);
             return;
           }
         } else if (input.block !== undefined) {
           if (input.text || !selector) {
-            say('ERROR: The type command takes one selector before {{. Quote a selector that has spaces.');
+            sayMistake('The `type` command takes one selector before `{{`. Quote a selector that has spaces.');
             return;
           }
           text = input.block;
@@ -297,29 +308,29 @@ export async function runPageCommand(
         // `--clear`: emptied first, so the text is optional.
         const clear = input.flags['--clear'] === true;
         if (!selector || (!text && !clear)) {
-          say('ERROR: The type command needs a selector and the text (or --clear), e.g. type \'input[name=q]\' \'hello world\'');
+          sayMistake('The `type` command needs a selector and the text (or `--clear`), e.g. `type \'input[name=q]\' \'hello world\'`');
           return;
         }
-        const count = await matches(page, selector, say);
+        const count = await matches(page, selector, say, frame, tab.link.host.frameIds);
         if (count === null) return false;
-        const element = locate(page, selector).first();
+        const element = locate(page, selector, frame).first();
         const typing = (async () => {
           if (clear) await element.clear({ timeout: actionMs });
           if (text) await element.pressSequentially(text, { timeout: actionMs });
         })();
         const done = !text ? 'Cleared' : clear ? 'Cleared and typed into' : 'Typed into';
-        await act(typing, `${done} ${named(page, selector)}${count > 1 ? ` (the first of ${count} matches)` : ''}`);
+        await act(typing, ui`${done} ${namedMarked(page, selector)}${inFrame}${count > 1 ? ` (the first of ${count} matches)` : ''}`);
         return;
       }
       case 'key': {
         const keys = input.words;
         if (keys.length === 0) {
-          say('ERROR: The key command needs a key, e.g. key j or key Shift+ArrowRight');
+          sayMistake('The `key` command needs a key, e.g. `key j` or `key Shift+ArrowRight`');
           return;
         }
         const unjoined = keys.find((k) => keyParts(k).includes(''));
         if (unjoined) {
-          say(`ERROR: ${unjoined} has a + with no key on one side. Join keys with +, as in Shift+Tab.`);
+          sayMistake(`${quoted(unjoined)} has a ${quoted('+')} with no key on one side. Join keys with ${quoted('+')}, as in ${quoted('Shift+Tab')}.`);
           return;
         }
         const named = keys.map(keyName);
@@ -333,9 +344,9 @@ export async function runPageCommand(
         const pressing = (async () => {
           for (const key of named) await page.keyboard.press(key);
         })();
-        await act(pressing, `Pressed ${named.join(', ')}`);
+        await act(pressing, ui`Pressed ${named.map((k) => code(k)).join(', ')}`);
         if (wasFullscreen && !tab.dialogs?.current && await pageSays(page, isFullscreen)) {
-          say('The page is still fullscreen. Escape sent by sm-dev goes to the page rather than to Chrome. To exit, use eval document.exitFullscreen().');
+          say('The page is still fullscreen. Escape sent by sm-dev goes to the page rather than to Chrome. To exit, use `eval document.exitFullscreen()`.');
         }
         return;
       }
@@ -344,21 +355,22 @@ export async function runPageCommand(
         const visible = input.flags['--visible'] === true;
         const parts = partOptions(input.flags, !!selector);
         if (typeof parts === 'string') {
-          say(`ERROR: ${parts}`);
+          sayMistake(`${parts}`);
           return;
         }
-        const count = selector ? await matches(page, selector, say) : 0;
+        const count = selector ? await matches(page, selector, say, frame, tab.link.host.frameIds) : 0;
         if (count === null) return false;
         let tree = '';
         const taking = (async () => {
           const doc = await documentOf(page);
           // The whole page is `:root`, not `body`: scripts often add their
           // panels to <html>, after <body>.
-          const whole = page.locator(':root');
+          const whole = (frame ?? page).locator(':root');
           tree = await whole.ariaSnapshot({ mode: 'ai', boxes: visible, timeout: actionMs });
-          noteRefs(page, tree, doc);
+          noteRefs(page, tree, doc, frame);
           if (visible) {
-            const [width, height] = await page.evaluate(() => [window.innerWidth, window.innerHeight]);
+            // A frame's boxes are from its own corner, so by its window.
+            const [width, height] = await (frame ?? page).evaluate(() => [window.innerWidth, window.innerHeight]);
             tree = onScreen(tree, width, height);
           }
           if (!parts) {
@@ -368,7 +380,7 @@ export async function runPageCommand(
           // Each match is found in the whole tree by its refs (an element
           // keeps its ref across snapshots). Only enough for the limit:
           // each costs a snapshot of the match.
-          const found = selector ? locate(page, selector) : null;
+          const found = selector ? locate(page, selector, frame) : null;
           const tops: string[][] = [];
           let rest: { total?: number; unsearched?: number } = {};
           for (let i = 0; found && i < count; i++) {
@@ -402,31 +414,38 @@ export async function runPageCommand(
         const outFile = input.flags['--out'];
         if (typeof outFile === 'string') {
           await write(outFile, () => writeFile(file(outFile), tree + '\n'));
-          say(`Wrote ${shown(outFile)} (${tree.split('\n').length} lines) from ${page.url()}`);
+          say(ui`Wrote ${url(shown(outFile))} (${tree.split('\n').length} lines) from ${url(page.url())}`);
           return;
         }
-        for (const line of tree.split('\n')) out(line);
+        for (const line of tree.split('\n')) out(snapshotLine(line));
         return;
       }
       case 'screenshot': {
         const rest = [...input.words];
         const image = rest.pop();
         if (!image) {
-          say('ERROR: The screenshot command needs a file, and takes one selector before it, e.g. screenshot \'#comments\' c.png');
+          sayMistake('The `screenshot` command needs a file, and takes one selector before it, e.g. `screenshot \'#comments\' c.png`');
           return;
         }
         if (!IMAGE_FILE.test(image)) {
-          say(`ERROR: The screenshot command writes a .png or .jpg file, and ${image} is neither. Name the file last.`);
+          sayMistake(`The ${quoted('screenshot')} command writes a .png or .jpg file, and ${quoted(image)} is neither. Name the file last.`);
           return;
         }
         const selector = rest[0];
         if (selector) {
           if (input.flags['--full']) {
-            say('ERROR: The --full flag is for the whole page, not an element');
+            sayMistake('The `--full` flag is for the whole page, not an element');
             return;
           }
-          if (await matches(page, selector, say) === null) return false;
-          await write(image, () => locate(page, selector).first().screenshot({ path: file(image), timeout: actionMs }));
+          if (await matches(page, selector, say, frame, tab.link.host.frameIds) === null) return false;
+          await write(image, () => locate(page, selector, frame).first().screenshot({ path: file(image), timeout: actionMs }));
+        } else if (frame) {
+          // The frame as it shows on the page: its <iframe> element.
+          if (input.flags['--full']) {
+            sayMistake('The `--full` flag is for the whole page, not a frame');
+            return;
+          }
+          await write(image, async () => (await frame.frameElement()).screenshot({ path: file(image), timeout: actionMs }));
         } else {
           try {
             await write(image, () => page.screenshot({ path: file(image), fullPage: input.flags['--full'] === true, timeout: within(SCREENSHOT_TIMEOUT_MS) }));
@@ -436,24 +455,24 @@ export async function runPageCommand(
             return false;
           }
         }
-        say(`Wrote ${shown(image)}${selector ? ` (${named(page, selector)})` : ''} from ${page.url()}`);
+        say(ui`Wrote ${url(shown(image))}${selector ? ui` (${namedMarked(page, selector)}${inFrame})` : frame ? ui` (in ${frameShown})` : ''} from ${url(page.url())}`);
         return;
       }
       case 'savehtml': {
         const words = input.words;
         if (words.length !== 1) {
-          say('ERROR: The savehtml command needs a file, e.g. savehtml page.html');
+          sayMistake('The `savehtml` command needs a file, e.g. `savehtml page.html`');
           return;
         }
         let html = '';
         await write(words[0], async () => { html = await savePageHtml(page, file(words[0]), input.userscripts); });
-        say(`Wrote ${shown(words[0])} (${html.length} chars) from ${page.url()}`);
-        if (input.userscripts.length > 0) say('It has the scripts\' changes in it, and its header lists them. For a copy without them, save it from a tab without scripts (newtab --noscript).');
+        say(ui`Wrote ${url(shown(words[0]))} (${html.length} chars) from ${url(page.url())}`);
+        if (input.userscripts.length > 0) say('It has the scripts\' changes in it, and its header lists them. For a copy without them, save it from a tab without scripts (`newtab --noscript`).');
         return;
       }
       case 'probe': {
         if (input.words.length === 0) {
-          say('ERROR: The probe command needs a selector or more, e.g. probe \'.titleline\' \'#hnmain\'');
+          sayMistake('The `probe` command needs a selector or more, e.g. `probe \'.titleline\' \'#hnmain\'`');
           return;
         }
         const css = input.flags['--css'] === true;
@@ -463,20 +482,20 @@ export async function runPageCommand(
           for (const selector of input.words) {
             const entry: ProbeData['selectors'][number] = { selector };
             const probing = (async () => {
-              const count = await refProblem(page, selector) ?? await countOf(page, selector);
+              const count = await refProblem(page, selector) ?? await refFrameProblem(page, selector, frame, tab.link.host.frameIds) ?? await countOf(page, selector, frame);
               if (typeof count === 'string') {
                 entry.error = count;
                 return;
               }
               entry.count = count;
               if (count === 0 || (!css && !html)) return;
-              const found = await probeMatches(page, selector, PROBE_MAX, actionMs).catch((err: Error) => plain(err));
+              const found = await probeMatches(page, selector, PROBE_MAX, actionMs, frame).catch((err: Error) => plain(err));
               if (typeof found === 'string') {
-                say(`The matches of ${selector} could not be read: ${found}`);
+                say(`The matches of ${quoted(selector)} could not be read: ${found}`);
                 return;
               }
               entry.matches = found.matches.map((match) => ({
-                ...(css && !found.framed && !match.shadow && match.css ? { css: match.css } : {}),
+                ...(css && (!found.framed || frame) && !match.shadow && match.css ? { css: match.css } : {}),
                 ...(html ? { html: match.html } : {}),
               }));
             })();
@@ -492,22 +511,24 @@ export async function runPageCommand(
         for (const selector of input.words) {
           const lines: string[] = [];
           const probing = (async () => {
-            const count = await refProblem(page, selector) ?? await countOf(page, selector);
-            if (typeof count === 'string') lines.push(`invalid  ${selector}  (${count})`);
-            else if (count === 0) lines.push(`missing  ${selector}`);
+            const count = await refProblem(page, selector) ?? await refFrameProblem(page, selector, frame, tab.link.host.frameIds) ?? await countOf(page, selector, frame);
+            // Marked up, for output.
+            if (typeof count === 'string') lines.push(ui`invalid  ${code(selector)}  (${message(count)})`);
+            else if (count === 0) lines.push(ui`missing  ${code(selector)}`);
             else {
-              lines.push(`found    ${selector}  (${count})`);
+              lines.push(ui`found    ${code(selector)}  (${count})`);
               if (!css && !html) return;
-              const found = await probeMatches(page, selector, PROBE_MAX, actionMs).catch((err: Error) => plain(err));
+              const found = await probeMatches(page, selector, PROBE_MAX, actionMs, frame).catch((err: Error) => plain(err));
               if (typeof found === 'string') {
                 lines.push(`    The matches could not be read: ${found}`);
                 return;
               }
               for (const match of found.matches) {
-                // One in a frame only works within it, so it isn't given.
-                const none = found.framed ? 'in a frame' : match.shadow ? 'in a shadow root' : null;
-                if (css) lines.push(`    selector: ${none ? `(none: ${none})` : match.css ?? '(none found)'}`);
-                if (html) lines.push(`    html: ${match.html}`);
+                // One in a frame only works within it, so it isn't given,
+                // unless the probe is in that frame already (`--frame`).
+                const none = found.framed && !frame ? 'in a frame' : match.shadow ? 'in a shadow root' : null;
+                if (css) lines.push(ui`    selector: ${none ? `(none: ${none})` : match.css != null ? code(match.css) : '(none found)'}`);
+                if (html) lines.push(ui`    html: ${code(match.html)}`);
               }
               if (found.count > found.matches.length) lines.push(`    (${found.count - found.matches.length} more)`);
             }
@@ -528,13 +549,13 @@ export async function runPageCommand(
         const name = input.flags['--file'];
         if (typeof name === 'string') {
           if (input.text || input.block !== undefined) {
-            say('ERROR: The cdp command takes calls or --file <path>, not both');
+            sayMistake('The `cdp` command takes calls or `--file <path>`, not both');
             return;
           }
           try {
             calls = cdpCallsTyped(readInputFile(file(name), shown(name)), { first: 1, name: (n) => `${shown(name)}, line ${n}` });
           } catch (err) {
-            say(`ERROR: ${(err as Error).message}`);
+            sayMistake(`${(err as Error).message}`);
             return;
           }
         } else if (input.block !== undefined) {
@@ -544,13 +565,32 @@ export async function runPageCommand(
           calls = cdpCallsTyped(input.text ?? '');
         }
         if (typeof calls === 'string') {
-          say(`ERROR: ${calls}`);
+          sayMistake(`${calls}`);
           return;
         }
         // A session of its own, detached at the end, so what a call
         // sets for its session (Emulation.* overrides, enabled domains)
-        // ends with the command, as it does for any CDP client.
-        const session = await page.context().newCDPSession(page);
+        // ends with the command, as it does for any CDP client. With
+        // `--frame`, on the target the frame is in: its own, or for one
+        // in its parent's process (which Playwright refuses a session
+        // for) the nearest ancestor's that has one, the tab's at the top.
+        // That target reaches all its frames, so the calls name the
+        // frame themselves where they need to; said, with its id.
+        let session: CDPSession | undefined;
+        for (let at: Frame | null = frame ?? null; at && at !== page.mainFrame() && !session; at = at.parentFrame()) {
+          session = await page.context().newCDPSession(at).catch(() => undefined);
+          if (session && at !== frame) {
+            const frameId = await tab.link.frameCdpId(frame!);
+            say(ui`${frameShown} is part of ${idRole(`F${tab.link.host.frameIds.number(at)}`)}'s target, so the calls go there.${frameId ? ui` Name the frame in them by its frameId, ${code(frameId)}.` : ''}`);
+          }
+        }
+        if (!session) {
+          session = await page.context().newCDPSession(page);
+          if (frame) {
+            const frameId = await tab.link.frameCdpId(frame);
+            say(ui`${frameShown} is part of ${idRole(`T${tab.n}`)}'s target, so the calls go there.${frameId ? ui` Name the frame in them by its frameId, ${code(frameId)}.` : ''}`);
+          }
+        }
         // A call that navigates the page is cut off, or never answers,
         // which is no failure when navigating was its point.
         // - Cut off: its error says so.
@@ -617,9 +657,9 @@ export async function runPageCommand(
 // How CDP and Playwright say a call was cut off by the page leaving.
 const CUT_OFF_BY_NAVIGATION = /context was destroyed|Cannot find context|navigated or closed/i;
 
-const CDP_USAGE = 'e.g. cdp Input.dispatchMouseEvent \'{"type": "mouseWheel", "x": 400, "y": 300, "deltaX": 0, "deltaY": 600}\'';
-const ONE_CALL = 'A cdp command makes one call. For several in one session, put one per line in a cdp {{ block.';
-const notAMethod = (word: string): string => `${word} is not a CDP method. Methods are named Domain.method, as in Page.reload.`;
+const CDP_USAGE = 'e.g. `cdp Input.dispatchMouseEvent \'{"type": "mouseWheel", "x": 400, "y": 300, "deltaX": 0, "deltaY": 600}\'`';
+const ONE_CALL = 'A `cdp` command makes one call. For several in one session, put one per line in a `cdp {{` block.';
+const notAMethod = (word: string): string => `${quoted(word)} is not a CDP method. Methods are named Domain.method, as in ${quoted('Page.reload')}.`;
 
 type CdpCall = { method: string; params: object };
 
@@ -640,7 +680,7 @@ export function cdpCallsTyped(raw: string, lines?: { first: number; name: (n: nu
     if (typeof call === 'string') return lines ? `${lines.name(lines.first + i)}: ${call}` : call;
     calls.push(call);
   }
-  if (calls.length === 0) return `The cdp command needs a method, ${CDP_USAGE}`;
+  if (calls.length === 0) return `The ${quoted('cdp')} command needs a method, ${CDP_USAGE}`;
   return calls;
 }
 
@@ -654,24 +694,24 @@ function cdpCallLine(text: string): CdpCall | string {
   if (!CDP_METHOD.test(method)) return notAMethod(method);
   let params = text.slice(method.length).trim();
   if (CDP_METHOD.test(params.split(/\s/, 1)[0])) return ONE_CALL;
-  const quoted = params.startsWith('\'{');
+  const singleQuoted = params.startsWith('\'{');
   let after = '';
-  if (quoted || params.startsWith('{')) {
-    const stop = jsonObjectEnd(params, quoted ? 1 : 0);
-    if (stop < 0) return `The params for ${method} have no closing }. A call and its params go on one line.`;
-    if (quoted && params[stop] !== '\'') return `The params for ${method} open with a ' that doesn't close after them`;
-    after = params.slice(quoted ? stop + 1 : stop).trim();
-    params = params.slice(quoted ? 1 : 0, stop);
+  if (singleQuoted || params.startsWith('{')) {
+    const stop = jsonObjectEnd(params, singleQuoted ? 1 : 0);
+    if (stop < 0) return `The params for ${quoted(method)} have no closing ${quoted('}')}. A call and its params go on one line.`;
+    if (singleQuoted && params[stop] !== '\'') return `The params for ${quoted(method)} open with a ${quoted("'")} that doesn't close after them`;
+    after = params.slice(singleQuoted ? stop + 1 : stop).trim();
+    params = params.slice(singleQuoted ? 1 : 0, stop);
   }
-  if (after) return CDP_METHOD.test(after.split(/\s/, 1)[0]) ? ONE_CALL : `The params for ${method} have more after them: ${after}`;
+  if (after) return CDP_METHOD.test(after.split(/\s/, 1)[0]) ? ONE_CALL : `The params for ${quoted(method)} have more after them: ${quoted(after)}`;
   if (!params) return { method, params: {} };
   let parsed: unknown;
   try {
     parsed = JSON.parse(params);
   } catch (err) {
-    return `The params for ${method} are not valid JSON (${(err as Error).message}): ${params}`;
+    return `The params for ${quoted(method)} are not valid JSON (${(err as Error).message}): ${quoted(params)}`;
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return `The params for ${method} must be a JSON object: ${params}`;
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return `The params for ${quoted(method)} must be a JSON object: ${quoted(params)}`;
   return { method, params: parsed };
 }
 
@@ -695,7 +735,7 @@ async function write(name: string, work: () => Promise<unknown>): Promise<void> 
     await work();
   } catch (err) {
     const problem = writeProblem(err);
-    if (problem) throw new Error(`Could not write ${name}: ${problem}`);
+    if (problem) throw new Error(`Could not write ${quoted(name)}: ${problem}`);
     throw err;
   }
 }
@@ -771,14 +811,14 @@ export function partOptions(flags: Record<string, string | true>, selector: bool
     const value = flags[flag];
     if (value === undefined) return fallback;
     const n = Number(value);
-    return typeof value === 'string' && Number.isInteger(n) && n >= 0 ? n : `The ${flag} flag takes a whole number, not ${value}`;
+    return typeof value === 'string' && Number.isInteger(n) && n >= 0 ? n : `The ${quoted(flag)} flag takes a whole number, not ${quoted(value)}`;
   };
   const find = flags['--find'];
-  if (typeof find === 'string' && find.trim() === '') return 'The --find flag needs some text';
+  if (typeof find === 'string' && find.trim() === '') return 'The `--find` flag needs some text';
   const text = typeof find === 'string' ? find : undefined;
   if (text === undefined && !selector) {
     const other = ['--up', '--context', '--limit'].find((f) => flags[f] !== undefined);
-    return other ? `The ${other} flag goes with a selector or --find` : null;
+    return other ? `The ${quoted(other)} flag goes with a selector or ${quoted('--find')}` : null;
   }
   const up = count('--up', 0);
   if (typeof up === 'string') return up;
@@ -822,26 +862,26 @@ export function clickOptions(given: Record<string, string | true>, selector: str
   const how: string[] = [];
   const button = flags['--button']?.toLowerCase();
   if (button !== undefined) {
-    if (button !== 'left' && button !== 'right' && button !== 'middle') return `${flags['--button']} is not a mouse button. Use left, right or middle.`;
+    if (button !== 'left' && button !== 'right' && button !== 'middle') return `${quoted(flags['--button'])} is not a mouse button. Use ${quoted('left')}, ${quoted('right')} or ${quoted('middle')}.`;
     click.button = button;
     if (button !== 'left') how.push(`the ${button} button`);
   }
   if (flags['--modifiers'] !== undefined) {
     const keys = flags['--modifiers'].split(/[+,]/).filter(Boolean).map(keyName);
     const bad = keys.find((key) => !(MODIFIERS as readonly string[]).includes(key));
-    if (bad !== undefined || keys.length === 0) return `${bad ?? flags['--modifiers']} is not a modifier key. Use ${MODIFIERS.join(', ')}, joined by +.`;
+    if (bad !== undefined || keys.length === 0) return `${quoted(bad ?? flags['--modifiers'])} is not a modifier key. Use ${MODIFIERS.map((m) => quoted(m)).join(', ')}, joined by ${quoted('+')}.`;
     click.modifiers = keys as (typeof MODIFIERS)[number][];
     how.push(`${keys.join('+')} held`);
   }
   if (flags['--count'] !== undefined) {
     const count = Number(flags['--count']);
-    if (!Number.isInteger(count) || count < 1 || count > 10) return `The --count flag takes a number of clicks from 1 to 10, not ${flags['--count']}`;
+    if (!Number.isInteger(count) || count < 1 || count > 10) return `The ${quoted('--count')} flag takes a number of clicks from 1 to 10, not ${quoted(flags['--count'])}`;
     click.clickCount = count;
     if (count > 1) how.push(`${count} clicks`);
   }
   if (flags['--at'] !== undefined) {
     const at = /^(\d+(?:\.\d+)?),(\d+(?:\.\d+)?)$/.exec(flags['--at'].replace(/\s/g, ''));
-    if (!at) return `The --at flag takes x,y in pixels from the element's top left corner, e.g. --at 10,5, not ${flags['--at']}`;
+    if (!at) return `The ${quoted('--at')} flag takes x,y in pixels from the element's top left corner, e.g. ${quoted('--at 10,5')}, not ${quoted(flags['--at'])}`;
     click.position = { x: Number(at[1]), y: Number(at[2]) };
     how.push(`the mouse at ${at[1]},${at[2]} in it`);
   }
@@ -854,7 +894,7 @@ export function clickOptions(given: Record<string, string | true>, selector: str
 export function plain(err: Error): string {
   const first = err.message.split('\n')[0].replace(/^(\w+(\.\w+)+: )+/, '').replace(/\.$/, '');
   const key = /Unknown key: "(.+)"/.exec(first);
-  if (key) return `${key[1]} is not a key name. Keys are named as in Enter, ArrowLeft, Shift+Tab (case-insensitive), or a single character.`;
+  if (key) return `${quoted(key[1])} is not a key name. Keys are named as in ${quoted('Enter')}, ${quoted('ArrowLeft')}, ${quoted('Shift+Tab')} (case-insensitive), or a single character.`;
   const timeout = /Timeout (\d+)ms exceeded/.exec(first);
   if (timeout) return notReady(err.message, Number(timeout[1]) / 1000);
   return first.charAt(0).toUpperCase() + first.slice(1);
@@ -911,7 +951,7 @@ async function placeProblem(page: Page, target: Locator, position: { x: number; 
   const r = Math.round;
   const size = `${r(box.width)}x${r(box.height)} pixels`;
   if (position && (position.x > box.width || position.y > box.height)) {
-    return `The point ${position.x},${position.y} is outside the element, which is ${size} (--at counts from its top left corner)`;
+    return `The point ${position.x},${position.y} is outside the element, which is ${size} (${quoted('--at')} counts from its top left corner)`;
   }
   // One sentence each: plain() drops a final period.
   const win = `the ${view.width}x${view.height} window`;
@@ -933,9 +973,9 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 // How many elements a selector matches, or why it can't be counted.
-export async function countOf(page: Page, selector: string): Promise<number | string> {
+export async function countOf(page: Page, selector: string, within?: Frame): Promise<number | string> {
   try {
-    return await locate(page, selector).count();
+    return await locate(page, selector, within).count();
   } catch (err) {
     if (page.isClosed()) return 'The tab closed';
     const message = (err as Error).message;
@@ -944,17 +984,117 @@ export async function countOf(page: Page, selector: string): Promise<number | st
   }
 }
 
+/**
+ * With `--frame` (`within`), why a ref doesn't do there: it names an
+ * element in another frame. Null when it's in that frame, or isn't a
+ * ref, or can't be found (which the count says).
+ */
+export async function refFrameProblem(page: Page, selector: string, within: Frame | undefined, ids: FrameIds): Promise<string | null> {
+  const ref = refOf(selector);
+  if (!within || !ref) return null;
+  const owner = await locate(page, selector).first().elementHandle({ timeout: 1000 })
+    .then((el) => el.ownerFrame()).catch(() => null);
+  if (!owner || owner === within) return null;
+  const where = owner === page.mainFrame() ? 'the top frame' : `F${ids.number(owner)}`;
+  return `The ref ${quoted(ref)} is in ${where}, not F${ids.number(within)}. A ref names its own frame, so ${quoted('--frame')} can be left out.`;
+}
+
+/**
+ * The iframe a `--frame` flag names in `tab`: undefined for none given,
+ * or the tab's own (its top frame); null, having said why, for one that
+ * isn't there. It takes `F2`, `T1.F2`, the tab's own `T1`, or a CDP id
+ * as the output shows it (`frameId=...` or `targetId=...`, or the start
+ * of one).
+ */
+export async function pickFrame(word: string | true | undefined, tab: ControlledTab, say: (line: string) => void): Promise<Frame | undefined | null> {
+  if (word === undefined) return undefined;
+  const sayMistake = (line: string): void => say(`${ERROR_PREFIX}${line}`);
+  const text = word === true ? '' : word;
+  // A tab's own ID is its top frame: the default, for this tab.
+  const tabWord = /^[Tt](\d+)$/.exec(text);
+  if (tabWord && Number(tabWord[1]) === tab.n) return undefined;
+  if (tabWord) {
+    sayMistake(`The ${quoted('--frame')} flag names ${quoted(`T${tabWord[1]}`)}, but the command acts on T${tab.n}`);
+    return null;
+  }
+  const cdpId = CDP_FRAME_ARG.exec(text)?.[1];
+  if (cdpId) return frameByCdpId(cdpId, tab, say);
+  const ref = parseFrameRef(text);
+  if (!ref) {
+    sayMistake(`The ${quoted('--frame')} flag takes a frame ID, such as ${quoted('F2')} or ${quoted(`T${tab.n}.F2`)}, or a ${quoted('frameId=...')}, not ${quoted(text)}. Use ${quoted('frames')} to list them.`);
+    return null;
+  }
+  if (ref.tab !== undefined && ref.tab !== tab.n) {
+    sayMistake(`The ${quoted('--frame')} flag names a frame in ${quoted(`T${ref.tab}`)}, but the command acts on T${tab.n}`);
+    return null;
+  }
+  const frame = findFrame(tab.page, tab.link.host.frameIds, ref.frame);
+  if (!frame) say(`T${tab.n} has no frame ${quoted(`F${ref.frame}`)} now. Use ${quoted('frames')} to list its frames.`);
+  return frame ?? null;
+}
+
+/**
+ * A frame's CDP id as given, copied from the output or typed: `frameId=`
+ * or `targetId=`, with its brackets or not, or the start of one long
+ * enough not to be a slip.
+ */
+export const CDP_FRAME_ARG = /^\[?(?:frameId|targetId)=([0-9a-f]{6,})\]?$/i;
+
+// The frame of `tab` whose CDP frame id starts with `id`: the top frame
+// (undefined) for the tab's own target id, which is its frame id too.
+async function frameByCdpId(id: string, tab: ControlledTab, say: (line: string) => void): Promise<Frame | undefined | null> {
+  const upper = id.toUpperCase();
+  if (tab.targetId?.toUpperCase().startsWith(upper)) return undefined;
+  const hits: Frame[] = [];
+  for (const node of frameNodes(tab.page, tab.link.host.frameIds)) {
+    if ((await tab.link.frameCdpId(node.frame))?.toUpperCase().startsWith(upper)) hits.push(node.frame);
+  }
+  if (hits.length === 1) return hits[0];
+  const ids = tab.link.host.frameIds;
+  say(hits.length > 1
+    ? `Several of T${tab.n}'s frames' ids start with ${quoted(id)} (${hits.map((f) => `F${ids.number(f)}`).join(', ')}). Give more of it.`
+    : `No frame of T${tab.n} has an id starting with ${quoted(id)}. Use ${quoted('frames')} to list them.`);
+  return null;
+}
+
+// A selector as `named` gives it, marked up: a ref as an ID, any other
+// selector as code, and the ref's label after it plain.
+function namedMarked(page: Page, selector: string): string {
+  const label = named(page, selector).slice(selector.length);
+  const ref = refOf(selector);
+  if (!ref) return ui`${code(selector)}${label}`;
+  // Only the ref itself in `[ref=e4]` or `ref=e4`.
+  const at = selector.indexOf(ref);
+  return ui`${selector.slice(0, at)}${idRole(ref)}${selector.slice(at + ref.length)}${label}`;
+}
+
+// A line of a snapshot as printed: each `[ref=e4]`'s ref marked as an
+// ID, and a part's `# Match 1` heading. The rest is the page's text, so
+// escaped; a snapshot written to a file stays plain.
+function snapshotLine(line: string): string {
+  if (/^# Match \d+$/.test(line)) return heading(line);
+  if (!line.includes('[ref=')) return line;
+  return MARKUP + line.split(/\[ref=([^\]\s]+)\]/).map((part, i) => (i % 2 === 1 ? `[ref=${idRole(part)}]` : escapeMarkup(part))).join('');
+}
+
 // How many elements a selector matches, or null (said why) when none
 // does or it can't be counted.
-async function matches(page: Page, selector: string, say: (line: string) => void): Promise<number | null> {
-  const problem = await refProblem(page, selector);
+async function matches(page: Page, selector: string, say: (line: string) => void, within?: Frame, ids?: FrameIds): Promise<number | null> {
+  const problem = await refProblem(page, selector) ?? (ids ? await refFrameProblem(page, selector, within, ids) : null);
   if (problem) {
     say(problem);
     return null;
   }
-  const count = await countOf(page, selector);
-  if (typeof count === 'string') say(`The selector ${selector} can't be used: ${count}`);
-  else if (count === 0) say(refOf(selector) ? `No element has the ref ${refOf(selector)}. Take a new snapshot for the page's refs.` : `No element matches ${selector}`);
+  const count = await countOf(page, selector, within);
+  if (typeof count === 'string') say(`The selector ${quoted(selector)} can't be used: ${count}`);
+  else if (count === 0) {
+    const ref = refOf(selector);
+    const inFrame = within && ids ? `F${ids.number(within)}` : undefined;
+    // Quoted as a typed word, for the probe hint.
+    const word = !/[\s'"]/.test(selector) ? selector : selector.includes("'") ? `"${selector}"` : `'${selector}'`;
+    say(ref ? `No element has the ref ${quoted(ref)}. Take a new snapshot for the page's refs.`
+      : `No element matches ${quoted(selector)}${inFrame ? ` in ${inFrame}` : ''}. Use ${quoted(`probe${inFrame ? ` --frame ${inFrame}` : ''} ${word}`)} to look for it.`);
+  }
   return typeof count === 'number' && count > 0 ? count : null;
 }
 

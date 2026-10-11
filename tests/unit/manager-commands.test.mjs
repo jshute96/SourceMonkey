@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { collectionList, managerVerb, pickCollection, pickManagedScript, runOfLinkId, scriptList } from '../../lib/harness/manager-commands.js';
 import { linkRunId } from '../../lib/harness/extension-link.js';
 import { managedCollection, managedScripts } from '../../dist/extension/managed-items.js';
+import { plainLine } from '../../lib/harness/output-style.js';
 
 const collections = [
   { id: 'web', number: 2, name: 'Scripts from web', kind: 'container', enabled: true, scriptCount: 1 },
@@ -27,7 +28,7 @@ const manager = { label: 'SourceMonkey', collections: async () => collections, s
 
 async function lines(fn) {
   const out = [];
-  await fn((line) => out.push(line));
+  await fn((line) => out.push(plainLine(line)));
   return out;
 }
 
@@ -89,10 +90,10 @@ test('a collection is named by number, id, whole name, or a part only it has', (
   assert.equal(pickCollection(collections, 'MINE').id, 'dir');
   assert.equal(pickCollection(collections, 'web').id, 'web');
   assert.equal(pickCollection(collections, 'D1').id, 'run');
-  assert.throws(() => pickCollection(collections, 'C9'), /There is no collection C9/);
-  assert.throws(() => pickCollection(collections, 'i'), /^Error: i names more than one collection: C1 \(mine\), C2 \(Scripts from web\)\. /);
+  assert.throws(() => pickCollection(collections, 'C9'), /There is no collection `C9`/);
+  assert.throws(() => pickCollection(collections, 'i'), /^Error: `i` names more than one collection: C1 \(mine\), C2 \(Scripts from web\)\. /);
   // Not a run's test collection by a part of its name.
-  assert.throws(() => pickCollection(collections, 'test'), /No collection is named test/);
+  assert.throws(() => pickCollection(collections, 'test'), /No collection is named `test`/);
 });
 
 test('the extension lists a test collection by its run, with no location, and its scripts unnumbered', () => {
@@ -114,8 +115,8 @@ test('a script is named by its run number in its run, E-id, id, whole name, or a
   assert.equal(pickManagedScript(scripts, 'e4').id, 's1');
   assert.equal(pickManagedScript(scripts, 'id=s2').id, 's2');
   assert.equal(pickManagedScript(scripts, 'dark').id, 's1');
-  assert.throws(() => pickManagedScript(scripts, 'r'), /^Error: r names more than one script: E4: Dark mode, Run script\. /);
-  assert.throws(() => pickManagedScript(scripts, 'E9'), /There is no script E9/);
+  assert.throws(() => pickManagedScript(scripts, 'r'), /^Error: `r` names more than one script: E4: Dark mode, Run script\. /);
+  assert.throws(() => pickManagedScript(scripts, 'E9'), /There is no script `E9`/);
 });
 
 test('a change to another run\'s script, or one that takes something away, is refused before SourceMonkey is asked', async () => {
@@ -127,7 +128,7 @@ test('a change to another run\'s script, or one that takes something away, is re
   };
   const run = async (verb, args, guarded = true) => {
     const out = [];
-    const ok = await managerVerb({ manager: changing, out: (l) => out.push(l), json: false, guarded, cwd: '/' }, 'script', verb, args[0], [], {});
+    const ok = await managerVerb({ manager: changing, out: (l) => out.push(plainLine(l)), json: false, guarded, cwd: '/' }, 'script', verb, args[0], [], {});
     return { ok, out };
   };
   assert.deepEqual(await run('disable', ['Run script']), { ok: false, out: ['[sm-dev] Run script is a script of run D1, which only that run changes'] });
@@ -152,7 +153,7 @@ test('turning a script on lists the copies it turned off, and says when its coll
   };
   const run = async (json) => {
     const out = [];
-    await managerVerb({ manager: changing, out: (l) => out.push(l), json, guarded: true, cwd: '/' }, 'script', 'enable', 'E4', [], {});
+    await managerVerb({ manager: changing, out: (l) => out.push(plainLine(l)), json, guarded: true, cwd: '/' }, 'script', 'enable', 'E4', [], {});
     return out;
   };
   assert.deepEqual(await run(false), [
@@ -190,15 +191,15 @@ test('the script or collection comes before its verb, and a missing one is said'
   assert.equal(onlyInspects('script "Dark mode" show'), true);
   assert.equal(onlyInspects('script "Dark mode" disable'), false);
   const out = [];
-  const ok = await managerVerb({ manager, out: (l) => out.push(l), json: false, guarded: true, cwd: '/' }, 'collection', 'show', undefined, [], {});
+  const ok = await managerVerb({ manager, out: (l) => out.push(plainLine(l)), json: false, guarded: true, cwd: '/' }, 'collection', 'show', undefined, [], {});
   assert.equal(ok, false);
-  assert.deepEqual(out, ['[sm-dev] ERROR: The collection show command needs a collection: collection <collection> show']);
+  assert.deepEqual(out, ['[sm-dev] ERROR: The `collection show` command needs a collection: `collection <collection> show`']);
   out.length = 0;
-  await managerVerb({ manager, out: (l) => out.push(l), json: false, guarded: true, cwd: '/' }, 'collection', 'rename', undefined, ['C3', 'New', 'name'], {});
-  assert.deepEqual(out, ['[sm-dev] ERROR: Name the collection before the verb: collection C3 rename New name']);
+  await managerVerb({ manager, out: (l) => out.push(plainLine(l)), json: false, guarded: true, cwd: '/' }, 'collection', 'rename', undefined, ['C3', 'New', 'name'], {});
+  assert.deepEqual(out, ['[sm-dev] ERROR: Name the collection before the verb: `collection C3 rename New name`']);
   out.length = 0;
-  await managerVerb({ manager, out: (l) => out.push(l), json: false, guarded: true, cwd: '/' }, 'script', 'enable', undefined, [], {});
-  assert.deepEqual(out, ['[sm-dev] ERROR: The script enable command needs a script: script <script> enable. There is no selected script outside a run.']);
+  await managerVerb({ manager, out: (l) => out.push(plainLine(l)), json: false, guarded: true, cwd: '/' }, 'script', 'enable', undefined, [], {});
+  assert.deepEqual(out, ['[sm-dev] ERROR: The `script enable` command needs a script: `script <script> enable`. There is no selected script outside a run.']);
 });
 
 test('another manager\'s scripts: one collection, C0, and a run\'s scripts by their E-ids', async () => {

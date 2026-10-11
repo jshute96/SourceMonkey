@@ -34,6 +34,7 @@ import {
 import type { ManagerControl } from './manager-commands.js';
 import { rebuildAdvice } from './rebuild-advice.js';
 import type { ExtensionFrame } from './frames.js';
+import { quoted } from './output-style.js';
 
 // How long a claim lasts unrenewed, and how often it's renewed. A killed
 // run's tabs run the extension's scripts again within the lease.
@@ -72,8 +73,8 @@ async function markBrowser(context: BrowserContext): Promise<void> {
 }
 
 // How to bring each side up to date, for the messages below.
-const UPDATE_EXTENSION = 'Update it: rebuild it and reload it in chrome://extensions, or use --temp-browser, which loads this sm-dev\'s copy.';
-const updateSmDev = (): string => `Update sm-dev: ${rebuildAdvice()} Or use --temp-browser, which loads this sm-dev's copy of SourceMonkey.`;
+const UPDATE_EXTENSION = 'Update it: rebuild it and reload it in chrome://extensions, or use `--temp-browser`, which loads this sm-dev\'s copy.';
+const updateSmDev = (): string => `Update sm-dev: ${rebuildAdvice()} Or use ${quoted('--temp-browser')}, which loads this sm-dev's copy of SourceMonkey.`;
 
 /** Said when the extension in the browser has an older protocol major, or none. */
 const EXTENSION_TOO_OLD = `SourceMonkey in this browser is older than this sm-dev, so the two can't work together. ${UPDATE_EXTENSION}`;
@@ -127,7 +128,7 @@ function requireMinorOf(extension: ProtocolVersion | undefined, minor: number, f
 /** Said when Chrome won't let the extension register user scripts. */
 function userScriptsOff(extensionId: string): string {
   return 'SourceMonkey in this browser does not have "Allow User Scripts" on, so it can\'t run sm-dev\'s scripts. '
-    + `Turn it on in SourceMonkey's details page, chrome://extensions/?id=${extensionId}, or use --temp-browser, which has it on.`;
+    + `Turn it on in SourceMonkey's details page, chrome://extensions/?id=${extensionId}, or use ${quoted('--temp-browser')}, which has it on.`;
 }
 
 /** An event from the extension, as sm-dev-link.ts and background.ts send them. */
@@ -141,7 +142,9 @@ export type ExtensionEvent =
     kind: 'menu'; op: 'add' | 'remove'; tabId: number; documentId: string; topFrame?: boolean;
     scriptId: string; commandId: string; name?: string; at: number;
   }
-  | { kind: 'values'; scriptId: string; tabId?: number; writes: { key: string; value?: unknown; deleted?: boolean }[]; at: number }
+  // `documentId` on `values`, `request`, `download` and `notification`:
+  // the sending document, from protocol 2.2.
+  | { kind: 'values'; scriptId: string; tabId?: number; documentId?: string; writes: { key: string; value?: unknown; deleted?: boolean }[]; at: number }
   | {
     // `scriptId` and the rest are set for a `GM_openInTab`; a link or
     // `window.open` has none.
@@ -152,11 +155,11 @@ export type ExtensionEvent =
   // A request, download or notification of a script, once as it starts
   // (or shows) and again as it settles.
   | {
-    kind: 'request'; scriptId: string; tabId: number; id: string; url: string; method: string;
+    kind: 'request'; scriptId: string; tabId: number; documentId?: string; id: string; url: string; method: string;
     outcome?: 'load' | 'error' | 'timeout' | 'abort'; status?: number; error?: string; at: number;
   }
   | {
-    kind: 'download'; scriptId: string; tabId: number; requestId: string; url: string; name: string;
+    kind: 'download'; scriptId: string; tabId: number; documentId?: string; requestId: string; url: string; name: string;
     outcome?: 'load' | 'error' | 'timeout' | 'abort'; filename?: string; error?: string; at: number;
   }
   | {
@@ -166,7 +169,7 @@ export type ExtensionEvent =
     host: string; url?: string; method?: string; answer?: 'once' | 'cancel' | 'allow' | 'allow-all' | 'deny'; at: number;
   }
   | {
-    kind: 'notification'; op: 'shown' | 'clicked' | 'closed'; scriptId: string; tabId: number; requestId: string;
+    kind: 'notification'; op: 'shown' | 'clicked' | 'closed'; scriptId: string; tabId: number; documentId?: string; requestId: string;
     notificationId?: string; text?: string; title?: string; at: number;
   };
 
