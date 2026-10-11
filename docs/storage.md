@@ -462,7 +462,7 @@ keys would look like a wiped profile.
   before the field existed — `backfillUsesUnsafeWindow` fills those in
   on the next `onInstalled`, since an unchanged script's row is never
   rebuilt. See
-  [injection.md](injection.md#unsafewindow-forces-main-world).
+  [injection.md](injection.md#unsafewindow-is-the-pages-window).
 - `versionProbes?` — what the script's `@updateURL` / `@downloadURL`
   last claimed, as `{kinds, url, version?, error?, checkedAt}` rows.
   Written only by `setVersionProbes`, never by the load pipeline —

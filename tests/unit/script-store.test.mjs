@@ -6,7 +6,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  IMPLICIT_UNSAFE_WINDOW_INFO,
   backfillHeaderProblems,
   retiredHeaderProblemIds,
   RETIRED_CONTEXT_MENU_UNSUPPORTED,
@@ -1300,15 +1299,13 @@ function stubStorage(rows) {
   return store;
 }
 
-test('backfillUsesUnsafeWindow flips a pre-field row and gives it the startup log', async () => {
+test('backfillUsesUnsafeWindow flips a pre-field row', async () => {
   const store = stubStorage([legacyRow()]);
   assert.equal(await backfillUsesUnsafeWindow(), 1);
   const row = store['script:script-1'];
   assert.equal(row.usesUnsafeWindow, true);
-  // Re-derived, so the row says what the injector will now do with it.
-  assert.deepEqual(row.startupLogs.map((l) => [l.level, l.message]), [
-    ['info', IMPLICIT_UNSAFE_WINDOW_INFO],
-  ]);
+  // Re-derived; a page-world script using it has nothing to report.
+  assert.deepEqual(row.startupLogs ?? [], []);
 });
 
 test('backfillUsesUnsafeWindow leaves rows it has nothing to add to', async () => {

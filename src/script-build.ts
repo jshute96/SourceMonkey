@@ -33,6 +33,7 @@ import { iconDeclFromHeader } from './script-icon.js';
 import { canonicalizeGrant, findApi, resolveGrants } from './gm-api-catalog.js';
 import { hasNoConnectRules } from './gm-connect.js';
 import { sourceUsesUnsafeWindow } from './unsafe-window-use.js';
+import { resolveWorld } from './script-world.js';
 import {
   ignoredMatchMessage,
   matchPatternProblem,
@@ -189,15 +190,14 @@ export interface StoredScript {
   // them straight off the freshly built row.
   startupLogs?: readonly StartupLog[];
   // True when the script's own body names `unsafeWindow`
-  // (`sourceUsesUnsafeWindow`) — derived from the body alone, with no
+  // (`sourceUsesUnsafeWindow`), derived from the body alone, with no
   // regard to `@grant`; every consumer re-checks the grant itself. When
-  // there is no grant line for it, both halves of the grant apply
-  // anyway: the script resolves to MAIN world and
-  // gets the `const unsafeWindow = window;` binding, which is what
-  // Tampermonkey and Violentmonkey do — neither keys the name off a
+  // there is no grant line for it, the script gets the
+  // `const unsafeWindow = window;` binding anyway, which is what
+  // Tampermonkey and Violentmonkey do: neither keys the name off a
   // grant line. Derived from `bodyText`, and persisted rather than
-  // recomputed: `resolveScriptWorld` sits on the per-sync spec-build
-  // path, and every caller has to get the same answer. Absent on rows
+  // recomputed: the binding is emitted on the per-sync spec-build path,
+  // and every caller has to get the same answer. Absent on rows
   // written before this existed and on error rows (which never run), and
   // reads as false there until the next refresh.
   usesUnsafeWindow?: boolean;
@@ -259,30 +259,32 @@ export function distillMatching(header: ParsedHeader | null): ScriptMatching {
 }
 
 // Derive parse-time diagnostics from the metadata block (plus one fact
-// about the body: whether it names `unsafeWindow` ungranted). Producers
-// so far: unknown `@grant` names, `unsafeWindow` combined with
-// `@inject-into content`, an ungranted `unsafeWindow` reference
-// moving the script into the page, `GM_xmlhttpRequest` with no
+// about the body: whether it names `unsafeWindow`). Producers
+// so far: unknown `@grant` names, `unsafeWindow` in a script that asks
+// to run isolated, `GM_xmlhttpRequest` with no
 // `@connect`, an unsupported `@run-at`, and bad `@match` patterns. Add others here as they come up (e.g.
 // deprecated header tags, soft `@resource` failures,
 // `@grant`-but-never-called dead grants). Anything that blocks
 // `validateHeader` belongs in there instead — error rows skip the
 // startup-logs attachment in `buildScriptFromText`.
-// Said when a script asks for `unsafeWindow` — by `@grant` or by using
-// the name — and also declares `@inject-into content`. Exported so the
-// tests and any other surface recognize it by identity rather than by
-// matching its wording.
-export const ISOLATED_UNSAFE_WINDOW_WARNING =
-  'This script cannot reach the page through unsafeWindow. '
-  + '@inject-into content makes the script run isolated from main page content, so the '
-  + "page's variables read as undefined. Remove @inject-into content to reach them.";
+// Said when a script asks for `unsafeWindow` (by `@grant` or by using
+// the name) and also asks to run isolated, naming the header that did
+// (`@inject-into content` or `@sandbox DOM`). Exported so the tests and
+// any other surface recognize it by identity rather than by matching
+// its wording.
+export function isolatedUnsafeWindowWarning(cause: string): string {
+  return 'This script cannot reach the page through unsafeWindow. '
+    + `${cause} makes the script run isolated from main page content, so the `
+    + `page's variables read as undefined. Remove ${cause} to reach them.`;
+}
 
-// Said when a script uses `unsafeWindow` with no grant for it and that
-// is what put it in the page's world. Exported for the same reason as
-// the warning above: recognized by identity, never by its wording.
-export const IMPLICIT_UNSAFE_WINDOW_INFO =
-  'This script uses unsafeWindow without declaring @grant unsafeWindow. '
-  + 'The script runs directly in the page, without isolation.';
+// The header line that puts a script in the isolated world, in the form
+// a message names it, or undefined when it runs in the page.
+function isolatingHeader(header: ParsedHeader): string | undefined {
+  if (resolveWorld(header) !== 'USER_SCRIPT') return undefined;
+  const injectInto = (getValue(header, 'inject-into') ?? '').trim().toLowerCase();
+  return injectInto === 'content' ? '@inject-into content' : '@sandbox DOM';
+}
 
 // Said when a script grants an API that `@connect` gates (today only
 // `GM_xmlhttpRequest`) but declares no `@connect` line: each other site
@@ -319,15 +321,14 @@ export function extractStartupLogs(
   const logs: StartupLog[] = [];
   const grants = getValues(header, 'grant');
   const resolved = resolveGrants(grants);
-  const injectInto = (getValue(header, 'inject-into') ?? '').trim().toLowerCase();
-  const pinnedIsolated = injectInto === 'content';
+  const isolatedBy = isolatingHeader(header);
   // The two ways a script asks for the page's window: the grant line,
   // and naming `unsafeWindow` in its body without one. Everything below
   // treats them alike — what the script needs is the same either way.
   const wantsUnsafeWindow = resolved.granted.has('unsafeWindow') || usesUnsafeWindow;
   if (grants.length > 0) {
-    // `none` wins over every other `@grant` line — no bindings, MAIN
-    // world — in both `resolveGrants` and `resolveWorld`. The author
+    // `none` wins over every other `@grant` line in `resolveGrants`: no
+    // bindings and no sandbox `window`. The author
     // probably meant the other lines, so say what happened to them.
     // Only the grants we'd otherwise have honored; a typo'd name gets
     // its own "unsupported" line below and shouldn't be counted twice.
@@ -360,33 +361,14 @@ export function extractStartupLogs(
     }
   }
   // `unsafeWindow` means "the page's real window". That only exists in
-  // MAIN world, and `@inject-into content` pins the script to the
-  // isolated USER_SCRIPT world, where `unsafeWindow` can only be the
-  // isolated realm's own `window` — page globals read as `undefined`.
-  // We keep the binding (matching Violentmonkey's content mode) but say
-  // so out loud, because the alternative is a script that quietly does
-  // nothing. See docs/injection.md#unsafewindow-forces-main-world.
-  if (wantsUnsafeWindow && pinnedIsolated) {
-    logs.push({ level: 'warn', message: ISOLATED_UNSAFE_WINDOW_WARNING });
-  }
-  // An ungranted reference moved the script into the page. Said at
-  // `info` because nothing is wrong — this is what TM/VM do with the
-  // same source — but the world is worth knowing: the script is no
-  // longer isolated from page content, and in MAIN world the page can
-  // see (and call) the GM runtime the script's other grants need.
-  //
-  // Only when the reference is what moved it. A script already headed
-  // for MAIN (`@inject-into page`, no grants, `@grant none`) gains the
-  // binding and stays where it was, so there is nothing to report.
-  const movedByReference =
-    usesUnsafeWindow
-    && !resolved.granted.has('unsafeWindow')
-    && !pinnedIsolated
-    && injectInto !== 'page'
-    && grants.length > 0
-    && !resolved.hasNone;
-  if (movedByReference) {
-    logs.push({ level: 'info', message: IMPLICIT_UNSAFE_WINDOW_INFO });
+  // MAIN world, and `@inject-into content` / `@sandbox DOM` pin the
+  // script to the isolated USER_SCRIPT world, where `unsafeWindow` can
+  // only be the isolated realm's own `window`: page globals read as
+  // `undefined`. We keep the binding (matching Violentmonkey's content
+  // mode) but say so out loud, because the alternative is a script that
+  // quietly does nothing. See docs/injection.md#execution-world.
+  if (wantsUnsafeWindow && isolatedBy) {
+    logs.push({ level: 'warn', message: isolatedUnsafeWindowWarning(isolatedBy) });
   }
   // A granted API that needs `@connect`, with none declared. One row
   // even when both spellings are granted: they are one API.

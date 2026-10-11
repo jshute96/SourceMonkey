@@ -120,6 +120,7 @@ test.describe('window.close / window.focus', () => {
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
         grant: ['window.focus'],
+        injectInto: 'content',
       },
       body: probeBody('focus'),
     });
@@ -191,9 +192,10 @@ test.describe('window.close / window.focus', () => {
   test('the override leaks to an ungranted sibling in the same document', async ({
     extensionContext, fixtureServer, sm,
   }) => {
-    // Pinning a KNOWN LIMITATION, not a feature. All SourceMonkey
-    // scripts on a page share one USER_SCRIPT world, so the override
-    // lands on a `window` the ungranted sibling also sees — and here
+    // Pinning a KNOWN LIMITATION, not a feature. All isolated
+    // SourceMonkey scripts on a page share one USER_SCRIPT world, so
+    // the override lands on a `window` the ungranted sibling also sees
+    // (in MAIN it's the page's, same leak), and here
     // that hands it the user's tab, not just an observation channel.
     // TM gates per script because it sandboxes each script's window.
     // See docs/GM-APIs.md and the per-script-worlds item in TODO.md;
@@ -205,6 +207,7 @@ test.describe('window.close / window.focus', () => {
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
         grant: ['window.close'],
+        injectInto: 'content',
       },
       body: `document.body.dataset.granterRan = 'yes';`,
     });
@@ -215,6 +218,7 @@ test.describe('window.close / window.focus', () => {
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-idle',
         grant: ['GM_addStyle'],
+        injectInto: 'content',
       },
       // Re-probed on a timer rather than once at load: run order
       // between two scripts on the same page isn't guaranteed, and the
@@ -258,6 +262,7 @@ test.describe('window.close / window.focus', () => {
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
         grant: ['window.focus'],
+        injectInto: 'content',
       },
       body: `document.body.dataset.ready = 'yes';`,
     });
@@ -289,6 +294,7 @@ test.describe('window.close / window.focus', () => {
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
         grant: ['window.close'],
+        injectInto: 'content',
       },
       body: `
         document.body.dataset.focusNative = String(

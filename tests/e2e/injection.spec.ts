@@ -459,7 +459,7 @@ test.describe('injection', () => {
     for (const [file, page] of [['a.user.js', 'target.html'], ['b.user.js', 'other.html']]) {
       scriptsDir.write({
         relativePath: file,
-        meta: { name: file, match: [`${fixtureServer.baseUrl}/${page}`], grant: ['GM_getValue'] },
+        meta: { name: file, match: [`${fixtureServer.baseUrl}/${page}`], grant: ['GM_getValue'], injectInto: 'content' },
         body: `document.documentElement.dataset.gm = String(GM_getValue('k', 'from-runtime'));\n`,
       });
     }

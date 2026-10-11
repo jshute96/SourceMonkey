@@ -2163,8 +2163,8 @@ that, since the answer is a function.
 - **`GM_getValue is not defined`**: the script uses an API it did not
   `@grant`.
 - **The script sees `undefined` for a page global**: it is in the
-  isolated world. Reading page globals needs `@grant none` or
-  `unsafeWindow`.
+  isolated world (`@inject-into content` or `@sandbox DOM`). Remove
+  that line.
 - **A `@require` fails to load**: sm-dev resolves it the way the
   extension does, including local overrides. The message names the URL
   and the reason.

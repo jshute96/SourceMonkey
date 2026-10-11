@@ -81,7 +81,10 @@ export const SKIP_REASON_SM_DEV = 'tab controlled by sm-dev';
 //   the command's `documentId`.
 // 2.2: `request`, `download`, `values` and a shown `notification` event
 //   carry the sending document's `documentId`, which says which frame.
-export const SM_DEV_PROTOCOL = { major: 2, minor: 2 } as const;
+// 2.3: every script runs in the page's world unless it asks to be
+//   isolated, and sm-dev works out the world the same way, for
+//   `eval --script` and for whose error a page error could be.
+export const SM_DEV_PROTOCOL = { major: 2, minor: 3 } as const;
 
 export interface ProtocolVersion {
   major: number;

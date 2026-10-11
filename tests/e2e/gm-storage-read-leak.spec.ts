@@ -36,7 +36,7 @@ test.describe('GM storage cross-script read leak', () => {
   test('a page-forged bridge check-pending cannot read another script\'s GM values', async ({
     extensionContext, fixtureServer, sm,
   }) => {
-    // Victim: USER_SCRIPT-world (real @grant → isolated world) storage
+    // Victim: USER_SCRIPT-world (`@inject-into content`) storage
     // script. Seeds a secret value on its first run and echoes whatever
     // it reads so the test can confirm the value really is in the SW
     // snapshot via the legitimate direct path.
@@ -47,6 +47,7 @@ test.describe('GM storage cross-script read leak', () => {
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
         grant: ['GM_setValue', 'GM_getValue'],
+        injectInto: 'content',
       },
       body: `
         if (GM_getValue('secret', '') === '') GM_setValue('secret', '${SECRET}');

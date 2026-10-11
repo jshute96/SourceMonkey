@@ -423,9 +423,11 @@ test('wrapCombinedEntry: the nested scope adds no lines', () => {
 
 test('buildSwapEvalBody: the swapped body shadows our bindings too', async () => {
   // The swap evals the bindings and the body in one call, so it needs
-  // the same nested scope as the registered entry.
+  // the same nested scope as the registered entry. Isolated, so it
+  // evals here without a prelude; the sandboxed form is covered in
+  // tests/e2e/sandbox-window.spec.ts.
   const script = makeScript({
-    header: { tags: [{ tag: 'name', value: 'X' }, { tag: 'grant', value: 'GM_setValue' }] },
+    header: { tags: [{ tag: 'name', value: 'X' }, { tag: 'grant', value: 'GM_setValue' }, { tag: 'inject-into', value: 'content' }] },
     bodyText: 'const GM_info = "mine"; var GM_setValue = 2; return [GM_info, GM_setValue].join(",");',
   });
   const { body } = await buildSwapEvalBody(script, '0.0.0', 'a.user.js');
@@ -1178,11 +1180,11 @@ test('buildRegistrationSpec: @grant none → MAIN world', async () => {
   assert.equal(spec.world, 'MAIN');
 });
 
-test('buildRegistrationSpec: any real @grant → USER_SCRIPT world', async () => {
+test('buildRegistrationSpec: a granted script runs in MAIN world, as in TM and VM', async () => {
   const spec = await buildRegistrationSpec(makeScript({
     header: { tags: [{ tag: 'name', value: 'X' }, { tag: 'grant', value: 'GM_setValue' }] },
   }));
-  assert.equal(spec.world, 'USER_SCRIPT');
+  assert.equal(spec.world, 'MAIN');
 });
 
 test('buildRegistrationSpec: @inject-into page wins over @grant', async () => {
@@ -1271,7 +1273,14 @@ function assertAllEntriesParse(spec, label) {
 function runCombined(spec, extraSelf = {}) {
   let out;
   const stub = {
-    __smPrelude: { send: () => {} },
+    // A granted page-world script runs `with` a sandbox; a plain object
+    // holding its bindings stands in for the prelude's Proxy here.
+    __smPrelude: {
+      send: () => {},
+      sandbox: (exposed) => ({ ...exposed }),
+      scopeOf: (s) => s,
+      callAs: (fn, t) => Reflect.apply(fn, t, []),
+    },
     // A storage grant makes the GM prelude call storage.init off a
     // snapshot the SW attaches to the check-pending reply; without one
     // it bails before the body runs.
@@ -1511,43 +1520,30 @@ test('resolveWorld: @inject-into content → USER_SCRIPT regardless of @grant', 
   assert.equal(resolveWorld(h), 'USER_SCRIPT');
 });
 
-test('resolveWorld: @inject-into auto falls through to @grant logic', () => {
-  assert.equal(
-    resolveWorld(makeHeader([{ tag: 'inject-into', value: 'auto' }])),
-    'MAIN',
-  );
-  assert.equal(
-    resolveWorld(makeHeader([
-      { tag: 'inject-into', value: 'auto' },
-      { tag: 'grant', value: 'GM_setValue' },
-    ])),
-    'USER_SCRIPT',
-  );
+test('resolveWorld: @inject-into auto and grants leave a script in MAIN', () => {
+  for (const tags of [
+    [{ tag: 'inject-into', value: 'auto' }],
+    [{ tag: 'inject-into', value: 'auto' }, { tag: 'grant', value: 'GM_setValue' }],
+    [{ tag: 'grant', value: 'GM_getValue' }, { tag: 'grant', value: 'GM_setValue' }],
+    [{ tag: 'grant', value: 'none' }, { tag: 'grant', value: 'GM_setValue' }],
+    [{ tag: 'grant', value: 'aoh72931' }],
+  ]) {
+    assert.equal(resolveWorld(makeHeader(tags)), 'MAIN', JSON.stringify(tags));
+  }
 });
 
-test('resolveWorld: multi @grant — "none" anywhere → MAIN, real grants only → USER_SCRIPT', () => {
-  assert.equal(
-    resolveWorld(makeHeader([
-      { tag: 'grant', value: 'none' },
-      { tag: 'grant', value: 'none' },
-    ])),
-    'MAIN',
-  );
-  // `none` wins, as it does for the bindings in resolveGrants.
-  assert.equal(
-    resolveWorld(makeHeader([
-      { tag: 'grant', value: 'none' },
-      { tag: 'grant', value: 'GM_setValue' },
-    ])),
-    'MAIN',
-  );
-  assert.equal(
-    resolveWorld(makeHeader([
-      { tag: 'grant', value: 'GM_getValue' },
-      { tag: 'grant', value: 'GM_setValue' },
-    ])),
-    'USER_SCRIPT',
-  );
+test('resolveWorld: @sandbox — raw and JavaScript are MAIN, DOM is isolated', () => {
+  const sb = (v, ...more) => resolveWorld(makeHeader([
+    { tag: 'grant', value: 'GM_setValue' }, { tag: 'sandbox', value: v }, ...more,
+  ]));
+  assert.equal(sb('raw'), 'MAIN');
+  assert.equal(sb('JavaScript'), 'MAIN');
+  assert.equal(sb('DOM'), 'USER_SCRIPT');
+  assert.equal(sb('dom'), 'USER_SCRIPT');
+  assert.equal(sb('bogus'), 'MAIN');
+  // @inject-into is read first.
+  assert.equal(sb('DOM', { tag: 'inject-into', value: 'page' }), 'MAIN');
+  assert.equal(sb('raw', { tag: 'inject-into', value: 'content' }), 'USER_SCRIPT');
 });
 
 test('resolveWorld: @inject-into value is case-insensitive', () => {
@@ -2271,7 +2267,9 @@ const {
 
 // The retry rebuilds specs from the store, so it needs a script row to
 // find. Only the fields collectActiveSpecs reads matter here.
-function seedStore(scriptId, { matches = ['https://e/*'], grants = [] } = {}) {
+// `injectInto: 'content'` for a script the test needs in the isolated
+// world: a granted script runs in the page otherwise.
+function seedStore(scriptId, { matches = ['https://e/*'], grants = [], injectInto } = {}) {
   const script = {
     id: scriptId,
     collectionId: 'src-1',
@@ -2286,7 +2284,11 @@ function seedStore(scriptId, { matches = ['https://e/*'], grants = [] } = {}) {
     leadingText: '',
     matching: { matches, includes: [], excludes: [] },
     header: {
-      tags: [{ tag: 'name', value: 'Bad' }, ...grants.map((value) => ({ tag: 'grant', value }))],
+      tags: [
+        { tag: 'name', value: 'Bad' },
+        ...grants.map((value) => ({ tag: 'grant', value })),
+        ...(injectInto ? [{ tag: 'inject-into', value: injectInto }] : []),
+      ],
       startLine: 1,
     },
   };
@@ -2678,7 +2680,7 @@ test('syncRegistrations: our own specs go in first, runtimes before the bridge',
   localStore.clear();
   forgetRegistrationState();
   seedStore('a', { matches: ['https://a.example/*'], grants: ['unsafeWindow', 'GM_setValue'] });
-  seedStore('b', { matches: ['https://b.example/*'], grants: ['GM_setValue'] });
+  seedStore('b', { matches: ['https://b.example/*'], grants: ['GM_setValue'], injectInto: 'content' });
   const chrome_ = fakeRegistrationSet();
   await syncRegistrations();
   assert.deepEqual(chrome_.order(), [GM_RUNTIME_SCRIPT_ID, GM_RUNTIME_MAIN_SCRIPT_ID, BRIDGE_SCRIPT_ID, 'a', 'b']);
@@ -3186,8 +3188,8 @@ test('syncRegistrations: a full sync sends nothing for what Chrome holds, and le
   sessionStore.clear();
   localStore.clear();
   forgetRegistrationState();
-  seedStore('a', { grants: ['GM_getValue'] });
-  seedStore('b', { grants: ['GM_getValue'] });
+  seedStore('a', { grants: ['GM_getValue'], injectInto: 'content' });
+  seedStore('b', { grants: ['GM_getValue'], injectInto: 'content' });
   const chrome_ = fakeRegistrationSet();
   await syncRegistrations();
 
@@ -3306,7 +3308,7 @@ test('syncRegistrations: a new worker reconciles in full when a helper holds oth
   sessionStore.clear();
   localStore.clear();
   forgetRegistrationState();
-  seedStore('a', { grants: ['GM_getValue'] });
+  seedStore('a', { grants: ['GM_getValue'], injectInto: 'content' });
   fakeRegistrationSet();
   await syncRegistrations();
   await forgetRegistrationStateAsNewWorkerForTests();
@@ -3388,7 +3390,7 @@ test('syncRegistrations: a full sync places everything again when a helper is be
   sessionStore.clear();
   localStore.clear();
   forgetRegistrationState();
-  seedStore('a', { grants: ['GM_getValue'] });
+  seedStore('a', { grants: ['GM_getValue'], injectInto: 'content' });
   const chrome_ = fakeRegistrationSet();
   await syncRegistrations();
   const order = async () => (await userScripts.getScripts()).map((s) => s.id);
@@ -3495,7 +3497,9 @@ test('runsSandboxed: a granted page-world script only', () => {
   const into = (v) => ({ tag: 'inject-into', value: v });
   assert.equal(runsSandboxed(h(grant('GM_setValue'), into('page'))), true);
   assert.equal(runsSandboxed(h(grant('unsafeWindow'))), true);
-  assert.equal(runsSandboxed(h(grant('GM_setValue'))), false, 'isolated');
+  assert.equal(runsSandboxed(h(grant('GM_setValue'))), true);
+  assert.equal(runsSandboxed(h(grant('GM_setValue'), into('content'))), false, 'isolated');
+  assert.equal(runsSandboxed(h(grant('GM_setValue'), { tag: 'sandbox', value: 'DOM' })), false, 'isolated');
   assert.equal(runsSandboxed(h(grant('none'))), false);
   assert.equal(runsSandboxed(h(grant('none'), grant('GM_setValue'))), false);
   assert.equal(runsSandboxed(h()), false, 'grantless');

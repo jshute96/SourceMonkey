@@ -12,7 +12,7 @@
 // wrapper-bridge.js. These tests cover both halves plus the SW-side
 // gate that keeps the page from abusing the widened bridge.
 //
-// See docs/injection.md#unsafewindow-forces-main-world.
+// See docs/injection.md#unsafewindow-is-the-pages-window.
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
@@ -347,7 +347,8 @@ test.describe('@grant unsafeWindow', () => {
         name: 'BroadcastVictim',
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
-        grant: ['GM_setValue', 'GM_getValue'],   // USER_SCRIPT world
+        grant: ['GM_setValue', 'GM_getValue'],
+        injectInto: 'content',
       },
       body: `
         // Tab 2 records what it receives so we can prove the broadcast
@@ -421,7 +422,8 @@ test.describe('@grant unsafeWindow', () => {
         name: 'Victim',
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
-        grant: ['GM_setValue', 'GM_getValue'],   // no unsafeWindow → USER_SCRIPT world
+        grant: ['GM_setValue', 'GM_getValue'],
+        injectInto: 'content',
       },
       body: `
         if (GM_getValue('secret', '') === '') GM_setValue('secret', 'original');

@@ -47,7 +47,7 @@ test('prepareScript: a valid script yields its id, matching and world', async ()
     assert.equal(p.status, 'ok');
     assert.equal(p.errorMessage, undefined);
     assert.equal(p.id, p.script.id);
-    assert.equal(p.world, 'USER_SCRIPT');
+    assert.equal(p.world, 'MAIN');
     assert.deepEqual(p.matching.matches, ['https://example.com/items/*']);
   } finally {
     await r.cleanup();

@@ -1,10 +1,10 @@
 // E2E coverage for `@grant window.onurlchange`.
 //
-// The interesting part is that the userscript runs in USER_SCRIPT
-// world while `history.pushState` is called by the PAGE (MAIN world) —
-// exactly the split that makes an isolated-world history patch
-// useless. `page.evaluate` runs in MAIN, so every drive below is a
-// genuine page-initiated navigation, not one our own world made.
+// The navigations under test are the PAGE's: `page.evaluate` calls
+// `history.pushState` from the page's own code, so every drive below
+// is a genuine page-initiated navigation, not one the script made. That
+// is the case an isolated-world history patch can't see, which is why
+// the signals come from the service worker.
 //
 // Signals under test — both come from the service worker
 // (`chrome.webNavigation` → `sm:url-change`), which is also where
@@ -306,10 +306,10 @@ test.describe('window.onurlchange', () => {
     extensionContext, fixtureServer, sm,
   }) => {
     // Pins the documented per-document (not per-script) enforcement
-    // gap: USER_SCRIPT world is one realm per document, so once ANY
-    // script grants the API the surface exists for every SourceMonkey
-    // script on the page. TM sandboxes each script's window and gates
-    // exactly. If per-script worlds ever land, this test should flip —
+    // gap: the surface goes on the world's `window` (the page's, here),
+    // which is one per document, so once ANY script grants the API it
+    // exists for every SourceMonkey script on the page. TM sandboxes
+    // each script's window and gates exactly. If per-script worlds ever land, this test should flip —
     // it exists so that change can't happen silently.
     scriptsDir.write({
       relativePath: 'granting.user.js',
@@ -355,7 +355,7 @@ test.describe('window.onurlchange', () => {
     // Both have run, so the surface is installed if it's going to be.
     await page.evaluate(() => window.dispatchEvent(new CustomEvent('sm-probe-leak')));
     // The ungranted sibling sees it, because the granting script
-    // installed it on the shared isolated-world window.
+    // installed it on the shared page window.
     await expect(page.locator('body')).toHaveAttribute('data-sibling-supported', 'true');
 
     await page.evaluate(() => history.pushState({}, '', '/target.html?leak=1'));

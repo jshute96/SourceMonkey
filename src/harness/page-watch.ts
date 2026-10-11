@@ -354,8 +354,8 @@ export class PageAttachment implements PageLink {
     return this.page.url();
   }
 
-  // The top frame's context the scripts without `@grant none` run in:
-  // the extension's user-script world.
+  // The top frame's context the isolated scripts (`@inject-into
+  // content`, `@sandbox DOM`) run in: the extension's user-script world.
   private scriptsContext(): number | null {
     const origin = this.options.watchOnly.extensionOrigin;
     let found: number | null = null;
@@ -380,7 +380,7 @@ export class PageAttachment implements PageLink {
   /**
    * Evaluates `expression` in the main frame, or in `frame` (one of the
    * page's iframes), in the page's own world, the scripts' (the
-   * user-script world every script without `@grant none` shares), or
+   * user-script world every isolated script shares), or
    * one script's own scope, for `eval`. Resolves to the result as a
    * line to print; rejects with a `ScriptThrew` for what the expression
    * threw, a `NoEvalHook` for a script that hasn't run here, a

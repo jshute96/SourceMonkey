@@ -4875,8 +4875,7 @@ async function bridgeMayActAs(
 // the same wording to the page console (`reportBlockedStyle`).
 function cspBlockedStyleMessage(api: 'GM_addStyle' | 'GM_addElement'): string {
   return `The page's Content Security Policy blocked the style ${api} added, so its rules don't apply. ` +
-    'A script running in the page (unsafeWindow, @inject-into page, or @grant none) gets no CSP exemption; ' +
-    'only an isolated script does.';
+    'Only a script running isolated from the page is exempt. Add @inject-into content to run it that way.';
 }
 
 // Which world an SW->page push is addressed to. Every `chrome.tabs

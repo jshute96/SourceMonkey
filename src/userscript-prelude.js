@@ -1258,6 +1258,7 @@
   var _defineProperty = Object.defineProperty;
   var _ownKeys = Reflect.ownKeys;
   var _fnToString = Function.prototype.toString;
+  var _bind = Function.prototype.bind;
   var _hasOwnProp = Object.prototype.hasOwnProperty;
   var _ObjectProto = Object.prototype;
   var _unscopables = Symbol.unscopables;
@@ -1310,15 +1311,24 @@
   }
 
   /* The same bound copy each time, so `removeEventListener(type,
-     window.handler)`-style identity checks still hold. `new` still
-     works (`new window.Proxy(…)`: native, with no `prototype`). */
+     window.handler)`-style identity checks still hold. It reads as
+     native code exactly when the original does, for scripts that check
+     `toString` (is `window.close` the browser's, or a replacement?):
+     - A native method gets a real bound function, which also keeps
+       `new` working (`new window.Proxy(…)`).
+     - A replacement (a page's wrapper, our `window.close`) gets a plain
+       function calling it with the real window. */
   function boundToWindow(fn) {
     var b = boundMethods.get(fn);
     if (!b) {
-      b = function () {
-        if (new.target !== undefined) return _ReflectConstruct(fn, arguments, new.target === b ? fn : new.target);
-        return _ReflectApply(fn, window, arguments);
-      };
+      if (isNative(fn)) {
+        b = _ReflectApply(_bind, fn, [window]);
+      } else {
+        b = function () {
+          if (new.target !== undefined) return _ReflectConstruct(fn, arguments, new.target === b ? fn : new.target);
+          return _ReflectApply(fn, window, arguments);
+        };
+      }
       boundMethods.set(fn, b);
     }
     return b;

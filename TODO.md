@@ -353,9 +353,10 @@ wasn't checked.
   - A shim like `GM_xmlhttpRequest = GM.xmlHttpRequest;` throws
     "Assignment to constant variable" at startup.
   - VM resolves names through `with(this)` over a wrapper, so the
-    assignment works. Granted page-world scripts now do too (the
-    sandbox `window` holds the names), so this is left for the
-    isolated world. Fix there: declare them with `let`.
+    assignment works. Granted scripts now do too, since they run in
+    the page with a sandbox `window` holding the names; this is left
+    for scripts that ask to be isolated. Fix there: declare them with
+    `let`.
   - About 50 corpus files assign to a `GM_*` name; some are guarded.
 - **No `cloneInto` / `exportFunction` / `createObjectIn`**
   (`needs-cloneinto`: 19993).
@@ -363,42 +364,36 @@ wasn't checked.
     `cloneInto is not defined`.
   - VM defines pass-through stand-ins on Chrome (`makeComponentUtils`
     in `src/injected/web/util.js`). Cheap to copy.
-- **Granted scripts run in the isolated world** (`needs-page-globals`:
-  561432, 382030, 485608, 395461, 37314, 382359, 386908, 387955,
-  432423, and earlier ones; `needs-custom-elements`: 397848).
-  - Scripts that read the page's globals without `unsafeWindow` (the
-    YouTube player API, the page's `$`, `customElements`, which is null
-    in the USER_SCRIPT world) fail. `@inject-into page` copies work.
-  - Our rule has it backwards. TM and VM start every script in the
-    page and leave it only when told to; we put any granted script in
-    the isolated world (`resolveWorld` in `src/script-world.ts`).
-    - TM: `@sandbox` defaults to `raw` (the page). `JavaScript` also
-      means the page on Chrome; only `DOM` asks for isolation.
-    - VM: `@inject-into auto` (the default) tries the page and falls
-      back to the isolated world when the page blocks it.
-    - Ours came from the first injection code putting everything in
-      USER_SCRIPT, with `@grant none` then carved out for the page.
-  - Granted scripts already in the page now run in a sandbox `window`,
-    as TM and VM run theirs (docs/injection.md, "The sandbox window").
-  - Next:
-    - Make the page the default, leaving it only for
-      `@inject-into content` or `@sandbox DOM`.
-    - Support `@sandbox` (`raw` and `JavaScript` as the page, `DOM` as
-      isolated). 10 corpus scripts declare it.
-  - What moving costs a granted script (docs/injection.md, "Costs of
-    running in MAIN"):
-    - A strict page CSP (Content Security Policy) drops `GM_addStyle`
-      / `GM_addElement` styles and blocks `eval`.
-    - Pages with a CSP `sandbox` header (opaque origin) get no
-      MAIN-world scripts at all.
-    - `window.__SM_GM__` goes on more pages, and page code can tamper
-      with the built-ins a script uses.
-  - The sharpest case: a script whose only `@grant` lines are unknown
-    names (27929's `@grant aoh72931`, 432423's `@grant Math.mod` and
-    `@grant window.extern`, 437552's `@grant noneT`) gets no APIs at
-    all, yet runs isolated. TM gave 27929 the page's globals, and
-    `@grant none` copies of 27929 and 432423 work. The new default
-    covers these.
+- **Re-test the scripts the page-world default should fix**
+  (`needs-page-globals`: 561432, 382030, 485608, 395461, 37314, 382359,
+  386908, 387955, 432423, and earlier ones; `needs-custom-elements`:
+  397848; unknown-only grants: 27929, 432423, 437552).
+  - They read the page's globals without `unsafeWindow` and failed when
+    granted scripts ran isolated. Scripts now start in the page, as in
+    TM and VM, with a sandbox `window` when granted
+    (docs/injection.md, "Execution world").
+- **Follow-ups from the page-world default** (docs/injection.md, "Costs
+  of running in MAIN"):
+  - A page a granted script matches can now reach its GM surface over
+    the bridge: read and write its storage, drive its
+    `GM_xmlhttpRequest`, read its responses and value broadcasts.
+    Before, only `unsafeWindow` / `@grant none` scripts were exposed.
+    TM reaches its page-world scripts through a keyed channel instead;
+    worth comparing, and deciding whether to key ours per script.
+  - Pages with a CSP `sandbox` header (opaque origin) get no MAIN-world
+    scripts at all. VM falls back to the isolated world there; we could
+    register an isolated copy for such frames.
+  - Under a strict page CSP, `GM_addStyle` / `GM_addElement` styles are
+    dropped in MAIN world (we log a warning). Many styling scripts now
+    run there. Route their DOM insertion through the isolated world?
+  - `window.close` / `window.focus` overrides sit on the page's
+    `window`, visible to the page and to ungranted sibling scripts. A
+    sandboxed script could get them on its own sandbox instead, which
+    is how TM gates them per script.
+  - `window.__SM_GM__` is on many more pages now, and page code can
+    tamper with the built-ins a script uses (docs/GM-API-strategy.md,
+    section 3, decided against VM's safe-builtins when granted scripts
+    ran isolated).
 - **`GM_cookie`** (463802) is the whole failure for a Reddit script.
   See "GM_* APIs not yet in the catalog".
 
@@ -464,9 +459,8 @@ against Tampermonkey with `sm-dev --manager tm` probes (2026-10-05).
     their GM code path, newer ones `!!self.GM_registerMenuCommand`, and
     vite-plugin-monkey builds read every grant off `window` (456077
     throws `GM_getValue is not a function`). TM passes all of these.
-  - Granted page-world scripts now get them on their sandbox `window`.
-    That covers all of these but 456077, which runs isolated and is
-    covered once the page is the default. Re-test them.
+  - Granted scripts get them on their sandbox `window`, since they run
+    in the page by default. Re-test them.
   - The `@require` clobbering (`require-clobbers-page`: 722) is fixed
     by the same sandbox. Re-test 722.
 

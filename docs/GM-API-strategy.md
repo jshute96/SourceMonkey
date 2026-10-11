@@ -50,11 +50,11 @@ recommends a path.
 - Per-page injection via `chrome.userScripts.register({world,
   matches, runAt, js: [{code}]})`. Chrome owns matching + injection.
 - Two realms in use:
-  - `USER_SCRIPT` world (default for `@grant`-using scripts). An
+  - `MAIN` world (the default). Shares both DOM and globals with the
+    page; a granted script gets a sandbox `window` over the page's.
+  - `USER_SCRIPT` world (`@inject-into content` / `@sandbox DOM`). An
     isolated world Chrome provides specifically for userscript
     managers. Shares the DOM with the page but has its own globals.
-  - `MAIN` world (default for `@grant none`). Shares both DOM and
-    globals with the page.
 - Each script body is wrapped in an IIFE that already sends
   `sm:start` / `sm:error` / etc. to the SW. USER_SCRIPT world calls
   `chrome.runtime.sendMessage` directly (after
@@ -194,14 +194,16 @@ indirection.
 ### 3. VM's safe-globals / paranoia is mostly redundant for us
 
 VM's PAGE-realm code defends against a hostile page that has
-already poisoned every builtin. Our `@grant`-using scripts run in
-USER_SCRIPT world, where the page **cannot** mutate our prototypes —
-that's the point of the isolated world. We'd be carrying hundreds
-of lines of `safeCall` / `createNullObj` / `setOwnProp` plumbing for
-a threat model we don't have.
+already poisoned every builtin. When this was decided, our
+`@grant`-using scripts ran in USER_SCRIPT world, where the page
+**cannot** mutate our prototypes.
 
-(For MAIN-world `@grant none` scripts the threat model returns, but
-those scripts don't use GM_* anyway.)
+- Granted scripts now run in MAIN by default, so the threat model
+  applies to them. Our GM runtime captures its natives at
+  `document_start`, before page scripts run, which covers the runtime
+  itself but not user code.
+- Whether to go further is open; see TODO.md, "Follow-ups from the
+  page-world default".
 
 ### 4. VM's MV3 story was incomplete; ours is MV3-only
 

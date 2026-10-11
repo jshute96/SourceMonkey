@@ -221,13 +221,11 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   // `const unsafeWindow = window;` in both worlds, because what makes
   // it correct is the WORLD, not the binding.
   //
-  //   - MAIN world: `window` IS the page's window, so this is the real
-  //     thing. `resolveWorld` sends every script that asks for
-  //     `unsafeWindow` here for exactly that reason — whether it asked
-  //     with a `@grant` line or just by naming it (see
-  //     src/unsafe-window-use.ts).
-  //   - USER_SCRIPT world: reachable only when the script also declared
-  //     `@inject-into content`, i.e. explicitly asked for isolation.
+  //   - MAIN world (the default): `window` IS the page's window, so
+  //     this is the real thing. It's emitted outside the sandbox
+  //     `window` a granted script gets, so it isn't the sandbox.
+  //   - USER_SCRIPT world: reachable only when the script declared
+  //     `@inject-into content` or `@sandbox DOM`, i.e. asked for isolation.
   //     `window` is then the isolated realm's, NOT the page's — matching
   //     Violentmonkey's content mode. `extractStartupLogs` emits a
   //     warning for that combination so it isn't a silent wrong answer.

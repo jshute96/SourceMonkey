@@ -175,9 +175,11 @@ test.describe('sm-dev typed commands', () => {
       return [...lines];
     };
 
-    expect(await run('menu M1')).toEqual([
-      '[sm-dev] The page opened a prompt dialog: "Name?". Use `accept [text]` or `dismiss`.',
+    // Either order: in the page's world the command reaches the script
+    // over the bridge, so the dialog can open after `Fired` is printed.
+    expect((await run('menu M1')).sort()).toEqual([
       '[sm-dev] Fired "Ask"',
+      '[sm-dev] The page opened a prompt dialog: "Name?". Use `accept [text]` or `dismiss`.',
     ]);
     // These would wait on the stopped page, and hold up the accept.
     const blocked = ['[sm-dev] The page is waiting on a prompt dialog. Use `accept` or `dismiss` first.'];

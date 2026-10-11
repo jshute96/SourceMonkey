@@ -916,6 +916,10 @@ async function runInBrowser(
   try {
     link = manager === 'sourcemonkey' ? await ExtensionLink.open(session.context, linkRunId(remote.id))
       : ExtensionLink.without(session.context, linkRunId(remote.id), runUses(manager));
+    // sm-dev works out each script's world itself (`resolveScriptWorld`),
+    // so it has to agree with the extension's: before protocol 2.3,
+    // granted scripts ran isolated.
+    if (manager === 'sourcemonkey') link.requireMinor(3, 'Running scripts in the page\'s world by default');
   } catch (err) {
     opts.out(`[sm-dev] ${(err as Error).message}`);
     return 1;

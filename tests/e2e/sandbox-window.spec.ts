@@ -1,8 +1,8 @@
-// A granted script in the page (MAIN) world runs inside a sandbox
-// `window`, as Tampermonkey and Violentmonkey run theirs: reads reach
-// the page's globals, but the script's own writes (a `@require`d
-// library's included) stay off the page's `window`. A `@grant none`
-// script gets the page's `window` itself.
+// Scripts run in the page (MAIN) world by default, and a granted one
+// runs inside a sandbox `window`, as Tampermonkey and Violentmonkey
+// run theirs: reads reach the page's globals, but the script's own
+// writes (a `@require`d library's included) stay off the page's
+// `window`. A `@grant none` script gets the page's `window` itself.
 //
 // See makeSandbox in src/userscript-prelude.js and
 // docs/injection.md#the-sandbox-window.
@@ -87,6 +87,11 @@ test.describe('sandbox window', () => {
           window.hasOwnProperty('__OWN__'),
           // A native constructor with no prototype still constructs.
           typeof new window.Proxy({}, {}),
+          // A bound copy reads as native exactly when the original does,
+          // and is the same copy each time.
+          Function.prototype.toString.call(window.setTimeout).includes('native code'),
+          Function.prototype.toString.call(window.addEventListener).includes('native code'),
+          window.setTimeout === window.setTimeout,
           // Non-configurable properties keep the Proxy invariants.
           (() => {
             Object.defineProperty(window, 'LOCKED', { value: 'locked', configurable: false });
@@ -112,6 +117,7 @@ test.describe('sandbox window', () => {
       'true', 'true', 'true',
       'true',
       'object',
+      'true', 'false', 'true',
       'false:locked',
     ].join(','));
     await expect(body).toHaveAttribute('data-sm-timer', 'fired');
@@ -161,6 +167,34 @@ test.describe('sandbox window', () => {
     await page.reload();
     await expect(page).toHaveTitle('v2:true:function:own:page-app');
     expect(await page.evaluate(() => typeof (window as any).__OWN__)).toBe('undefined');
+    await page.close();
+  });
+
+  test('a granted script reads page globals by default; @sandbox DOM isolates it', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // The world default: the page, as in TM and VM. TM's @sandbox DOM
+    // (like VM's @inject-into content) asks for the isolated world.
+    for (const [file, extra] of [['page.user.js', []], ['dom.user.js', ['// @sandbox     DOM']]] as const) {
+      scriptsDir.write({
+        relativePath: file,
+        meta: {
+          name: file,
+          match: [`${fixtureServer.baseUrl}/*`],
+          runAt: 'document-end',
+          grant: ['GM_setValue'],
+          extra: [...extra],
+        },
+        body: `document.body.dataset['sm_' + ${JSON.stringify(file.split('.')[0])}] = typeof __PAGE_APP__;`,
+      });
+    }
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/${PAGE}`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm_page', 'object');
+    await expect(page.locator('body')).toHaveAttribute('data-sm_dom', 'undefined');
     await page.close();
   });
 

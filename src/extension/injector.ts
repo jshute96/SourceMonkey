@@ -146,9 +146,8 @@ export const BRIDGE_SCRIPT_ID = 'sourcemonkey-bridge';
 export const GM_RUNTIME_SCRIPT_ID = 'sourcemonkey-gm-runtime';
 
 // MAIN-world flavor of the same runtime source. Needed whenever an
-// active MAIN-world script grants a runtime-backed API — which includes
-// every script that asks for `unsafeWindow`, by grant or by reference,
-// since either forces MAIN world. Its SW traffic rides
+// active MAIN-world script grants a runtime-backed API, which is most
+// granted scripts: MAIN is the default world. Its SW traffic rides
 // `wrapper-bridge.js`.
 export const GM_RUNTIME_MAIN_SCRIPT_ID = 'sourcemonkey-gm-runtime-main';
 
@@ -208,18 +207,6 @@ export function normalizeDeclaredRunAt(value: string | undefined): string {
   const v = (value ?? '').trim().toLowerCase();
   if (v === CONTEXT_MENU_RUN_AT) return v;
   return SUPPORTED_RUN_AT.includes(v) ? v : 'document-idle';
-}
-
-// True iff the script's `@grant` lines ask for `unsafeWindow`.
-// `unsafeWindow` is defined as "the page's real window object", which in
-// Chrome is only reachable from MAIN world — an isolated world's
-// `window` is a different realm and no synchronous bridge to the page's
-// can exist. So this grant is a world request, not just a binding
-// request. See docs/injection.md#unsafewindow-forces-main-world.
-export function grantsUnsafeWindow(header: ParsedHeader | null | undefined): boolean {
-  if (!header) return false;
-  const { granted } = resolveGrants(getValues(header, 'grant'));
-  return granted.has('unsafeWindow');
 }
 
 // True iff the script needs the shared `__SM_GM__` runtime registered in
@@ -745,8 +732,7 @@ export async function buildGmBindingsForScript(
   // reflected here.
   const grantedNames = resolved.hasNone ? [] : [...resolved.granted];
   // A body that names `unsafeWindow` with no grant for it gets the
-  // binding anyway — `resolveScriptWorld` has already put the script in
-  // MAIN world for it, and without the `const` the reference is a
+  // binding anyway: without the `const` the reference is a
   // ReferenceError. TM and VM both expose the name ungranted, so this is
   // what a script written against either already expects.
   //

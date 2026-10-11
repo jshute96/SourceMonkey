@@ -1,5 +1,4 @@
-// MAIN-world coverage for the GM_* surfaces whose specs only ever ran
-// in USER_SCRIPT world.
+// MAIN-world coverage for the GM_* surfaces where the world matters.
 //
 // Why these and not the others: the surfaces below either install
 // themselves on the world's own `window` (`window.onurlchange`,

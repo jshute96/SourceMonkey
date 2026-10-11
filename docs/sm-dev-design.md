@@ -1659,7 +1659,8 @@ The run commands that drive and read a tab's page (`click`, `type`,
   - No hook in the document means the script hasn't run there. Then,
     and with no run script selected, a bare `eval` runs in the page,
     so the page's globals aren't silently out of reach.
-    - With `--script` it falls back to the scripts' shared world.
+    - With `--script` it falls back to the world the script runs in:
+      the page's, or the isolated scripts' shared world.
     - It says so for a selected script, except in a `--noscript` tab;
       a named one is an error.
 - `cdp` opens a fresh CDP session on the tab (`newCDPSession`) for each

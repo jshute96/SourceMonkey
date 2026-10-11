@@ -400,16 +400,12 @@ For the header tags SourceMonkey honors, see
 
 ### How scripts run
 
-Scripts run either in the page's own JavaScript world or in an isolated
-one, chosen the same way Tampermonkey and Violentmonkey choose: a
-script with no `@grant` (or `@grant none`) shares the page's world and
-can read its globals, like `window.jQuery`; anything else is isolated.
-A script that grants `unsafeWindow` runs in the page's world too, since
-`unsafeWindow` is the page's window, and its other `GM_*` APIs still
-work there — as does a script that simply uses `unsafeWindow` without
-granting it, which is how Tampermonkey and Violentmonkey read it as
-well. Set `@inject-into page` or `@inject-into content` to pick
-explicitly.
+Like in Tampermonkey and Violentmonkey, scripts run in the page's own
+JavaScript world, so they can read its globals, like `window.jQuery`.
+A script that grants `GM_*` APIs gets its own `window` over the page's,
+so what it writes there (or a library it loads) stays its own;
+`unsafeWindow` is the page's. Set `@inject-into content` or
+`@sandbox DOM` to run a script in an isolated world instead.
 
 Whatever a script throws is caught and reported against that script —
 including failures that happen later, from timers, event listeners, and

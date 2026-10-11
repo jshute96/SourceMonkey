@@ -350,10 +350,9 @@ test('a script running only in an iframe: its lines name the frame, a frame\'s s
 
 test('a stackless error is the script\'s only where one could have thrown it', async ({ fixtureServer, scriptsDir }) => {
   const page = `${fixtureServer.baseUrl}/target.html`;
-  // Isolated from the page by its grant.
   const isolated = scriptsDir.write({
     relativePath: 'isolated.user.js',
-    meta: { name: 'Isolated', match: [page], grant: ['GM_getValue'] },
+    meta: { name: 'Isolated', match: [page], grant: ['GM_getValue'], injectInto: 'content' },
     body: `setTimeout(() => { Promise.reject('isolated-own') });`,
   });
   const pageWorld = scriptsDir.write({

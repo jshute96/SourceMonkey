@@ -1125,9 +1125,10 @@ function selectedScript(ctx: ConsoleContext): PreparedScript | undefined {
  * `--script=<script>` names; in the page with `--page`.
  * - With no run script selected (none loaded, or an `E` script picked,
  *   which has no eval hook), a bare `eval` runs in the page, and
- *   `--script` in the scripts' shared world.
- * - The same goes for a selected script that hasn't run on the page.
- *   The page by default, so its globals aren't silently out of reach.
+ *   `--script` in the isolated scripts' shared world.
+ * - A selected script that hasn't run on the page: a bare `eval` runs
+ *   in the page, so its globals aren't silently out of reach, and
+ *   `--script` in the world the script runs in.
  * Null, said why, when the name picks none or the flags clash.
  */
 function evalScope(ctx: ConsoleContext, flag: string | true | undefined, page: boolean): EvalIn | null {
@@ -1136,9 +1137,9 @@ function evalScope(ctx: ConsoleContext, flag: string | true | undefined, page: b
     ctx.out(`${MISTAKE_PREFIX}The ${quoted('eval')} command takes ${quoted('--page')} or ${quoted('--script')}, not both`);
     return null;
   }
-  const fallback = flag === undefined ? 'page' : 'scripts';
   const script = flag === undefined || flag === true ? selectedScript(ctx) : pickScript(ctx, flag);
-  if (!script) return typeof flag === 'string' ? null : fallback;
+  if (!script) return typeof flag === 'string' ? null : flag === undefined ? 'page' : 'scripts';
+  const fallback = flag === undefined || script.world === 'MAIN' ? 'page' : 'scripts';
   // No hook: not pushed into the extension, so it hasn't run anywhere.
   const hook = script.id ? ctx.host.evalHook(script.id) : null;
   // Another manager reports nothing, so a missed scope there says

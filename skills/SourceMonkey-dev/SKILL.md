@@ -371,7 +371,8 @@ $R eval 'config.mode'                        # a top-level const of the script
 - Locals inside other functions aren't. Expose them on `window`
   (below).
 - Use `eval --page` for the page's own globals (its `$`, an app's
-  state object), which a granted script's world can't see.
+  state object) as the page sees them. An isolated script can't see
+  them, and a granted one may have its own `$` from a `@require`.
 
 For state inside other functions, expose state and functions on
 `window`. Build this in while developing; it's cheap and can stay:
@@ -387,11 +388,11 @@ $R eval 'myScript.currentSlide()'
 $R eval 'myScript.relayout(); myScript.state'
 ```
 
-- With any `@grant` other than `none`, the script runs in an isolated
-  world the page can't see, so a `window` property there is private
-  to the script.
-- A `@grant none` script shares the page's world: pick a name the site
-  won't collide with. `eval --page` reaches it too.
+- With any `@grant` other than `none`, the script's `window` is its
+  own (a sandbox over the page's), so a `window` property there is
+  private to the script.
+- A `@grant none` script shares the page's `window`: pick a name the
+  site won't collide with. `eval --page` reaches it too.
 
 Log what happens, and wait for it instead of sleeping:
 
@@ -816,7 +817,7 @@ refused. How it works and what differs:
 - **`GM_x is not defined`**: missing `@grant GM_x`. Same in the
   extension.
 - **A page global is `undefined` in the script**: it's in the isolated
-  world. Use `unsafeWindow`, or `@grant none`.
+  world (`@inject-into content` or `@sandbox DOM`). Remove that line.
 - **An early `document-start` change gets overwritten by the page
   under sm-dev only**: in a tab a run tab opened, the script may run
   after the page's first inline scripts (see

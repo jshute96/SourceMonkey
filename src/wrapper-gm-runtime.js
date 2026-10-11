@@ -1330,8 +1330,8 @@
        background.ts); the SW words its own line rather than trusting
        a page-reachable string. */
     var text = "The page's Content Security Policy blocked the style " + api +
-      " added, so its rules don't apply. A script running in the page (unsafeWindow," +
-      " @inject-into page, or @grant none) gets no CSP exemption; only an isolated script does.";
+      " added, so its rules don't apply. Only a script running isolated from the page is" +
+      " exempt. Add @inject-into content to run it that way.";
     try { console.info("[SourceMonkey:" + scriptId + "] " + text); } catch (_e) {}
     transportSend({ type: "sm:gm-dom-blocked", scriptId: scriptId, api: api }).catch(function () {});
   }

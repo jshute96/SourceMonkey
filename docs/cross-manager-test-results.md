@@ -165,7 +165,7 @@ stays enforced in an SM-only spec.
     it, and its assertions are unconditional: every manager here is
     expected to define the name and reach the page through it. This is
     the premise SourceMonkey's own implicit handling rests on (see
-    [injection.md](injection.md#unsafewindow-forces-main-world)), so it
+    [injection.md](injection.md#unsafewindow-is-the-pages-window)), so it
     is measured rather than assumed.
     - **Both confirm it** (TM 5.5.0, VM 2.49.0): `typeof unsafeWindow` is
       `object` with no `@grant` line for it, and the read reaches the

@@ -305,14 +305,15 @@ test('eval --script reaches a MAIN-world script and a script\'s IIFE, keeps stri
   // Inside the script's IIFE, with its GM_* bindings still in reach.
   expect(await run('eval --script=Iife hidden + " " + typeof GM_log')).toEqual(['"inside function"']);
   // Other didn't match the page: selected, a bare eval runs in the
-  // page, and --script in the shared world; named, that's a failure.
+  // page, and --script in the world Other runs in (the page's too);
+  // named, that's a failure.
   ctx.current = other;
   expect(await run('eval typeof count')).toEqual([
     '[sm-dev] Other hasn\'t run on this page, so this ran in the page',
     '"undefined"',
   ]);
   expect(await run('eval --script document.title')).toEqual([
-    '[sm-dev] Other hasn\'t run on this page, so this ran in the scripts\' shared world',
+    '[sm-dev] Other hasn\'t run on this page, so this ran in the page',
     '"target"',
   ]);
   expect(await run('eval --script=Other 1')).toEqual(['[sm-dev] Other hasn\'t run on this page, so its scope can\'t be reached. Load a page it matches, or reload this one.']);

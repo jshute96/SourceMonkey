@@ -425,9 +425,12 @@ fetch via the SW). Highlights:
   `__sm*` names and a library's own `unsafeWindow` all run; a leading
   `"use strict"` applies, at run time and in the install-time syntax
   check; the reload swap gets the same scope.
-- `tests/e2e/gm-main-world-surface.spec.ts` — the rest of the GM_*
-  surface from MAIN world, which every other spec exercises only in
-  USER_SCRIPT world. Two reasons a surface is in here:
+- `tests/e2e/sandbox-window.spec.ts` — a granted page-world script's
+  sandbox `window`: page reads, `in` checks, own writes and `@require`
+  globals kept off the page, bound window methods, the reload swap, and
+  the default world (`@sandbox DOM` isolates).
+- `tests/e2e/gm-main-world-surface.spec.ts` — GM_* surfaces from MAIN
+  world where the world matters. Two reasons a surface is in here:
   - **It installs itself on the world's `window`**, which in MAIN is the
     *page's*: `window.onurlchange` (the `=== null` feature test has to
     hold, and the page can see the accessor too — pinned deliberately,

@@ -143,11 +143,10 @@ than a silently-misbehaving script.
 
 ## MAIN-world storage
 
-A script that asks for `unsafeWindow` — by `@grant` or by using the
-name — runs in the page's own world (see
-[injection.md](injection.md#unsafewindow-forces-main-world)), and takes
-its storage grants with it. Same cache, same batching, same snapshot
-contract — only the transport differs, and that has consequences.
+A script runs in the page's own world unless it asks for isolation
+(see [injection.md](injection.md#execution-world)), and its storage
+grants work there too. Same cache, same batching, same snapshot
+contract; only the transport differs, and that has consequences.
 
 - **The snapshot is gated.** MAIN world has no `chrome.runtime`, so
   the `sm:check-pending` request rides `wrapper-bridge.js`, where a
@@ -157,9 +156,10 @@ contract — only the transport differs, and that has consequences.
   read out of the MAIN-world `window.__SM_GM__`. A refusal is a missing snapshot, i.e. the hard
   abort above.
 - **The page can read and write the cache.** `window.__SM_GM__` is a
-  global in the page's realm. This is inherent to `@grant unsafeWindow`
-  and matches TM/VM; it is also why the gate can concede the snapshot
-  without conceding anything new.
+  global in the page's realm. This is inherent to running a granted
+  script in the page; it is also why the gate can concede the snapshot
+  without conceding anything new. A script whose values the page must
+  not see asks for isolation (`@inject-into content`).
 - **Teardown flushes survive because the bridge path is synchronous.**
   - Every page→SW request is a DOM `CustomEvent`
     (`sourcemonkey-bridge-sync`, JSON in `detail`), whose listeners all

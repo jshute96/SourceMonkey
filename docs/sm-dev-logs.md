@@ -238,9 +238,9 @@ until the year 2255.
 - An error with no stack frames (a thrown string, an aborted fetch,
   a page script's parse error) goes by where it was thrown.
   - It is the scripts' when thrown in SourceMonkey's world, or in the
-    page's world where a script that runs there (`@grant none`, say)
-    matches the frame's URL (`@noframes` counted in an iframe). It
-    can't be told from the page's then.
+    page's world where a script that runs there (any not asking for
+    isolation) matches the frame's URL (`@noframes` counted in an
+    iframe). It can't be told from the page's then.
   - Otherwise it's the page's: in a tab with no scripts
     (`--noscript`), an ad frame's cross-origin `SecurityError`, or
     any site error where the scripts run isolated.

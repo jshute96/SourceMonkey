@@ -122,7 +122,8 @@ test('an extension run takes the run commands: status, values, set, menu, eval, 
   test.setTimeout(90_000);
   const file = scriptsDir.write({
     relativePath: 'cmds.user.js',
-    meta: { name: 'Cmds', match: ['*://*/target.html', '*://*/other.html'], grant: ['GM_setValue', 'GM_getValue', 'GM_registerMenuCommand'] },
+    // Isolated, so `eval --script` shows the extension's own world.
+    meta: { name: 'Cmds', match: ['*://*/target.html', '*://*/other.html'], grant: ['GM_setValue', 'GM_getValue', 'GM_registerMenuCommand'], injectInto: 'content' },
     body: `
       if (location.pathname.endsWith('other.html')) {
         console.log('[cmds] on other');

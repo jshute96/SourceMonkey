@@ -53,41 +53,39 @@ the script sees a `ReferenceError` at call time, and the SW logs a
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
 | `GM_info` / `GM.info` | ✅ | ✓ | ✓ | ✓ | Implicit — exposed in every script regardless of `@grant` (including `@grant none` and scripts with no `@grant` line), and in both MAIN and USER_SCRIPT worlds. Also spliced into every `@require` entry. Baked into the wrapper at registration time. Surface: `script.{name, version, namespace, description, matches, includes, excludes, grant, runAt}`, `scriptHandler: "SourceMonkey"`, `version: <extension version>`, `scriptMetaStr` (raw `==UserScript==` block), `uuid` (stored script id). `script.grant` is the **canonicalized** set we emitted bindings for, not the raw `@grant` lines — `@grant GM.setValue` shows up as `GM_setValue`. TM and VM both report the raw lines instead. |
-| `unsafeWindow` | ✅ | ✓ | ✓ |   | The page's real `window`. Granting it puts the script in MAIN world (see below), and `unsafeWindow` is the page's own `window`. The script's own `window` is a sandbox over it ([injection.md](injection.md#the-sandbox-window)), so `unsafeWindow === window` is `false`, as in TM and VM on Chrome (measured; see [cross-manager-test-results.md](cross-manager-test-results.md)). Reads, writes, and calls all reach the page's realm. **No grant needed:** a script whose body names `unsafeWindow` without granting it gets the same treatment — TM and VM both expose the name ungranted, so plenty of real scripts never declare it (see below). **Exception:** `@inject-into content` pins the script to the isolated world, where it can only be that world's own `window`; that combination is flagged with a startup-log warning. |
+| `unsafeWindow` | ✅ | ✓ | ✓ |   | The page's real `window`. Scripts run in MAIN world unless they ask for isolation (see below), and `unsafeWindow` is the page's own `window`. The script's own `window` is a sandbox over it ([injection.md](injection.md#the-sandbox-window)), so `unsafeWindow === window` is `false`, as in TM and VM on Chrome (measured; see [cross-manager-test-results.md](cross-manager-test-results.md)). Reads, writes, and calls all reach the page's realm. **No grant needed:** a script whose body names `unsafeWindow` without granting it gets the same treatment — TM and VM both expose the name ungranted, so plenty of real scripts never declare it (see below). **Exception:** `@inject-into content` or `@sandbox DOM` pins the script to the isolated world, where it can only be that world's own `window`; that combination is flagged with a startup-log warning. |
 
 ### `unsafeWindow` and the execution world
 
 - `unsafeWindow` is defined as *the page's* window. In Chrome that
   object exists only in MAIN world, and property access on it is
-  synchronous — there is no async bridge that could stand in.
-- So the grant is a **world request**: `@grant unsafeWindow` resolves
-  the script to MAIN world, exactly as `@inject-into page` does.
-  Tampermonkey and Violentmonkey make the same trade.
-- The rest of the script's `@grant`s follow it there. The shared
-  `__SM_GM__` runtime is registered in MAIN as well, and routes its
-  service-worker traffic over the existing bridge.
-- `@inject-into content` still wins — it's an explicit request for
+  synchronous, so there is no async bridge that could stand in.
+- Every script runs in MAIN world unless it asks for isolation
+  (`@inject-into content` or `@sandbox DOM`), as in Tampermonkey and
+  Violentmonkey. So `unsafeWindow` reaches the page with or without a
+  grant line.
+- The script's `@grant`s work there too. The shared `__SM_GM__`
+  runtime is registered in MAIN as well, and routes its
+  service-worker traffic over the bridge.
+- `@inject-into content` / `@sandbox DOM` are explicit requests for
   isolation. The binding stays (matching VM's content mode) but every
   page global reads as `undefined`, so SourceMonkey emits a
   `warning`-level startup log rather than letting that be silent.
-- **A reference with no grant line counts as the request.** Neither TM
-  nor VM keys `unsafeWindow` off `@grant`, so a script written against
-  either may use it and never declare it — 112 of the GreasyFork top
+- **A reference with no grant line gets the binding.** Neither TM nor
+  VM keys `unsafeWindow` off `@grant`, so a script written against
+  either may use it and never declare it; 112 of the GreasyFork top
   2000 do exactly that. SourceMonkey scans the body at load time and
-  treats those scripts as though they had granted it: MAIN world, same
-  binding, and an `info`-level startup log saying the script is no
-  longer isolated from page content.
+  emits the same binding.
   - `GM_info.script.grant` still reports the `@grant` lines the file
-    declares. The inference changes the world and adds a `window`
-    alias; it grants no API.
-  - What the scan can and can't see — comments and strings are
-    stripped, a source that declares the name itself is left alone —
-    is in [injection.md](injection.md#unsafewindow-forces-main-world)
+    declares. The binding is a `window` alias; it grants no API.
+  - What the scan can and can't see (comments and strings are
+    stripped, a source that declares the name itself is left alone)
+    is in [injection.md](injection.md#unsafewindow-is-the-pages-window)
     and `src/unsafe-window-use.ts`.
 - Running in MAIN world has costs the isolated world doesn't: the page
   can see and interfere with the script, and DOM injection is subject
   to the page's CSP. See
-  [injection.md](injection.md#gm_-in-main-world).
+  [injection.md](injection.md#costs-of-running-in-main).
 
 ---
 
@@ -104,8 +102,8 @@ set TM's own bundled linter validates against, so anything else
 
 | Grant | Status | TM | VM | GM | Notes |
 |-------|:------:|:--:|:--:|:--:|-------|
-| `none` | ✅ | ✓ | ✓ | ✓ | Opts the script out of the whole GM surface and puts it in MAIN world. Wins over every other `@grant` line on the same script, for both the bindings and the world — Violentmonkey does exactly this (`grant.includes('none')` gates both its API wrapper and its page-context path) and warns at install time with "`@grant none` disables all other `@grant` keys"; we say the same in a startup-log warning naming the overridden grants. `GM_info` is still exposed. See [supported-headers.md](supported-headers.md). |
-| `unsafeWindow` | ✅ | ✓ | ✓ |   | The page's real `window`; asking for it — by `@grant` or just by naming it — moves the script to MAIN world to make that so. See [`unsafeWindow` and the execution world](#unsafewindow-and-the-execution-world). |
+| `none` | ✅ | ✓ | ✓ | ✓ | Opts the script out of the whole GM surface, and out of the sandbox `window`: it gets the page's own. Wins over every other `@grant` line on the same script. Violentmonkey does exactly this (`grant.includes('none')` gates its API wrapper) and warns at install time with "`@grant none` disables all other `@grant` keys"; we say the same in a startup-log warning naming the overridden grants. `GM_info` is still exposed. See [supported-headers.md](supported-headers.md). |
+| `unsafeWindow` | ✅ | ✓ | ✓ |   | The page's real `window`, reachable because scripts run in MAIN world unless they ask for isolation; by `@grant` or just by naming it. See [`unsafeWindow` and the execution world](#unsafewindow-and-the-execution-world). |
 | `window.onurlchange` | ✅ | ✓ |   |   | SPA navigation hook. `window.onurlchange === null` feature-detects; `window.addEventListener('urlchange', info => …)` and the `window.onurlchange = fn` slot both work. See below. VM has never implemented it (feature request closed unimplemented), so scripts already carry the `=== null` guard. |
 | `window.close` | ✅ | ✓ | ✓ (2.6.2+) |   | Closes the tab the script runs in, via the extension — the plain page API refuses to close a tab the script didn't open. See below. |
 | `window.focus` | ✅ | ✓ | ✓ (2.12.10+) |   | Selects this tab and raises (un-minimizing) its browser window, neither of which page JS can do. See below. |

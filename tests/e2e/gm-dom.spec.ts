@@ -99,6 +99,7 @@ test.describe('GM_addStyle / GM_addElement (Phase 4)', () => {
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
         grant: ['GM_addStyle'],
+        injectInto: 'content',
       },
       body: `
         GM_addStyle('#target { color: rgb(1, 2, 3); }');

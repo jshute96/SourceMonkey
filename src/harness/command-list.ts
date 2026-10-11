@@ -573,7 +573,7 @@ export const HELP_SECTIONS: HelpSection[] = [
             term: '--script[=<script>]',
             about: [
               'Evaluate inside the selected script, or the one named.',
-              'A selected script that hasn\'t run on the page falls back to the scripts\' shared world.',
+              'A selected script that hasn\'t run on the page falls back to the world it runs in: the page\'s, or the isolated scripts\' shared world.',
             ],
           },
           { term: '--file <path>', about: 'Evaluate a JavaScript file, in place of `<js>`.' },

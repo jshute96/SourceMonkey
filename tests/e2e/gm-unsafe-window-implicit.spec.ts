@@ -12,7 +12,7 @@
 // (src/unsafe-window-use.ts), recorded on the stored row, and read by
 // `resolveScriptWorld`.
 //
-// See docs/injection.md#unsafewindow-forces-main-world.
+// See docs/injection.md#unsafewindow-is-the-pages-window.
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
@@ -28,10 +28,9 @@ test.describe('unsafeWindow without a grant', () => {
   test('a GM_*-granting script that never granted unsafeWindow still reaches the page', async ({
     extensionContext, fixtureServer, sm,
   }) => {
-    // The 75-script case: real grants alone pinned the script to the
-    // isolated world, where `unsafeWindow` was a ReferenceError. The
-    // grants have to keep working after the move, which means the GM
-    // runtime and the bridge follow the script into MAIN.
+    // Without the binding, `unsafeWindow` is a ReferenceError. The
+    // grants work alongside it: the GM runtime and the bridge are in
+    // MAIN too.
     scriptsDir.write({
       relativePath: 'a.user.js',
       meta: {
@@ -70,14 +69,11 @@ test.describe('unsafeWindow without a grant', () => {
     await expect(second.locator('body')).toHaveAttribute('data-sm-visits', '1');
     await second.close();
 
-    // The move is reported — at `info`, because nothing is wrong: the
-    // script simply isn't isolated from page content any more.
+    // Nothing to report: the script was in the page anyway.
     const detail = await sm.getCollectionWithScripts(added!.id);
-    const log = (detail!.scripts[0].startupLogs ?? []).find(
+    expect((detail!.scripts[0].startupLogs ?? []).filter(
       (l) => l.message.includes('unsafeWindow'),
-    );
-    expect(log, 'expected a startup log naming the implicit unsafeWindow').toBeTruthy();
-    expect(log!.level).toBe('info');
+    )).toEqual([]);
   });
 
   test('a script with no @grant lines at all gets the binding and no runtime', async ({
@@ -113,12 +109,12 @@ test.describe('unsafeWindow without a grant', () => {
     expect(detail!.scripts[0].startupLogs ?? []).toEqual([]);
   });
 
-  test('a mention in a comment or a string does not move the script', async ({
+  test('a mention in a comment or a string gives no binding', async ({
     extensionContext, fixtureServer, sm,
   }) => {
     // The scan strips comments and string literals first. A script that
-    // only talks ABOUT unsafeWindow keeps the isolation its grants gave
-    // it — page globals stay invisible.
+    // only talks ABOUT unsafeWindow gets no binding for it; its sandbox
+    // window carries only the bindings it got.
     scriptsDir.write({
       relativePath: 'a.user.js',
       meta: {
@@ -132,7 +128,7 @@ test.describe('unsafeWindow without a grant', () => {
         const note = 'needs unsafeWindow';
         const b = document.body.dataset;
         b.smNote = note;
-        b.smPageApp = String(typeof window.__PAGE_APP__);
+        b.smBinding = String(typeof this['unsafe' + 'Window']);
       `,
     });
     await sm.addCollection(scriptsDir.path);
@@ -141,8 +137,7 @@ test.describe('unsafeWindow without a grant', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/${PAGE}`);
     await expect(page.locator('body')).toHaveAttribute('data-sm-note', 'needs unsafeWindow');
-    // Still isolated: this is the isolated realm's own window.
-    await expect(page.locator('body')).toHaveAttribute('data-sm-page-app', 'undefined');
+    await expect(page.locator('body')).toHaveAttribute('data-sm-binding', 'undefined');
     await page.close();
   });
 

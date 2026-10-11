@@ -45,13 +45,14 @@ test.describe('<script> insertion and CSP', () => {
 
   for (const world of ['USER_SCRIPT', 'MAIN'] as const) {
     const grant = world === 'MAIN' ? ['GM_addElement', 'unsafeWindow'] : ['GM_addElement'];
+    const injectInto = world === 'MAIN' ? 'page' as const : 'content' as const;
 
     test(`${world} world: inline scripts run on a page with no CSP`, async ({
       extensionContext, fixtureServer, sm,
     }) => {
       scriptsDir.write({
         relativePath: 'a.user.js',
-        meta: { name: 'Inline', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end', grant },
+        meta: { name: 'Inline', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end', grant, injectInto },
         body: INSERT_BODY,
       });
       await sm.addCollection(scriptsDir.path);
@@ -68,7 +69,7 @@ test.describe('<script> insertion and CSP', () => {
     }) => {
       scriptsDir.write({
         relativePath: 'a.user.js',
-        meta: { name: 'InlineStrict', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end', grant },
+        meta: { name: 'InlineStrict', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end', grant, injectInto },
         body: INSERT_BODY,
       });
       await sm.addCollection(scriptsDir.path);
@@ -90,7 +91,7 @@ test.describe('<script> insertion and CSP', () => {
       expect(crossOrigin).not.toBe(fixtureServer.baseUrl);
       scriptsDir.write({
         relativePath: 'a.user.js',
-        meta: { name: 'SrcStrict', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end', grant },
+        meta: { name: 'SrcStrict', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end', grant, injectInto },
         body: `
           const el = GM_addElement('script', { src: '${crossOrigin}/set-page-global.js' });
           el.addEventListener('load', () => { document.body.dataset.smSrc = 'load'; });

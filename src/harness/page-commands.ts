@@ -78,7 +78,7 @@ export interface PageInput extends ParsedArgs {
 export type EvalIn = { scope: ScriptScope | null; name: string; named: boolean; fallback: EvalWorld; manager?: string } | EvalWorld;
 type EvalWorld = 'page' | 'scripts';
 
-const WORLD_NAMES: Record<EvalWorld, string> = { page: 'the page', scripts: 'the scripts\' shared world' };
+const WORLD_NAMES: Record<EvalWorld, string> = { page: 'the page', scripts: 'the isolated scripts\' shared world' };
 
 // Image types `screenshot` can write, by the file's extension.
 const IMAGE_FILE = /\.(png|jpe?g)$/i;
