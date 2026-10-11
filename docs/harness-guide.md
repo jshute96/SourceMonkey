@@ -776,8 +776,10 @@ requests) to bury the script's.
   - `[event]`: what the scripts did (started, threw, `GM_*` calls);
   - `[script log]`: console lines from the scripts, by any frame of
     the call's stack, so a script logging through a page helper counts;
-  - errors whose stack runs through the scripts, and a thrown value
-    that isn't an `Error` (it has no stack, so it is always shown).
+  - errors whose stack runs through the scripts, and those with no
+    stack (a thrown string, an aborted fetch) that a script could have
+    thrown: in its own world, or in the page's when a script runs there
+    (`@grant none`).
 - A line from a tab after T1 starts with its tab: `[T2] [script log] ...`.
 - A script's own throw prints once, as `<name> threw:`.
 - Stack lines name the file and line the code was written on, as the

@@ -73,8 +73,8 @@ export function hostReportedError(stack: string, hostReports: boolean): boolean 
 export function pageErrorSource(stack: string, hostReports: boolean, ours = OURS): 'script' | 'page' | null {
   if (hostReportedError(stack, hostReports)) return null;
   // A thrown or rejected non-Error value (`Promise.reject('nope')`)
-  // has no frames, so there's no telling whose it was. Rare enough
-  // that showing it beats losing a script's.
+  // has no frames, so there's no telling from its stack. The run looks
+  // at where it was thrown (`stacklessIsScripts` in run.ts).
   if (!/\n\s+at /.test(stack)) return 'script';
   return stack.includes(ours) ? 'script' : 'page';
 }

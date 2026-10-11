@@ -233,14 +233,21 @@ until the year 2255.
   - Which script: the first frame in one of the run's scripts' entry
     URLs (`ExtensionHost.scriptOf`).
 - Uncaught errors go by their stack's text: the scripts' when it
-  names SourceMonkey's code, or has no frames at all (a thrown
-  string). A script body's throw prints as its `threw` event instead.
-  - A stackless error thrown in an iframe none of the run's scripts
-    match (by URL, `@noframes` counted) is the page's: an ad frame's
-    cross-origin `SecurityError`, say.
-  - The frame comes from the protocol's copy of the error
-    (`Runtime.exceptionThrown`), paired with Playwright's by its
-    message.
+  names SourceMonkey's code. A script body's throw prints as its
+  `threw` event instead.
+- An error with no stack frames (a thrown string, an aborted fetch,
+  a page script's parse error) goes by where it was thrown.
+  - It is the scripts' when thrown in SourceMonkey's world, or in the
+    page's world where a script that runs there (`@grant none`, say)
+    matches the frame's URL (`@noframes` counted in an iframe). It
+    can't be told from the page's then.
+  - Otherwise it's the page's: in a tab with no scripts
+    (`--noscript`), an ad frame's cross-origin `SecurityError`, or
+    any site error where the scripts run isolated.
+  - Where it was thrown comes from the protocol's copy of the error
+    (`Runtime.exceptionThrown`): its context's frame and origin,
+    paired with Playwright's copy by its message. Without that copy
+    or its frame, it's the scripts' if the tab runs any.
 - The `[name]` rule is gone.
 - Under Violentmonkey or Tampermonkey, the same with its URLs
   (`ExtensionHost.external`): its worlds and its code
@@ -250,6 +257,9 @@ until the year 2255.
     `userscript.html?name=<name>.user.js&id=<uuid>`.
   - Neither reports `threw` events, so a script's uncaught error is a
     `script` line.
+  - The manager picks a script's world itself (Violentmonkey runs them
+    in the page's by default), so a stackless error in the page's world
+    is the scripts' wherever one of the run's scripts matches.
   - Tampermonkey moves a script's lines; the manager maps the run's
     scripts' back (`ExtensionHost.external.remap`).
   - See [sm-dev-violentmonkey.md](sm-dev-violentmonkey.md#logs-and-errors)

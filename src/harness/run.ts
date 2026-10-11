@@ -32,7 +32,7 @@ import { pageSays } from './page-commands.js';
 import { consoleSource, consoleText, decodeOwnRefs, formatConsoleArgs, isPreludeLine, pageErrorSource } from './page-output.js';
 import { FrameSessions, type FrameSession } from './frame-sessions.js';
 import {
-  defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, preparedScriptPath, prepareScript, pushedFiles, shownPath, warningLines, type PreparedScript,
+  defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, preparedNoframes, preparedScriptPath, prepareScript, pushedFiles, shownPath, warningLines, type PreparedScript,
 } from './prepare.js';
 import { DEFAULT_LOG_SOURCES, inSources, RunLog, streamLine, type LogFields, type LogSource } from './run-logs.js';
 import { runDownloadsDir } from './run-log.js';
@@ -954,7 +954,7 @@ async function runInBrowser(
     // without it.
     const tabId = await claimTab(link, page, opts.out);
     if (tabId === undefined) return 1;
-    wirePageOutput(page, 1, opts.emit!, host, link.origin);
+    wirePageOutput(page, 1, opts.emit!, host, link.origin, () => tabs.firstTabScripts);
     wireSandboxCheck(page, () => tabs.firstTabScripts, opts.out);
     const dialogs = await DialogTracker.attach(page, tabEvent(opts.emit!, 1, 'dialog'), {
       visible: browserVisible(opts), commandsComing, tabRef: () => (tabs.list().length > 1 ? 'T1' : undefined),
@@ -1509,11 +1509,13 @@ class FollowedTabs {
       tabEvent(this.opts.emit!, n, 'tab-closed')('Tab closed');
       this.onTabsChanged();
     });
-    wirePageOutput(page, n, this.opts.emit!, this.host, this.link.origin);
-    // Not for a tab with no scripts, which gets none either way. Read
-    // from the tab once it exists, since `open --script` switches it.
+    // Read from the tab once it exists, since `open --script` switches
+    // what it runs.
     let tabNow: ControlledTab | null = null;
-    wireSandboxCheck(page, () => ((tabNow?.noScript ?? noScript) ? [] : this.scripts), out);
+    const tabScripts = (): readonly PreparedScript[] => ((tabNow?.noScript ?? noScript) ? [] : this.scripts);
+    wirePageOutput(page, n, this.opts.emit!, this.host, this.link.origin, tabScripts);
+    // Not for a tab with no scripts, which gets none either way.
+    wireSandboxCheck(page, tabScripts, out);
     const dialogs = await DialogTracker.attach(page, tabEvent(this.opts.emit!, n, 'dialog'), {
       visible: browserVisible(this.opts),
       commandsComing: this.commandsComing,
@@ -1809,7 +1811,11 @@ function tabOutput(out: (line: string) => void, n: number): (line: string) => vo
 // (`console.error(err)` prints the stack) at the `@require` or script
 // line they came from. It runs before `decodeOwnRefs`, since it matches
 // the scripts' URLs as the page wrote them (still encoded).
-function wirePageOutput(page: Page, n: number, emit: (fields: LogFields) => void, host: ExtensionHost, extensionOrigin: string): void {
+// `scripts`: the scripts the tab runs now.
+function wirePageOutput(
+  page: Page, n: number, emit: (fields: LogFields) => void, host: ExtensionHost, extensionOrigin: string,
+  scripts: () => readonly PreparedScript[],
+): void {
   // Given up on after a while, so a session that never opens (a hung tab,
   // a slow remote browser) can't hold up the tab's lines for good.
   // Under another manager, its worlds are the scripts'.
@@ -1879,9 +1885,9 @@ function wirePageOutput(page: Page, n: number, emit: (fields: LogFields) => void
   // a throw inside a `@require` carries that URL only unmapped. Only the
   // message is printed anyway.
   //
-  // The frame it was thrown in comes from the protocol's copy. A
-  // stackless error (no telling whose from its stack) in an iframe none
-  // of the run's scripts match is the page's: an ad frame's, say.
+  // The frame and world it was thrown in come from the protocol's copy.
+  // A stackless error (no telling whose from its stack) is the page's
+  // unless a script could have thrown it there (`stacklessIsScripts`).
   page.on('pageerror', (err) => {
     const stack = err.stack ?? err.message;
     // Its protocol copy is claimed even for an error not shown, so a
@@ -1890,13 +1896,32 @@ function wirePageOutput(page: Page, n: number, emit: (fields: LogFields) => void
     // Another manager reports no errors, so each is the page's to show.
     let source = pageErrorSource(stack, !host.external, host.external?.prefix);
     if (!source) return;
+    // As they were when it was thrown, not after a `load` meanwhile.
+    const tabScripts = scripts();
     pending = pending.then(async () => {
       const thrown = await thrownIn;
       const where = inFrame(thrown?.frame);
-      if (source === 'script' && where.frame !== undefined && !/\n\s+at /.test(stack) && host.scriptsFor(thrown!.url, true).length === 0) source = 'page';
+      if (source === 'script' && !/\n\s+at /.test(stack) && !stacklessIsScripts(thrown, thrown?.frame !== page.mainFrame(), tabScripts, !!host.external)) source = 'page';
       emit({ source: source!, ...SCRIPT_IN_PAGE[source!], kind: 'error', tab: n, ...where, scriptId: source === 'script' ? host.scriptOf([stack]) : undefined, text: decodeOwnRefs(err.message) });
     }).catch(() => undefined);
   });
+}
+
+/**
+ * Whether an uncaught error with no stack could be one of `scripts`':
+ * thrown in their world, or in the page's where one of them runs in it
+ * (`@grant none`, say). Pages throw these too: a site's own
+ * `Promise.reject(x)`, an aborted fetch, a parse error. `inFrame`:
+ * thrown in an iframe. `external`: under another manager, which picks
+ * the worlds itself (Violentmonkey runs scripts in the page's by
+ * default), so any script matching there could have.
+ */
+function stacklessIsScripts(where: ThrownWhere | undefined, inFrame: boolean, scripts: readonly PreparedScript[], external: boolean): boolean {
+  if (scripts.length === 0) return false;
+  if (where?.extensionWorld) return true;
+  // No copy, or its frame not found: no telling where.
+  if (!where?.url) return true;
+  return scripts.some((s) => (external || s.world === 'MAIN') && explainMatch(s.matching, where.url).matches && !(inFrame && preparedNoframes(s)));
 }
 
 /**
@@ -1909,9 +1934,9 @@ interface ConsoleCall {
   frame?: () => Promise<Frame | undefined>;
 }
 
-// Where an uncaught error was thrown: its frame, and the frame's URL
-// then.
-type ThrownWhere = { frame: Frame | undefined; url: string };
+// Where an uncaught error was thrown: its frame, the frame's URL then,
+// and whether in the scripts' world.
+type ThrownWhere = { frame: Frame | undefined; url: string; extensionWorld: boolean };
 
 // An uncaught error as the protocol reports it.
 type ThrownDetails = {
@@ -1999,9 +2024,9 @@ class ConsoleStacks {
   }
 
   /**
-   * Where an uncaught error with `message` was thrown (its frame, and
-   * the frame's URL then), from the protocol's copy, which this claims;
-   * undefined when none comes in time. One whose message is empty can't
+   * Where an uncaught error with `message` was thrown (its frame, the
+   * frame's URL then, and its world), from the protocol's copy, which
+   * this claims; undefined when none comes in time. One whose message is empty can't
    * be told from another, so isn't looked for.
    */
   async thrownIn(message: string): Promise<ThrownWhere | undefined> {
@@ -2064,7 +2089,8 @@ class ConsoleStacks {
     const now = Date.now();
     // Looked up now, while the frame still shows the page that threw.
     const frame = this.frameOf(session, details.executionContextId ?? 0, sessions);
-    const where = frame().then((f) => ({ frame: f, url: f?.url() ?? '' }), () => ({ frame: undefined, url: '' }));
+    const extensionWorld = session.contexts.get(details.executionContextId ?? 0)?.origin === this.extensionOrigin;
+    const where = frame().then((f) => ({ frame: f, url: f?.url() ?? '', extensionWorld }), () => ({ frame: undefined, url: '', extensionWorld }));
     this.thrown.push({ first: (texts[0] ?? '').split('\n')[0], texts, where, at: now });
     // Only the latest matter: Playwright's copy follows within moments.
     while (this.thrown.length > 0 && (this.thrown.length > CALLS_KEPT || now - this.thrown[0].at > THROWN_KEPT_MS)) this.thrown.shift();

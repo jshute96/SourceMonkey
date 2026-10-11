@@ -348,6 +348,34 @@ test('a script running only in an iframe: its lines name the frame, a frame\'s s
   expect(lines.some((l) => /^ {5}Active on T1 \(F\d+\)$/.test(l))).toBe(true);
 });
 
+test('a stackless error is the script\'s only where one could have thrown it', async ({ fixtureServer, scriptsDir }) => {
+  const page = `${fixtureServer.baseUrl}/target.html`;
+  // Isolated from the page by its grant.
+  const isolated = scriptsDir.write({
+    relativePath: 'isolated.user.js',
+    meta: { name: 'Isolated', match: [page], grant: ['GM_getValue'] },
+    body: `setTimeout(() => { Promise.reject('isolated-own') });`,
+  });
+  const pageWorld = scriptsDir.write({
+    relativePath: 'page-world.user.js',
+    meta: { name: 'PageWorld', match: [page], grant: ['none'] },
+    body: `console.log('[page-world] on');`,
+  });
+  const reject = (text: string) => `eval --page setTimeout(() => { Promise.reject('${text}') }); 'rejected'`;
+  const lines = await driveCli([isolated, page], [
+    ['[script error] isolated-own', reject('page-own')],
+    // Page errors aren't in the run's output by default.
+    ['"rejected"', 'wait log --log-source page page-own'],
+    ['Wait matched', 'logs --log-source page --find page-own'],
+    ['[page error] page-own', `load ${pageWorld}`],
+    // With a script in the page's world, there's no telling whose.
+    ['[page-world] on', reject('either')],
+    ['[script error] either', 'exit'],
+  ]);
+  expect(lines.some((l) => / T1 \[page error\] page-own$/.test(l))).toBe(true);
+  expect(lines.some((l) => l.endsWith('[script error] page-own'))).toBe(false);
+});
+
 test('load, update and reload all reload just the tabs they affect', async ({ fixtureServer, scriptsDir }) => {
   const base = fixtureServer.baseUrl;
   const write = (name: string, page: string, body = `console.log('[${name}] on ' + location.pathname);`) => scriptsDir.write({
