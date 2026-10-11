@@ -11,6 +11,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { quoted } from './output-style.js';
 
 // lib/, beside this module's lib/harness/.
 const LIB_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -22,9 +23,9 @@ const LIB_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
  */
 export function rebuildAdvice(): string {
   const source = buildSource();
-  if (!source) return 'Run pnpm run build in SourceMonkey, and pnpm install again where it is installed.';
-  if (path.resolve(source, 'lib') === LIB_DIR) return 'Run pnpm run build.';
-  return `Run pnpm run build in ${source}, then pnpm install here.`;
+  if (!source) return 'Run `pnpm run build` in SourceMonkey, and `pnpm install` again where it is installed.';
+  if (path.resolve(source, 'lib') === LIB_DIR) return 'Run `pnpm run build`.';
+  return `Run ${quoted('pnpm run build')} in ${source}, then ${quoted('pnpm install')} here.`;
 }
 
 // The checkout lib/ was built from, or null: built before

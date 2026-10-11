@@ -29,6 +29,7 @@ import { ExtensionMissingError, extensionIdFromKey, findExtensionWorker, sourceM
 import { fetchedDir } from './manager-fetch.js';
 import { MANAGERS, managerFlag, type ManagerName } from './managers.js';
 import { rebuildAdvice } from './rebuild-advice.js';
+import { quoted } from './output-style.js';
 
 // dist/, beside lib/: in the checkout, and in an installed package,
 // which ships both.
@@ -78,7 +79,7 @@ export async function launchExtensionBrowser(options: ExtensionLaunchOptions = {
   const dir = manager === 'sourcemonkey' ? EXTENSION_DIR : fetchedDir(manager);
   if (!existsSync(path.join(dir, 'manifest.json'))) {
     throw new Error(manager === 'sourcemonkey' ? `The built extension is missing from ${EXTENSION_DIR}. ${rebuildAdvice()}`
-      : `${MANAGERS[manager].label} isn't fetched. Fetch it with sm-dev ${managerFlag(manager)} manager fetch`);
+      : `${MANAGERS[manager].label} isn't fetched. Fetch it with ${quoted(`sm-dev ${managerFlag(manager)} manager fetch`)}`);
   }
   const headed = options.headed === true;
   const profile = mkdtempSync(path.join(os.tmpdir(), 'sm-dev-extension-'));
@@ -156,7 +157,7 @@ async function quietTampermonkey(context: BrowserContext, id: string): Promise<v
 // The id of a fetched manager, from the key its manifest was given.
 function fetchedId(dir: string, manager: ManagerName): string {
   const { key } = JSON.parse(readFileSync(path.join(dir, 'manifest.json'), 'utf8')) as { key?: unknown };
-  if (typeof key !== 'string') throw new Error(`The extension in ${dir} has no key in its manifest. Fetch it again with sm-dev --manager ${MANAGERS[manager].short} manager fetch`);
+  if (typeof key !== 'string') throw new Error(`The extension in ${dir} has no key in its manifest. Fetch it again with ${quoted(`sm-dev --manager ${MANAGERS[manager].short} manager fetch`)}`);
   return extensionIdFromKey(key);
 }
 

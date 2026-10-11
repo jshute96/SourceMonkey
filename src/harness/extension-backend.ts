@@ -69,7 +69,7 @@ async function readManifest(): Promise<{ key?: unknown }> {
 export class ExtensionMissingError extends Error {}
 
 const NOT_INSTALLED = 'SourceMonkey is not installed in this browser. Load it there as an unpacked extension, with Allow User Scripts on '
-  + '(see https://github.com/jshute96/SourceMonkey/blob/main/docs/harness-guide.md#setting-it-up), or use --temp-browser, which loads it.';
+  + '(see https://github.com/jshute96/SourceMonkey/blob/main/docs/harness-guide.md#setting-it-up), or use `--temp-browser`, which loads it.';
 
 // The extension's worker in this context, once its `self.SourceMonkey`
 // surface is there. A worker can be listed before its module has run

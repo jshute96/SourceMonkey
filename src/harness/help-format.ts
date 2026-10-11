@@ -3,15 +3,17 @@
 // (commands, flags, IDs), and **bold** spans.
 //
 // Lines are laid out with their markup, then painted. In color (a
-// terminal that has it), code becomes cyan, and headings and **bold**
-// spans bold. Those are palette colors, which terminal themes set to
-// read on their own background, light or dark. Plain, bold is dropped,
+// terminal that has it), code and headings take the looks of sm-dev's
+// other output (STYLES in output-style.ts): code as a command, headings
+// and **bold** spans as headings. Plain, bold is dropped,
 // and a code span keeps its backticks only where they help it read
 // apart from the prose (`keepsBackticks`). A quiet span (`quiet`), for
 // a list's terms and usage lines, has none.
 //
 // Widths are measured as the text will show in the mode it is laid out
 // for, so columns line up and lines wrap to fit either way.
+
+import { keepsBackticks, styleCodes } from './output-style.js';
 
 // Starts a line of a code block, after its indent: shown as is, all of
 // it code.
@@ -31,18 +33,6 @@ export const quiet = (text: string): string => QUIET + text + QUIET_END;
 // Each span: code first, so `**` in one (a glob) is code, not bold.
 const SPAN = new RegExp(`\`([^\`]*)\`|${QUIET}([^${QUIET_END}]*)${QUIET_END}|\\*\\*([^*]+)\\*\\*`, 'g');
 
-/**
- * Whether a code span keeps its backticks in plain help: one of several
- * words (`--lang zh-CN`), a lowercase word that reads as English (a
- * command, `all`), or punctuation (`{{`). A flag, ID, number, path or
- * name reads as code without them.
- */
-function keepsBackticks(span: string): boolean {
-  // Spaces may be held as KEPT_SPACE while wrapping. A capitalized name
-  // (`Shift`, `Method`) or one letter (`N`) reads as code already.
-  return /[\s\u0002]/.test(span) || /^[a-z][a-z-]+$/.test(span) || !/[A-Za-z0-9]/.test(span);
-}
-
 // Text as it shows, plain or in color, before any color is added.
 function shown(text: string): string {
   return text.replace(SPAN, (span, code?: string, quieted?: string, bold?: string) => {
@@ -51,10 +41,9 @@ function shown(text: string): string {
   });
 }
 
-const CYAN = '\x1b[36m';
-const NO_COLOR = '\x1b[39m';
-const BOLD = '\x1b[1m';
-const NO_BOLD = '\x1b[22m';
+// Code and headings, on and off, as the rest of sm-dev's output shows them.
+const [CODE, NO_CODE] = styleCodes('cmd');
+const [BOLD, NO_BOLD] = styleCodes('h');
 
 // Whether the help being laid out is for color. Set for one rendering
 // by `render`.
@@ -89,11 +78,11 @@ function paint(line: string): string {
   const code = line.indexOf(CODE_LINE);
   if (code >= 0) {
     const rest = line.slice(code + 1);
-    return line.slice(0, code) + (color && rest ? CYAN + rest + NO_COLOR : rest);
+    return line.slice(0, code) + (color && rest ? CODE + rest + NO_CODE : rest);
   }
   if (!color) return shown(line);
   const spans = line.replace(SPAN, (_span, code?: string, quieted?: string, bold?: string) => (
-    bold !== undefined ? BOLD + bold + NO_BOLD : CYAN + (code ?? quieted) + NO_COLOR
+    bold !== undefined ? BOLD + bold + NO_BOLD : CODE + (code ?? quieted) + NO_CODE
   ));
   return line.startsWith('#') ? BOLD + spans + NO_BOLD : spans;
 }

@@ -24,6 +24,7 @@ import type { ManagerName } from './managers.js';
 import { explainMatch, prepareScript, type PreparedScript } from './prepare.js';
 import { liveRuns } from './runs.js';
 import { markedText, readMark, sameScript, withoutMark, type ScriptMark } from './script-mark.js';
+import { quoted } from './output-style.js';
 
 /** One installed script, as sm-dev reads it from the manager. */
 export interface ExternalScript {
@@ -256,7 +257,7 @@ export function externalControl(manager: ExternalManager): ManagerControl {
   const { label } = manager;
   const find = async (id: string): Promise<Listed> => {
     const found = (await listAll(manager)).find((l) => String(l.script.id) === id);
-    if (!found) throw new Error(`There is no script E${id}. Use script list to list the installed scripts.`);
+    if (!found) throw new Error(`There is no script E${id}. Use ${quoted('script list')} to list the installed scripts.`);
     return found;
   };
   const collection = async (scripts?: number): Promise<ManagedCollection> => ({

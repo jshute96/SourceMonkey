@@ -300,6 +300,22 @@ up:
   on it, once each, and runs none of them.
 - In a run, `help [command]` or `?` does the same.
 
+### Color
+
+At a terminal with color, sm-dev's output is colored too:
+
+- The prompt is green, and the commands you type cyan, as are commands
+  echoed before their output (`stdin > status`).
+- Errors are bold red, warnings bold magenta.
+- Headings (`Tabs:`, `Scripts`) and the `*` marking what is selected
+  are bold; IDs (`T1`, `E3`, `e4`) are green; URLs and file paths are
+  underlined; script and menu names are italic.
+- Commands and code in messages are cyan (`` Use `tabs` to list them ``).
+  Without color, they keep their backticks where that helps them read.
+- Log lines' time and source prefix are dimmed.
+- `NO_COLOR` turns color off, and `FORCE_COLOR` on. `--json` results
+  are never colored.
+
 ## A browser to work in
 
 `sm-dev` connects to a browser over CDP (Chrome DevTools Protocol, the

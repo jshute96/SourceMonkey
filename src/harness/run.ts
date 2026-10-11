@@ -34,9 +34,12 @@ import { FrameSessions, type FrameSession } from './frame-sessions.js';
 import {
   defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, preparedScriptPath, prepareScript, pushedFiles, shownPath, warningLines, type PreparedScript,
 } from './prepare.js';
-import { DEFAULT_LOG_SOURCES, inSources, RunLog, streamText, type LogFields, type LogSource } from './run-logs.js';
+import { DEFAULT_LOG_SOURCES, inSources, RunLog, streamLine, type LogFields, type LogSource } from './run-logs.js';
 import { runDownloadsDir } from './run-log.js';
 import { comparableUrl, openingSavedLine, type SavedPageStart } from './saved-pages.js';
+import { echoLine, INVALID_PREFIX, plainLine, quoted } from './output-style.js';
+// The roles for marked-up output, as S.id(...): their names are common locals here.
+import * as S from './output-style.js';
 import { browserSentence, checkRunsDir, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentCommand, type SentLineHandler } from './runs.js';
 import { cspBlocksPageScripts, sandboxedPageWarning } from '../sandboxed-page.js';
 import { waitForStuckTabs } from './stuck-tabs.js';
@@ -80,8 +83,10 @@ export interface RunOptions extends ConnectOptions {
   logSources?: ReadonlySet<LogSource>;
   collectionRoot: string;
   localRoots: string[];
-  /** Where the stream goes. */
+  /** Where the stream goes: plain text, or with markup when `markup` is set. */
   out: (line: string) => void;
+  /** Lines to `out` keep their markup (output-style.ts), for an `out` that paints them. */
+  markup?: boolean;
   /**
    * Logs a line of one of the log sources (see run-logs.ts), which the
    * stream shows when its source is one it shows. Set by `run`.
@@ -239,8 +244,10 @@ export async function connectBrowser(
   out: (line: string) => void,
   { runTab = false } = {},
 ): Promise<BrowserSession | null> {
-  const session = await openBrowser(opts, out, { runTab, openTab: true });
-  session?.notes.forEach(out);
+  // Plain text: its lines may hold markup, which this caller doesn't paint.
+  const plain = (line: string): void => out(plainLine(line));
+  const session = await openBrowser(opts, plain, { runTab, openTab: true });
+  session?.notes.forEach(plain);
   return session;
 }
 
@@ -300,7 +307,7 @@ async function openBrowser(
       if (manager !== 'sourcemonkey' && fetchedVersion(manager) === null) await fetchManager(manager, out);
       launched = await launchExtensionBrowser({ headed: opts.headed === true, muted: opts.muted, args: langLaunchArgs(opts.lang), connectedElsewhere: true, downloadsDir, manager });
     } catch (err) {
-      out(`Could not launch a browser with ${label}: ${(err as Error).message}`);
+      out(S.asError(`Could not launch a browser with ${label}: ${(err as Error).message}`));
       return null;
     }
     closeLaunched = launched.close;
@@ -308,7 +315,7 @@ async function openBrowser(
       browser = await chromium.connectOverCDP(launched.endpoint);
     } catch (err) {
       await launched.close();
-      out(`Could not connect to the browser launched with ${label}: ${(err as Error).message}`);
+      out(S.asError(`Could not connect to the browser launched with ${label}: ${(err as Error).message}`));
       return null;
     }
     launchedAt = launched.endpoint;
@@ -330,12 +337,12 @@ async function openBrowser(
       if (/Timeout \d+ms exceeded/.test(message) && /<ws connected>/.test(message)) {
         // The browser answered, and the tabs' setup didn't finish: a tab
         // that stopped responding after the check, or very many tabs.
-        out(`Could not connect to the browser at ${endpoint}: Connecting timed out. A tab may have stopped responding (a dialog open, or a busy page), or the browser has very many tabs. Run again to check the tabs.`);
+        out(S.asError(`Could not connect to the browser at ${endpoint}: Connecting timed out. A tab may have stopped responding (a dialog open, or a busy page), or the browser has very many tabs. Run again to check the tabs.`));
         return null;
       }
       const from = browserSettingName(opts.cdp) === '$SM_DEV_BROWSER' ? ' (from $SM_DEV_BROWSER)' : '';
-      out(`Could not connect to a browser at ${endpoint}${from}: ${message}`);
-      out('Start one with sm-dev --open-browser, pass --browser, or use --temp-browser');
+      out(S.asError(`Could not connect to a browser at ${endpoint}${from}: ${message}`));
+      out(S.err('Start one with `sm-dev --open-browser`, pass `--browser`, or use `--temp-browser`'));
       return null;
     }
   }
@@ -545,7 +552,7 @@ function startPages(opts: RunOptions, prepared: PreparedScript[]): StartPages | 
   if (!opts.all) {
     if (given.urls.length > 0) return given;
     const url = defaultPageUrl(prepared[0]);
-    if (!url) opts.out(NO_URL);
+    if (!url) opts.out(S.err(NO_URL));
     return url ? { urls: [url], saved: [null], skipped: [] } : null;
   }
   const urls = new Set<string>();
@@ -580,7 +587,9 @@ function printSkipped(opts: RunOptions, start: StartPages): void {
 }
 
 export async function run(opts: RunOptions): Promise<number> {
-  const remote = new Remote(opts.out, opts.logSources ?? DEFAULT_LOG_SOURCES, opts.onStop, opts.onActivity, opts.primaryPid);
+  const given = opts.out;
+  const print = opts.markup ? given : (line: string): void => given(plainLine(line));
+  const remote = new Remote(print, opts.logSources ?? DEFAULT_LOG_SOURCES, opts.onStop, opts.onActivity, opts.primaryPid);
   // Every line also goes to whoever sent the command running now.
   opts = { ...opts, out: remote.out, emit: remote.emit, typed: new Map(opts.files.map((file, i) => [file, opts.given?.[i] ?? file])) };
   const session = await openBrowser(opts, opts.out, { runTab: true, openTab: !opts.noTab });
@@ -646,7 +655,7 @@ export async function run(opts: RunOptions): Promise<number> {
     // On every way out, so a page tested after this is never taken
     // for one the run still controls. Its registrations are gone, but
     // script code already running in an open page runs on.
-    const run = remote.id ? `Run ${remote.id}` : 'The run';
+    const run = remote.id ? S.ui`Run ${S.id(remote.id)}` : 'The run';
     opts.out(`[sm-dev] ${run} ended`);
     await remote.close();
   }
@@ -723,7 +732,7 @@ class Remote {
   readonly emit = (fields: LogFields): void => {
     const record = this.logs.add(fields);
     if (record.streamed === false) return;
-    const line = streamText(record);
+    const line = streamLine(record);
     const shows = (sources: ReadonlySet<LogSource>): boolean => record.always === true || inSources(record, sources);
     if (shows(this.sources)) this.print(line);
     for (const [listener, sources] of this.listeners) if (shows(sources ?? this.sources)) listener(line);
@@ -747,9 +756,9 @@ class Remote {
         const { linkRunLog } = await import('./run-log.js');
         await linkRunLog(record.log, id, this.out);
       }
-      this.out(`[sm-dev] Started as run ${id}. Other shells reach it with sm-dev --run ${id} <command>, or sm-dev attach ${id}, and stop it with sm-dev stop ${id}.`);
+      this.out(`[sm-dev] ${S.ui`Started as run ${S.id(id)}. Other shells reach it with ${S.cmd(`sm-dev --run ${id} <command>`)}, or ${S.cmd(`sm-dev attach ${id}`)}, and stop it with ${S.cmd(`sm-dev stop ${id}`)}.`}`);
     } catch (err) {
-      this.out(`[sm-dev] Other shells can't reach this run: ${(err as Error).message}`);
+      this.out(`[sm-dev] ${S.asError(`Other shells can't reach this run: ${(err as Error).message}`)}`);
     }
   }
 
@@ -819,7 +828,7 @@ class Remote {
       // Headed by who sent it and how (see commandMark). A {{ block
       // as it was typed: its code between `{{` and `}}`.
       const mark = commandMark(sent, this.primaryPid);
-      const marked = more.length === 0 ? [`${mark} ${first}`] : [`${mark} ${first} {{`, ...more.map((m) => `... ${m}`), '... }}'];
+      const marked = more.length === 0 ? [echoLine(mark, first)] : [echoLine(mark, `${first} {{`), ...more.map((m) => echoLine('...', m)), echoLine('...', '}}')];
       // To the log and the clients following the run, but not back to
       // the one that sent it, which heads its output itself.
       for (const l of marked) {
@@ -832,7 +841,7 @@ class Remote {
     if (/^\s*stop\s*$/.test(line)) {
       // First, so `sm-dev stop` knows it was heard, and waits for the
       // teardown rather than taking the wait for no answer.
-      reply(`[sm-dev] Stopping run ${this.id}`);
+      reply(`[sm-dev] ${S.ui`Stopping run ${S.id(this.id ?? '')}`}`);
       if (!sent.follows) this.listeners.set(reply, undefined);
       this.onStop?.();
       return 'hold';
@@ -871,7 +880,7 @@ async function runInBrowser(
   const manager = opts.manager ?? DEFAULT_MANAGER;
   const { label } = MANAGERS[manager];
   if (manager === 'sourcemonkey' && managerNow === 'disabled') {
-    opts.out(`[sm-dev] SourceMonkey is turned off in this browser. Turn it on with sm-dev${browserArg(session.endpoint, session.launched)} manager enable, or use --temp-browser, which loads it.`);
+    opts.out(`[sm-dev] SourceMonkey is turned off in this browser. Turn it on with ${quoted(`sm-dev${browserArg(session.endpoint, session.launched)} manager enable`)}, or use ${quoted('--temp-browser')}, which loads it.`);
     return 1;
   }
   // Under another manager, the manager runs every script it has, and
@@ -879,7 +888,7 @@ async function runInBrowser(
   // it too (external-manager.ts).
   if (manager !== 'sourcemonkey' && managerNow !== 'installed' && managerNow !== null) {
     const fix = managerNow === 'disabled' ? 'manager enable' : 'manager install';
-    opts.out(`[sm-dev] ${label} is ${managerNow === 'disabled' ? 'turned off' : 'not installed'} in this browser. Use sm-dev${browserArg(session.endpoint, session.launched)} ${managerFlag(manager)} ${fix}.`);
+    opts.out(`[sm-dev] ${label} is ${managerNow === 'disabled' ? 'turned off' : 'not installed'} in this browser. Use ${quoted(`sm-dev${browserArg(session.endpoint, session.launched)} ${managerFlag(manager)} ${fix}`)}.`);
     if (opts.files.length > 0) return 1;
   }
   if (manager !== 'sourcemonkey' && (managerNow === 'installed' || managerNow === null)) {
@@ -1009,20 +1018,21 @@ async function runInBrowser(
         }
         pushedAny = true;
         host.setPushed(script.id!, String(installed.id));
-        opts.out(`[sm-dev] Installed in ${label} as E${installed.id}: ${preparedScriptPath(script)}${installed.replaced ? ' (replaced)' : ''}`);
+        opts.out(`[sm-dev] ${S.ui`Installed in ${label} as ${S.id(`E${installed.id}`)}: ${S.url(preparedScriptPath(script))}${installed.replaced ? ' (replaced)' : ''}`}`);
         continue;
       }
       const result = await link.push(text, name, pushedFiles(script), script.script.fileUrl);
       pushedAny = true;
       if (result.status !== 'ok') {
-        opts.out(`INVALID  ${typedName(opts, file)}\n    ${result.errorMessage ?? ''}`);
+        opts.out(`${INVALID_PREFIX}${typedName(opts, file)}`);
+        opts.out(S.asError(`    ${result.errorMessage ?? ''}`));
         return false;
       }
       host.setPushed(script.id!, result.scriptId);
       // An extension without the call leaves its stack lines as they are.
       host.setLayout(result.scriptId, await link.stackLayout(result.scriptId).catch(() => null));
       if (seed && opts.values) await host.setValues(script.id!, opts.values);
-      opts.out(`[sm-dev] Pushed to SourceMonkey: ${preparedScriptPath(script)}${result.replaced ? ' (replaced)' : ''}`);
+      opts.out(`[sm-dev] ${S.ui`Pushed to SourceMonkey: ${S.url(preparedScriptPath(script))}${result.replaced ? ' (replaced)' : ''}`}`);
     }
     return true;
   };
@@ -1085,7 +1095,7 @@ async function runInBrowser(
     }
     const already = files.indexOf(file);
     if (already >= 0) {
-      opts.out(`[sm-dev] ${input} is already loaded, as script ${already + 1}. Use update ${already + 1} to re-read it.`);
+      opts.out(`[sm-dev] ${input} is already loaded, as script ${already + 1}. Use ${quoted(`update ${already + 1}`)} to re-read it.`);
       return;
     }
     opts.typed?.set(file, input);
@@ -1099,8 +1109,8 @@ async function runInBrowser(
     files.push(file);
     remote.setScripts(files);
     stamps.set(script, await filesStamp(script));
-    opts.out(`[sm-dev] Loaded ${input} as script ${n}`);
-    await apply([...scripts, script], [{ next: script }], `No open tab matches it, so none was reloaded. Use open ${n} to open its page.`, true, timeoutMs);
+    opts.out(`[sm-dev] ${S.ui`Loaded ${S.url(input)} as script ${S.id(n)}`}`);
+    await apply([...scripts, script], [{ next: script }], `No open tab matches it, so none was reloaded. Use ${quoted(`open ${n}`)} to open its page.`, true, timeoutMs);
   });
   // Seeded once, as pushed. An update keeps the store, so values the
   // script wrote since survive it.
@@ -1470,7 +1480,7 @@ class FollowedTabs {
       return;
     }
     this.opts.out(saved ? `${openingSavedLine(saved.given, url, `T${tab.n}`)}${targetIdSuffix(tab.targetId)}`
-      : `[sm-dev] Opening ${url} in T${tab.n}${targetIdSuffix(tab.targetId)}`);
+      : `[sm-dev] ${S.ui`Opening ${S.url(url)} in ${S.id(`T${tab.n}`)}${targetIdSuffix(tab.targetId)}`}`);
   }
 
   async navigate(tab: ControlledTab, url: string, timeoutMs?: number): Promise<void> {
@@ -1682,10 +1692,13 @@ async function prepareAll(opts: RunOptions, files = opts.files): Promise<Prepare
   for (const file of files) {
     const p = await prepareScript({ file, collectionRoot: opts.collectionRoot, localRoots: opts.localRoots });
     if (p.status !== 'ok') {
-      opts.out(`INVALID  ${typedName(opts, file)}\n    ${p.diagnostic}`);
+      opts.out(`${INVALID_PREFIX}${typedName(opts, file)}`);
+      // Its own line, so the client colors it as an error too.
+      opts.out(S.asError(`    ${p.diagnostic}`));
       return null;
     }
-    for (const line of warningLines(p)) opts.out(`[sm-dev] ${line}`);
+    // As markup, so backticks from the script's own header stay text.
+    for (const line of warningLines(p)) opts.out(`[sm-dev] ${line.startsWith(S.WARNING_LEVEL) ? S.asWarning(line) : S.ui`${line}`}`);
     out.push(p);
   }
   return out;

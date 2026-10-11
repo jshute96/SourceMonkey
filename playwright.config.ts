@@ -1,5 +1,11 @@
 import { defineConfig } from '@playwright/test';
 
+// Playwright sets FORCE_COLOR=1 in its workers, which every sm-dev a
+// test spawns would take up, coloring output the tests read as text.
+// Workers load this file too, so it is dropped here for them (and in
+// the runner, where it isn't set).
+delete process.env.FORCE_COLOR;
+
 // Extension e2e tests must run in a persistent Chromium context with the
 // unpacked extension loaded. Each worker spins up its own context, which
 // is what makes running several at once safe: the fixture server binds

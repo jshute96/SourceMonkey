@@ -11,6 +11,7 @@ import { MANAGERS } from './managers.js';
 import { withoutMark } from './script-mark.js';
 import { TmIds } from './tm-ids.js';
 import { getValue, getValues, parseHeader } from '../userscript-header.js';
+import { quoted } from './output-style.js';
 
 // A script as the dashboard's list gives it: only the fields sm-dev reads.
 interface TmScript {
@@ -70,7 +71,7 @@ export class Tampermonkey implements ExternalManager {
     const copies = (await installedManagers(endpoint)).filter((m) => m.manager === 'tampermonkey');
     const copy = copies.find((m) => m.enabled);
     if (!copy) {
-      throw new Error(`${label} is ${copies.length > 0 ? 'turned off' : 'not installed'} in this browser. Use sm-dev${browserArg} --manager tm manager ${copies.length > 0 ? 'enable' : 'install'}.`);
+      throw new Error(`${label} is ${copies.length > 0 ? 'turned off' : 'not installed'} in this browser. Use ${quoted(`sm-dev${browserArg} --manager tm manager ${copies.length > 0 ? 'enable' : 'install'}`)}.`);
     }
     let page: HiddenPage;
     try {

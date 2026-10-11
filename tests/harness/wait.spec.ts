@@ -4,6 +4,7 @@
 
 import { test, expect } from '../fixtures/harness.js';
 import { commandRunner, DialogTracker, type ConsoleContext } from '../../lib/harness/console-commands.js';
+import { plainLine } from '../../lib/harness/output-style.js';
 import { RunLog, streamText } from '../../lib/harness/run-logs.js';
 
 test('wait and the actions settle the page, and say what kept it busy', async ({ page, fixtureServer, host, attachment, loadScript }) => {
@@ -40,13 +41,13 @@ test('wait and the actions settle the page, and say what kept it busy', async ({
     `,
   });
   const lines: string[] = [];
-  const dialogs = await DialogTracker.attach(page, (t) => lines.push(`[sm-dev] ${t}`), { visible: false, commandsComing: true });
+  const dialogs = await DialogTracker.attach(page, (t) => lines.push(plainLine(`[sm-dev] ${t}`)), { visible: false, commandsComing: true });
   await page.goto(`${fixtureServer.baseUrl}/target.html`);
 
   // The run's log, as run.ts keeps it for `wait log`, with the script's
   // own lines, which the run streams.
   const logs = new RunLog();
-  const say = (line: string): void => { lines.push(line); };
+  const say = (line: string): void => { lines.push(plainLine(line)); };
   page.on('console', (msg) => {
     if (!msg.text().startsWith('[slow]')) return;
     say(streamText(logs.add({ source: 'script', kind: msg.type(), tab: 1, text: msg.text() })));
@@ -124,7 +125,7 @@ test('wait and the actions settle the page, and say what kept it busy', async ({
   expect((await run('wait selector body log --timeout-seconds 0.2')).lines)
     .toEqual(['[sm-dev] Wait failed: The selector body log matched nothing on T1 within 0.2s']);
   // A mistake anywhere fails the command.
-  expect(await run('get')).toEqual({ ok: false, lines: ['[sm-dev] ERROR: The get command needs a key'] });
+  expect(await run('get')).toEqual({ ok: false, lines: ['[sm-dev] ERROR: The `get` command needs a key'] });
 
   // After a command that moves the window, the line from before it, and
   // the waits' own replies, don't count.
@@ -151,8 +152,8 @@ test('wait and the actions settle the page, and say what kept it busy', async ({
   expect((await run('click #go')).lines).toContainEqual(expect.stringMatching(/^\[sm-dev\] T1 did not settle within 5s: The DOM is still changing/));
 
   // Mistakes.
-  expect(await run('wait sometime')).toEqual({ ok: false, lines: ['[sm-dev] ERROR: The wait command takes a tab, all, selector, selector-gone, log, or a delay such as 500ms or 2s, not sometime'] });
-  expect((await run('wait selector')).lines).toEqual(['[sm-dev] ERROR: The wait selector command needs a selector, e.g. wait selector \'#results\'']);
+  expect(await run('wait sometime')).toEqual({ ok: false, lines: ['[sm-dev] ERROR: The `wait` command takes a tab, `all`, `selector`, `selector-gone`, `log`, or a delay such as 500ms or 2s, not `sometime`'] });
+  expect((await run('wait selector')).lines).toEqual(['[sm-dev] ERROR: The `wait selector` command needs a selector, e.g. `wait selector \'#results\'`']);
   expect((await run('wait 2s --timeout-seconds 1')).lines).toEqual(['[sm-dev] ERROR: The delay 2s is longer than --timeout-seconds 1. Give a timeout at least as long, or none.']);
   // A tab before a delay, or a timeout at least as long, is allowed, and changes nothing.
   expect(await run('wait 10ms --timeout-seconds 1')).toEqual({ ok: true, lines: [] });
@@ -160,13 +161,13 @@ test('wait and the actions settle the page, and say what kept it busy', async ({
   expect(await run('wait all 10ms')).toEqual({ ok: true, lines: [] });
   expect((await run('wait T9 10ms')).ok).toBe(false);
   expect((await run('wait --timeout-seconds 0')).lines).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The --timeout-seconds flag needs a number of seconds/)]);
-  expect((await run('wait --soon')).lines).toEqual(['[sm-dev] ERROR: The wait command has no --soon flag. It takes --timeout-seconds, --log-source, --find, --since, --frame.']);
+  expect((await run('wait --soon')).lines).toEqual(['[sm-dev] ERROR: The `wait` command has no --soon flag. It takes --timeout-seconds, --log-source, --find, --since, --frame.']);
   // A flag it doesn't take, after wait log's text, isn't taken as part of it.
-  expect((await run('wait log ready --timeout 40')).lines).toEqual(['[sm-dev] ERROR: The wait command has no --timeout flag. It takes --timeout-seconds, --log-source, --find, --since, --frame.']);
-  expect((await run('wait selector T1 #go')).lines).toEqual(['[sm-dev] ERROR: The tab goes before the word selector: wait T1 selector #go']);
+  expect((await run('wait log ready --timeout 40')).lines).toEqual(['[sm-dev] ERROR: The `wait` command has no --timeout flag. It takes --timeout-seconds, --log-source, --find, --since, --frame.']);
+  expect((await run('wait selector T1 #go')).lines).toEqual(['[sm-dev] ERROR: The tab goes before the word selector: `wait T1 selector #go`']);
   // Other --words ending the text are text, as is anything quoted.
   expect((await run('wait log \'Running --dry-run mode\' --timeout-seconds 0.2')).lines).toEqual(['[sm-dev] Wait failed: No log line matched "Running --dry-run mode" within 0.2s', searchedTo]);
-  expect((await run('wait T1 log x')).lines).toEqual(['[sm-dev] ERROR: The wait log command takes no tab, since it watches all of the run\'s output']);
+  expect((await run('wait T1 log x')).lines).toEqual(['[sm-dev] ERROR: The `wait log` command takes no tab, since it watches all of the run\'s output']);
   expect((await run('wait 99999999s')).lines).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: A delay can be at most \d+s$/)]);
   // A mistyped flag fails too, so a line of several stops there.
   expect((await run('wait --soon')).ok).toBe(false);

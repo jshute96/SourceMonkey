@@ -31,7 +31,7 @@ test('commands that work through SourceMonkey say so; page commands work with an
   assert.equal(unsupportedCommand('script', 'violentmonkey', 'this run uses'), null);
   assert.equal(unsupportedCommand('script', 'tampermonkey', 'this run uses'), null);
   assert.equal(unsupportedCommand('values', 'violentmonkey', 'this run uses'),
-    'The values command works with SourceMonkey only, and this run uses Violentmonkey');
+    'The `values` command works with SourceMonkey only, and this run uses Violentmonkey');
 });
 
 // A zip of `files`, deflated, as a CRX holds one.

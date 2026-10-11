@@ -9,6 +9,7 @@
 import { JSON_COMMANDS } from './json-output.js';
 import { padTo, quiet, render, textLines, visibleLength, wrap } from './help-format.js';
 import { MANAGERS, MANAGER_NAMES, type ManagerName } from './managers.js';
+import { quoted } from './output-style.js';
 
 // How many of a selector's matches `probe --css` and `--html` show.
 export const PROBE_MAX = 10;
@@ -447,7 +448,7 @@ export const HELP_SECTIONS: HelpSection[] = [
           { term: '--find <text>', about: 'Only elements containing this text (in a name, text, value or URL; case insensitive), within the selector\'s matches.' },
           { term: '--up <n>', about: 'Start from the element `n` levels above each match.' },
           { term: '--context', about: `Go further up from each match while that adds at most ${CONTEXT_LINES} lines: wrapper divs, small containers.` },
-          { term: '--limit <n>', about: `How many matches to show (\`${PART_LIMIT}\` by default, \`0\` for all).` },
+          { term: '--limit <n>', about: `How many matches to show (${quoted(PART_LIMIT)} by default, ${quoted('0')} for all).` },
         ],
       },
       {
@@ -1060,7 +1061,7 @@ const ABOUT_COLUMN = 22;
 const WIDTH = 79;
 
 // Text as a code span: typed or shown as is.
-const code = (text: string): string => `\`${text}\``;
+const code = (text: string): string => quoted(text);
 
 // A description's lines, each of its own lines wrapped to `width`.
 function aboutLines(about: string | string[], width: number): string[] {
@@ -1241,7 +1242,7 @@ export function commandManagers(name: string): ManagerName[] {
 export function unsupportedCommand(name: string, manager: ManagerName, whose: string): string | null {
   const managers = commandManagers(name);
   if (managers.includes(manager)) return null;
-  return `The ${name} command works with ${managers.map((m) => MANAGERS[m].label).join(' or ')} only, and ${whose} ${MANAGERS[manager].label}`;
+  return `The ${quoted(name)} command works with ${managers.map((m) => MANAGERS[m].label).join(' or ')} only, and ${whose} ${MANAGERS[manager].label}`;
 }
 
 /** Every command's name, in the list's order; one with several forms once. */
@@ -1375,8 +1376,8 @@ export function commandSyntax(name: string): CommandSyntax {
  * miss (`--timeout` for `--timeout-seconds`) shows the right one.
  */
 export function noSuchFlag(command: string, flag: string, known: string[] = commandFlags(command)): string {
-  const takes = known.length === 0 ? 'It takes no flags.' : `It takes ${known.join(', ')}.`;
-  return `The ${command} command has no ${flag} flag. ${takes}`;
+  const takes = known.length === 0 ? 'It takes no flags.' : `It takes ${known.map((f) => quoted(f)).join(', ')}.`;
+  return `The ${quoted(command)} command has no ${quoted(flag)} flag. ${takes}`;
 }
 
 // One command's help: its usage, what it does, its arguments and options.

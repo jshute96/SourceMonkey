@@ -255,7 +255,7 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
     const url = `${fixtureServer.baseUrl}/target.html`;
     await setup.cli('newtab', '--noscript', url);
     expect((await setup.cli('tabs')).some((l) => l.startsWith(`* T2: ${url} (no scripts)`))).toBe(true);
-    expect(await setup.cli('menu', 'T2')).toEqual(['[sm-dev] No menu commands are registered on T2. T1 has some; use menu all or menu T1 to list them.']);
+    expect(await setup.cli('menu', 'T2')).toEqual(['[sm-dev] No menu commands are registered on T2. T1 has some; use `menu all` or `menu T1` to list them.']);
     // An expression with spaces and quotes arrives as the shell gave it,
     // and so does a whole command sent as one word.
     expect(await setup.cli('eval', 'T2', 'document.title + " " + location.pathname')).toEqual(['"target /target.html"']);
@@ -336,7 +336,7 @@ test('start --detach returns once started, is replaced by the next unless --new,
     expect(several.slice(0, 2)).toEqual(['ERROR: Several runs are active. Pick one with --run, or attach to one:', expect.stringMatching(/^Run\s+PID/)]);
     // Except status, which shows the browser, then each run, a blank line between.
     const statuses = execFileSync(process.execPath, [CLI, 'status'], { env: setup.env, encoding: 'utf8' }).split('\n');
-    expect(statuses[0]).toBe('No current run. (Use start or attach to connect to one.)');
+    expect(statuses[0]).toBe('No current run. (Use `start` or `attach` to connect to one.)');
     expect(statuses[1]).toMatch(/^Browser: /);
     expect(statuses).toContain('Other active runs:');
     expect(statuses.filter((l) => l.startsWith('Other run: '))).toEqual([expect.stringMatching(/^Other run: D1 /), expect.stringMatching(/^Other run: D2 /)]);
@@ -415,7 +415,7 @@ test('one line starts a run, sends it commands, and stops it unless detached', a
     expect(again.slice(0, 2)).toEqual(['[sm-dev] Stopping run Dmain', '[sm-dev] Run Dmain ended']);
     expect(again.at(-2)).toMatch(/^\[sm-dev\] Run Dmain now running detached/);
     // The old way of naming a run is pointed at the new one.
-    expect(await setup.cli('Dmain', 'status')).toEqual(['ERROR: Name the run with --run, before the command: sm-dev --run Dmain status']);
+    expect(await setup.cli('Dmain', 'status')).toEqual(['ERROR: Name the run with --run, before the command: `sm-dev --run Dmain status`']);
   } finally {
     await setup.cli('stop', '--all');
     await setup.cleanup();
@@ -662,7 +662,7 @@ test('--json prints each result as one line of JSON on stdout, and other log mes
 
     // A failure is its text on stderr, in place of a result.
     const failed = await setup.cliStreams('values', '9', '--json');
-    expect(failed).toEqual({ code: 1, stdout: [], stderr: ['[sm-dev] There is no script 9. Use scripts to list them.'] });
+    expect(failed).toEqual({ code: 1, stdout: [], stderr: ['[sm-dev] There is no script 9. Use `scripts` to list them.'] });
     // So is a mistake caught before anything runs.
     const mistaken = await setup.cliStreams('--json', 'validate', 'nope.user.js');
     expect(mistaken).toEqual({ code: 2, stdout: [], stderr: ['ERROR: No such file or directory: nope.user.js'] });

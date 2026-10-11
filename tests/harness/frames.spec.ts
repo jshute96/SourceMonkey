@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 import { test, expect } from '../fixtures/harness.js';
 import { runConsoleCommand, type ConsoleContext, type ControlledTab } from '../../lib/harness/console-commands.js';
+import { plainLine } from '../../lib/harness/output-style.js';
 
 const EXAMPLE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'examples', 'frames');
 
@@ -24,7 +25,7 @@ test('frames: ids, the scripts in each frame, menus and match', async ({ page, f
   const lines: string[] = [];
   const tabs: ControlledTab[] = [{ n: 1, page, link: attachment }];
   const ctx: ConsoleContext = {
-    host, tabs: () => tabs, scripts: [every, bOnly, topOnly], out: (l) => lines.push(l), stop: () => undefined, json: false,
+    host, tabs: () => tabs, scripts: [every, bOnly, topOnly], out: (l) => lines.push(plainLine(l)), stop: () => undefined, json: false,
   };
   const run = async (line: string) => {
     lines.length = 0;
@@ -78,9 +79,9 @@ test('frames: ids, the scripts in each frame, menus and match', async ({ page, f
   // By its CDP id, as shown or by its start; a tab's target id is its tab.
   expect(plain(await run(`frames frameId=${frameIds.b.slice(0, 8)}`))[0]).toBe(`${b}: ${frameB}`);
   expect(plain(await run(`frames [targetId=${frameIds.b}]`))[0]).toBe(`${b}: ${frameB}`);
-  expect(await run('frames frameId=ffffffffff')).toEqual(['[sm-dev] No frame\'s id starts with ffffffffff. Use frames all to list them.']);
+  expect(await run('frames frameId=ffffffffff')).toEqual(['[sm-dev] No frame\'s id starts with `ffffffffff`. Use `frames all` to list them.']);
   expect(await run(`eval --frame frameId=${frameIds.nested} location.pathname`)).toEqual(['"/frames/frame-nested.html"']);
-  expect(await run('frames T2.F1')).toEqual(['[sm-dev] ERROR: T2 has no frame F1. Use frames all to list them.']);
+  expect(await run('frames T2.F1')).toEqual(['[sm-dev] ERROR: T2 has no frame F1. Use `frames all` to list them.']);
 
   // Not in the top frame: only where; in the top frame only: nothing.
   expect(await run('tabs')).toEqual([
@@ -142,7 +143,7 @@ test('frames: ids, the scripts in each frame, menus and match', async ({ page, f
     `[sm-dev] SourceMonkey example: frames: Frame B only hasn't run in ${a}, so its scope can't be reached. Load a page it matches, or reload this one.`,
   ]);
   expect(await run(`eval --frame ${nested} --page document.querySelectorAll('#log li').length`)).toEqual(['1']);
-  expect(await run('eval --frame F99 1')).toEqual(['[sm-dev] T1 has no frame F99 now. Use frames to list its frames.']);
+  expect(await run('eval --frame F99 1')).toEqual(['[sm-dev] T1 has no frame F99 now. Use `frames` to list its frames.']);
   expect(await run(`eval --frame T2.${b} 1`)).toEqual([`[sm-dev] ERROR: The --frame flag names a frame in T2, but the command acts on T1`]);
   expect(await run('eval --frame T2 1')).toEqual(['[sm-dev] ERROR: The --frame flag names T2, but the command acts on T1']);
   expect(await run('eval --frame T1 location.pathname')).toEqual(['"/frames/frames.html"']);
@@ -179,7 +180,7 @@ test('frames: ids, the scripts in each frame, menus and match', async ({ page, f
   ]);
   expect((await run(`wait selector --frame ${b} ${countInB}`))).toEqual([`[sm-dev] Wait done: The selector ${countInB} matches on T1.${b}`]);
   expect(await run(`wait 10ms --frame ${b}`)).toEqual([
-    '[sm-dev] ERROR: The --frame flag is for wait selector and wait selector-gone, which look for an element in a frame',
+    '[sm-dev] ERROR: The --frame flag is for `wait selector` and `wait selector-gone`, which look for an element in a frame',
   ]);
 
   // A frame's own picture, its target for raw CDP, and a hidden one.

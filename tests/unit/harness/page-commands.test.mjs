@@ -50,13 +50,13 @@ test('cdp reads one method with its JSON params', () => {
 });
 
 test('cdp says what is wrong with its call', () => {
-  assert.match(cdpCallsTyped([].join(' ')), /^The cdp command needs a method/);
-  assert.equal(cdpCallsTyped(['{"x": 1}'].join(' ')), '{"x": is not a CDP method. Methods are named Domain.method, as in Page.reload.');
-  assert.match(cdpCallsTyped(['Page.reload', '{nope}'].join(' ')), /^The params for Page.reload are not valid JSON/);
-  assert.match(cdpCallsTyped('Page.reload [1]'), /^The params for Page.reload must be a JSON object/);
-  assert.match(cdpCallsTyped(['Page.enable', 'Page.reload'].join(' ')), /^A cdp command makes one call/);
+  assert.match(cdpCallsTyped([].join(' ')), /^The `cdp` command needs a method/);
+  assert.equal(cdpCallsTyped(['{"x": 1}'].join(' ')), '`{"x":` is not a CDP method. Methods are named Domain.method, as in `Page.reload`.');
+  assert.match(cdpCallsTyped(['Page.reload', '{nope}'].join(' ')), /^The params for `Page.reload` are not valid JSON/);
+  assert.match(cdpCallsTyped('Page.reload [1]'), /^The params for `Page.reload` must be a JSON object/);
+  assert.match(cdpCallsTyped(['Page.enable', 'Page.reload'].join(' ')), /^A `cdp` command makes one call/);
   // Trailing words after the params.
-  assert.equal(cdpCallsTyped(['Page.reload', '{}', 'x'].join(' ')), 'The params for Page.reload have more after them: x');
+  assert.equal(cdpCallsTyped(['Page.reload', '{}', 'x'].join(' ')), 'The params for `Page.reload` have more after them: `x`');
 });
 
 test('typed cdp keeps the quotes in its JSON, and takes one call per line', () => {
@@ -74,16 +74,16 @@ test('typed cdp keeps the quotes in its JSON, and takes one call per line', () =
     cdpCallsTyped(`Runtime.evaluate '{"expression": "matchMedia('(x)').matches"}'`),
     [{ method: 'Runtime.evaluate', params: { expression: "matchMedia('(x)').matches" } }],
   );
-  assert.match(cdpCallsTyped(''), /^The cdp command needs a method/);
-  assert.equal(cdpCallsTyped('Page.reload {"x": '), 'The params for Page.reload have no closing }. A call and its params go on one line.');
-  assert.match(cdpCallsTyped(`Page.reload '{"x": 1}`), /open with a ' that doesn't close/);
-  assert.match(cdpCallsTyped('Page.enable Page.reload'), /^A cdp command makes one call/);
-  assert.match(cdpCallsTyped('Page.reload {} Page.enable'), /^A cdp command makes one call/);
-  assert.match(cdpCallsTyped('Page.reload {} x'), /^The params for Page.reload have more after them: x/);
+  assert.match(cdpCallsTyped(''), /^The `cdp` command needs a method/);
+  assert.equal(cdpCallsTyped('Page.reload {"x": '), 'The params for `Page.reload` have no closing `}`. A call and its params go on one line.');
+  assert.match(cdpCallsTyped(`Page.reload '{"x": 1}`), /open with a `'` that doesn't close/);
+  assert.match(cdpCallsTyped('Page.enable Page.reload'), /^A `cdp` command makes one call/);
+  assert.match(cdpCallsTyped('Page.reload {} Page.enable'), /^A `cdp` command makes one call/);
+  assert.match(cdpCallsTyped('Page.reload {} x'), /^The params for `Page.reload` have more after them: `x`/);
   // A block or file names the line.
   assert.equal(
     cdpCallsTyped('\nPage.enable\nnope', { first: 0, name: (n) => `Line ${n} of the block` }),
-    'Line 2 of the block: nope is not a CDP method. Methods are named Domain.method, as in Page.reload.',
+    'Line 2 of the block: `nope` is not a CDP method. Methods are named Domain.method, as in `Page.reload`.',
   );
 });
 
@@ -106,11 +106,11 @@ test('click takes its flags anywhere around the selector', () => {
 
 test('click says what is wrong with its flags', () => {
   const typed = (line) => clickLine(line);
-  assert.equal(typed('e4 --button'), 'The --button flag needs a value: --button <name>');
-  assert.equal(typed('e4 --button back'), 'back is not a mouse button. Use left, right or middle.');
-  assert.equal(typed('e4 --modifiers Shift+Q'), 'Q is not a modifier key. Use Alt, Control, ControlOrMeta, Meta, Shift, joined by +.');
-  assert.equal(typed('e4 --count 0'), 'The --count flag takes a number of clicks from 1 to 10, not 0');
-  assert.equal(typed('e4 --at 5'), 'The --at flag takes x,y in pixels from the element\'s top left corner, e.g. --at 10,5, not 5');
+  assert.equal(typed('e4 --button'), 'The `--button` flag needs a value: `--button <name>`');
+  assert.equal(typed('e4 --button back'), '`back` is not a mouse button. Use `left`, `right` or `middle`.');
+  assert.equal(typed('e4 --modifiers Shift+Q'), '`Q` is not a modifier key. Use `Alt`, `Control`, `ControlOrMeta`, `Meta`, `Shift`, joined by `+`.');
+  assert.equal(typed('e4 --count 0'), 'The `--count` flag takes a number of clicks from 1 to 10, not `0`');
+  assert.equal(typed('e4 --at 5'), 'The `--at` flag takes x,y in pixels from the element\'s top left corner, e.g. `--at 10,5`, not `5`');
 });
 
 test('click and hover take --at, and hover --modifiers but no click-only flags', () => {
@@ -122,7 +122,7 @@ test('click and hover take --at, and hover --modifiers but no click-only flags',
     selector: 'img', click: { modifiers: ['Alt'], position: { x: 4, y: 4 } }, how: ['Alt held', 'the mouse at 4,4 in it'],
   });
   assert.equal(hover('img --count 2'),
-    'The hover command has no --count flag. It takes --modifiers, --at, --nowait, --timeout-seconds, --frame.');
+    'The `hover` command has no `--count` flag. It takes `--modifiers`, `--at`, `--nowait`, `--timeout-seconds`, `--frame`.');
 });
 
 test('a timed-out action says which check its element kept failing', () => {

@@ -20,6 +20,7 @@
 // the block's own.
 
 import { splitWords } from './command-args.js';
+import { echoLine } from './output-style.js';
 import { ALIASES, COMMAND_NAMES, commandSyntax } from './command-list.js';
 
 /** One command, ready for `runConsoleCommand`. */
@@ -189,11 +190,11 @@ export function parseCommandList(text: string): { commands: AssembledCommand[] }
 }
 
 /**
- * A command as it was written, for heading its output: `> ` before the
- * first line and `... ` before the rest, as the prompt shows them.
+ * A command as it was written, for heading its output: `mark` before
+ * the first line and `...` before the rest, as the prompt shows them.
  */
-export function echoCommand(command: AssembledCommand): string[] {
-  return command.source.map((line, i) => `${i === 0 ? '> ' : '... '}${i === 0 ? line.trim() : line}`);
+export function echoCommand(command: AssembledCommand, mark = '>'): string[] {
+  return command.source.map((line, i) => (i === 0 ? echoLine(mark, line.trim()) : echoLine('...', line)));
 }
 
 /** A word as a shell would need it written, for echoing a command. */

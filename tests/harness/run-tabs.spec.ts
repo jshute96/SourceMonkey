@@ -268,7 +268,7 @@ test('--notab: the first tab opened is T1, unprefixed like a normal run\'s', asy
     ['1: Hello (', `newtab ${target}`],
     ['[script log] [hello] on /target.html', 'exit'],
   ]);
-  expect(lines).toContain('[sm-dev] No tabs are active. Use newtab to open one.');
+  expect(lines).toContain('[sm-dev] No tabs are active. Use `newtab` to open one.');
   expect(lines.some((l) => l.startsWith(`[sm-dev] Opening ${target} in T1 [targetId=`))).toBe(true);
   // Both the page's lines and the harness's own, without a [T1] prefix.
   expect(lines).toContain('[script log] [hello] on /target.html');
@@ -385,10 +385,10 @@ test('load, update and reload all reload just the tabs they affect', async ({ fi
   expect(lines).not.toContain('[sm-dev] Reloading T1, T2');
   expect(lines).toContain(`* 2: B (${scriptsDir.path}/b.user.js)`);
   expect(lines).toContain('  k = 1');
-  expect(lines).toContain(`[sm-dev] ${b} is already loaded, as script 2. Use update 2 to re-read it.`);
-  expect(lines).toContain(`[sm-dev] ${a} is already loaded, as script 1. Use update 1 to re-read it.`);
+  expect(lines).toContain(`[sm-dev] ${b} is already loaded, as script 2. Use \`update 2\` to re-read it.`);
+  expect(lines).toContain(`[sm-dev] ${a} is already loaded, as script 1. Use \`update 1\` to re-read it.`);
   // Once for `load ${b}`, once for the directory.
-  expect(lines.filter((l) => l === `[sm-dev] ${b} is already loaded, as script 2. Use update 2 to re-read it.`)).toHaveLength(2);
+  expect(lines.filter((l) => l === `[sm-dev] ${b} is already loaded, as script 2. Use \`update 2\` to re-read it.`)).toHaveLength(2);
   expect(lines).toContain('[sm-dev] No such file or directory: nothing.user.js');
   // The failed update changed nothing, so reloaded nothing.
   const invalid = lines.findIndex((l) => l.startsWith('INVALID'));
@@ -481,7 +481,7 @@ test('open --noscript switches a tab to no scripts for good, and --script back',
   expect(lines.slice(back)).toContain('[sm-dev] T3 runs the scripts again');
   expect(lines.slice(back)).toContain('[T2] [script log] [A] on /target.html');
   expect(lines).toContain('[T4] [script log] [A] on /target.html');
-  expect(lines).toContain('[sm-dev] ERROR: The newtab command takes --noscript or --script, not both');
+  expect(lines).toContain('[sm-dev] ERROR: The `newtab` command takes --noscript or --script, not both');
 });
 
 test('open and reload switch the tab they name, or the current one, and say when nothing changes', async ({ fixtureServer, scriptsDir }) => {
@@ -508,7 +508,7 @@ test('open and reload switch the tab they name, or the current one, and say when
     // A mistake, found before it is sent, stops the piped commands.
     ['T2 runs no scripts from now on', 'open --bogus'],
   ]);
-  expect(lines).toContain('ERROR: The open command has no --bogus flag. It takes --noscript, --script, --timeout-seconds, --from-saved, --url, --offline, --nowait.');
+  expect(lines).toContain('ERROR: The `open` command has no --bogus flag. It takes --noscript, --script, --timeout-seconds, --from-saved, --url, --offline, --nowait.');
   expect(lines).toContain('That command failed, so the commands after it were not run');
   // T1 stayed on its page when switched back.
   expect(lines.filter((l) => l === '"/other.html"')).toHaveLength(2);
@@ -544,11 +544,11 @@ test('a tab waiting on a dialog is left out of reload all, and blocks update', a
   ]);
   expect(lines).toContain('[sm-dev] T2 is waiting on a dialog, so it was not reloaded');
   // T2 is the current tab, having just been opened.
-  expect(lines).toContain('[sm-dev] The page is waiting on an alert dialog. Use accept or dismiss first.');
+  expect(lines).toContain('[sm-dev] The page is waiting on an alert dialog. Use `accept` or `dismiss` first.');
   expect(lines.filter((l) => l.startsWith('[sm-dev] Reloading'))).toEqual([]);
   // `reload all` began with the dialog up, so it ends with a reminder;
   // `update` named it already in refusing, so it doesn't repeat it.
-  expect(lines.filter((l) => l === '[sm-dev] *DIALOG* still waiting: The page is showing an alert dialog. Answer using accept or dismiss.'))
+  expect(lines.filter((l) => l === '[sm-dev] *DIALOG* still waiting: The page is showing an alert dialog. Answer using `accept` or `dismiss`.'))
     .toHaveLength(1);
 });
 
@@ -580,7 +580,7 @@ test('with no tab, load says nothing was reloaded', async ({ scriptsDir }) => {
     ['Started as run', `load ${b}`],
     ['none was reloaded', 'exit'],
   ]);
-  expect(lines).toContain('[sm-dev] No open tab matches it, so none was reloaded. Use open 2 to open its page.');
+  expect(lines).toContain('[sm-dev] No open tab matches it, so none was reloaded. Use `open 2` to open its page.');
 });
 
 test('--watch re-pushes on a save and reloads the tab it runs in', async ({ fixtureServer, scriptsDir }) => {
@@ -794,9 +794,9 @@ test('a request to an undeclared host reports SourceMonkey\'s prompt, and connec
   );
   // `status` lists it under the script, and the command ends with a
   // reminder, since it was waiting when the command began.
-  expect(lines.some((l) => l.includes(`*PERMISSION PROMPT* waiting: localhost (GET ${other}/other.html). Answer using connect.`))).toBe(true);
+  expect(lines.some((l) => l.includes(`*PERMISSION PROMPT* waiting: localhost (GET ${other}/other.html). Answer using \`connect\`.`))).toBe(true);
   expect(lines).toContain(
-    '[sm-dev] *PERMISSION PROMPT* still waiting: Asks requests permission to connect to localhost. Answer using connect once|cancel|allow|deny|allow-all.',
+    '[sm-dev] *PERMISSION PROMPT* still waiting: Asks requests permission to connect to localhost. Answer using `connect once|cancel|allow|deny|allow-all`.',
   );
   expect(lines).toContain('[sm-dev] Allowed localhost for Asks');
   // Answered: the reminder stops.

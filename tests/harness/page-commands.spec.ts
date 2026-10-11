@@ -9,6 +9,7 @@ import path from 'node:path';
 import { test, expect } from '../fixtures/harness.js';
 import { DialogTracker, runConsoleCommand, type ConsoleContext } from '../../lib/harness/console-commands.js';
 import { RunLog } from '../../lib/harness/run-logs.js';
+import { plainLine } from '../../lib/harness/output-style.js';
 
 test('page commands drive the page and read it', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {
   const script = await loadScript({
@@ -37,12 +38,12 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   // The run's log, as run.ts keeps it for `logs`.
   const logs = new RunLog();
   page.on('console', (msg) => logs.add({ source: 'script', kind: msg.type(), tab: 1, text: msg.text() }));
-  const dialogs = await DialogTracker.attach(page, (t) => lines.push(`[sm-dev] ${t}`), { visible: false, commandsComing: true });
+  const dialogs = await DialogTracker.attach(page, (t) => lines.push(plainLine(`[sm-dev] ${t}`)), { visible: false, commandsComing: true });
   await page.goto(`${fixtureServer.baseUrl}/target.html`);
   await expect(page.locator('button')).toHaveText('Add one');
 
   const tabs = [{ n: 1, page, link: attachment, dialogs, targetId: 'ABCDEF0123456789' }];
-  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(l), stop: () => undefined, logs };
+  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(plainLine(l)), stop: () => undefined, logs };
   const run = async (line: string, cwd?: string) => {
     lines.length = 0;
     await runConsoleCommand(line, ctx, { cwd });
@@ -55,7 +56,7 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('eval widget')).toEqual(['{\n  "clicks": 0\n}']);
   expect(await run('eval --page typeof widget')).toEqual(['"undefined"']);
   expect(await run('eval --script widget')).toEqual(['{\n  "clicks": 0\n}']);
-  expect(await run('eval --page --script 1')).toEqual(['[sm-dev] ERROR: The eval command takes --page or --script, not both']);
+  expect(await run('eval --page --script 1')).toEqual(['[sm-dev] ERROR: The `eval` command takes --page or --script, not both']);
   // Inside the script: its GM_* bindings and top-level declarations.
   expect(await run('eval GM_info.script.name')).toEqual(['"Widget"']);
   expect(await run('eval --script=Widget button.textContent')).toEqual(['"Add one"']);
@@ -66,7 +67,7 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   // An awaited expression is the value, as in the console.
   expect(await run('eval --script await Promise.resolve(button.localName)')).toEqual(['"button"']);
   expect(await run('eval --script missing')).toEqual(['[sm-dev] The expression threw: ReferenceError: missing is not defined']);
-  expect(await run('eval --script=nope 1')).toEqual(['[sm-dev] No loaded script matches nope. Use scripts to list them.']);
+  expect(await run('eval --script=nope 1')).toEqual(['[sm-dev] No loaded script matches `nope`. Use `scripts` to list them.']);
   expect(await run('eval --script= 1')).toEqual(['[sm-dev] ERROR: The --script flag needs a value: --script=<script>']);
   expect(await run('eval document.querySelector("main")')).toEqual(['main#target']);
   expect(await run('eval nothing.here')).toEqual(['[sm-dev] The expression threw: ReferenceError: nothing is not defined']);
@@ -85,7 +86,7 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('click T1 button')).toEqual(['[sm-dev] Clicked button']);
   expect(await run('eval document.querySelector("button").textContent')).toEqual(['"Added 1"']);
   expect(await run('eval --script T1 widget.clicks')).toEqual(['1']);
-  expect(await run('click \'#nothing\'')).toEqual(['[sm-dev] No element matches #nothing']);
+  expect(await run('click \'#nothing\'')).toEqual(['[sm-dev] No element matches #nothing. Use `probe #nothing` to look for it.']);
   // The id as `tabs` shows it names the tab.
   expect(await run('eval [targetId=ABCDEF0123456789] document.title')).toEqual(['"target"']);
   expect(await run('hover button')).toEqual(['[sm-dev] Hovered over button']);
@@ -105,7 +106,7 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('type \'input[aria-label=Note]\' \'hello world\'')).toEqual(['[sm-dev] Typed into input[aria-label=Note]']);
   await run('key Backspace Backspace');
   expect(await run('key Nope')).toEqual(['[sm-dev] The key command failed: Nope is not a key name. Keys are named as in Enter, ArrowLeft, Shift+Tab (case-insensitive), or a single character.']);
-  expect(await run('key Shift+')).toEqual(['[sm-dev] ERROR: Shift+ has a + with no key on one side. Join keys with +, as in Shift+Tab.']);
+  expect(await run('key Shift+')).toEqual(['[sm-dev] ERROR: Shift+ has a `+` with no key on one side. Join keys with `+`, as in Shift+Tab.']);
   // Through the keys alias, case-insensitive.
   expect(await run('keys end shift+home')).toEqual(['[sm-dev] Pressed End, Shift+Home']);
   expect(await run('eval document.querySelector("input").value')).toEqual(['"hello wor"']);
@@ -122,12 +123,12 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   // Spaces and a blank line at the end are typed too.
   expect(await run('type #notes\n  \n')).toEqual(['[sm-dev] Typed into #notes']);
   expect(await run(notes)).toEqual(['"--nowait first  line\\nenda\\nb\\n  \\n"']);
-  expect(await run('type\n#notes x')).toEqual(['[sm-dev] ERROR: The type command takes one selector before {{. Quote a selector that has spaces.']);
-  expect(await run('type #notes --file notes.txt\nx', scriptsDir.path)).toEqual(['[sm-dev] ERROR: The type command takes text or --file, not both']);
+  expect(await run('type\n#notes x')).toEqual(['[sm-dev] ERROR: The `type` command takes one selector before `{{`. Quote a selector that has spaces.']);
+  expect(await run('type #notes --file notes.txt\nx', scriptsDir.path)).toEqual(['[sm-dev] ERROR: The `type` command takes text or --file, not both']);
   expect(await run('type #notes --file nope.txt', scriptsDir.path)).toEqual(['[sm-dev] ERROR: Couldn\'t read nope.txt: The file does not exist']);
-  expect(await run('type #notes --file')).toEqual(['[sm-dev] ERROR: The --file flag needs a value: --file <path>']);
-  expect(await run('type --file notes.txt')).toEqual(['[sm-dev] ERROR: The type command takes a selector and one file, e.g. type \'#notes\' --file notes.txt']);
-  expect(await run('type #notes b\nc')).toEqual(['[sm-dev] ERROR: The type command takes one selector before {{. Quote a selector that has spaces.']);
+  expect(await run('type #notes --file')).toEqual(['[sm-dev] ERROR: The --file flag needs a value: `--file <path>`']);
+  expect(await run('type --file notes.txt')).toEqual(['[sm-dev] ERROR: The `type` command takes a selector and one file, e.g. `type \'#notes\' --file notes.txt`']);
+  expect(await run('type #notes b\nc')).toEqual(['[sm-dev] ERROR: The `type` command takes one selector before `{{`. Quote a selector that has spaces.']);
   await page.evaluate(() => document.querySelector('#notes')!.remove());
 
   const tree = await run('snapshot');
@@ -142,7 +143,7 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(readFileSync(path.join(dir, 'tree.txt'), 'utf8')).toContain('button "Added 1"');
   // A long eval result is cut when printed, and written whole with --out.
   const long = await run('eval "x".repeat(12000)');
-  expect(long).toEqual([expect.stringMatching(/^"x{9999}\.\.\. \(12002 chars; eval --out FILE writes it all\)$/)]);
+  expect(long).toEqual([expect.stringMatching(/^"x{9999}\.\.\. \(12002 chars; `eval --out FILE` writes it all\)$/)]);
   expect(await run('eval --out long.json "x".repeat(12000)', dir)).toEqual(['[sm-dev] Wrote long.json (12002 chars)']);
   expect(readFileSync(path.join(dir, 'long.json'), 'utf8')).toBe(`"${'x'.repeat(12000)}"\n`);
   // Code written as a function body: its `return` is the value.
@@ -157,9 +158,9 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('eval --file probe.js --script', dir)).toEqual(['{\n  "c": 1\n}']);
   expect(await run('eval --script T1 --file probe.js', dir)).toEqual(['{\n  "c": 1\n}']);
   expect(await run('eval --file nope.js', dir)).toEqual(['[sm-dev] ERROR: Couldn\'t read nope.js: The file does not exist']);
-  expect(await run('eval --file probe.js 1 + 1', dir)).toEqual(['[sm-dev] ERROR: The eval command takes JavaScript or --file, not both']);
-  expect(await run('eval --file', dir)).toEqual(['[sm-dev] ERROR: The --file flag needs a value: --file <path>']);
-  expect(await run('eval --file --script', dir)).toEqual(['[sm-dev] ERROR: The --file flag needs a value: --file <path>']);
+  expect(await run('eval --file probe.js 1 + 1', dir)).toEqual(['[sm-dev] ERROR: The `eval` command takes JavaScript or --file, not both']);
+  expect(await run('eval --file', dir)).toEqual(['[sm-dev] ERROR: The --file flag needs a value: `--file <path>`']);
+  expect(await run('eval --file --script', dir)).toEqual(['[sm-dev] ERROR: The --file flag needs a value: `--file <path>`']);
   expect(await run('eval --file probe.js --file probe.js', dir)).toEqual(['[sm-dev] ERROR: The --file flag can be given once']);
   mkdirSync(path.join(dir, 'probes'));
   expect(await run('eval --file probes', dir)).toEqual(['[sm-dev] ERROR: Couldn\'t read probes: It\'s a folder']);
@@ -172,7 +173,7 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('screenshot button b.png', dir)).toEqual([expect.stringMatching(/^\[sm-dev\] Wrote b\.png \(button\) from http/)]);
   expect(statSync(path.join(dir, 'b.png')).size).toBeGreaterThan(0);
   expect(await run('screenshot --full whole.png', dir)).toEqual([expect.stringMatching(/^\[sm-dev\] Wrote whole\.png from http/)]);
-  expect(await run('screenshot button', dir)).toEqual(['[sm-dev] ERROR: The screenshot command writes a .png or .jpg file, and button is neither. Name the file last.']);
+  expect(await run('screenshot button', dir)).toEqual(['[sm-dev] ERROR: The `screenshot` command writes a .png or .jpg file, and `button` is neither. Name the file last.']);
   expect(await run('savehtml nowhere/x.html', dir)).toEqual(['[sm-dev] The savehtml command failed: Could not write nowhere/x.html: Its folder doesn\'t exist']);
   const saved = await run('savehtml page.html', dir);
   expect(saved[0]).toMatch(/^\[sm-dev\] Wrote page\.html \(\d+ chars\) from http/);
@@ -200,17 +201,17 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   // answer it, and the page commands wait until it has.
   const clicked = await run('click \'#warn\'');
   expect(clicked).toContain('[sm-dev] Clicked #warn. It opened a dialog, which is waiting for an answer.');
-  expect(await run('eval 1')).toEqual(['[sm-dev] The page is waiting on an alert dialog. Use accept or dismiss first.']);
+  expect(await run('eval 1')).toEqual(['[sm-dev] The page is waiting on an alert dialog. Use `accept` or `dismiss` first.']);
   expect(await run('accept')).toEqual(['[sm-dev] Accepted the dialog']);
   expect(await run('eval 1')).toEqual(['1']);
   expect(await run('eval confirm("sure?")')).toContain('[sm-dev] The expression opened a dialog, which is waiting for an answer.');
   expect(await run('dismiss')).toEqual(['[sm-dev] Dismissed the dialog']);
-  expect(await run('screenshot')).toEqual([expect.stringContaining('The screenshot command needs a file')]);
-  expect(await run('snapshot --deep')).toEqual(['[sm-dev] ERROR: The snapshot command has no --deep flag. It takes --visible, --out, --find, --up, --context, --limit, --timeout-seconds, --frame.']);
+  expect(await run('screenshot')).toEqual([expect.stringContaining('The `screenshot` command needs a file')]);
+  expect(await run('snapshot --deep')).toEqual(['[sm-dev] ERROR: The `snapshot` command has no --deep flag. It takes --visible, --out, --find, --up, --context, --limit, --timeout-seconds, --frame.']);
   // Every command, not only the ones with flags of their own; a quoted
   // selector with -- in it is one word, not a flag.
-  expect(await run('status --bad')).toEqual(['[sm-dev] ERROR: The status command has no --bad flag. It takes --frames, --json, --nojson.']);
-  expect(await run('eval T1 --script --x')).toEqual(['[sm-dev] ERROR: The eval command has no --x flag. It takes --page, --script, --file, --out, --timeout-seconds, --frame.']);
+  expect(await run('status --bad')).toEqual(['[sm-dev] ERROR: The `status` command has no --bad flag. It takes --frames, --json, --nojson.']);
+  expect(await run('eval T1 --script --x')).toEqual(['[sm-dev] ERROR: The `eval` command has no --x flag. It takes --page, --script, --file, --out, --timeout-seconds, --frame.']);
   expect(await run(`probe '.a --b'`)).not.toContainEqual(expect.stringContaining('flag'));
 
   // A navigation an expression doesn't live through is said as such,
@@ -226,8 +227,8 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   ]);
   expect(await run('cdp T1 Target.getTargetInfo')).toEqual([expect.stringContaining('"type": "page"')]);
   expect(await run('cdp Nope.nothing')).toEqual([expect.stringMatching(/^\[sm-dev\] Nope\.nothing failed: /)]);
-  expect(await run('cdp nope')).toEqual([expect.stringContaining('nope is not a CDP method')]);
-  expect(await run('cdp Page.enable Page.reload')).toEqual([expect.stringContaining('A cdp command makes one call')]);
+  expect(await run('cdp nope')).toEqual([expect.stringContaining('`nope` is not a CDP method')]);
+  expect(await run('cdp Page.enable Page.reload')).toEqual([expect.stringContaining('A `cdp` command makes one call')]);
   // A block's calls share a session, so an override one sets holds for
   // the next; it ends with the command.
   const dark = '{"expression": "matchMedia(\'(prefers-color-scheme: dark)\').matches", "returnByValue": true}';
@@ -250,7 +251,7 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
     JSON.stringify({ result: { type: 'number', value: 4, description: '4' } }, null, 2),
   ]);
   expect(await run('cdp --file calls.txt Page.reload', scriptsDir.path)).toEqual([expect.stringContaining('not both')]);
-  expect(await run('cdp --file')).toEqual(['[sm-dev] ERROR: The --file flag needs a value: --file <path>']);
+  expect(await run('cdp --file')).toEqual(['[sm-dev] ERROR: The --file flag needs a value: `--file <path>`']);
   // A dialog a call opens stops the wait, and says so.
   expect(await run('cdp Runtime.evaluate {"expression": "alert(1)"}')).toContain('[sm-dev] Runtime.evaluate opened a dialog, which is waiting for an answer.');
   expect(await run('accept')).toEqual(['[sm-dev] Accepted the dialog']);
@@ -267,7 +268,7 @@ test('a tab closing mid-expression is said as such', async ({ page, fixtureServe
   await page.goto(`${fixtureServer.baseUrl}/target.html`);
   const lines: string[] = [];
   const tabs = [{ n: 1, page, link: attachment }];
-  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(l), stop: () => undefined };
+  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(plainLine(l)), stop: () => undefined };
   const pending = runConsoleCommand('eval --page new Promise(() => {})', ctx);
   await new Promise((r) => setTimeout(r, 200));
   await page.close();
@@ -291,7 +292,7 @@ test('eval --script reaches a MAIN-world script and a script\'s IIFE, keeps stri
   await expect.poll(() => host.reports.started.length).toBe(2);
   const lines: string[] = [];
   const tabs = [{ n: 1, page, link: attachment }];
-  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [main, other, iife], out: (l) => lines.push(l), stop: () => undefined };
+  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [main, other, iife], out: (l) => lines.push(plainLine(l)), stop: () => undefined };
   const run = async (line: string) => {
     lines.length = 0;
     await runConsoleCommand(line, ctx);
@@ -324,7 +325,7 @@ test('eval --script reaches a page-world script on a page whose CSP forbids eval
   await expect.poll(() => host.reports.started.length).toBe(1);
   const lines: string[] = [];
   const tabs = [{ n: 1, page, link: attachment }];
-  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [main], out: (l) => lines.push(l), stop: () => undefined };
+  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [main], out: (l) => lines.push(plainLine(l)), stop: () => undefined };
   // The hook's eval runs inside a CDP evaluation, which Chrome exempts
   // from the page's policy.
   await runConsoleCommand('eval --script here', ctx);
@@ -350,7 +351,7 @@ test('click takes a button, modifiers and a count, and says which check its elem
   });
   const lines: string[] = [];
   const tabs = [{ n: 1, page, link: attachment }];
-  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(l), stop: () => undefined };
+  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(plainLine(l)), stop: () => undefined };
   const run = async (line: string) => {
     lines.length = 0;
     await runConsoleCommand(line, ctx);
@@ -362,7 +363,7 @@ test('click takes a button, modifiers and a count, and says which check its elem
   expect(await seen()).toEqual(['contextmenu 2 0', 'auxclick 2 1']);
   expect(await run('click T1 button --count 2 --modifiers shift')).toEqual(['[sm-dev] Clicked button with Shift held, 2 clicks']);
   expect(await seen()).toEqual(['click 0 1 shift', 'click 0 2 shift', 'dblclick 0 2 shift']);
-  expect(await run('click button --button back')).toEqual(['[sm-dev] ERROR: back is not a mouse button. Use left, right or middle.']);
+  expect(await run('click button --button back')).toEqual(['[sm-dev] ERROR: `back` is not a mouse button. Use `left`, `right` or `middle`.']);
 
   // Covered, it says by what, rather than listing what it might be.
   await page.evaluate(() => document.body.insertAdjacentHTML('beforeend', '<div id="over" style="position:fixed;inset:0"></div>'));
@@ -398,13 +399,13 @@ test('an Escape that leaves the page fullscreen says how to exit', async ({ page
   await page.goto(`${fixtureServer.baseUrl}/target.html`);
   const lines: string[] = [];
   const tabs = [{ n: 1, page, link: attachment }];
-  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(l), stop: () => undefined };
+  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(plainLine(l)), stop: () => undefined };
   const run = async (line: string) => {
     lines.length = 0;
     await runConsoleCommand(line, ctx);
     return [...lines];
   };
-  const stillFullscreen = '[sm-dev] The page is still fullscreen. Escape sent by sm-dev goes to the page rather than to Chrome. To exit, use eval document.exitFullscreen().';
+  const stillFullscreen = '[sm-dev] The page is still fullscreen. Escape sent by sm-dev goes to the page rather than to Chrome. To exit, use `eval document.exitFullscreen()`.';
 
   // Not fullscreen: Escape is just a key, even with a later key entering it.
   expect(await run('key Escape')).toEqual(['[sm-dev] Pressed Escape']);
@@ -434,7 +435,7 @@ test('snapshot refs name elements for the other commands, and it can show only t
   });
   const lines: string[] = [];
   const tabs = [{ n: 1, page, link: attachment }];
-  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(l), stop: () => undefined };
+  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(plainLine(l)), stop: () => undefined };
   const run = async (line: string, cwd?: string) => {
     lines.length = 0;
     await runConsoleCommand(line, ctx, { cwd });
@@ -476,7 +477,7 @@ test('snapshot refs name elements for the other commands, and it can show only t
   expect(await run(`probe --css ${save}`)).toEqual([`found    ${save}  (1)`, '    selector: button[data-testid="save"]']);
   expect(await selectorOf(refIn(scrolled, 'Far away'))).toBe('button.far');
   expect(await selectorOf('input[aria-label=Note]')).toBe('input');
-  expect(await run('snapshot --css')).toEqual(['[sm-dev] ERROR: The snapshot command has no --css flag. It takes --visible, --out, --find, --up, --context, --limit, --timeout-seconds, --frame.']);
+  expect(await run('snapshot --css')).toEqual(['[sm-dev] ERROR: The `snapshot` command has no --css flag. It takes --visible, --out, --find, --up, --context, --limit, --timeout-seconds, --frame.']);
 
   // Refs reach into a frame and a shadow root, where selectors are
   // suggested for neither; and look-alike buttons get told apart.
@@ -522,7 +523,7 @@ test('snapshot shows each of a selector\'s matches, and --find the elements cont
   });
   const lines: string[] = [];
   const tabs = [{ n: 1, page, link: attachment }];
-  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(l), stop: () => undefined };
+  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(plainLine(l)), stop: () => undefined };
   const run = async (line: string) => {
     lines.length = 0;
     await runConsoleCommand(line, ctx);
@@ -572,7 +573,7 @@ test('snapshot shows a panel added after <body>, and refs from a snapshot of it 
   });
   const lines: string[] = [];
   const tabs = [{ n: 1, page, link: attachment }];
-  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(l), stop: () => undefined };
+  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(plainLine(l)), stop: () => undefined };
   const run = async (line: string) => {
     lines.length = 0;
     await runConsoleCommand(line, ctx);
@@ -614,12 +615,12 @@ test('click and hover say when the mouse can\'t reach the point', async ({ page,
     `,
   });
   const lines: string[] = [];
-  const dialogs = await DialogTracker.attach(page, (t) => lines.push(`[sm-dev] ${t}`), { visible: false, commandsComing: true });
+  const dialogs = await DialogTracker.attach(page, (t) => lines.push(plainLine(`[sm-dev] ${t}`)), { visible: false, commandsComing: true });
   await page.setViewportSize({ width: 800, height: 600 });
   await page.goto(`${fixtureServer.baseUrl}/target.html`);
   await expect(page.locator('#panel')).toHaveCount(1);
   const tabs = [{ n: 1, page, link: attachment, dialogs, targetId: 'ABCDEF0123456789' }];
-  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(l), stop: () => undefined };
+  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(plainLine(l)), stop: () => undefined };
   const run = async (line: string) => {
     lines.length = 0;
     await runConsoleCommand(line, ctx);

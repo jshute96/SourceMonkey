@@ -17,6 +17,7 @@ process.env.SM_DEV_RUNS_DIR = RUNS_DIR;
 after(() => rmSync(RUNS_DIR, { recursive: true, force: true }));
 
 const { browserSentence, RunClient, RunControl, liveRuns, runIdOf, runTable, sendLine, stopRun } = await import('../../../lib/harness/runs.js');
+const { plainLine } = await import('../../../lib/harness/output-style.js');
 
 // A run's handlers: `command` as given, and nothing to follow.
 function handlers(command, follow = () => () => undefined) {
@@ -191,6 +192,9 @@ test('stop falls back to SIGTERM for a run that drops the connection', async () 
 test('list prints a table', () => {
   const now = Date.now();
   const run = (overrides) => ({ ...fields({ started: now - 125_000 }), ...overrides });
+  // With markup, it reads the same once plain: columns padded by the text shown.
+  const few = [run({ id: 'D1', pid: 42, scripts: ['z.user.js'], tabs: 1 }), run({ id: 'D12', pid: 4567, scripts: [], browser: 'http://127.0.0.1:41234', owned: true })];
+  assert.deepEqual(runTable(few, now, { markup: true }).map(plainLine), runTable(few, now));
   assert.deepEqual(runTable([
     run({ id: 'D1', pid: 42, scripts: ['sites/x/y.user.js', 'z.user.js'], tabs: 1 }),
     run({ id: 'D2', pid: 4567, scripts: ['a.user.js', 'b.user.js', 'c.user.js', 'd.user.js', 'e.user.js'], tabs: 3 }),

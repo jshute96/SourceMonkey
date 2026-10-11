@@ -170,6 +170,8 @@ Serves `sm-dev list`, `stop`, `attach` and the commands sent to a run.
   connection as a listener; no history is replayed.
   - `"logSources": [...]` in it (from `attach --log-source`) picks the
     log sources that connection gets, in place of the run's.
+  - `"markup": true` in it asks for lines with their markup (see
+    [Output color](#output-color-output-stylets)). Others get plain text.
 - Commands are `{"line", "cwd", "words", "interactive"}`, taken one at
   a time.
   - Each reply ends with a `COMMAND_DONE` line (`\u0000sm-dev:done
@@ -298,6 +300,51 @@ Command marks:
 - Commands that only look, and what they print (known by `inCommand`),
   are left out.
 
+## Output color (`output-style.ts`)
+
+- At a terminal with color, the output is painted: the prompt and typed
+  commands, errors and warnings, and what each piece of a line is.
+  - `streamHasColor` decides, per stream: stdout and stderr each at a
+    terminal with color, or `FORCE_COLOR`. `NO_COLOR` turns it off.
+  - Pipes, files, `--json` results and the run's log get plain text.
+- Lines carry markup: XML-like tags naming roles, not looks
+  (`<id>T1</id>`, `<url>`, `<name>`, `<cmd>`, `<code>`, `<h>`, `<sel>`).
+  - One table (`STYLES`) maps each role to its look, so colors change
+    in one place.
+  - A marked line starts with `MARKUP` (a control character, then a
+    private-use one); text before it is plain, so a line can be
+    ``'[sm-dev] ' + ui`...` ``.
+  - `ui` and the role helpers escape what is put in them, so a script
+    name or page text can't break a line.
+  - Markup goes only into lines at output: never into Error messages,
+    JSON, or strings code compares. One exception: `statusHeading` in
+    `cli.ts` rewrites a run's `Run:` heading, which it matches in both
+    its plain and marked forms.
+- sm-dev's own messages need no markup: a line starting with a known
+  prefix (`[sm-dev] ERROR: `, `ERROR: `, `Warning: `, `INVALID  `, ...)
+  is colored as an error or warning by it.
+  - In those lines and in errors, `` `backticked` `` spans are commands
+    or code. Plain, they keep their backticks where that helps them
+    read apart (`keepsBackticks`, as in help).
+    - Messages write them with `quoted()` in template literals, rather
+      than escaped backticks.
+    - Text a script or page wrote (console lines, a thrown error, a
+      dialog's text) goes in as markup instead (`asError`, `ui`), so its
+      own backticks stay as they are.
+  - So a run from an older build, sending plain text, still shows
+    colored errors.
+- Who gets markup:
+  - The run sends it only to clients whose hello asks; `run()` callers
+    get plain text unless they pass `markup: true`.
+  - The run's process never colors (it is started with
+    `FORCE_COLOR=0`), so the log file stays plain.
+  - `start` relays a new run's first lines from that log, so they are
+    colored by their prefix alone, without IDs or URLs marked.
+  - The client paints each line in `writeOutputLine`, and stderr lines
+    in `writeErr`.
+- The prompt (`prompt-editor.ts`) paints the `> ` and `... ` prompts and
+  the typed text as it draws them, measuring by the plain text.
+
 ## Command input
 
 ### The command line (`cli.ts`)
@@ -368,10 +415,11 @@ Command marks:
     apart from the prose: several words (`--lang zh-CN`), a lowercase
     word (a command, `all`), or punctuation (`{{`). Flags, IDs,
     numbers, paths and capitalized names read as code without them.
-  - At a terminal with color (or `FORCE_COLOR`), backticks become cyan,
-    and headings and `**bold**` spans bold. Plain, bold spans show as
-    plain text. Those are palette colors, which themes set to
-    read on their own light or dark background.
+  - At a terminal with color (or `FORCE_COLOR`), code and headings take
+    the looks the rest of the output gives commands and headings (the
+    `STYLES` table, see [Output color](#output-color-output-stylets)):
+    code cyan, headings and `**bold**` spans bold. Plain, bold spans
+    show as plain text.
   - Lines wrap by the width they show in each mode, so a line in color,
     without backticks, can fit more. A code span never splits across
     lines.

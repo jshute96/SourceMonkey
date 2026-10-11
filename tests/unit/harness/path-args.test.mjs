@@ -50,8 +50,8 @@ test('a URL or plain word is left as it is', () => {
 });
 
 test('expanding to nothing is a usage error', () => {
-  assert.throws(() => expandPathArg('*.txt', root), (err) => err instanceof UsageError && err.message === 'No files match *.txt');
-  assert.throws(() => expandPathArg('empty', root, { scripts: true }), (err) => err instanceof UsageError && err.message === 'No .user.js files found under empty');
+  assert.throws(() => expandPathArg('*.txt', root), (err) => err instanceof UsageError && err.message === 'No files match `*.txt`');
+  assert.throws(() => expandPathArg('empty', root, { scripts: true }), (err) => err instanceof UsageError && err.message === 'No .user.js files found under `empty`');
 });
 
 test('each path once, in the order given', () => {
@@ -60,10 +60,10 @@ test('each path once, in the order given', () => {
 
 test('** that is not a whole path part, or is the last one, is a usage error', () => {
   for (const glob of ['abc**', '**def', '**.user.js', 'sub/x**/*.js']) {
-    assert.throws(() => expandPathArg(glob, root), (err) => err instanceof UsageError && err.message === `Invalid glob ${glob}. Use ** only as a whole path part, as in src/**/*.user.js.`);
+    assert.throws(() => expandPathArg(glob, root), (err) => err instanceof UsageError && err.message === `Invalid glob \`${glob}\`. Use \`**\` only as a whole path part, as in \`src/**/*.user.js\`.`);
   }
-  assert.throws(() => expandPathArg('sub/**/', root), (err) => err instanceof UsageError && err.message.endsWith('as in sub/**/*.user.js.'));
-  assert.throws(() => expandPathArg('sub/**', root), (err) => err instanceof UsageError && err.message === 'Invalid glob sub/**. It ends in **, so it names no files. Add a file name, as in sub/**/*.user.js.');
+  assert.throws(() => expandPathArg('sub/**/', root), (err) => err instanceof UsageError && err.message.endsWith('as in `sub/**/*.user.js`.'));
+  assert.throws(() => expandPathArg('sub/**', root), (err) => err instanceof UsageError && err.message === 'Invalid glob `sub/**`. It ends in `**`, so it names no files. Add a file name, as in `sub/**/*.user.js`.');
 });
 
 test('a directory link named in the pattern is followed, not while searching', () => {
@@ -72,8 +72,8 @@ test('a directory link named in the pattern is followed, not while searching', (
 });
 
 test('a word with a * and no scheme is a glob, even one that looks like a host', () => {
-  assert.throws(() => expandPathArg('example.com/*', root, { scripts: true }), /No files match example\.com\/\*/);
-  assert.throws(() => expandPathArg('localhost/*', root, { scripts: true }), /No files match localhost\/\*/);
+  assert.throws(() => expandPathArg('example.com/*', root, { scripts: true }), /No files match `example\.com\/\*`/);
+  assert.throws(() => expandPathArg('localhost/*', root, { scripts: true }), /No files match `localhost\/\*`/);
   assert.deepEqual(expandPathArg('http://localhost/*', root, { scripts: true }), ['http://localhost/*']);
   assert.deepEqual(expandPathArg('sub/*', root), ['sub/c.user.js']);
 });

@@ -7,6 +7,7 @@
 
 import { readdirSync, statSync, type Dirent } from 'node:fs';
 import path from 'node:path';
+import { quoted } from './output-style.js';
 
 const SCRIPT_FILE = /\.user\.js$/i;
 
@@ -75,10 +76,10 @@ export function globMistake(pattern: string): string | null {
   // A trailing slash leaves an empty last part, which isn't one.
   const segments = pattern.split(SEPARATORS).filter(Boolean);
   if (segments.some((s) => s.includes('**') && s !== '**')) {
-    return `Invalid glob ${pattern}. Use ** only as a whole path part, as in src/**/*.user.js.`;
+    return `Invalid glob ${quoted(pattern)}. Use ${quoted('**')} only as a whole path part, as in ${quoted('src/**/*.user.js')}.`;
   }
   if (segments.at(-1) === '**') {
-    return `Invalid glob ${pattern}. It ends in **, so it names no files. Add a file name, as in ${pattern.replace(/[/\\]+$/, '')}/*.user.js.`;
+    return `Invalid glob ${quoted(pattern)}. It ends in ${quoted('**')}, so it names no files. Add a file name, as in ${quoted(`${pattern.replace(/[/\\]+$/, '')}/*.user.js`)}.`;
   }
   return null;
 }

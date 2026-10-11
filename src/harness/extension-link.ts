@@ -34,6 +34,7 @@ import {
 import type { ManagerControl } from './manager-commands.js';
 import { rebuildAdvice } from './rebuild-advice.js';
 import type { ExtensionFrame } from './frames.js';
+import { quoted } from './output-style.js';
 
 // How long a claim lasts unrenewed, and how often it's renewed. A killed
 // run's tabs run the extension's scripts again within the lease.
@@ -72,8 +73,8 @@ async function markBrowser(context: BrowserContext): Promise<void> {
 }
 
 // How to bring each side up to date, for the messages below.
-const UPDATE_EXTENSION = 'Update it: rebuild it and reload it in chrome://extensions, or use --temp-browser, which loads this sm-dev\'s copy.';
-const updateSmDev = (): string => `Update sm-dev: ${rebuildAdvice()} Or use --temp-browser, which loads this sm-dev's copy of SourceMonkey.`;
+const UPDATE_EXTENSION = 'Update it: rebuild it and reload it in chrome://extensions, or use `--temp-browser`, which loads this sm-dev\'s copy.';
+const updateSmDev = (): string => `Update sm-dev: ${rebuildAdvice()} Or use ${quoted('--temp-browser')}, which loads this sm-dev's copy of SourceMonkey.`;
 
 /** Said when the extension in the browser has an older protocol major, or none. */
 const EXTENSION_TOO_OLD = `SourceMonkey in this browser is older than this sm-dev, so the two can't work together. ${UPDATE_EXTENSION}`;
@@ -127,7 +128,7 @@ function requireMinorOf(extension: ProtocolVersion | undefined, minor: number, f
 /** Said when Chrome won't let the extension register user scripts. */
 function userScriptsOff(extensionId: string): string {
   return 'SourceMonkey in this browser does not have "Allow User Scripts" on, so it can\'t run sm-dev\'s scripts. '
-    + `Turn it on in SourceMonkey's details page, chrome://extensions/?id=${extensionId}, or use --temp-browser, which has it on.`;
+    + `Turn it on in SourceMonkey's details page, chrome://extensions/?id=${extensionId}, or use ${quoted('--temp-browser')}, which has it on.`;
 }
 
 /** An event from the extension, as sm-dev-link.ts and background.ts send them. */
