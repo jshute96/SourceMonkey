@@ -163,6 +163,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/userscript.ts` | Userscript viewer controller — installed mode (`?script=`), preview mode (`?preview=`), in-page switching between copies, the Collection row's Move button, the controls row's Local copy / delete-copy buttons, live `storage` watchers, log pane |
 | `src/extension/compare.ts` | Compare page controller — loads two copies (stored, or a preview's download), the fields table with its swap, per-file tabs, unified / side-by-side diff rendering, change-block arrows |
 | `src/extension/debug/icons.ts` | Debug icons controller — lists all cached icons with scope, expiry, per-row refresh/delete, and Delete All |
+| `src/extension/resize-observer-loop.ts` | Keeps Chrome's harmless ResizeObserver loop error out of the extension Errors panel |
 | `src/extension/select-all.ts` | The Ctrl/Cmd-A that selects a page's content rather than the page, given what each page wants selected |
 | `src/extension/line-diff.ts` | Pure line diff (Myers) plus hunk folding and change counts, behind the compare page |
 | `src/extension/move-dialog.ts` | The move-script dialog opened from the viewer's Collection row: destination dropdown, live refusals, runs the move itself |

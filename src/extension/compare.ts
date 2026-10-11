@@ -68,6 +68,7 @@ import { installLocalRootsListener, localRootsReady, localSearchRoots } from '..
 import { setGlyphButton } from './glyph.js';
 import { HEADING_SITE_ICONS, renderSiteIconInto } from './site-icon.js';
 import { installSelectAll } from './select-all.js';
+import { ignoreResizeObserverLoopErrors } from './resize-observer-loop.js';
 import { countChanges, diffLines, splitLines, toHunks, type DiffOp } from './line-diff.js';
 
 // ---------- What a side is ----------
@@ -155,6 +156,7 @@ function writeSetting(key: string, value: string): void {
 }
 
 installHomeLinkHandler();
+ignoreResizeObserverLoopErrors();
 // Ctrl/Cmd-A selects the diff on screen rather than the page: the one
 // pane there is, or, side by side, the pane focus is in — the left one
 // when it is nowhere in particular. The line numbers and signs are

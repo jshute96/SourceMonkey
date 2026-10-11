@@ -49,6 +49,7 @@ import {
 import { touchesStructuralRows } from './structural-keys.js';
 import { enableTitle, watchSoloModifier } from './solo-click.js';
 import { ENABLE_TITLE, viewerUrl } from '../script-display.js';
+import { ignoreResizeObserverLoopErrors } from './resize-observer-loop.js';
 
 // The checkbox tooltip's second line under a disabled collection: the
 // box still sets the script's own flag, which has no effect for now.
@@ -324,10 +325,14 @@ scriptsEl.addEventListener('scroll', growPinnedList);
 // the observer sees before the frame is painted.
 const scrollbarWidth = measureScrollbar();
 document.body.style.setProperty('--scrollbar-width', `${scrollbarWidth}px`);
-// Set before the first frame too: setting it from the observer's first
-// callback could rewrap a row and resize the list again in the same
-// frame, which Chrome reports as a ResizeObserver loop error.
+// Set before the first frame too, so the first frame needs no fix-up.
+// Later, when a scrollbar comes or goes, the frame lays out once with
+// both scrollbar and gutter; a row can rewrap, and the observer's fix
+// resizes the list again in the same frame. Chrome reports that as a
+// ResizeObserver loop error, which is harmless and kept out of the
+// Errors panel.
 scriptsEl.style.setProperty('--gutter', `${scrollbarWidth}px`);
+ignoreResizeObserverLoopErrors();
 new ResizeObserver(() => {
   const scrolling = scriptsEl.offsetWidth > scriptsEl.clientWidth;
   scriptsEl.style.setProperty('--gutter', scrolling ? '0px' : `${scrollbarWidth}px`);

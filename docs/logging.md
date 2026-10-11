@@ -178,6 +178,16 @@ console call at all, and each has its own countermeasure:
   http(s) reads to the service worker, which has no document for the
   hint to apply to — `src/http-read.ts`, used by both `fetchHttpText`
   and `fetchResourceBytes`. See `tests/e2e/preload-hints.spec.ts`.
+- **ResizeObserver loops in an extension page.**
+  - Chrome raises `ResizeObserver loop completed with undelivered
+    notifications` when an observer's callback resizes what it watches
+    within the same frame. The popup's scrollbar gutter can do this as a
+    scrollbar comes or goes.
+  - It's harmless: the notification arrives on the next frame. Web pages
+    don't log it, but extension pages list it in the Errors panel.
+  - `src/extension/resize-observer-loop.ts` cancels that `error` event,
+    which keeps it out. Pages that use a ResizeObserver (the popup,
+    compare) install it.
 
 ## Page-console "startup logs"
 
