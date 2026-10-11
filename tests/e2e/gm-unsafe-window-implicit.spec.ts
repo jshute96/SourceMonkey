@@ -55,7 +55,8 @@ test.describe('unsafeWindow without a grant', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/${PAGE}`);
     await expect(page.locator('body')).toHaveAttribute('data-sm-app-name', 'page-app');
-    await expect(page.locator('body')).toHaveAttribute('data-sm-same-as-window', 'true');
+    // Granted, so its window is a sandbox over the page's.
+    await expect(page.locator('body')).toHaveAttribute('data-sm-same-as-window', 'false');
     await expect(page.locator('body')).toHaveAttribute('data-sm-visits', '0');
     expect(await page.evaluate(
       () => (window as unknown as { __FROM_SCRIPT__?: string }).__FROM_SCRIPT__,

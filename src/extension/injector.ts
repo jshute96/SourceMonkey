@@ -89,7 +89,7 @@ import {
   WRAPPER_PRELUDE,
 } from '../generated-wrappers.js';
 import { grantedSubsystems, resolveGrants } from '../gm-api-catalog.js';
-import { resolveScriptWorld, type InjectionWorld } from '../script-world.js';
+import { resolveScriptWorld, runsSandboxed, type InjectionWorld } from '../script-world.js';
 import { scanStorageRows } from './storage-scan.js';
 import { cachedRows, sharedRows } from './row-cache.js';
 import { isScratchUrl, scratchRunOf } from './directories.js';
@@ -343,6 +343,9 @@ export function wrapPreludeEntry(): string {
 //     declaration SyntaxErrors, so the script never ran. All of these
 //     work under TM and VM, whose GM names live in an outer scope too.
 //
+// A granted page-world script's user program runs in a `with` over its
+// sandbox `window` instead; see `SANDBOX_SCOPE_OPEN` below.
+//
 // Why an arrow FUNCTION, not a block:
 //
 //   - A block only scopes `let`/`const`/`class`. A `var` or a sloppy-
@@ -376,6 +379,48 @@ export function wrapPreludeEntry(): string {
 // result anyway.
 const USER_SCOPE_OPEN = '(()=>{';
 const USER_SCOPE_CLOSE = '\n})();';
+
+// A sandboxed script's user scope (see `runsSandboxed`): the program
+// runs inside `with (__smW)`, the scope over the prelude's sandbox
+// `window` (`__smS`), and as a function called with the sandbox as
+// `this`, as in Tampermonkey and Violentmonkey. See docs/injection.md,
+// "The sandbox window".
+//
+//   - `with` is what makes a bare `$` find the copy a `@require` put on
+//     `window` before the page's, and a bare `window` read as the
+//     sandbox. The wrap and the swap eval are sloppy code, where `with`
+//     is allowed; a `"use strict"` program inside the function is fine.
+//   - A function rather than the arrow, so top-level `this` can be the
+//     sandbox. `callAs` calls it through the prelude's captured
+//     `Reflect.apply`, out of the way of a page that patched
+//     `Function.prototype.call`.
+//   - Top-level `arguments` is then the function's own (empty) list
+//     rather than the wrap's.
+//   - The `__sm*` names live outside the `with`, and the scope never
+//     claims `__sm*` names, so they resolve to these.
+//
+// Same lines as the arrow form: the declaration and opener go on the
+// head line, the closer on the wrap's last line.
+const SANDBOX_SCOPE_OPEN = '__smC(function(){';
+const SANDBOX_SCOPE_CLOSE = '\n},__smS);';
+
+// Declares the sandbox, holding the script's own bindings, ahead of
+// the `with`.
+function sandboxDeclaration(declared: readonly string[]): string {
+  const exposed = declared.map((n) => `${n}:${n}`).join(',');
+  return `const __smP=self.__smPrelude,__smS=__smP.sandbox({${exposed}}),__smW=__smP.scopeOf(__smS),__smC=__smP.callAs;`;
+}
+
+// The user scope's opener, after any `return`, and closer, for a script
+// that is or isn't sandboxed. `declared` is what its bindings declare.
+function userScope(declared: readonly string[] | null, withReturn: boolean): { open: string; close: string } {
+  const ret = withReturn ? 'return' : '';
+  if (!declared) return { open: ret + USER_SCOPE_OPEN, close: USER_SCOPE_CLOSE };
+  return {
+    open: `${sandboxDeclaration(declared)}with(__smW)${ret ? ret + ' ' : ''}${SANDBOX_SCOPE_OPEN}`,
+    close: SANDBOX_SCOPE_CLOSE,
+  };
+}
 
 // The eval hook key (src/eval-hook.ts) for a script in an sm-dev run's
 // test collection (`scratch:///<run>/...`): its run's. None for any
@@ -455,6 +500,9 @@ export function wrapCombinedEntry(args: {
   // sm-dev's eval hook (src/eval-hook.ts), under this key. None for the
   // person's own scripts.
   evalHookKey?: string;
+  // The names `gmBindings` declares, when the script runs sandboxed
+  // (`runsSandboxed`); absent otherwise.
+  sandboxed?: readonly string[];
 }): string {
   const idLit = jsLit(args.scriptId);
   const hooked = (program: string, mainStart = 0): string => withScriptEvalHook(program, mainStart, args.scriptId, args.evalHookKey);
@@ -471,7 +519,8 @@ export function wrapCombinedEntry(args: {
     `var __smSend=self.__smPrelude.send;`;
   // gmBindings and gmPrelude are already single-line strings (or
   // empty), so the head stays on one physical line.
-  const head = `self.__smRun(${idLit},function(__smE){${declPreamble}${args.gmBindings}${args.gmPrelude}return${USER_SCOPE_OPEN}`;
+  const scope = userScope(args.sandboxed ?? null, true);
+  const head = `self.__smRun(${idLit},function(__smE){${declPreamble}${args.gmBindings}${args.gmPrelude}${scope.open}`;
 
   if ((args.script.requires ?? []).length === 0) {
     // Nothing to concatenate, so nothing shifts and no map is needed.
@@ -480,7 +529,7 @@ export function wrapCombinedEntry(args: {
     // original line N and lets the viewer pass refs through unmapped.
     // `buildSwapEvalBody` mirrors this exactly — see NO_REQUIRE_LAYOUT
     // in composed-source.ts.
-    return head + hooked(composeRequiredBody(args.script)) + `${USER_SCOPE_CLOSE}});\n//# sourceURL=${args.sourceUrl}\n`;
+    return head + hooked(composeRequiredBody(args.script)) + `${scope.close}});\n//# sourceURL=${args.sourceUrl}\n`;
   }
 
   // Head occupies generated line 0; user source starts below it.
@@ -489,7 +538,7 @@ export function wrapCombinedEntry(args: {
     mainUrl: args.sourceUrl,
     startLine: USER_SOURCE_START_LINE,
   });
-  const code = head + '\n' + hooked(composed.text, composed.mainStart) + `${USER_SCOPE_CLOSE}});\n`;
+  const code = head + '\n' + hooked(composed.text, composed.mainStart) + `${scope.close}});\n`;
   const map = buildSourceMap({
     file: args.sourceUrl,
     segments: composed.segments,
@@ -686,7 +735,7 @@ export async function buildGmBindingsForScript(
   // No header at all → no GM_info either (we'd have nothing to put
   // in it). Production callers never hit this because validateHeader
   // rejects headerless scripts upstream; the guard is for unit tests.
-  if (!script.header) return { js: '', prelude: '', granted: [], needsValues: false };
+  if (!script.header) return { js: '', prelude: '', granted: [], needsValues: false, declared: [] };
   const grants = getValues(script.header, 'grant');
   const resolved = resolveGrants(grants);
   // `@grant none` and no-grants both fall through to emitGmBindings
@@ -766,7 +815,8 @@ export async function buildSwapEvalBody(
   // gmEmit.js is single-line and ends with a space (or is empty), so
   // it occupies generated line 0 exactly as `wrapCombinedEntry`'s wrap
   // head does.
-  const head = gmEmit.js + USER_SCOPE_OPEN;
+  const scope = userScope(runsSandboxed(script) ? gmEmit.declared : null, false);
+  const head = gmEmit.js + scope.open;
   // An sm-dev test collection's script keeps its eval hook when swapped.
   const hookKey = scratchEvalHookKey(script.fileUrl);
   const hooked = (program: string, mainStart = 0): string => withScriptEvalHook(program, mainStart, script.id, hookKey);
@@ -778,7 +828,7 @@ export async function buildSwapEvalBody(
     // every logged stack line for the majority of scripts, which have
     // no `@require` — and with no segments to map by, the viewer
     // could not detect it, let alone correct it.
-    return { body: head + hooked(composeRequiredBody(script)) + USER_SCOPE_CLOSE, needsValues: gmEmit.needsValues };
+    return { body: head + hooked(composeRequiredBody(script)) + scope.close, needsValues: gmEmit.needsValues };
   }
   const composed = composeSource(script, {
     requireUrls: requires.map((r) => buildRequireSourceUrl(logLabel, r.url)),
@@ -797,7 +847,7 @@ export async function buildSwapEvalBody(
     totalLines: 1 + composed.lineCount + 1,
   });
   return {
-    body: head + '\n' + hooked(composed.text, composed.mainStart) + USER_SCOPE_CLOSE + '\n' + inlineSourceMapComment(map),
+    body: head + '\n' + hooked(composed.text, composed.mainStart) + scope.close + '\n' + inlineSourceMapComment(map),
     needsValues: gmEmit.needsValues,
   };
 }
@@ -991,6 +1041,7 @@ export async function buildRegistrationSpec(
     gmBindings: gmEmit.js,
     gmPrelude: gmEmit.prelude,
     evalHookKey: options.evalHookKey ?? scratchEvalHookKey(script.fileUrl),
+    ...(runsSandboxed(script) ? { sandboxed: gmEmit.declared } : {}),
   });
 
   // Register at document_start regardless of the declared @run-at. The

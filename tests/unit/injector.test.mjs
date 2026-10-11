@@ -90,7 +90,7 @@ import {
   wrapCombinedEntry,
   wrapPreludeEntry,
 } from '../../dist/extension/injector.js';
-import { resolveWorld } from '../../dist/script-world.js';
+import { resolveWorld, runsSandboxed } from '../../dist/script-world.js';
 import {
   composeRequiredBody,
   stackLayout,
@@ -3479,4 +3479,79 @@ test('the helpers go into frames, whatever their scripts\' @noframes', async () 
   }));
   assert.equal(spec.world, 'MAIN');
   assert.equal(buildBridgeSpec([spec]).allFrames, true);
+});
+
+// ---------- The sandbox window (granted page-world scripts) ----------
+
+const SANDBOXED_HEADER = { tags: [
+  { tag: 'name', value: 'Foo' },
+  { tag: 'grant', value: 'GM_setValue' },
+  { tag: 'inject-into', value: 'page' },
+] };
+
+test('runsSandboxed: a granted page-world script only', () => {
+  const h = (...tags) => ({ header: makeHeader([{ tag: 'name', value: 'X' }, ...tags]) });
+  const grant = (v) => ({ tag: 'grant', value: v });
+  const into = (v) => ({ tag: 'inject-into', value: v });
+  assert.equal(runsSandboxed(h(grant('GM_setValue'), into('page'))), true);
+  assert.equal(runsSandboxed(h(grant('unsafeWindow'))), true);
+  assert.equal(runsSandboxed(h(grant('GM_setValue'))), false, 'isolated');
+  assert.equal(runsSandboxed(h(grant('none'))), false);
+  assert.equal(runsSandboxed(h(grant('none'), grant('GM_setValue'))), false);
+  assert.equal(runsSandboxed(h()), false, 'grantless');
+  assert.equal(runsSandboxed({ header: null }), false);
+});
+
+// A stand-in for the prelude's sandbox: records what the wrap hands it.
+function sandboxStub() {
+  const calls = { exposed: null };
+  const sandbox = { mine: 'sandbox' };
+  const scope = { fromScope: 'scope' };
+  return {
+    calls, sandbox,
+    prelude: {
+      send: () => {},
+      sandbox: (exposed) => { calls.exposed = exposed; return sandbox; },
+      scopeOf: (s) => (s === sandbox ? scope : null),
+      callAs: (fn, t) => Reflect.apply(fn, t, []),
+    },
+  };
+}
+
+test('wrapCombinedEntry: a sandboxed script runs `with` its scope, `this` the sandbox, on the same lines', async () => {
+  const script = makeScript({
+    header: SANDBOXED_HEADER,
+    bodyText: 'void 1;\nreturn [this.mine, fromScope, typeof GM_setValue];',
+  });
+  const spec = await buildRegistrationSpec(script);
+  assert.equal(spec.world, 'MAIN');
+  const code = spec.js[2].code;
+  assert.match(code, /with\(__smW\)return __smC\(function\(\)\{void 1;\n/);
+  assert.match(code, /\n\},__smS\);\}\);\n/);
+  const stub = sandboxStub();
+  const out = runCombined(spec, { __smPrelude: stub.prelude });
+  assert.deepEqual(out, ['sandbox', 'scope', 'function']);
+  assert.deepEqual(Object.keys(stub.calls.exposed).sort(), ['GM', 'GM_info', 'GM_setValue']);
+});
+
+test('wrapCombinedEntry: an ungranted page-world script keeps the arrow scope', async () => {
+  const spec = await buildRegistrationSpec(makeScript({
+    header: { tags: [{ tag: 'name', value: 'Foo' }, { tag: 'grant', value: 'none' }] },
+  }));
+  assert.match(spec.js[2].code, /return\(\(\)=>\{/);
+  assert.doesNotMatch(spec.js[2].code, /with\(/);
+});
+
+test('buildSwapEvalBody: a sandboxed script gets the same scope, without `return`', async () => {
+  const script = makeScript({
+    header: SANDBOXED_HEADER,
+    bodyText: 'void 1;\n[this.mine, fromScope]',
+  });
+  const { body } = await buildSwapEvalBody(script, '0.0.0');
+  assert.match(body, /with\(__smW\)__smC\(function\(\)\{void 1;\n/);
+  // Global code, as the indirect eval runs it: sloppy, so `with` parses.
+  const stub = sandboxStub();
+  const run = new Function('self', 'window', `return eval(${JSON.stringify(body.replace('[this.mine', 'return [this.mine'))});`);
+  const out = run({ __smPrelude: stub.prelude, __SM_GM__: {} }, {});
+  assert.deepEqual(out, ['sandbox', 'scope']);
 });

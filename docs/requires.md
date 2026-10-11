@@ -270,6 +270,12 @@ Requires and the body share one lexical scope, exactly as in TM/VM:
   arrangement, where a require's top-level `var` did become a global.
   A library that expects page code to see `window.MyLib` must assign
   it explicitly.
+- **`window.MyLib = …`** reaches the page only from a `@grant none`
+  (or grantless) page-world script. A granted page-world script's
+  `window` is a sandbox, so the assignment stays the script's own, as
+  under TM and VM; see
+  [injection.md](injection.md#the-sandbox-window). In the isolated
+  world the page never sees it either.
 - **GM bindings** are emitted once, ahead of the first require, so
   library top-level code sees `GM_info` / `GM_setValue` / etc. too.
 - **The GM prelude runs first**, so a require's top-level

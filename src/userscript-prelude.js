@@ -28,7 +28,9 @@
  *                matcher + check-pending + @run-at gates resolve.
  *                Concatenation is what gives requires and the body one
  *                shared scope, nested inside the bindings' scope so
- *                its declarations shadow ours. Trailing
+ *                its declarations shadow ours. A granted page-world
+ *                script's runs inside `with` over its sandbox `window`
+ *                instead (see makeSandbox). Trailing
  *                `//# sourceURL=sourcemonkey://<id>/<name>.user.js`,
  *                plus an inline source map when requires are present so
  *                devtools still splits them into separate files.
@@ -488,7 +490,7 @@
       w.addEventListener = function (type, listener) {
         /* A bare `addEventListener(...)` from strict code has no `this`;
            natively that means the global, so it counts as window. */
-        var target = this == null ? w : this;
+        var target = this == null || isSandbox(this) ? w : this;
         if (type === "load" && target === w && listener) {
           queued.push(listener);
           return;
@@ -1211,6 +1213,246 @@
     });
   };
 
+  /* ---------- The sandbox `window` for granted page-world scripts ----------
+     A granted script in MAIN world runs its user program inside
+     `with (scope)`, with the sandbox as top-level `this`, as
+     Tampermonkey and Violentmonkey run theirs. The sandbox is a Proxy
+     standing in for `window`:
+       - Reads fall through to the page's window, so `window.$` and a
+         bare `$` both see the page's jQuery, and `"x" in window`
+         answers for the page's properties too.
+       - Plain writes (`window.foo = x`, `defineProperty`) stay in the
+         sandbox, so a `@require`d library's `window.jQuery = …` doesn't
+         replace the page's. A bare `foo` in the script then finds the
+         sandbox's copy first.
+       - Writes to a setter the page's window has (`onload`,
+         `location`, `name`, our `onurlchange`) go through to it.
+       - `window`, `self`, `globalThis`, and `top` / `parent` / `frames`
+         where they are this window, read as the sandbox.
+       - Window methods (`setTimeout`, `addEventListener`, other native
+         ones) come back bound to the real window, since a call through
+         the sandbox would pass it as `this` and the method would
+         throw.
+       - The script's own bindings (`GM_info`, granted `GM_*`, `GM`,
+         `unsafeWindow`) are on it, so `this.unsafeWindow` and
+         `window.GM_setValue` work as they do in TM and VM.
+       - Our own `__sm*` globals bypass it, both ways: the eval hook's
+         map and `__SM_GM__` must stay on the real window.
+     The `with` object is a second, thin Proxy over it (the scope). Its
+     `has` claims only the sandbox's own names and `window` / `self` /
+     `globalThis`, so any other bare name resolves as it would without
+     the sandbox; the sandbox's own `has` answers `in` for everything.
+     The sandbox's own properties live on its Proxy target, so the
+     Proxy invariants hold for them, non-configurable ones included.
+     See docs/injection.md, "The sandbox window". */
+  var _Proxy = typeof Proxy === "function" ? Proxy : null;
+  var _WeakMap = typeof WeakMap === "function" ? WeakMap : null;
+  var _ReflectApply = Reflect.apply;
+  var _ReflectConstruct = Reflect.construct;
+  var _ReflectDefineProperty = Reflect.defineProperty;
+  var _ReflectDeleteProperty = Reflect.deleteProperty;
+  var _ReflectGet = Reflect.get;
+  var _ReflectSet = Reflect.set;
+  var _getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+  var _getPrototypeOf = Object.getPrototypeOf;
+  var _defineProperty = Object.defineProperty;
+  var _ownKeys = Reflect.ownKeys;
+  var _fnToString = Function.prototype.toString;
+  var _hasOwnProp = Object.prototype.hasOwnProperty;
+  var _ObjectProto = Object.prototype;
+  var _unscopables = Symbol.unscopables;
+  var NATIVE_CODE = /\{\s*\[native code\]\s*\}\s*$/;
+  /* sandbox -> its scope Proxy. */
+  var sandboxes = _WeakMap ? new _WeakMap() : null;
+  var boundMethods = _WeakMap ? new _WeakMap() : null;
+  /* function -> whether it is native code, so a page function's source
+     is stringified once, not on every read. */
+  var nativeVerdicts = _WeakMap ? new _WeakMap() : null;
+
+  function isSandbox(v) {
+    return !!(sandboxes && v && (typeof v === "object") && sandboxes.has(v));
+  }
+
+  /* The window's own methods, bound by name whatever their value: a
+     page or another script often wraps `addEventListener` (our
+     `onurlchange` support does), and the wrapper ends in the native
+     method, which needs the real window as `this`. Tampermonkey binds
+     the same list. */
+  var WINDOW_METHODS = Object.create(null);
+  ("addEventListener alert atob blur btoa cancelAnimationFrame cancelIdleCallback " +
+    "captureEvents clearInterval clearTimeout close confirm createImageBitmap " +
+    "dispatchEvent fetch find focus getComputedStyle getSelection matchMedia " +
+    "moveBy moveTo open postMessage print prompt queueMicrotask releaseEvents " +
+    "removeEventListener reportError requestAnimationFrame requestIdleCallback " +
+    "resizeBy resizeTo scroll scrollBy scrollTo setInterval setTimeout " +
+    "showDirectoryPicker stop structuredClone webkitCancelAnimationFrame " +
+    "webkitRequestAnimationFrame").split(" ").forEach(function (n) { WINDOW_METHODS[n] = true; });
+
+  function isNative(fn) {
+    var v = nativeVerdicts.get(fn);
+    if (v === undefined) {
+      try { v = NATIVE_CODE.test(_ReflectApply(_fnToString, fn, [])); } catch (_e) { v = false; }
+      nativeVerdicts.set(fn, v);
+    }
+    return v;
+  }
+
+  /* A method of the window, to bind: one of the window's own by name,
+     or native code with no `prototype` (constructors have one, methods
+     don't). Not `Object.prototype`'s (`hasOwnProperty`, `valueOf`):
+     those must see the sandbox as `this`. */
+  function isWindowMethod(k, fn) {
+    if (typeof fn !== "function") return false;
+    if (typeof k === "string" && WINDOW_METHODS[k]) return true;
+    if (_hasOwnProp.call(fn, "prototype")) return false;
+    if (_hasOwnProp.call(_ObjectProto, k) && _ObjectProto[k] === fn) return false;
+    return isNative(fn);
+  }
+
+  /* The same bound copy each time, so `removeEventListener(type,
+     window.handler)`-style identity checks still hold. `new` still
+     works (`new window.Proxy(…)`: native, with no `prototype`). */
+  function boundToWindow(fn) {
+    var b = boundMethods.get(fn);
+    if (!b) {
+      b = function () {
+        if (new.target !== undefined) return _ReflectConstruct(fn, arguments, new.target === b ? fn : new.target);
+        return _ReflectApply(fn, window, arguments);
+      };
+      boundMethods.set(fn, b);
+    }
+    return b;
+  }
+
+  /* Called for every bare name the script reads, so it avoids
+     allocating. */
+  function isOurKey(k) {
+    return typeof k === "string" && k.charCodeAt(0) === 95
+      && (k.lastIndexOf("__sm", 0) === 0 || k === "__SM_GM__");
+  }
+
+  /* The page window's descriptor for `k`, own or inherited. */
+  function windowDescriptor(k) {
+    for (var o = window; o; o = _getPrototypeOf(o)) {
+      var d = _getOwnPropertyDescriptor(o, k);
+      if (d) return d;
+    }
+    return null;
+  }
+
+  function isWindowAlias(k) {
+    return k === "window" || k === "self" || k === "globalThis";
+  }
+
+  function makeSandbox(exposed) {
+    if (!_Proxy || !sandboxes) return window;
+    /* The sandbox's own properties. */
+    var own = Object.create(null);
+    var proxy;
+    var keys = _ownKeys(exposed);
+    for (var i = 0; i < keys.length; i++) {
+      _defineProperty(own, keys[i], { value: exposed[keys[i]], writable: true, enumerable: false, configurable: true });
+    }
+    /* The page's value for `k`, as the script should see it. */
+    function pageValue(k) {
+      var v = window[k];
+      if (v === window && (isWindowAlias(k) || k === "top" || k === "parent" || k === "frames")) return proxy;
+      if (isWindowMethod(k, v)) return boundToWindow(v);
+      return v;
+    }
+    proxy = new _Proxy(own, {
+      has: function (t, k) {
+        if (isOurKey(k)) return k in window;
+        return k in t || k in window;
+      },
+      get: function (t, k) {
+        if (isOurKey(k)) return window[k];
+        if (_hasOwnProp.call(t, k)) {
+          var v = _ReflectGet(t, k, proxy);
+          /* A script's own replacement of a window method, which
+             likely ends in the native one. */
+          return typeof k === "string" && WINDOW_METHODS[k] && typeof v === "function" ? boundToWindow(v) : v;
+        }
+        return pageValue(k);
+      },
+      set: function (t, k, v) {
+        if (isOurKey(k)) { window[k] = v; return true; }
+        if (_hasOwnProp.call(t, k)) return _ReflectSet(t, k, v, proxy);
+        /* A setter goes through to the page; a read-only property
+           (`document`, `undefined`) refuses the write, as the real
+           window does. Anything else becomes the sandbox's own. */
+        var w = windowDescriptor(k);
+        if (w && w.set) { _ReflectApply(w.set, window, [v]); return true; }
+        if (w && (w.get || !w.writable)) return false;
+        return _ReflectDefineProperty(t, k, { value: v, writable: true, enumerable: true, configurable: true });
+      },
+      defineProperty: function (t, k, desc) {
+        if (isOurKey(k)) return _ReflectDefineProperty(window, k, desc);
+        return _ReflectDefineProperty(t, k, desc);
+      },
+      deleteProperty: function (t, k) {
+        if (isOurKey(k)) return _ReflectDeleteProperty(window, k);
+        return _ReflectDeleteProperty(t, k);
+      },
+      getOwnPropertyDescriptor: function (t, k) {
+        if (!isOurKey(k) && _hasOwnProp.call(t, k)) return _getOwnPropertyDescriptor(t, k);
+        var w = _getOwnPropertyDescriptor(window, k);
+        if (!w) return undefined;
+        /* Reported configurable: the target lacks it, and a Proxy can
+           only report a non-configurable property its target has. */
+        w.configurable = true;
+        if ("value" in w) w.value = pageValue(k);
+        return w;
+      },
+      ownKeys: function (t) {
+        var seen = Object.create(null);
+        var out = [];
+        var add = function (k) {
+          if (typeof k === "symbol") { if (out.indexOf(k) < 0) out.push(k); return; }
+          if (seen[k]) return;
+          seen[k] = true;
+          out.push(k);
+        };
+        _ownKeys(window).forEach(add);
+        _ownKeys(t).forEach(add);
+        return out;
+      },
+      getPrototypeOf: function () { return _getPrototypeOf(window); },
+      setPrototypeOf: function () { return false; },
+      /* The page's window can't be made non-extensible either. */
+      preventExtensions: function () { return false; },
+    });
+    var scope = new _Proxy(Object.create(null), {
+      has: function (_t, k) {
+        if (typeof k !== "string" || isOurKey(k)) return false;
+        return _hasOwnProp.call(own, k) || isWindowAlias(k);
+      },
+      get: function (_t, k) {
+        if (k === _unscopables) return undefined;
+        return proxy[k];
+      },
+      set: function (_t, k, v) {
+        return _ReflectSet(proxy, k, v);
+      },
+    });
+    sandboxes.set(proxy, scope);
+    return proxy;
+  }
+
+  /* The object a sandbox's user program runs `with`. */
+  function scopeOf(sandbox) {
+    return (sandboxes && sandboxes.get(sandbox)) || sandbox;
+  }
+
+  /* Run the user program with the sandbox as `this`, through the
+     `Reflect.apply` captured at document_start, so a page that patched
+     `Function.prototype.call` (as some do, for their own reasons)
+     doesn't sit in the way. Not a security boundary: a MAIN-world page
+     can replace `__smPrelude` itself. */
+  function callAs(fn, thisArg) {
+    return _ReflectApply(fn, thisArg, []);
+  }
+
   /* The shared namespace. .init() lets a per-script config blob that
      runs AFTER the prelude is already loaded (i.e. the 2nd+ script in
      the same world) initialize directly without going through the
@@ -1221,6 +1463,9 @@
     /* For tests that run the decision's timer themselves. */
     decisionTimeoutMs: DECISION_TIMEOUT_MS,
     send: send,
+    sandbox: makeSandbox,
+    scopeOf: scopeOf,
+    callAs: callAs,
   };
 
   /* Drain any configs the FIRST script's config blob (which ran

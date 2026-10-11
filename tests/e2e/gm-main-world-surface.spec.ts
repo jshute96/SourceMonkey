@@ -43,10 +43,9 @@ test.describe('GM_* surfaces in MAIN world', () => {
       body: `
         const seen = [];
         document.body.dataset.supported = String(window.onurlchange === null);
-        // Same object either way in MAIN world; asserting both spellings
-        // is what proves the accessor went onto the page's window and
-        // not some other one.
-        document.body.dataset.sameWindow = String(unsafeWindow === window);
+        // Read through the page's own window too: that proves the
+        // accessor went onto it, not onto the script's sandbox.
+        document.body.dataset.onPageWindow = String(unsafeWindow.onurlchange === null);
         window.addEventListener('urlchange', function (info) {
           seen.push(info && info.url);
           document.body.dataset.urls = JSON.stringify(seen);
@@ -64,7 +63,7 @@ test.describe('GM_* surfaces in MAIN world', () => {
     // The documented feature test has to hold in MAIN too — a script
     // that reads `undefined` here concludes the feature is unsupported.
     await expect(page.locator('body')).toHaveAttribute('data-supported', 'true');
-    await expect(page.locator('body')).toHaveAttribute('data-same-window', 'true');
+    await expect(page.locator('body')).toHaveAttribute('data-on-page-window', 'true');
 
     // A genuine page-initiated navigation. `page.evaluate` runs in MAIN
     // world, which is now the same world as the script.

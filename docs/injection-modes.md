@@ -59,6 +59,10 @@ self.__smRun("<id>",function(__smE){<preamble><GM bindings><GM prelude>return(()
 //# sourceMappingURL=data:application/json;charset=utf-8;base64,…
 ```
 
+A granted page-world script's user scope opens and closes differently
+(a `with` over its sandbox `window`), on the same lines; see
+[injection.md](injection.md#the-sandbox-window).
+
 - The config blob and prelude stay separate — see
   [Why inline the prelude](#why-inline-the-prelude-not-register-once-per-page).
 - A `;` on its own line between segments defeats any hazard from

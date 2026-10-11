@@ -148,6 +148,10 @@ export interface GmBindingEmit {
   // prelude's `storage.init` emission — exposed here so the injector
   // doesn't have to re-derive it from the granted-name list.
   needsValues: boolean;
+  // The identifiers `js` declares (`GM_info`, each granted `GM_*`,
+  // `GM`, `unsafeWindow`). A sandboxed script gets them as properties
+  // of its sandbox `window` too; see `sandboxDeclaration` in injector.ts.
+  declared: readonly string[];
 }
 
 // JSON-encode but inside a JavaScript source context: the standard
@@ -467,17 +471,24 @@ export function emitGmBindings(
   // both treat it as implicit so a script can introspect its own
   // metadata without declaring a single grant.
   const parts: string[] = [emitGmInfo(info)];
+  const declared: string[] = ['GM_info'];
   for (const spec of specs) {
     if (spec.name === 'GM_info') continue;
     const line = emitOneBinding(spec, info.scriptId);
-    if (line) parts.push(line);
+    if (!line) continue;
+    parts.push(line);
+    // `window.close` and the like call into the runtime; they declare nothing.
+    if (/^[A-Za-z_$][\w$]*$/.test(spec.name)) declared.push(spec.name);
   }
   // GM_info is part of the GM4 alias namespace too.
   const allSpecsIncludingInfo = [findApi('GM_info')!].concat(
     specs.filter((s) => s.name !== 'GM_info'),
   );
   const gmObject = emitGmObject(allSpecsIncludingInfo);
-  if (gmObject) parts.push(gmObject);
+  if (gmObject) {
+    parts.push(gmObject);
+    declared.push('GM');
+  }
   // `@grant window.onurlchange` — the only entry whose effect is an
   // eager call rather than a declaration. It has to run before the
   // body so the body's `window.onurlchange === null` feature test
@@ -626,6 +637,7 @@ export function emitGmBindings(
     prelude,
     granted: specs.map((s) => s.name),
     needsValues: hasStorageGrant,
+    declared,
   };
 }
 

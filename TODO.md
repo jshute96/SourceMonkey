@@ -353,7 +353,9 @@ wasn't checked.
   - A shim like `GM_xmlhttpRequest = GM.xmlHttpRequest;` throws
     "Assignment to constant variable" at startup.
   - VM resolves names through `with(this)` over a wrapper, so the
-    assignment works. Fix: declare them with `let`.
+    assignment works. Granted page-world scripts now do too (the
+    sandbox `window` holds the names), so this is left for the
+    isolated world. Fix there: declare them with `let`.
   - About 50 corpus files assign to a `GM_*` name; some are guarded.
 - **No `cloneInto` / `exportFunction` / `createObjectIn`**
   (`needs-cloneinto`: 19993).
@@ -367,19 +369,36 @@ wasn't checked.
   - Scripts that read the page's globals without `unsafeWindow` (the
     YouTube player API, the page's `$`, `customElements`, which is null
     in the USER_SCRIPT world) fail. `@inject-into page` copies work.
-  - TM ran 386908 (which hooks the page's event APIs) in the page,
-    where SourceMonkey's isolated copy had no effect.
+  - Our rule has it backwards. TM and VM start every script in the
+    page and leave it only when told to; we put any granted script in
+    the isolated world (`resolveWorld` in `src/script-world.ts`).
+    - TM: `@sandbox` defaults to `raw` (the page). `JavaScript` also
+      means the page on Chrome; only `DOM` asks for isolation.
+    - VM: `@inject-into auto` (the default) tries the page and falls
+      back to the isolated world when the page blocks it.
+    - Ours came from the first injection code putting everything in
+      USER_SCRIPT, with `@grant none` then carved out for the page.
+  - Granted scripts already in the page now run in a sandbox `window`,
+    as TM and VM run theirs (docs/injection.md, "The sandbox window").
+  - Next:
+    - Make the page the default, leaving it only for
+      `@inject-into content` or `@sandbox DOM`.
+    - Support `@sandbox` (`raw` and `JavaScript` as the page, `DOM` as
+      isolated). 10 corpus scripts declare it.
+  - What moving costs a granted script (docs/injection.md, "Costs of
+    running in MAIN"):
+    - A strict page CSP (Content Security Policy) drops `GM_addStyle`
+      / `GM_addElement` styles and blocks `eval`.
+    - Pages with a CSP `sandbox` header (opaque origin) get no
+      MAIN-world scripts at all.
+    - `window.__SM_GM__` goes on more pages, and page code can tamper
+      with the built-ins a script uses.
   - The sharpest case: a script whose only `@grant` lines are unknown
-    names (27929's `@grant aoh72931`, 432423's `@grant Math.mod`,
-    437552's `@grant noneT`) gets no APIs at all, yet runs isolated
-    (`resolveWorld` in `src/script-world.ts`). TM gave 27929 the
-    page's globals, and `@grant none` copies of 27929 and 432423
-    work. Treating unknown-only grants like no grants would fix
-    these alone.
-  - VM runs these in the page by default (TM reportedly too, through
-    its `@sandbox` default). Worth deciding whether to pick the page
-    world automatically, rather than only for `@inject-into page` and
-    `@grant unsafeWindow` (see docs/injection.md).
+    names (27929's `@grant aoh72931`, 432423's `@grant Math.mod` and
+    `@grant window.extern`, 437552's `@grant noneT`) gets no APIs at
+    all, yet runs isolated. TM gave 27929 the page's globals, and
+    `@grant none` copies of 27929 and 432423 work. The new default
+    covers these.
 - **`GM_cookie`** (463802) is the whole failure for a Reddit script.
   See "GM_* APIs not yet in the catalog".
 
@@ -438,33 +457,18 @@ against Tampermonkey with `sm-dev --manager tm` probes (2026-10-05).
     corrupt.
   - Fix: honor the option's charset when building `responseText` (for
     `x-user-defined`, map each byte to one character).
-- **`@require` libraries land on the page's `window` in MAIN world**
-  (`require-clobbers-page`: 722).
-  - A script that names `unsafeWindow` runs in the page, so its
-    `@require`d jQuery 1.10.2 replaced ja.wikipedia's 3.7.1, and
-    Wikipedia's own code threw (`mwCollapsibleSetup`).
-  - Under TM the page kept 3.7.1: TM runs the require in its sandbox
-    and hands out a wrapper for `unsafeWindow`.
-  - Fix ideas: run requires with a scope object as `this`/`window`
-    for MAIN-world scripts, or snapshot and restore the page globals a
-    require overwrites. Both are partial; needs a design.
-- **`unsafeWindow` and `GM_*` aren't properties of `window`/`self`**
-  (`unsafewindow-on-window`: 593, 4881, 4882, 455261, 455855;
-  `gm-on-window`: 456077, 455261, 455855).
+- **`unsafeWindow` and `GM_*` aren't properties of `window`/`self`
+  in the isolated world** (`unsafewindow-on-window`: 593, 4881, 4882,
+  455261, 455855; `gm-on-window`: 456077, 455261, 455855).
   - Greasemonkey-era scripts test `if (this.unsafeWindow)` to pick
-    their GM code path. TM and VM: `true`; SourceMonkey: `false`,
-    since `unsafeWindow` is a local binding and `window` is the page's
-    own. 4881 and 4882 fail on it; copies adding
-    `this.unsafeWindow = unsafeWindow;` work.
-  - Newer scripts test `!!self.GM_registerMenuCommand` (the Xbox Cloud
-    Gaming family, 455261 and 455855, which then skip their menus), and
+    their GM code path, newer ones `!!self.GM_registerMenuCommand`, and
     vite-plugin-monkey builds read every grant off `window` (456077
-    throws `GM_getValue is not a function`). TM passes both checks
-    (`--manager tm`); a copy of 456077 reading from an object of the
-    granted functions works.
-  - Fixing it means setting properties on the `window` the script
-    sees. In the isolated world that's private to the script; in the
-    page world the page can see them, so it needs a design.
+    throws `GM_getValue is not a function`). TM passes all of these.
+  - Granted page-world scripts now get them on their sandbox `window`.
+    That covers all of these but 456077, which runs isolated and is
+    covered once the page is the default. Re-test them.
+  - The `@require` clobbering (`require-clobbers-page`: 722) is fixed
+    by the same sandbox. Re-test 722.
 
 The next items came from testing the 300 and then 400 oldest corpus
 scripts, checked against Tampermonkey 5.5 with `sm-dev --manager tm`

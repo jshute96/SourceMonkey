@@ -26,7 +26,7 @@ test.describe('@grant unsafeWindow', () => {
   test.beforeEach(() => { scriptsDir = ScriptsDir.create(); });
   test.afterEach(() => { scriptsDir.cleanup(); });
 
-  test('reaches real page globals, and window === unsafeWindow in MAIN world', async ({
+  test('reaches real page globals; its own window is a sandbox over them', async ({
     extensionContext, fixtureServer, sm,
   }) => {
     scriptsDir.write({
@@ -41,9 +41,11 @@ test.describe('@grant unsafeWindow', () => {
         const b = document.body.dataset;
         b.smAppName = String(unsafeWindow.__PAGE_APP__ && unsafeWindow.__PAGE_APP__.name);
         b.smFnResult = String(unsafeWindow.__PAGE_FN__ ? unsafeWindow.__PAGE_FN__('x') : 'no-fn');
-        // In MAIN world the two are the same object. A script that
-        // tests this (several real ones do) must not be misled.
+        // A granted script's own window is a sandbox over the page's,
+        // so the two differ, as in Tampermonkey. Reads still reach the
+        // page through either.
         b.smSameAsWindow = String(unsafeWindow === window);
+        b.smViaWindow = String(window.__PAGE_APP__ && window.__PAGE_APP__.name);
         // Writes must land where the page can see them.
         unsafeWindow.__FROM_SCRIPT__ = 'hello-page';
       `,
@@ -55,7 +57,8 @@ test.describe('@grant unsafeWindow', () => {
     await page.goto(`${fixtureServer.baseUrl}/${PAGE}`);
     await expect(page.locator('body')).toHaveAttribute('data-sm-app-name', 'page-app');
     await expect(page.locator('body')).toHaveAttribute('data-sm-fn-result', 'page-fn:x');
-    await expect(page.locator('body')).toHaveAttribute('data-sm-same-as-window', 'true');
+    await expect(page.locator('body')).toHaveAttribute('data-sm-same-as-window', 'false');
+    await expect(page.locator('body')).toHaveAttribute('data-sm-via-window', 'page-app');
 
     // page.evaluate runs in the page's MAIN world, so it sees both the
     // side effect of the page function AND what the script wrote.

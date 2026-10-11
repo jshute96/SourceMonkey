@@ -1064,7 +1064,7 @@ real event either, so nothing outside its own sandbox `window` — not
 `unsafeWindow`, not `document` — can subscribe. Ours is a superset in
 one narrow way: the runtime patches the `window` of whichever world
 the script runs in, and a script that grants `unsafeWindow` runs in
-MAIN world where `unsafeWindow === window`, so
+MAIN world, where that is the page's own `window`, so
 `unsafeWindow.addEventListener('urlchange', …)` does work here.
 `document.addEventListener('urlchange', …)` is dead in both.
 

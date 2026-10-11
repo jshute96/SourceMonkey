@@ -91,3 +91,19 @@ export function resolveScriptWorld(
 ): InjectionWorld {
   return resolveWorld(script.header, script.usesUnsafeWindow === true);
 }
+
+// Whether the script's user program runs inside a sandbox `window`
+// (the prelude's `sandbox`): a page-world script that grants anything.
+// That's how Tampermonkey and Violentmonkey run a granted script in the
+// page: reads reach the page's globals, but the script's own writes,
+// a `@require`d library's `window.jQuery = …` included, stay off the
+// page's `window`. A `@grant none` or grantless script gets the page's
+// `window` itself, as it does under both. See docs/injection.md, "The
+// sandbox window".
+export function runsSandboxed(
+  script: Pick<StoredScript, 'header' | 'usesUnsafeWindow'>,
+): boolean {
+  if (!script.header || resolveScriptWorld(script) !== 'MAIN') return false;
+  const grants = getValues(script.header, 'grant');
+  return grants.length > 0 && !resolveGrants(grants).hasNone;
+}

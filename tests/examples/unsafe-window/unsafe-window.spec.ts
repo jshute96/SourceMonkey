@@ -8,14 +8,13 @@
 // Two things are manager-specific, and measured rather than assumed
 // (see docs/cross-manager-test-results.md):
 //
-//   - **Whether `unsafeWindow === window`.** SourceMonkey is the only
-//     one where it is: it binds `unsafeWindow = window` in MAIN world,
-//     with no wrapper in between. TM and VM both hand out a wrapper on
-//     Chrome (measured), so both answer `false` — including VM in its
-//     isolated mode, where it is still not a way into the page.
-//     All of them meet the contract that matters — the page's globals
-//     are reachable — which is why the `read` / `call` / write
-//     assertions are unconditional and this one is SM-only.
+//   - **Whether `unsafeWindow === window`.** On Chrome all three
+//     answer `false`: each hands out a sandbox wrapper as the script's
+//     own `window` (measured for TM and VM, including VM's isolated
+//     mode, where it is still not a way into the page). All of them
+//     meet the contract that matters (the page's globals are
+//     reachable), which is why the `read` / `call` / write assertions
+//     are unconditional and this one is SM-only.
 //   - **The starting value of the GM storage counter.** SourceMonkey's
 //     fixture wipes storage per test; TM keeps the installed script's
 //     stored values across runs. So the counter is asserted as
@@ -42,13 +41,12 @@ test.describe('examples / unsafe-window', () => {
     // Call: a page-defined function runs and returns the page's answer.
     await expect(page.locator('#log li[data-script="call"]'))
       .toContainText('hello userscript from the page');
-    // Identity: SM-only. SM runs the script in the page realm and
-    // aliases `unsafeWindow` to `window`; TM and VM both wrap. The row
-    // is still required to exist everywhere — what it says there is a
-    // report, not a contract. See the header comment.
+    // Identity: asserted for SM only. The row is still required to
+    // exist everywhere; what it says there is a report, not a
+    // contract. See the header comment.
     if (setup.manager === 'sourcemonkey') {
       await expect(page.locator('#log li[data-script="identity"]'))
-        .toContainText('unsafeWindow === window: true');
+        .toContainText('unsafeWindow === window: false');
     } else {
       await expect(page.locator('#log li[data-script="identity"]')).toHaveCount(1);
     }
