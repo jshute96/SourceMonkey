@@ -9,13 +9,27 @@ the output in `console-commands.ts`.
 
 - **The top frame uses its tab's id** (`T1`). It has no `F` id.
 - **Each iframe gets an `F` id** (`F3`), numbered across the whole run
-  like tab ids, and never reused.
+  like tab ids.
   - Unique across tabs, so an id alone names one frame.
   - `T1.F3` is accepted too, and is an error if F3 isn't in T1.
 - **An id belongs to the frame, not its document.** An iframe that
   reloads or navigates keeps its id.
-  - A frame the page removes and adds again is a new frame, with a new
-    id. So is each frame of a page the top frame navigates to.
+- **Ids last across a tab reload.** Playwright makes a new `Frame` for
+  each iframe then, so sm-dev matches them up: a new frame in the place
+  of one that went away takes its id.
+  - The same goes when the tab moves to another page that has an iframe
+    in the same place.
+  - Its place is its parent (a tab or an `F` id) and URL, or failing
+    that its URL without the query and fragment.
+  - A frame that hasn't loaded yet (no URL, or the `about:blank` it
+    starts with) waits for its URL to be matched by, and listings leave
+    it out until then.
+    - It waits only a few seconds, as some frames stay on `about:blank`.
+    - Its later siblings wait with it, so that of two frames with one
+      URL, the earlier gets the earlier id whichever loads first.
+    - On a first load, with no gone frames to match, nothing waits.
+  - Otherwise ids aren't reused: a new frame in no gone frame's place
+    gets a new one.
 - Frames nest; a frame's parent is a tab id or another `F` id.
 
 ## Where the data comes from
@@ -194,6 +208,8 @@ T1: http://localhost:8765/frames/frames.html
   - Load lines go through the same queue as console lines and errors,
     so what a page logged or threw comes before the next page's load.
   - A change of the frame URL's fragment alone isn't a load.
+  - Nor is a new frame's first `about:blank`, the empty document it
+    starts with before the one it loads.
 - A line can still lack its frame: an event from an older extension, a
   document no frame matched, or a console line whose frame's session
   isn't open yet. So a line without a frame isn't necessarily the top

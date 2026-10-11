@@ -566,8 +566,8 @@ $R wait selector --frame F2 '.ready'   # Wait for an element inside F2
 ```
 
 - Iframes are named `F1`, `F2`, ... for the whole run; the top frame
-  is its tab (`T1`). An iframe keeps its id when it reloads, so `F2`
-  stays the same frame across `--watch` reloads.
+  is its tab (`T1`). An iframe keeps its id when it or the tab reloads,
+  so you can keep using `F2` after a reload.
 - Where a script runs: `frames`, or `tabs` / `status`, which list a
   script not only in the top frame as `(T1, F2)` or `(F2)`.
   - `frames` marks iframes that aren't visible `(hidden)`: often ad or

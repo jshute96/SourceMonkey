@@ -202,7 +202,8 @@ test('frames: ids, the scripts in each frame, menus and match', async ({ page, f
   expect(plain(await run('frames'))[2]).toBe(`  ${a}: ${frameA} (hidden)`);
   await page.evaluate(() => { document.getElementById('frame-a')!.style.display = ''; });
 
-  // Frame B reloads: same id; its nested frame is a new frame.
+  // Frame B reloads: same id, and its nested frame, a new frame in the
+  // same place, gets its id back.
   await page.evaluate(() => {
     const frame = document.getElementById('frame-b') as HTMLIFrameElement;
     frame.src = frame.src;
@@ -213,10 +214,14 @@ test('frames: ids, the scripts in each frame, menus and match', async ({ page, f
   const after = await run('frames');
   // Its target is a new one: the reload made a new process.
   expect(after[2]).toMatch(new RegExp(`^  ${b}: ${frameB.replace(/[.]/g, '\\.')} \\[frameId=\\w+\\] \\[targetId=\\w+\\]$`));
-  expect(after[4]).toMatch(/^ {4}F\d+: /);
-  expect(after[4]).not.toContain(`${nested}:`);
+  expect(after[4]).toMatch(new RegExp(`^ {4}${nested}: `));
   expect((await run('tabs'))[1]).toBe(`* T1: ${url} (+2 frames)`);
   expect((await run('menu')).some((l) => l.includes('mark frame-a'))).toBe(false);
+  // The tab reloads: its new frames get the ids of the ones in their
+  // places, frame A's (gone before) too.
+  await page.reload();
+  const frameList = async () => plain(await run('frames')).filter((l) => /^ +F\d+: /.test(l)).map((l) => l.trim().split(':')[0]);
+  await expect.poll(frameList).toEqual([a, b, nested]);
 
   // A second tab none of them match: each line names the tabs and frames.
   const page2 = await page.context().newPage();

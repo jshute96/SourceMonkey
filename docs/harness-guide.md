@@ -1321,8 +1321,9 @@ A script runs in each iframe whose URL it matches (see
 [docs/frames.md](frames.md)). sm-dev gives each iframe an id, `F1`,
 `F2`, ... across the run; the top frame goes by its tab's id.
 
-- An iframe keeps its id when it reloads or navigates. One the page
-  removes and adds again is a new frame.
+- An iframe keeps its id when it reloads or navigates, and when the tab
+  reloads or navigates: a new frame in the same place, with the same
+  URL, takes the id of the one that was there.
 - `frames` shows the current tab's frame tree, with the scripts running
   in each frame. `frames T2`, `frames all`, or `frames F3` (that frame
   and those in it) for others.

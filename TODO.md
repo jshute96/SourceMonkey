@@ -684,14 +684,20 @@ Adding any of these is a catalog entry + a body — nothing structural.
   registering that runtime on pages that otherwise don't need it.
   TM/VM have the same limitation today. Build it when a real site
   shows up where the style matters.
-- **Frame-scope the remaining SW pushes.** `sm:gm-xhr-event` now goes
-  to `sender.frameId`, but `sm:gm-tab-closed`,
-  `sm:gm-notification-event` and `sm:gm-menu-fire` still go tab-wide,
-  and `sm:gm-value-update` is inherently tab-scoped (the openers table
-  keys on tabId). Harmless while nothing registers with `allFrames` —
-  the bridge only exists in the top frame — but the day `@noframes`
-  work turns that on, a MAIN-world script's events would be posted
-  into every subframe's realm. Needs a per-frame openers table.
+- **Send the remaining GM pushes to the requesting frame.** Scripts run
+  in frames now, but `sm:gm-tab-closed` and `sm:gm-notification-event`
+  still go to the whole tab (`chrome.tabs.sendMessage` with no frame;
+  `background.ts`). Menu fires and XHR events already go to their
+  document or frame.
+  - Nothing misfires: each frame's copy drops a request id it doesn't
+    know.
+  - But any frame where the bridge (`wrapper-bridge.js`) runs relays
+    the push into its page, so another frame's page can see a
+    page-world script's request id and event.
+  - Fix: keep the requesting document with the request, as menu
+    commands do, and send to it.
+  - `sm:gm-value-update` going to all of a tab's frames is right: each
+    frame's copy needs the write.
 - **Gate `sm:start` over the bridge too.** It's what populates the
   `gmOpeners` table, i.e. who receives value broadcasts. A forged one
   can only name an id the page can already see, and the push relay is

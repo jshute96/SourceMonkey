@@ -1867,6 +1867,9 @@ function wirePageOutput(page: Page, n: number, emit: (fields: LogFields) => void
     const before = frameUrls.get(frame);
     frameUrls.set(frame, url);
     if (before !== undefined && before !== url && before.split('#')[0] === url.split('#')[0]) return;
+    // A new frame's empty first document, before the one it loads. Not
+    // numbered for it either: its id waits for its URL (FrameIds).
+    if (before === undefined && url === 'about:blank') return;
     const where = inFrame(frame);
     pending = pending.then(() => emit({ source: 'event', kind: 'load', tab: n, ...where, text: `Loaded ${url}`, streamed: false }));
   });
