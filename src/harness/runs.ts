@@ -16,7 +16,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
-import { err as errorLine, escapeMarkup, heading, id as idRole, MARKUP, plainLine, quoted, url } from './output-style.js';
+import { err as errorLine, escapeMarkup, heading, id as idRole, plainLine, quoted, roleCell, tableLines, textCell, url, type Cell } from './output-style.js';
 import { LOG_SOURCES, type LogSource } from './run-logs.js';
 import { DEFAULT_MANAGER, MANAGERS, type ManagerName } from './managers.js';
 
@@ -718,37 +718,28 @@ const LISTED_SCRIPTS = 3;
  * as an error message needs them.
  */
 export function runTable(records: RunRecord[], now = Date.now(), { markup = false }: { markup?: boolean } = {}): string[] {
-  // Each cell as plain text and as markup; columns line up by the plain.
-  type Cell = { plain: string; styled: string };
-  const plain = (text: string): Cell => ({ plain: text, styled: escapeMarkup(text) });
-  const as = (style: (text: string) => string, text: string): Cell => ({ plain: text, styled: style(text) });
   const rows: Cell[][] = [
-    ['Run', 'PID', 'Uptime', 'Browser', 'Manager', 'Tabs', 'Scripts'].map((text) => as(heading, text)),
+    ['Run', 'PID', 'Uptime', 'Browser', 'Manager', 'Tabs', 'Scripts'].map((text) => roleCell(heading, text)),
     ...records.map((r) => {
       const names = r.scripts.map((s) => path.basename(s));
-      const shown = names.slice(0, LISTED_SCRIPTS).map((n) => as(url, n));
-      if (names.length > LISTED_SCRIPTS) shown.push(plain(`(${names.length - LISTED_SCRIPTS} more)`));
+      const shown = names.slice(0, LISTED_SCRIPTS).map((n) => roleCell(url, n));
+      if (names.length > LISTED_SCRIPTS) shown.push(textCell(`(${names.length - LISTED_SCRIPTS} more)`));
       const browser = browserLabel(r);
       const where = browserAddress(r);
       return [
-        as(idRole, r.id),
-        plain(String(r.pid)),
-        plain(uptime(now - r.started)),
+        roleCell(idRole, r.id),
+        textCell(String(r.pid)),
+        textCell(uptime(now - r.started)),
         { plain: browser, styled: url(where) + escapeMarkup(browser.slice(where.length)) },
-        plain(MANAGERS[r.manager ?? DEFAULT_MANAGER].label),
-        plain(r.tabs === undefined ? '-' : String(r.tabs)),
+        textCell(MANAGERS[r.manager ?? DEFAULT_MANAGER].label),
+        textCell(r.tabs === undefined ? '-' : String(r.tabs)),
         shown.length > 0
           ? { plain: shown.map((c) => c.plain).join(', '), styled: shown.map((c) => c.styled).join(', ') }
-          : plain('-'),
+          : textCell('-'),
       ];
     }),
   ];
-  const widths = rows[0].map((_, i) => Math.max(...rows.map((row) => row[i].plain.length)));
-  // The last column unpadded, so no line ends in spaces.
-  return rows.map((row) => {
-    const line = (text: (cell: Cell) => string): string => row.map((cell, i) => text(cell) + (i < row.length - 1 ? ' '.repeat(widths[i] - cell.plain.length) : '')).join('  ').trimEnd();
-    return markup ? MARKUP + line((cell) => cell.styled) : line((cell) => cell.plain);
-  });
+  return tableLines(rows, { markup });
 }
 
 // A run's browser address, without its scheme.

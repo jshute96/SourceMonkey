@@ -137,6 +137,31 @@ function markupOf(text: string): string {
   return escapeMarkup(text.slice(0, at)) + text.slice(at + MARKUP.length).replaceAll(MARKUP, '');
 }
 
+/** A table cell: its text, and the same as markup. Columns line up by the text. */
+export interface Cell {
+  plain: string;
+  styled: string;
+}
+
+/** A cell of plain text. */
+export const textCell = (text: string): Cell => ({ plain: text, styled: escapeMarkup(text) });
+
+/** A cell in a role: `roleCell(url, 'https://x/')`. */
+export const roleCell = (style: (text: string) => string, text: string): Cell => ({ plain: text, styled: style(text) });
+
+/**
+ * Rows as lines: columns two spaces apart, each as wide as its widest
+ * cell. The last column isn't padded, so no line ends in spaces. As
+ * markup, or with `markup: false`, as plain text.
+ */
+export function tableLines(rows: Cell[][], { markup = true }: { markup?: boolean } = {}): string[] {
+  const widths = (rows[0] ?? []).map((_, i) => Math.max(...rows.map((row) => row[i].plain.length)));
+  return rows.map((row) => {
+    const line = (text: (cell: Cell) => string): string => row.map((cell, i) => text(cell) + (i < row.length - 1 ? ' '.repeat(widths[i] - cell.plain.length) : '')).join('  ').trimEnd();
+    return markup ? MARKUP + line((cell) => cell.styled) : line((cell) => cell.plain);
+  });
+}
+
 /** Text as a role: `role('id', 'T1')`. Text that is markup already stays markup. */
 export function role(name: Role, text: string | number): string {
   return `${MARKUP}<${name}>${markupOf(String(text))}</${name}>`;

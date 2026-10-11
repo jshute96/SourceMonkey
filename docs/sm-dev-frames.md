@@ -138,9 +138,10 @@ T1: http://localhost:8765/frames/frames.html
 ## `match --frames`
 
 - For a tab's page, `match` also checks each of its iframes, by the
-  frame's own URL, indented as in `frames`.
-- `@noframes` keeps a script out of every frame, shown as
-  `Kept out by: @noframes` above the rules that matched.
+  frame's own URL: a row each in its table, indented under the tab as
+  in `frames`. See [match output](sm-dev-design.md#match-output).
+- `@noframes` keeps a script out of every frame, shown as the frame's
+  result (`@noframes`), with the rules that would have matched.
 - The frames don't count toward `match`'s exit code: a script isn't
   expected in every frame.
 - It needs a run, which has the tabs. Without one, `--frames` is an

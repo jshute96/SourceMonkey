@@ -338,6 +338,9 @@ export type MatchExplanation = UrlMatchExplanation;
 /** The reason to give when no header rule names a URL at all. */
 export const NO_RULE_COVERS_URL = 'No @match or @include covers this URL';
 
+/** The same, for `match` over several URLs, none of which a rule names. */
+export const NO_RULE_COVERS_URLS = 'No @match or @include covers these URLs';
+
 /**
  * Whether the script runs on `url`, and which header rule decided: an
  * exclude wins over everything, then the first `@match`, then the

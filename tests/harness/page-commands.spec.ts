@@ -497,7 +497,7 @@ test('snapshot refs name elements for the other commands, and it can show only t
   const more = await run('snapshot');
   const inFrame = refIn(more, 'In frame');
   expect(await run(`probe --css ${inFrame} ${refIn(more, 'Shadowed')}`)).toEqual([
-    `found    ${inFrame}  (1)`, '    selector: (none: in a frame)',
+    `found    ${inFrame}  (1)`, '    selector (in F1): button',
     `found    ${refIn(more, 'Shadowed')}  (1)`, '    selector: (none: in a shadow root)',
   ]);
   expect(await run(`click ${inFrame}`)).toEqual([`[sm-dev] Clicked ${inFrame} (button "In frame")`]);

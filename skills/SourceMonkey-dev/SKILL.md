@@ -555,13 +555,14 @@ of the script; they share stored values, and can talk to each other with
 `postMessage`.
 
 ```sh
-$R frames                           # the tab's iframes as a tree, with the scripts in each
-$R match --frames                   # what each frame's URL would match, and @noframes
-$R snapshot --find Save             # refs inside frames (f2e4) work in any command as they are
-$R click f2e4
-$R eval --frame F2 'state'          # in the script's copy in F2 (--page: F2's page)
-$R click --frame F2 '.play'         # a selector inside F2: also hover, type, probe, snapshot, screenshot
-$R wait selector --frame F2 '.ready'
+$R frames                     # List the tab's iframes as a tree, with the scripts running in each
+$R match --frames             # Check which iframes the script's rules match
+$R snapshot --find Save       # Find elements in all frames; refs in iframes look like f2e4
+$R click f2e4                 # Use a ref from any frame directly, with no --frame
+$R probe --css f2e4           # Get a CSS selector for the element, and which frame it's in
+$R eval --frame F2 'state'    # Run code in the script instance in F2 (--page: in F2's page)
+$R click --frame F2 '.play'   # Look for a selector inside F2 (also hover, type, probe, snapshot, screenshot)
+$R wait selector --frame F2 '.ready'   # Wait for an element inside F2
 ```
 
 - Iframes are named `F1`, `F2`, ... for the whole run; the top frame

@@ -1205,10 +1205,12 @@ do. Like the listings, they work with no run too, against `--browser`.
 
 On their own, with files:
 
-- `sm-dev match <script>... <url>...` says whether each script would
-  run on each URL, with all rules that matched it (`Matched by:`) or
-  excluded it (`Excluded by:`). A `start` command line works with
-  `match` in its place.
+- `sm-dev match <script>... <url>...` shows whether each script would
+  run on each URL, in a table per script. A `start` command line works
+  with `match` in its place.
+  - Its `Rules` column names each rule that matched or excluded the
+    URL, by an id (`M1`, `I2`, `X3`) that the `Rules:` list under the
+    table spells out. See [match](sm-dev-design.md#match-output).
 - `sm-dev validate <path>...` checks script validity (header,
   `@require`, syntax) over files, directories, globs or script URLs,
   with the message the extension would show, plus all warnings (each
@@ -1551,7 +1553,10 @@ current one.
   `probe --css e4` for a ref's, or `probe --css '.titleline > a'` for
   one per match.
   - It passes over ids and classes that look generated (`css-1x2y3z`).
-  - Elements in a frame or a shadow root get none; use their ref.
+  - For an element in an iframe, it names the frame first
+    (`selector (in F2): #save`), since the selector works only with
+    `--frame F2`.
+  - Elements in a shadow root get none; use their ref.
 
 ### `cdp`
 

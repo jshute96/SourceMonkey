@@ -592,6 +592,38 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
 - A directory stands for its scripts. Expanding to nothing is a usage
   error.
 
+#### `match` output
+
+One table per script, a row per page and frame, then the rules the
+table names:
+
+```text
+Where  Result     Rules     URL
+T1     no match   M1    X3  https://x.test/a/index.html
+  F1   @noframes  M1        frame.html?q=1
+T2     match         M2     https://y.test/
+Rules:
+  M1: @match https://x.test/a/*
+  M2: @match https://y.test/*
+  X3: @exclude https://x.test/a/index.html
+```
+
+- **Rule ids are local to the table**: `M` for `@match`, `I` for
+  `@include`, `X` for `@exclude`, numbered in that order. Only rules
+  that cover some row get one.
+- **Every rule that covers a row shows**, not just the deciding one, so
+  a miss shows what an `@exclude` overrode.
+- **Each rule has its own column** while there are at most 8, so a rule
+  reads down the table. Past 8, each row lists only its own ids.
+- **Rules and URLs can be long**, so neither goes mid-row: the URL is
+  last, and each rule is spelled out once, below.
+- **A frame's URL is its file alone** (`frame.html?q=1`) when it's in
+  its parent's directory.
+- **`@noframes` is a frame's result.** Its rules still show what would
+  have matched.
+- With no rule covering any row, the `Rules` column goes, and a line
+  shows that in place of the list. `Where` goes when no row has a tab.
+
 ## The browser
 
 ### Connecting
@@ -1756,9 +1788,17 @@ comes with its refs.
   one call each, which took seconds on a large page.
 - Uniqueness is counted across open shadow roots too, as Playwright's
   CSS engine matches there.
-- Elements in a frame get no selector, since the commands look for
-  selectors in the page's own frame. Nor do elements in a shadow root,
-  since a `>` path can't cross into one.
+- An element in an iframe gets a selector within its frame's
+  document, with the frame named first: `selector (in F2): #save`.
+  - The commands look for a selector in the top frame unless given
+    `--frame F2`, so the selector alone would find nothing.
+  - The frame goes before the selector, which is free-form and has the
+    rest of the line. `--html` lines name it too (`html (in F2):`), and
+    JSON has it as the entry's `frame`.
+  - One in a frame that can't be named (it went meanwhile) gets
+    `(none: in a frame)`, as the selector wouldn't work.
+- Elements in a shadow root get none, since a `>` path can't cross into
+  one.
 
 ### Waiting (`wait.ts`)
 

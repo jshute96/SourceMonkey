@@ -1354,8 +1354,9 @@ async function matchCommand(ctx: ConsoleContext, words: string[], cwd: string, w
       ctx.out(NO_TABS);
       return 1;
     }
-    // Named only when there is another tab it could have been.
-    pages.push(ctx.tabs().length > 1 ? tabPage(tab) : { url: tab.page.url(), ...framesOf(tab) });
+    // Named only when there is another tab it could have been, or
+    // frames under it to tell it from.
+    pages.push(ctx.tabs().length > 1 || withFrames ? tabPage(tab) : { url: tab.page.url() });
   }
   // Each once, as on the command line.
   const unique = pages.filter((p, i) => pages.findIndex((q) => q.url === p.url && q.name === p.name) === i);

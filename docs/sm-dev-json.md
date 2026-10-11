@@ -713,8 +713,10 @@ interface MatchFrame {
 Text:
 
 ```text
-match    file:///home/me/gm-menu/gm-menu.html (T1)
-    Matched by:  @match file:///*/gm-menu/gm-menu.html
+Where  Result  Rules  URL
+T1     match   M1     file:///home/me/gm-menu/gm-menu.html
+Rules:
+  M1: @match file:///*/gm-menu/gm-menu.html
 ```
 
 JSON:
@@ -923,7 +925,8 @@ interface ProbeData {
     selector: string;
     count?: number;      // absent when the selector is invalid
     error?: string;      // why the selector is invalid
-    matches?: { css?: string; html?: string }[]; // with --css / --html
+    frame?: string;      // with --css / --html, for matches in an iframe: F2
+    matches?: { css?: string; html?: string }[]; // with --css / --html; css works within frame
   }[];
 }
 ```

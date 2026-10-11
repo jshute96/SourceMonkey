@@ -9,10 +9,10 @@ import path from 'node:path';
 
 import { isMarkupContentType, looksLikeMarkup, markupResponseMessage } from '../markup-response.js';
 import { unusableMatchGroupKey } from '../url-match.js';
-import { asError, asWarning, code, heading, id, INVALID_PREFIX, quoted, ui, url, WARNING_LEVEL } from './output-style.js';
+import { asError, asWarning, code, heading, id, INVALID_PREFIX, quoted, roleCell, tableLines, textCell, ui, url, WARNING_LEVEL, type Cell } from './output-style.js';
 import { HAS_SCHEME, globFiles, globMistake, isDirectory, isGlob, walkScripts } from './path-args.js';
 import { jsonResult, type MatchPage, type ValidateData } from './json-output.js';
-import { NO_RULE_COVERS_URL, explainMatch, isDirectoryMessage, noSuchFileMessage, parseCheckWarning, preparedNoframes, prepareScript, shownPath, warningLines, type PreparedScript } from './prepare.js';
+import { NO_RULE_COVERS_URL, NO_RULE_COVERS_URLS, explainMatch, isDirectoryMessage, noSuchFileMessage, parseCheckWarning, preparedNoframes, prepareScript, shownPath, warningLines, type PreparedScript } from './prepare.js';
 
 // A mistake in how the command was typed, as opposed to a failure while
 // carrying it out: the one kind that exits 2.
@@ -264,13 +264,33 @@ export function matchJson(prepared: PreparedScript, pages: MatchTarget[]): { val
   };
 }
 
+// Up to this many rules each get a column of their own in `match`'s
+// table; past it, a row lists only its own.
+const RULE_COLUMNS = 8;
+
 /**
  * `match`'s lines for one script against each page, and how many pages
  * it doesn't match (all of them, for a script that can't run at all).
- * `pages` are URLs, each with an optional name (a tab's) shown after
- * it, and its iframes under it, which don't count as misses: a script
- * isn't expected in every frame. `label` names the script where there
- * is no heading to.
+ * `pages` are URLs, each with an optional name (a tab's), and its
+ * iframes under it, which don't count as misses: a script isn't
+ * expected in every frame. `label` names the script where there is no
+ * heading to.
+ *
+ * A table, a row per page and frame, then the rules it names:
+ *
+ *     Where  Result    Rules  URL
+ *     T1     no match  M1 X2  https://x.test/a/index.html
+ *       F1   match     M1     frame.html
+ *     Rules:
+ *       M1: @match https://x.test/a/*
+ *       X2: @exclude https://x.test/a/index.html
+ *
+ * - Rules: each rule that covers a row, matching or excluding, by an
+ *   id local to the table (`M` for `@match`, `I` for `@include`, `X`
+ *   for `@exclude`), numbered in that order. Up to `RULE_COLUMNS` of
+ *   them, each has a column of its own.
+ * - A frame's URL is shortened to its file when it's in its parent's
+ *   directory.
  */
 export function matchLines(
   prepared: PreparedScript,
@@ -280,29 +300,64 @@ export function matchLines(
   if (prepared.status !== 'ok' && !unmatchableScript(prepared)) {
     return { lines: [label === undefined ? 'INVALID script' : `${INVALID_PREFIX}${label}`], misses: pages.length };
   }
-  const lines: string[] = [];
+  interface Row { where: string; depth: number; result: string; rules: string[]; url: string }
+  const rows: Row[] = [];
   let misses = 0;
   // Every rule that covers the URL, not only the deciding one, so a
   // miss shows what an @exclude overrode.
-  const rulesOf = (verdict: ReturnType<typeof explainMatch>): string[] => {
-    const rules = [
-      ...verdict.excludedBy.map((rule) => ui`${heading('Excluded by')}: ${code(rule)}`),
-      // Padded so its rules line up with the excludes'.
-      ...verdict.matchedBy.map((rule) => ui`${heading('Matched by')}:  ${code(rule)}`),
-    ];
-    if (rules.length === 0) rules.push(NO_RULE_COVERS_URL);
-    return rules;
-  };
+  const rulesOf = (verdict: ReturnType<typeof explainMatch>): string[] => [...verdict.matchedBy, ...verdict.excludedBy];
   for (const { url: page, name, frames } of pages) {
     const verdict = explainMatch(prepared.matching, page);
     if (!verdict.matches) misses++;
-    lines.push(ui`${verdict.matches ? 'match   ' : 'no match'} ${url(page)}${name ? ui` (${id(name)})` : ''}`, ...rulesOf(verdict).map((r) => `    ${r}`));
+    rows.push({ where: name ?? '', depth: 0, result: verdict.matches ? 'match' : 'no match', rules: rulesOf(verdict), url: page });
+    const urls = new Map<string, string>(name ? [[name, page]] : []);
     for (const frame of frames ?? []) {
       const v = frameVerdict(prepared, frame.url);
-      const pad = '  '.repeat(frame.depth);
-      const rules = [...(v.noframes ? [ui`${heading('Kept out by')}: ${code('@noframes')}`] : []), ...rulesOf(v)];
-      lines.push(ui`${pad}${v.matches ? 'match   ' : 'no match'} ${id(frame.id)}: ${url(frame.url)}`, ...rules.map((r) => `${pad}    ${r}`));
+      urls.set(frame.id, frame.url);
+      // `@noframes` decides alone; the rules still show what would match.
+      const result = v.noframes ? '@noframes' : v.matches ? 'match' : 'no match';
+      rows.push({ where: frame.id, depth: frame.depth, result, rules: rulesOf(v), url: shownFrameUrl(frame.url, urls.get(frame.parent)) });
     }
   }
+  const { matches, includes, excludes } = prepared.matching;
+  const used = [
+    ...matches.map((m) => `@match ${m}`), ...includes.map((i) => `@include ${i}`), ...excludes.map((x) => `@exclude ${x}`),
+  ].filter((rule, i, all) => all.indexOf(rule) === i && rows.some((row) => row.rules.includes(rule)));
+  const ids = new Map(used.map((rule, i) => [rule, `${rule.startsWith('@exclude') ? 'X' : rule.startsWith('@include') ? 'I' : 'M'}${i + 1}`]));
+  const idWidth = Math.max(0, ...[...ids.values()].map((s) => s.length));
+  const rulesCell = (row: Row): Cell => {
+    const slots = used.length <= RULE_COLUMNS
+      ? used.map((rule) => (row.rules.includes(rule) ? ids.get(rule)! : '').padEnd(idWidth))
+      : used.filter((rule) => row.rules.includes(rule)).map((rule) => ids.get(rule)!);
+    return {
+      plain: slots.join(' ').trimEnd(),
+      styled: slots.map((slot) => (slot.trim() ? id(slot.trim()) + ' '.repeat(slot.length - slot.trim().length) : slot)).join(' ').trimEnd(),
+    };
+  };
+  const named = rows.some((row) => row.where);
+  const columns = <T>(where: T, result: T, rules: T, address: T): T[] => [...(named ? [where] : []), result, ...(used.length > 0 ? [rules] : []), address];
+  const table: Cell[][] = [
+    columns('Where', 'Result', 'Rules', 'URL').map((text) => roleCell(heading, text)),
+    ...rows.map((row) => columns(
+      { plain: '  '.repeat(row.depth) + row.where, styled: '  '.repeat(row.depth) + (row.where ? id(row.where) : '') },
+      textCell(row.result), rulesCell(row), roleCell(url, row.url),
+    )),
+  ];
+  const lines = tableLines(table);
+  if (used.length > 0) lines.push(ui`${heading('Rules')}:`, ...used.map((rule) => ui`  ${id(ids.get(rule)!)}: ${code(rule)}`));
+  else lines.push(rows.length === 1 ? NO_RULE_COVERS_URL : NO_RULE_COVERS_URLS);
   return { lines, misses };
+}
+
+// A frame's URL as `match` shows it: its file alone when it's in the
+// same directory as its parent's (`frame-a.html`), else whole.
+function shownFrameUrl(frameUrl: string, parentUrl: string | undefined): string {
+  if (parentUrl === undefined) return frameUrl;
+  const base = parentUrl.replace(/[?#].*$/, '');
+  const dir = base.slice(0, base.lastIndexOf('/') + 1);
+  // Only a directory after the host: `https://x.test` has none.
+  if (!/^[a-z][a-z0-9+.-]*:\/\/[^/]*\//i.test(dir) || !frameUrl.startsWith(dir)) return frameUrl;
+  const rest = frameUrl.slice(dir.length);
+  const file = rest.replace(/[?#].*$/, '');
+  return file && !file.includes('/') ? rest : frameUrl;
 }

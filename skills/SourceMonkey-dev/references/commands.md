@@ -126,7 +126,7 @@ test a script under VM or TM:
 | Command | Does |
 | --- | --- |
 | `validate <path>...` | Header, `@require` and syntax checks, plus warnings, e.g. an `@icon` that can't be shown (files, dirs, globs) |
-| `match <script>... <url>...` | Would it run there; which rule decided |
+| `match <script>... <url>...` | Would it run there; which rules matched or excluded it |
 | `match`, `match all` | In a run: the selected script on the current tab; all scripts on all tabs. `--frames`: each of the tab's iframes too |
 | `scripts`, `script <script>` | List; pick the one `get`/`set`/`match` use. It also lists SourceMonkey-managed scripts on the tab as E1, ...; `scripts E1` picks one for `get`/`set`, any installed script (`script list` lists them), on the tab or not (`set key --force <json>` outside a `--temp-browser`) |
 | `load <script>...` | Add scripts to the run |
@@ -194,7 +194,7 @@ own: change them only when asked to.
 | `eval <js>` | Evaluate inside the selected script, where its `GM_*` APIs, `@require` libraries, top-level declarations and IIFE locals are visible; prints JSON (promises awaited). In the page when no script is selected or it hasn't run there |
 | `eval --page <js>` | Evaluate in the page, where the page's own globals are |
 | `eval --script=<script> <js>` | Evaluate inside the named script |
-| `eval --frame F2 <js>` | Evaluate in an iframe: the script's copy there, or its page with `--page`. Cross-origin frames too |
+| `eval --frame F2 <js>` | Evaluate in an iframe: in the script instance there, or in its page with `--page`. Cross-origin frames too |
 | `eval --file <path>` | Evaluate a JavaScript file |
 | `eval --out FILE <js>` | Write the result to a file; printed results are cut past 10,000 characters |
 | `cdp <Method> [json]` | A raw CDP call on the tab; the result as JSON. A `{{` block or `--file` holds several, one per line (see [cdp.md](cdp.md)) |

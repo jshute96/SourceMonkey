@@ -254,7 +254,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/path-args.ts` | Globs (`*`, `**`) and directory searches for sm-dev's file arguments |
 | `src/harness/command-lines.ts` | Input lines into a run's commands: multi-line `{{ ... }}` blocks (`eval`, `set`, `type`, `cdp`), comments, sent lists |
 | `src/harness/command-list.ts` | Every sm-dev command in one list, in the help's named sections, with arguments, options, and the help views' layouts |
-| `src/harness/output-style.ts` | Output markup by role (IDs, URLs, commands), sm-dev's message prefixes, and painting lines for a terminal |
+| `src/harness/output-style.ts` | Output markup by role (IDs, URLs, commands), sm-dev's message prefixes, tables, and painting lines for a terminal |
 | `src/harness/help-format.ts` | Help text layout: wrapping by shown width, bullets, `code` spans, and painting them in color for a terminal |
 | `src/harness/command-args.ts` | The one parser of every sm-dev command's words: quotes, flags, a leading tab, text, forms (and what one acts on), blocks |
 | `src/harness/prompt-editor.ts` | Multi-line editing of `{{` blocks at the `--interactive` prompt, on top of readline |
@@ -569,6 +569,7 @@ unit tests.
 | `tests/unit/harness/command-lines.test.mjs` | Unit tests for `{{ ... }}` blocks, comments, and lists of commands |
 | `tests/unit/harness/page-output.test.mjs` | Unit tests for whose a page's console lines and errors are: a run script's or the page's |
 | `tests/unit/harness/run-logs.test.mjs` | Unit tests for a run's log: sources, IDs and the cap, `--since` / `--tail` parsing, and how lines read |
+| `tests/unit/harness/match-lines.test.mjs` | Unit tests for `match`'s table: rule ids and columns, frames under their tab, `@noframes` |
 | `tests/unit/harness/frames.test.mjs` | Unit tests for frame refs and matching the extension's frame tree to the page's |
 | `tests/unit/harness/validate.test.mjs` | Runs `sm-dev validate` over the example suites: verdicts matching the browser's, and warnings |
 | `tests/unit/harness/prepare.test.mjs` | Unit tests for `prepareScript` and `explainMatch` over real files on disk |

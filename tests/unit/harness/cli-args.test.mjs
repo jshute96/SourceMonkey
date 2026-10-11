@@ -33,13 +33,13 @@ test('match lists every rule that excluded or matched each URL', () => {
   const r = spawnSync(process.execPath, [CLI, 'match', script, page, `${page}#part`, 'http://127.0.0.1/other.html'], { encoding: 'utf8' });
   assert.equal(r.status, 1);
   assert.equal(r.stdout, [
-    `match    ${page}`,
-    '    Matched by:  @match *://*/headers-match-hash/headers-match-hash.html',
-    `no match ${page}#part`,
-    '    Excluded by: @exclude *#part',
-    '    Matched by:  @match *://*/headers-match-hash/headers-match-hash.html',
-    'no match http://127.0.0.1/other.html',
-    '    No @match or @include covers this URL',
+    'Result    Rules  URL',
+    `match     M1     ${page}`,
+    `no match  M1 X2  ${page}#part`,
+    'no match         http://127.0.0.1/other.html',
+    'Rules:',
+    '  M1: @match *://*/headers-match-hash/headers-match-hash.html',
+    '  X2: @exclude *#part',
     '',
   ].join('\n'));
 });
@@ -52,21 +52,23 @@ test('match takes several scripts and URLs in any order, a heading per script', 
   assert.equal(r.status, 1);
   assert.equal(r.stdout, [
     rel('match-exact.user.js'),
-    `match    ${page}#part`,
-    '    Matched by:  @match *://*/headers-match-hash/headers-match-hash.html',
-    `match    ${page}`,
-    '    Matched by:  @match *://*/headers-match-hash/headers-match-hash.html',
+    'Result  Rules  URL',
+    `match   M1     ${page}#part`,
+    `match   M1     ${page}`,
+    'Rules:',
+    '  M1: @match *://*/headers-match-hash/headers-match-hash.html',
     '',
     rel('include-hash.user.js'),
-    `match    ${page}#part`,
-    '    Matched by:  @include *://*/headers-match-hash/headers-match-hash.html#part',
-    `no match ${page}`,
-    '    No @match or @include covers this URL',
+    'Result    Rules  URL',
+    `match     I1     ${page}#part`,
+    `no match         ${page}`,
+    'Rules:',
+    '  I1: @include *://*/headers-match-hash/headers-match-hash.html#part',
     '',
   ].join('\n'));
   // A script or URL given twice is checked once.
   const twice = spawnSync(process.execPath, [CLI, 'match', path.join(dir, 'match-exact.user.js'), page, path.join(dir, 'match-exact.user.js'), page], { encoding: 'utf8' });
-  assert.equal(twice.stdout, `match    ${page}\n    Matched by:  @match *://*/headers-match-hash/headers-match-hash.html\n`);
+  assert.equal(twice.stdout, `Result  Rules  URL\nmatch   M1     ${page}\nRules:\n  M1: @match *://*/headers-match-hash/headers-match-hash.html\n`);
   // Two spellings of one file are one script too.
   const spelled = spawnSync(process.execPath, [CLI, 'match', path.join(dir, 'match-exact.user.js'), `${dir}./x/../match-exact.user.js`, page], { encoding: 'utf8' });
   assert.equal(spelled.stdout, twice.stdout);
@@ -79,8 +81,8 @@ test('match takes several scripts and URLs in any order, a heading per script', 
 test('match expands a glob in the examples directory into its script and pages; * in a URL needs its scheme', () => {
   const cwd = fileURLToPath(new URL('../../examples/', import.meta.url));
   const r = spawnSync(process.execPath, [CLI, 'match', 'gm-menu/*', 'http://localhost/*'], { encoding: 'utf8', cwd });
-  assert.match(r.stdout, /^match {4}file:\/\/.*\/gm-menu\/gm-menu\.html$/m);
-  assert.match(r.stdout, /^no match http:\/\/localhost\/\*$/m);
+  assert.match(r.stdout, /^match +M1 +file:\/\/.*\/gm-menu\/gm-menu\.html$/m);
+  assert.match(r.stdout, /^no match +http:\/\/localhost\/\*$/m);
   // Without a scheme, a word with * is a glob, even one that looks like a host.
   const bare = spawnSync(process.execPath, [CLI, 'match', 'gm-menu/*', 'localhost/*'], { encoding: 'utf8', cwd });
   assert.equal(bare.status, 2);
@@ -98,8 +100,9 @@ test('match gives a script that can never match its per-URL answer, and a broken
     assert.equal(r.status, 1);
     assert.equal(r.stdout, [
       path.relative(process.cwd(), hash),
-      `no match ${page}`,
-      '    No @match or @include covers this URL',
+      'Result    URL',
+      `no match  ${page}`,
+      'No @match or @include covers this URL',
       '',
       // Outside this directory: as it was given, never with ../.
       broken,
@@ -141,7 +144,7 @@ test('validate and match fetch a script given as a URL, and run refuses one', as
     assert.equal(validated.stdout, `ok       ${url}\n\n1 ok, 0 invalid\n`);
     const page = 'http://x.test/headers-match-hash/headers-match-hash.html';
     assert.equal((await cli('match', url, page)).stdout,
-      `match    ${page}\n    Matched by:  @match *://*/headers-match-hash/headers-match-hash.html\n`);
+      `Result  Rules  URL\nmatch   M1     ${page}\nRules:\n  M1: @match *://*/headers-match-hash/headers-match-hash.html\n`);
     const missing = await cli('validate', `${base}/nope.user.js`);
     assert.equal(missing.code, 1);
     assert.equal(missing.stderr, `Could not fetch ${base}/nope.user.js: The server answered 404 Not Found\n`);

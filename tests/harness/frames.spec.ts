@@ -127,8 +127,8 @@ test('frames: ids, the scripts in each frame, menus and match', async ({ page, f
 
   // @noframes keeps top-only out of every frame its rules match.
   const match = await run('match 3 --frames');
-  expect(match).toContain(`  no match ${a}: ${frameA}`);
-  expect(match).toContain('      Kept out by: @noframes');
+  expect(match).toContainEqual(expect.stringMatching(new RegExp(`^  ${a} +@noframes +M2 +\\S+$`)));
+  expect(match).toContain('  M2: @match *://*/frames/frame-a.html');
   const matchJson = await json('match 2 --frames');
   expect(matchJson.results[0].pages[0].frames.map((f: { id: string; matches: boolean }) => [f.id, f.matches])).toEqual([
     [a, false], [b, true], [nested, false],
@@ -150,7 +150,7 @@ test('frames: ids, the scripts in each frame, menus and match', async ({ page, f
   const before = Number(host.getValue(every.id!, 'count') ?? 0);
   expect((await run(`click --frame ${b} '#buttons button'`)).at(-1)).toBe(`[sm-dev] Clicked #buttons button in ${b}`);
   await expect.poll(() => host.getValue(every.id!, 'count')).toBe(before + 1);
-  expect(await run(`probe --frame ${nested} --css '#log li'`)).toEqual(['found    #log li  (1)', '    selector: li']);
+  expect(await run(`probe --frame ${nested} --css '#log li'`)).toEqual(['found    #log li  (1)', `    selector (in ${nested}): li`]);
   expect(await run(`wait selector --frame ${nested} '#log li'`)).toEqual([`[sm-dev] Wait done: The selector #log li matches on T1.${nested}`]);
 
   // Refs reach into frames without --frame: from a whole-page snapshot,
@@ -167,6 +167,11 @@ test('frames: ids, the scripts in each frame, menus and match', async ({ page, f
   const countInB = refOf(await run(`snapshot --frame ${b}`), 'button "Count"');
   expect(whole).toMatch(new RegExp(`button "Count" .*\\[ref=${countInB}\\]`));
   await run('snapshot');
+  // probe --css names the frame a ref's selector works in.
+  expect(await run(`probe --css --html ${countInB}`)).toEqual([
+    `found    ${countInB}  (1)`, `    selector (in ${b}): #btn-count`, `    html (in ${b}): <button id="btn-count">Count</button>`,
+  ]);
+  expect((await json(`probe --css ${countInB}`)).selectors[0]).toEqual({ selector: countInB, count: 1, frame: b, matches: [{ css: '#btn-count' }] });
   await clickCount(countInB);
   // One frame's snapshot after another's keeps the first's refs.
   await run(`snapshot --frame ${b}`);

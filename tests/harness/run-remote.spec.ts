@@ -268,8 +268,8 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
     // match and validate take the run's scripts and tabs, and a miss
     // is the exit code only when it comes last.
     // T2, the tab newtab picked, which runs no scripts but matches.
-    expect(await setup.cliExit('match')).toEqual({ code: 0, lines: [`match    ${url} (T2)`, '    Matched by:  @match *://*/target.html'] });
-    expect(await setup.cliExit('match', '3', 'T2')).toEqual({ code: 1, lines: [`no match ${url} (T2)`, '    No @match or @include covers this URL'] });
+    expect(await setup.cliExit('match')).toEqual({ code: 0, lines: ['Where  Result  Rules  URL', `T2     match   M1     ${url}`, 'Rules:', '  M1: @match *://*/target.html'] });
+    expect(await setup.cliExit('match', '3', 'T2')).toEqual({ code: 1, lines: ['Where  Result    URL', `T2     no match  ${url}`, 'No @match or @include covers this URL'] });
     const goesOn = await setup.cliExit('match', '3', '--', 'eval', '1+1');
     expect(goesOn.code).toBe(0);
     expect(goesOn.lines.slice(-2)).toEqual(['arg > eval 1+1', '2']);
@@ -283,7 +283,7 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
     expect(typo.code).toBe(2);
     expect(typo.lines).not.toContain('arg > eval 1+1');
     // A loaded script by its name.
-    expect((await setup.cliExit('match', 'More', 'T1')).lines[0]).toMatch(/^no match \S+ \(T1\)$/);
+    expect((await setup.cliExit('match', 'More', 'T1')).lines[1]).toMatch(/^T1 +no match +\S+$/);
 
     expect(await setup.cli('stop', 'D1')).toEqual([
       '[sm-dev] Stopping run D1',

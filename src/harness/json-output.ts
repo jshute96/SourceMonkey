@@ -473,6 +473,11 @@ export interface ProbeData {
     count?: number;
     /** Why the selector is invalid. */
     error?: string;
+    /**
+     * With --css or --html, for matches in an iframe: its id (`F2`).
+     * Their `css` works within it (`--frame F2`).
+     */
+    frame?: string;
     /** With --css or --html: the first matches. */
     matches?: { css?: string; html?: string }[];
   }[];

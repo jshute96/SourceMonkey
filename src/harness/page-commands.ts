@@ -494,8 +494,11 @@ export async function runPageCommand(
                 say(`The matches of ${quoted(selector)} could not be read: ${found}`);
                 return;
               }
+              const inFrame = await matchesFrame(page, selector, found.framed, frame);
+              if (inFrame) entry.frame = `F${tab.link.host.frameIds.number(inFrame)}`;
               entry.matches = found.matches.map((match) => ({
-                ...(css && (!found.framed || frame) && !match.shadow && match.css ? { css: match.css } : {}),
+                // Not for a frame that can't be named, where it wouldn't work.
+                ...(css && inFrame !== null && !match.shadow && match.css ? { css: match.css } : {}),
                 ...(html ? { html: match.html } : {}),
               }));
             })();
@@ -523,12 +526,16 @@ export async function runPageCommand(
                 lines.push(`    The matches could not be read: ${found}`);
                 return;
               }
+              // A selector for one in a frame only works within it
+              // (`--frame`), so the frame comes first: the selector is
+              // free-form, and the end of the line is its own. One in a
+              // frame that can't be named gets none.
+              const inFrame = await matchesFrame(page, selector, found.framed, frame);
+              const where = inFrame ? ui` (in ${idRole(`F${tab.link.host.frameIds.number(inFrame)}`)})` : '';
               for (const match of found.matches) {
-                // One in a frame only works within it, so it isn't given,
-                // unless the probe is in that frame already (`--frame`).
-                const none = found.framed && !frame ? 'in a frame' : match.shadow ? 'in a shadow root' : null;
-                if (css) lines.push(ui`    selector: ${none ? `(none: ${none})` : match.css != null ? code(match.css) : '(none found)'}`);
-                if (html) lines.push(ui`    html: ${code(match.html)}`);
+                const none = inFrame === null ? 'in a frame' : match.shadow ? 'in a shadow root' : null;
+                if (css) lines.push(ui`    selector${where}: ${none ? `(none: ${none})` : match.css != null ? code(match.css) : '(none found)'}`);
+                if (html) lines.push(ui`    html${where}: ${code(match.html)}`);
               }
               if (found.count > found.matches.length) lines.push(`    (${found.count - found.matches.length} more)`);
             }
@@ -984,6 +991,20 @@ export async function countOf(page: Page, selector: string, within?: Frame): Pro
   }
 }
 
+// The iframe a probe's matches are in: the `--frame` one, or else a
+// ref's own (a selector without `--frame` looks in the top frame only).
+// Undefined in the top frame; null when in one that can't be found.
+async function matchesFrame(page: Page, selector: string, framed: boolean, within: Frame | undefined): Promise<Frame | null | undefined> {
+  if (!framed) return undefined;
+  return within ?? await refOwner(page, selector);
+}
+
+// The frame a ref's element is in, or null when it can't be found.
+function refOwner(page: Page, selector: string): Promise<Frame | null> {
+  return locate(page, selector).first().elementHandle({ timeout: 1000 })
+    .then((el) => el.ownerFrame()).catch(() => null);
+}
+
 /**
  * With `--frame` (`within`), why a ref doesn't do there: it names an
  * element in another frame. Null when it's in that frame, or isn't a
@@ -992,8 +1013,7 @@ export async function countOf(page: Page, selector: string, within?: Frame): Pro
 export async function refFrameProblem(page: Page, selector: string, within: Frame | undefined, ids: FrameIds): Promise<string | null> {
   const ref = refOf(selector);
   if (!within || !ref) return null;
-  const owner = await locate(page, selector).first().elementHandle({ timeout: 1000 })
-    .then((el) => el.ownerFrame()).catch(() => null);
+  const owner = await refOwner(page, selector);
   if (!owner || owner === within) return null;
   const where = owner === page.mainFrame() ? 'the top frame' : `F${ids.number(owner)}`;
   return `The ref ${quoted(ref)} is in ${where}, not F${ids.number(within)}. A ref names its own frame, so ${quoted('--frame')} can be left out.`;
