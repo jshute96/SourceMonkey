@@ -82,6 +82,7 @@ import { installSwTeardownHandler } from './sw-teardown.js';
 import { resolveScriptWorld, type InjectionWorld } from '../script-world.js';
 import {
   buildManualRunInjections,
+  buildIsolatedFallbackInjections,
   buildSwapEvalBody,
   executeManualRun,
   isManualRunCandidate,
@@ -101,6 +102,7 @@ import {
   SM_CHECK_PENDING_MSG,
   SM_ERROR_MSG,
   SM_FOCUS_MSG,
+  SM_MAIN_BLOCKED_MSG,
   SM_GM_LOG_MSG,
   SM_GM_DOM_BLOCKED_MSG,
   SM_MANUAL_MSG,
@@ -2606,6 +2608,59 @@ async function manualRanIn(sender: chrome.runtime.MessageSender, scriptId: strin
   if (!documentId || tabId === undefined) return false;
   if (manualRunDocs.get(documentId)?.has(scriptId)) return true;
   return getDocState(await getTabRecord(tabId), documentId)?.manualRuns?.[scriptId] !== undefined;
+}
+
+// Documents given the sandboxed-page fallback, so a second ask while the
+// worker runs (a page can't send one, but a USER_SCRIPT-world script
+// could) runs nothing twice. Oldest dropped past the cap.
+const mainFallbackDocs = new Set<string>();
+const MAIN_FALLBACK_DOCS_MAX = 200;
+// How long the fallback waits for a reload's refresh of a script, so a
+// reload runs the edited copy. The fallback is late anyway.
+const MAIN_FALLBACK_REFRESH_WAIT_MS = 5_000;
+
+// The sandboxed-page fallback. A CSP `sandbox` directive (or an
+// `<iframe sandbox>`) without `allow-scripts` turns off script in the
+// document's own world and gives it an opaque origin, so Chrome
+// injects no MAIN-world script there.
+// The bridge, in USER_SCRIPT world, notices (an opaque origin, and no
+// MAIN-world prelude started) and asks for this. Each MAIN-world script that matches the
+// document is injected into it in USER_SCRIPT world instead, as
+// Violentmonkey falls back to its content world. There is no page code
+// to share globals with on such a page, so the isolated world costs it
+// nothing. Each still asks check-pending whether to run, as a
+// registered copy would. See docs/injection.md#csp-sandbox-pages.
+async function runBlockedMainScripts(tabId: number, sender: chrome.runtime.MessageSender): Promise<void> {
+  const documentId = (sender as { documentId?: string }).documentId;
+  const url = sender.url;
+  if (!documentId || !url || sender.origin !== 'null') return;
+  if (mainFallbackDocs.has(documentId)) return;
+  mainFallbackDocs.add(documentId);
+  if (mainFallbackDocs.size > MAIN_FALLBACK_DOCS_MAX) mainFallbackDocs.delete(mainFallbackDocs.values().next().value!);
+  await ensureLoaded();
+  await claimsReady();
+  const frameId = sender.frameId ?? 0;
+  // Not one Chrome refused to register: it wasn't skipped by the page.
+  const rejected = await rejectedScriptIds();
+  const found = findMatchesForUrl(url).filter((m) => m.world === 'MAIN' && !rejected.has(m.id) && !(m.noframes && frameId !== 0));
+  const version = chrome.runtime.getManifest().version;
+  const reload = fastPathByDoc.get(fastPathKey(tabId, documentId));
+  for (const m of expectedMatches(found, activeClaim(tabId)?.runId)) {
+    // On a reload, build from the refreshed copy, so the edit runs (the
+    // copy's check-pending then finds nothing newer to swap in).
+    const refresh = reload?.scripts.get(m.id)?.promise;
+    if (refresh) await Promise.race([refresh, new Promise((r) => setTimeout(r, MAIN_FALLBACK_REFRESH_WAIT_MS))]);
+    const script = await getScript(m.id);
+    if (!script || script.status !== 'ok') continue;
+    const injections = await buildIsolatedFallbackInjections(script, version, getScriptLogLabel(m.id));
+    if (!injections) continue;
+    dlog(`[SourceMonkey] running ${getScriptLogLabel(m.id)} isolated on sandboxed document ${documentId}`);
+    try {
+      await executeManualRun(tabId, documentId, injections);
+    } catch (err) {
+      console.info(`[SourceMonkey] could not run ${getScriptLogLabel(m.id)} on a sandboxed page:`, err);
+    }
+  }
 }
 
 // Run `fn` in `tabId`'s work queue (`enqueueTabWork`) and hand back
@@ -5120,6 +5175,16 @@ function installScriptMessageListener(): void {
       // fire-and-forget check a focus event triggers.
       try { sendResponse({ ok: true }); } catch { /* gone */ }
       void refreshLocalScriptsOnTab(tabId);
+      return false;
+    }
+    if (type === SM_MAIN_BLOCKED_MSG) {
+      try { sendResponse({ ok: true }); } catch { /* gone */ }
+      // The bridge's own message, which it never relays for the page.
+      if (!viaBridge(msg)) {
+        void runBlockedMainScripts(tabId, sender).catch((err) => {
+          console.info('[SourceMonkey] sandboxed-page fallback failed:', err);
+        });
+      }
       return false;
     }
     if (type === 'sm:gm-xhr-start') {

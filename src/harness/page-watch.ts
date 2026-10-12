@@ -82,6 +82,8 @@ export class NoDocument extends Error {}
 // How long `evaluate` waits for a page that is between documents (a
 // reload or navigation under way) to have one again.
 const DOCUMENT_WAIT_MS = 5000;
+// How long `drain` waits for the page to run a timer.
+const DRAIN_WAIT_MS = 500;
 const BETWEEN_DOCUMENTS = 'The page is between documents (reloading or navigating), so there is none to evaluate in';
 
 // What an expression threw: an Error's description, else the value
@@ -273,7 +275,12 @@ export class PageAttachment implements PageLink {
    * handler, or a script body, which runs after its start report.
    */
   async drain(): Promise<void> {
-    await this.page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0))).catch(() => undefined);
+    // Bounded: a page with its own scripting off (a CSP `sandbox`) never
+    // runs the timer, and has no console lines of its own to wait for.
+    await Promise.race([
+      this.page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0))).catch(() => undefined),
+      new Promise((resolve) => setTimeout(resolve, DRAIN_WAIT_MS)),
+    ]);
     await this.caughtUp();
   }
 
@@ -495,15 +502,26 @@ export class PageAttachment implements PageLink {
   //
   // A page-world script's hook `eval`s under the page's Content Security
   // Policy, but within a CDP evaluation, which Chrome exempts from it.
+  //
+  // A page-world script runs isolated on a page that turns off script in
+  // its own world (docs/injection.md#csp-sandbox-pages), so its hook is
+  // looked for in the scripts' world too, after its own.
   private async evaluateInScript(at: EvalContexts, expression: string, scope: ScriptScope): Promise<string> {
-    const contextId = scope.world === 'MAIN' ? at.page : at.scripts;
-    if (contextId === null) throw new NoEvalHook();
     const { cdp } = at;
     const hook = `globalThis[${JSON.stringify(scope.key)}]?.[${JSON.stringify(scope.id)}]`;
-    const { result: found } = await cdp.send('Runtime.evaluate', {
-      expression: `typeof ${hook} === 'function'`, contextId, returnByValue: true,
-    });
-    if (found.value !== true) throw new NoEvalHook();
+    const hasHook = async (id: number | null): Promise<boolean> => {
+      if (id === null) return false;
+      const { result: found } = await cdp.send('Runtime.evaluate', {
+        expression: `typeof ${hook} === 'function'`, contextId: id, returnByValue: true,
+      });
+      return found.value === true;
+    };
+    const tried = scope.world === 'MAIN' ? [at.page, at.scripts] : [at.scripts];
+    let contextId: number | null = null;
+    for (const id of tried) {
+      if (await hasHook(id)) { contextId = id; break; }
+    }
+    if (contextId === null) throw new NoEvalHook();
     const { exceptionDetails: compiled } = await cdp.send('Runtime.compileScript', {
       expression, sourceURL: '', persistScript: false, executionContextId: contextId,
     });

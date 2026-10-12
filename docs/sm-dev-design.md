@@ -956,9 +956,16 @@ response, so it says so directly.
 
 - Watches each tab's main-frame navigation responses, skipping
   redirects, whose headers don't apply to the page.
-- Warns on each load of such a page that the run's MAIN-world scripts
-  match, naming them. The check and the wording live in
-  `src/sandboxed-page.ts`, shared with the extension's Log hint.
+- On each load of such a page that the run's MAIN-world scripts
+  match, names them:
+  - As a note that they run isolated instead, with a SourceMonkey that
+    does that (protocol 2.4 on; see
+    [injection.md](injection.md#csp-sandbox-pages)).
+  - As a warning that they can't run, with another manager or an older
+    SourceMonkey. An older sm-dev gives the warning with any
+    SourceMonkey, so with a newer one it's wrong.
+- The check and the wording live in `src/sandboxed-page.ts`, shared
+  with the extension's Log hint.
 
 ### Applying script changes
 

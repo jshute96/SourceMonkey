@@ -166,7 +166,7 @@ test('closing a followed tab and T1 is noticed, and the run carries on', async (
   expect(code).toBe(0);
 });
 
-test('a page sandboxed by its CSP header gets a warning naming the page-context scripts', async ({ fixtureServer, scriptsDir }) => {
+test('a page sandboxed by its CSP header gets a note naming the page-context scripts, which run isolated', async ({ fixtureServer, scriptsDir }) => {
   const main = scriptsDir.write({
     relativePath: 'page-world.user.js',
     meta: { name: 'PageWorld', match: ['*://*/*'], grant: ['none'] },
@@ -179,17 +179,15 @@ test('a page sandboxed by its CSP header gets a warning naming the page-context 
   });
   const { lines } = await runUntil({
     files: [main, content], urls: [`${fixtureServer.baseUrl}/__sandbox/target.html`], collectionRoot: scriptsDir.path,
-  }, ['sandboxes it', '[content-world] ran']);
-  const warning = lines.find((l) => l.includes('sandboxes it'));
-  expect(warning).toBe(
-    `[sm-dev] This page's Content-Security-Policy header sandboxes it without allow-scripts. A sandboxed page stops ` +
-    `scripts running in the page's own context, so these scripts can't run here: ` +
-    `${scriptsDir.path}/page-world.user.js. Add @inject-into content to run a script in the isolated context ` +
-    `instead, unless it needs the page's own variables.`,
+  }, ['sandboxes it', '[content-world] ran', '[page-world] ran']);
+  const note = lines.find((l) => l.includes('sandboxes it'));
+  expect(note).toBe(
+    `[sm-dev] This page's Content-Security-Policy header sandboxes it without allow-scripts, so SourceMonkey runs ` +
+    `these scripts in the isolated context instead: ${scriptsDir.path}/page-world.user.js.`,
   );
-  // The page-context one is blocked, the isolated one runs.
+  // Both run: the page-context one isolated.
   expect(lines).toContain('[script log] [content-world] ran');
-  expect(lines).not.toContain('[script log] [page-world] ran');
+  expect(lines).toContain('[script log] [page-world] ran');
 });
 
 test('--notab opens no tab, and no scripts open a blank page or the URL given', async ({ fixtureServer, scriptsDir }) => {

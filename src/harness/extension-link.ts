@@ -231,6 +231,15 @@ export class ExtensionLink {
     requireMinorOf(this.extensionProtocol, minor, feature);
   }
 
+  /**
+   * Whether the extension's protocol minor is at least `minor`: for
+   * output that depends on what the extension does. False for a run
+   * with no SourceMonkey link.
+   */
+  hasMinor(minor: number): boolean {
+    return (this.extensionProtocol?.minor ?? 0) >= minor;
+  }
+
   private constructor(
     private readonly context: BrowserContext,
     /**

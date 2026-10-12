@@ -1324,6 +1324,34 @@ export async function buildManualRunInjections(
   return out;
 }
 
+// What to inject to run MAIN-world script `script` in USER_SCRIPT world
+// instead, on a page that turns off script in its own world (a CSP
+// `sandbox` without `allow-scripts`, where Chrome injects nothing in
+// MAIN). Built as a registration of the same script with
+// `@inject-into content` ahead of its own headers, so it runs as an
+// isolated script would, with the runtime first (a no-op where
+// present). Null when the script has nothing Chrome could match on.
+// See `runBlockedMainScripts` in background.ts.
+export async function buildIsolatedFallbackInjections(
+  script: StoredScript,
+  scriptHandlerVersion: string,
+  logLabel: string,
+): Promise<ManualRunInjection[] | null> {
+  if (!script.header) return null;
+  const isolated: StoredScript = {
+    ...script,
+    header: { ...script.header, tags: [{ tag: 'inject-into', value: 'content' }, ...script.header.tags] },
+  };
+  const spec = await buildRegistrationSpec(isolated, scriptHandlerVersion, logLabel);
+  if (!spec) return null;
+  const out: ManualRunInjection[] = [];
+  if (needsGmRuntime(script.header)) {
+    out.push({ world: 'USER_SCRIPT', js: [{ code: WRAPPER_GM_RUNTIME + `\n//# sourceURL=${GM_RUNTIME_SOURCE_URL}\n` }] });
+  }
+  out.push({ world: 'USER_SCRIPT', js: spec.js.map((j) => ({ code: (j as { code: string }).code })) });
+  return out;
+}
+
 // Chrome 135's `chrome.userScripts.execute`, which our @types/chrome
 // predates.
 interface UserScriptsExecute {
@@ -1335,9 +1363,10 @@ interface UserScriptsExecute {
   }): Promise<unknown>;
 }
 
-// Inject a manual run into document `documentId` (the top frame's) of
-// `tabId`. Throws what Chrome says when it can't: a page it won't
-// inject into, or one that's gone (the tab closed or navigated).
+// Inject a manual run (or a sandboxed page's fallback) into document
+// `documentId` of `tabId`. Throws what Chrome says when it can't: a
+// page it won't inject into, or one that's gone (the tab closed or
+// navigated).
 export async function executeManualRun(
   tabId: number,
   documentId: string,

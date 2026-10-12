@@ -796,10 +796,10 @@ requests) to bury the script's.
 - `attach --log-source ...` picks the sources for that sm-dev alone.
 - `logs` reads them back, the page's too with `--log-source all`.
 - A page whose `Content-Security-Policy` header sandboxes it without
-  `allow-scripts` blocks scripts in the page's own context (`@grant
-  none`, `@inject-into page`). On each load of such a page, the run
-  names the loaded scripts that this blocks and suggests
-  `@inject-into content`.
+  `allow-scripts` blocks scripts in the page's own context.
+  SourceMonkey runs them in the isolated context there instead, and on
+  each load of such a page the run names them. Under another manager,
+  it names them as blocked and suggests `@inject-into content`.
 
 ## Sending commands
 

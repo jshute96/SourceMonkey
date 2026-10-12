@@ -139,6 +139,9 @@
   /* GM_addStyle / GM_addElement's insert from MAIN world (`insertNode`
      in wrapper-gm-runtime.js). */
   var INSERT_MARKER = "sourcemonkey-bridge-insert";
+  /* A MAIN-world prelude saying our scripts run in this document (see
+     the fallback at the end). userscript-prelude.js names it too. */
+  var MAIN_READY = "sourcemonkey-main-ready";
   /* Payload types we relay page -> SW. Telemetry + the reload
      fast-path handshake, plus the SW-backed half of the GM_* surface
      that the MAIN-world runtime needs. Anything not listed is dropped,
@@ -319,5 +322,39 @@
      can fire it too, which repeats one request: the SW answers it with
      the same claim or skip, or at worst a plain run in place of a
      reload hot-swap. */
+  var mainSeen = false;
+  try { window.addEventListener(MAIN_READY, function () { mainSeen = true; }, true); } catch (_e6) {}
   try { window.dispatchEvent(new CustomEvent(READY_MARKER)); } catch (_e5) {}
+
+  /* Fallback for a sandboxed page. A CSP `sandbox` directive (or an
+     `<iframe sandbox>`) without `allow-scripts` turns off script in the
+     document's own world, and with it every MAIN-world script: Chrome
+     injects none there, while this world still runs. Such a document has
+     an opaque origin, so on one where no MAIN-world prelude announces
+     itself (MAIN_READY, now or in answer to our ready event above), we
+     ask the SW to run this document's MAIN-world scripts here instead,
+     as Violentmonkey falls back to its content world.
+
+     - The check waits one task: every document_start registration is
+       in by then, so a prelude injected after us has announced too.
+     - The opaque origin is what keeps a script Chrome just hasn't
+       registered yet (a sync in progress) from running here twice.
+     - `sandbox allow-scripts` gives an opaque origin too, but its
+       MAIN-world scripts run and announce, so nothing runs twice.
+     - `sandbox allow-same-origin` keeps the real origin, so it is
+       missed (TODO.md). A probe <script> can't tell either: one we
+       insert reports running even on a sandboxed page.
+     - The page can send MAIN_READY too, which only keeps the fallback
+       off. */
+  var opaque = false;
+  try { opaque = self.origin === "null"; } catch (_e7) {}
+  if (opaque && !mainSeen) {
+    setTimeout(function () {
+      if (mainSeen) return;
+      try {
+        var p = chrome.runtime.sendMessage({ type: "sm:main-blocked" });
+        if (p && typeof p.catch === "function") p.catch(function () {});
+      } catch (_e8) {}
+    }, 0);
+  }
 })();

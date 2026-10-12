@@ -387,12 +387,20 @@ wasn't checked.
     bridge is on every page a MAIN-world script matches. Keying the
     channel closes it; scoping the listener to pages where a script
     grants either API would narrow it.
+  - The sandboxed-page fallback misses `sandbox allow-same-origin`
+    without `allow-scripts` (a CSP header, or the common
+    `<iframe sandbox="allow-same-origin">` for untrusted HTML): it keeps
+    the real origin, which is what the bridge keys on. A probe
+    `<script>` the bridge inserts reports running even on a sandboxed
+    page, so it can't tell. Needs another signal (docs/injection.md, "CSP sandbox
+    pages").
+  - A manual (`@run-at context-menu`) MAIN-world script still can't
+    run on a page whose sandbox turns off its own scripting: "Run this
+    script" injects into MAIN, which Chrome drops there. The load-time
+    fallback (docs/injection.md, "CSP sandbox pages") could cover it.
   - No CSP exemption for a MAIN-world `GM_addStyle` / `GM_addElement`
     into a closed shadow root, another frame's document or a detached
     parent; the runtime inserts those itself (docs/GM-APIs.md).
-  - Pages with a CSP `sandbox` header (opaque origin) get no MAIN-world
-    scripts at all. VM falls back to the isolated world there; we could
-    register an isolated copy for such frames.
   - `window.__SM_GM__` is on many more pages now, and page code can
     tamper with the built-ins a script uses (docs/GM-API-strategy.md,
     section 3, decided against VM's safe-builtins when granted scripts

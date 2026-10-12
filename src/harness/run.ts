@@ -25,6 +25,7 @@ import { launchExtensionBrowser } from './extension-launch.js';
 import { fetchManager, fetchedVersion } from './manager-fetch.js';
 import { DEFAULT_MANAGER, MANAGERS, managerFlag, type ManagerName } from './managers.js';
 import { ExtensionLink, linkRunId, type ExtensionEvent } from './extension-link.js';
+import { ISOLATES_SANDBOXED_PAGES_MINOR } from '../sm-dev-protocol.js';
 import { ExternalRunScripts, externalControl, externalOff, externalOthers, openExternalManager, type ExternalManager } from './external-manager.js';
 import type { ErrorReport, ManualReport, PageLink, SkipReport, StartReport } from './host.js';
 import { attachPage, targetIdOf, type AttachOptions, type PageAttachment } from './page-watch.js';
@@ -41,7 +42,7 @@ import { echoLine, INVALID_PREFIX, plainLine, quoted } from './output-style.js';
 // The roles for marked-up output, as S.id(...): their names are common locals here.
 import * as S from './output-style.js';
 import { browserSentence, checkRunsDir, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentCommand, type SentLineHandler } from './runs.js';
-import { cspBlocksPageScripts, sandboxedPageWarning } from '../sandboxed-page.js';
+import { cspBlocksPageScripts, sandboxedPageNote, sandboxedPageWarning } from '../sandboxed-page.js';
 import { waitForStuckTabs } from './stuck-tabs.js';
 import { NO_TABS } from './tab-refs.js';
 import { loadPage, settleTabs } from './wait.js';
@@ -959,7 +960,7 @@ async function runInBrowser(
     const tabId = await claimTab(link, page, opts.out);
     if (tabId === undefined) return 1;
     wirePageOutput(page, 1, opts.emit!, host, link.origin, () => tabs.firstTabScripts);
-    wireSandboxCheck(page, () => tabs.firstTabScripts, opts.out);
+    wireSandboxCheck(page, () => tabs.firstTabScripts, opts.out, link.hasMinor(ISOLATES_SANDBOXED_PAGES_MINOR));
     const dialogs = await DialogTracker.attach(page, tabEvent(opts.emit!, 1, 'dialog'), {
       visible: browserVisible(opts), commandsComing, tabRef: () => (tabs.list().length > 1 ? 'T1' : undefined),
     });
@@ -1519,7 +1520,7 @@ class FollowedTabs {
     const tabScripts = (): readonly PreparedScript[] => ((tabNow?.noScript ?? noScript) ? [] : this.scripts);
     wirePageOutput(page, n, this.opts.emit!, this.host, this.link.origin, tabScripts);
     // Not for a tab with no scripts, which gets none either way.
-    wireSandboxCheck(page, tabScripts, out);
+    wireSandboxCheck(page, tabScripts, out, this.link.hasMinor(ISOLATES_SANDBOXED_PAGES_MINOR));
     const dialogs = await DialogTracker.attach(page, tabEvent(this.opts.emit!, n, 'dialog'), {
       visible: browserVisible(this.opts),
       commandsComing: this.commandsComing,
@@ -1766,12 +1767,16 @@ function shortValue(value: unknown): string {
 }
 
 // A page whose CSP sandboxes it without allow-scripts gets no MAIN-world
-// userscripts in a real manager, and Chrome says nothing about it. Said
-// on each load of one that the run's MAIN-world scripts match. See
+// userscripts in a real manager, and Chrome says nothing about it.
+// SourceMonkey runs them isolated there instead. Said on each load of
+// one that the run's MAIN-world scripts match. See
 // src/sandboxed-page.ts.
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
-function wireSandboxCheck(page: Page, scripts: () => readonly PreparedScript[], out: (line: string) => void): void {
+// `isolates`: the manager runs such a page's MAIN-world scripts
+// isolated instead (SourceMonkey from protocol 2.4), so the line is a
+// note rather than a warning.
+function wireSandboxCheck(page: Page, scripts: () => readonly PreparedScript[], out: (line: string) => void, isolates: boolean): void {
   page.on('response', (response) => {
     try {
       // A redirect's own headers don't apply to the page it leads to.
@@ -1786,7 +1791,9 @@ function wireSandboxCheck(page: Page, scripts: () => readonly PreparedScript[], 
     void response.headerValue('content-security-policy').then((csp) => {
       if (!csp || !cspBlocksPageScripts(csp)) return;
       const blocked = scripts().filter((s) => s.world === 'MAIN' && explainMatch(s.matching, url).matches);
-      if (blocked.length > 0) out(`[sm-dev] ${sandboxedPageWarning(blocked.map(preparedScriptPath))}`);
+      if (blocked.length === 0) return;
+      const paths = blocked.map(preparedScriptPath);
+      out(`[sm-dev] ${isolates ? sandboxedPageNote(paths) : sandboxedPageWarning(paths)}`);
     }, () => undefined);
   });
 }

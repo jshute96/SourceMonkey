@@ -1482,6 +1482,20 @@
     callAs: callAs,
   };
 
+  /* In MAIN world, tell the bridge our scripts run here, now and again
+     when it announces itself (it may be injected after us). On a page
+     whose CSP `sandbox` turns off script in its own world, Chrome
+     injects nothing in MAIN, so the bridge hears neither and asks the
+     SW to run this document's MAIN-world scripts in USER_SCRIPT world
+     instead (MAIN_READY in wrapper-bridge.js). */
+  if (!hasOwnRuntimeChannel()) {
+    var announce = function () {
+      try { if (_CustomEvent && _dispatchEvent) _dispatchEvent(new _CustomEvent("sourcemonkey-main-ready")); } catch (_ae) {}
+    };
+    try { window.addEventListener("sourcemonkey-bridge-ready", announce, true); } catch (_le) {}
+    announce();
+  }
+
   /* Drain any configs the FIRST script's config blob (which ran
      before this prelude entry) pushed onto the queue. */
   drainQueue(initScript);

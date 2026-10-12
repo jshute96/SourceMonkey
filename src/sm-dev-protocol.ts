@@ -84,7 +84,13 @@ export const SKIP_REASON_SM_DEV = 'tab controlled by sm-dev';
 // 2.3: every script runs in the page's world unless it asks to be
 //   isolated, and sm-dev works out the world the same way, for
 //   `eval --script` and for whose error a page error could be.
-export const SM_DEV_PROTOCOL = { major: 2, minor: 3 } as const;
+// 2.4: on a page whose CSP `sandbox` turns off script in its own world,
+//   the page-world scripts run isolated instead, so sm-dev notes that
+//   rather than warning that they can't run.
+export const SM_DEV_PROTOCOL = { major: 2, minor: 4 } as const;
+// The minor from which a sandboxed page's MAIN-world scripts run
+// isolated (2.4 above).
+export const ISOLATES_SANDBOXED_PAGES_MINOR = 4;
 
 export interface ProtocolVersion {
   major: number;

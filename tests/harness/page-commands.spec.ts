@@ -634,3 +634,21 @@ test('click and hover say when the mouse can\'t reach the point', async ({ page,
   // Playwright's own reason stands when it gives one.
   expect(await run('hover #gone')).toEqual(['[sm-dev] The hover command failed: The element stayed outside the viewport for 5 seconds, where it can\'t be scrolled to']);
 });
+
+test('eval --script reaches a page-world script that runs isolated on a sandboxed page', async ({ page, fixtureServer, host, attachment, loadScript }) => {
+  // A CSP `sandbox` turns off script in the page's own world, so the
+  // extension runs the script isolated there (docs/injection.md#csp-sandbox-pages).
+  const script = await loadScript({
+    relativePath: 'sandboxed.user.js',
+    meta: { name: 'Sandboxed', match: ['*://*/__sandbox/target.html'], grant: ['none'] },
+    body: `const marker = 'ran'; document.documentElement.dataset.ran = marker;`,
+  });
+  const dialogs = await DialogTracker.attach(page, () => undefined, { visible: false, commandsComing: true });
+  await page.goto(`${fixtureServer.baseUrl}/__sandbox/target.html`);
+  await expect(page.locator('html')).toHaveAttribute('data-ran', 'ran');
+  const lines: string[] = [];
+  const tabs = [{ n: 1, page, link: attachment, dialogs, targetId: 'ABCDEF0123456789' }];
+  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(plainLine(l)), stop: () => undefined, logs: new RunLog() };
+  await runConsoleCommand('eval --script marker', ctx, {});
+  expect(lines).toEqual(['"ran"']);
+});

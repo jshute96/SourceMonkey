@@ -1047,11 +1047,62 @@ in the isolated one.
   `@connect` hosts, and read its responses and value broadcasts (see
   [Trust model](#trust-model)). This is the main thing the isolated
   world protects; a script that needs it says `@inject-into content`.
-- **A CSP `sandbox` page gets no MAIN-world scripts.** A page served
-  with a CSP `sandbox` directive has an opaque origin, and Chrome
-  injects no MAIN-world scripts there at all (see
-  `src/extension/missing-scripts.ts`). VM falls back to the isolated
-  world in that case; we don't yet (TODO.md).
+- **A CSP `sandbox` page runs them isolated.** Chrome injects no
+  MAIN-world script where the page's own world has script turned off,
+  so they run in USER_SCRIPT world there instead, a little later (see
+  [CSP sandbox pages](#csp-sandbox-pages)).
+
+##### CSP sandbox pages
+
+A CSP `sandbox` directive without `allow-scripts` (or an
+`<iframe sandbox>` without it) turns off script in the document's own
+world. Chrome then injects no MAIN-world script there, without a word,
+while USER_SCRIPT-world ones still run. VM falls back to its content
+world in that case, and so do we:
+
+- **Spotting it.** The bridge runs in USER_SCRIPT world, on every page
+  a MAIN-world script matches. Each MAIN-world prelude announces itself
+  to it (`sourcemonkey-main-ready`, sent on load and again when the
+  bridge announces itself). A bridge in a document with an opaque
+  origin (`self.origin === 'null'`) that has heard none one task after
+  it started sends `sm:main-blocked` to the SW itself.
+  - One task is enough: every `document_start` registration is in by
+    then.
+  - The opaque origin is what keeps a script Chrome just hasn't
+    registered yet (a sync in progress) from running isolated on an
+    ordinary page.
+  - `sandbox allow-scripts` also gives an opaque origin, but MAIN-world
+    scripts run there and announce, so nothing runs twice.
+  - `sandbox allow-same-origin` without `allow-scripts` keeps the real
+    origin, so it is missed (TODO.md). A probe `<script>` the bridge
+    inserts can't tell either: it reports running even there.
+  - The page can send the announcement too. That only keeps the
+    fallback off, and a page that can send it isn't one that needs it.
+- **Running them.** `runBlockedMainScripts` in `background.ts` finds the
+  MAIN-world scripts that match the document (honouring `@noframes`,
+  sm-dev claims, and leaving out any Chrome refused to register) and
+  injects each into it with
+  `chrome.userScripts.execute`, built as a registration of the same
+  script with `@inject-into content` ahead of its own headers
+  (`buildIsolatedFallbackInjections`). The GM runtime goes first, a
+  no-op where it is already there.
+  - Each still asks check-pending whether to run, as a registered copy
+    does, and reports as an isolated script.
+  - On a reload, each is built after the reload's refresh of it (up to
+    5 seconds), so an edit runs.
+  - The SW ignores a second ask for a document while it runs. After a
+    worker restart, the prelude's own per-world check keeps a second
+    copy of a script from starting.
+- **What it costs.** Such a page runs no script of its own, so there
+  are no page globals the script could have wanted. Scripts start late:
+  after a bridge task, a worker wake-up and a build each, which can be
+  after `DOMContentLoaded`. A `document-start` script's
+  MutationObserver finds the page already parsed.
+- The badge's MISSING hint for a sandboxed page
+  ([matching.md](matching.md#scripts-that-never-start)) covers a
+  fallback that failed to start a script.
+- sm-dev's `eval --script` looks for a page-world script's scope in the
+  isolated world too, so it reaches the fallback copy.
 - **One extra hop per call.** Every `GM_*` SW round-trip pays the
   bridge relay, like `sm:check-pending` already did from MAIN. The
   request leg costs no task hop (it is a synchronous event dispatch);
