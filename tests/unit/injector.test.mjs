@@ -763,6 +763,8 @@ test('buildSwapEvalBody: a swapped body with @requires shares their scope', asyn
   // registration uses, so the swap path gets shared scope for free —
   // but nothing exercised it end-to-end with a require present.
   const script = makeScript({
+    // `@grant none`: no sandbox, which `evalWithGate` has no prelude for.
+    header: { tags: [{ tag: 'name', value: 'Hello' }, { tag: 'grant', value: 'none' }] },
     bodyText: 'return tag("ok");',
     requires: [{
       url: 'https://cdn/x.js', source: 'const tag = (s) => "from-require:" + s;',
@@ -3492,7 +3494,7 @@ test('the helpers go into frames, whatever their scripts\' @noframes', async () 
   assert.equal(buildBridgeSpec([spec]).allFrames, true);
 });
 
-// ---------- The sandbox window (granted page-world scripts) ----------
+// ---------- The sandbox window (page-world scripts but @grant none) ----------
 
 const SANDBOXED_HEADER = { tags: [
   { tag: 'name', value: 'Foo' },
@@ -3500,7 +3502,7 @@ const SANDBOXED_HEADER = { tags: [
   { tag: 'inject-into', value: 'page' },
 ] };
 
-test('runsSandboxed: a granted page-world script only', () => {
+test('runsSandboxed: a page-world script without @grant none', () => {
   const h = (...tags) => ({ header: makeHeader([{ tag: 'name', value: 'X' }, ...tags]) });
   const grant = (v) => ({ tag: 'grant', value: v });
   const into = (v) => ({ tag: 'inject-into', value: v });
@@ -3511,7 +3513,9 @@ test('runsSandboxed: a granted page-world script only', () => {
   assert.equal(runsSandboxed(h(grant('GM_setValue'), { tag: 'sandbox', value: 'DOM' })), false, 'isolated');
   assert.equal(runsSandboxed(h(grant('none'))), false);
   assert.equal(runsSandboxed(h(grant('none'), grant('GM_setValue'))), false);
-  assert.equal(runsSandboxed(h()), false, 'grantless');
+  // As TM and VM run one (measured).
+  assert.equal(runsSandboxed(h()), true, 'grantless');
+  assert.equal(runsSandboxed(h(into('content'))), false, 'grantless, isolated');
   assert.equal(runsSandboxed({ header: null }), false);
 });
 
@@ -3539,12 +3543,15 @@ test('wrapCombinedEntry: a sandboxed script runs `with` its scope, `this` the sa
   const spec = await buildRegistrationSpec(script);
   assert.equal(spec.world, 'MAIN');
   const code = spec.js[2].code;
-  assert.match(code, /with\(__smW\)return __smC\(function\(\)\{void 1;\n/);
-  assert.match(code, /\n\},__smS\);\}\)\}\)\(/);
+  // Defined on the head line and called on the closing one, so its
+  // call frame is past the end of the script's own lines.
+  assert.match(code, /with\(__smW\)\{const __smU=function\(\)\{void 1;\n/);
+  assert.match(code, /\n\};return __smC\(__smU,__smS\)\}\}\)\}\)\(/);
   const stub = sandboxStub();
   const out = runCombined(spec, { __smPrelude: stub.prelude });
   assert.deepEqual(out, ['sandbox', 'scope', 'function']);
-  assert.deepEqual(Object.keys(stub.calls.exposed).sort(), ['GM', 'GM_info', 'GM_setValue']);
+  // `unsafeWindow` is always on the sandbox, as in TM and VM.
+  assert.deepEqual(Object.keys(stub.calls.exposed).sort(), ['GM', 'GM_info', 'GM_setValue', 'unsafeWindow']);
 });
 
 test('wrapCombinedEntry: a sandboxed script\'s window.close goes on its sandbox only', async () => {
@@ -3567,7 +3574,7 @@ test('wrapCombinedEntry: a sandboxed script\'s window.close goes on its sandbox 
   assert.equal(stub.calls.exposed.close, replacement);
 });
 
-test('wrapCombinedEntry: an ungranted page-world script keeps the arrow scope', async () => {
+test('wrapCombinedEntry: a @grant none page-world script keeps the arrow scope', async () => {
   const spec = await buildRegistrationSpec(makeScript({
     header: { tags: [{ tag: 'name', value: 'Foo' }, { tag: 'grant', value: 'none' }] },
   }));
@@ -3584,7 +3591,8 @@ test('buildSwapEvalBody: a sandboxed script gets the same scope, without `return
     bodyText: 'void 1;\n[this.mine, fromScope]',
   });
   const { body } = await buildSwapEvalBody(script, '0.0.0');
-  assert.match(body, /with\(__smW\)__smC\(function\(\)\{void 1;\n/);
+  assert.match(body, /with\(__smW\)\{const __smU=function\(\)\{void 1;\n/);
+  assert.match(body, /\n\};__smC\(__smU,__smS\)\}/);
   // Global code, as the indirect eval runs it: sloppy, so `with` parses.
   const stub = sandboxStub();
   const run = new Function('self', 'window', 'document', `return eval(${JSON.stringify(body.replace('[this.mine', 'return [this.mine'))});`);

@@ -55,9 +55,10 @@ test.describe('sandbox window', () => {
         window.dispatchEvent(new Event('sm-test'));
         window.onclick = () => {};
         document.body.dataset.smRan = [
-          // Page globals, bare and through window.
+          // Page globals: bare names reach them; the sandbox window
+          // shows only the browser's built-ins, as in TM and VM.
           __PAGE_APP__.name,
-          window.__PAGE_APP__.name,
+          typeof window.__PAGE_APP__,
           // The library's copy, bare and through window.
           __PAGE_FN__(),
           window.__PAGE_FN__(),
@@ -79,16 +80,21 @@ test.describe('sandbox window', () => {
           // A shim reassigning a granted name works, as in VM, rather
           // than hitting our const.
           (() => { GM_setValue = 'shim'; return GM_setValue; })(),
-          // Feature tests with \`in\` see the page's properties.
+          // Feature tests with \`in\` see the built-ins, not the page's
+          // own globals.
           'setTimeout' in window,
           '__PAGE_APP__' in window,
           'IntersectionObserver' in self,
+          Object.keys(window).includes('__PAGE_APP__'),
+          // A bare built-in is the sandbox's too.
+          setTimeout === window.setTimeout,
           // Object.prototype's methods see the sandbox.
           window.hasOwnProperty('__OWN__'),
           // A native constructor with no prototype still constructs.
           typeof new window.Proxy({}, {}),
           // A bound copy reads as native exactly when the original does,
-          // and is the same copy each time.
+          // and is the same copy each time. The page's wrapper above
+          // isn't seen: the sandbox has the browser's own method.
           Function.prototype.toString.call(window.setTimeout).includes('native code'),
           Function.prototype.toString.call(window.addEventListener).includes('native code'),
           window.setTimeout === window.setTimeout,
@@ -107,17 +113,17 @@ test.describe('sandbox window', () => {
     await page.goto(`${fixtureServer.baseUrl}/${PAGE}`);
     const body = page.locator('body');
     await expect(body).toHaveAttribute('data-sm-ran', [
-      'page-app', 'page-app',
+      'page-app', 'undefined',
       'lib-fn', 'lib-fn', 'my-lib', '1',
       'true', 'true', 'true', 'true',
       'object', 'function', 'object',
       'false', 'page-fn:x',
       '[object Window]',
       'shim',
-      'true', 'true', 'true',
+      'true', 'false', 'true', 'false', 'true',
       'true',
       'object',
-      'true', 'false', 'true',
+      'true', 'true', 'true',
       'false:locked',
     ].join(','));
     await expect(body).toHaveAttribute('data-sm-timer', 'fired');
@@ -132,6 +138,169 @@ test.describe('sandbox window', () => {
       typeof window.onclick,
       typeof (window as any).LOCKED,
     ].join(','))).toBe('page-fn:y,undefined,undefined,function,undefined');
+    await page.close();
+  });
+
+  test('iframe guards: bare top and parent match the sandbox in the top frame, and not in a child frame', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // `if (window.self !== top) return;` and its variants are how most
+    // scripts skip frames; in the top frame each must read as false.
+    scriptsDir.write({
+      relativePath: 'guards.user.js',
+      meta: {
+        name: 'Guards',
+        match: [`${fixtureServer.baseUrl}/frames-*`],
+        runAt: 'document-end',
+        grant: ['GM_setValue'],
+      },
+      body: `
+        document.documentElement.dataset.smFramed = [
+          self !== top, window.self !== top, window !== top, window.top !== window.self,
+          parent !== window, self !== window.parent, frames === window,
+        ].join(',');
+      `,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    const html = (body: string) => ({ status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' }, body });
+    await page.route(`${fixtureServer.baseUrl}/frames-top.html`, (route) => route.fulfill(
+      html('<!doctype html><iframe src="frames-child.html"></iframe>'),
+    ));
+    await page.route(`${fixtureServer.baseUrl}/frames-child.html`, (route) => route.fulfill(html('<!doctype html><p>child</p>')));
+    await page.goto(`${fixtureServer.baseUrl}/frames-top.html`);
+    await expect(page.locator('html')).toHaveAttribute('data-sm-framed', 'false,false,false,false,false,false,true');
+    const child = page.frames().find((f) => f.url().endsWith('/frames-child.html'))!;
+    await expect(child.locator('html')).toHaveAttribute('data-sm-framed', 'true,true,true,true,true,true,true');
+    await page.close();
+  });
+
+  test('the sandbox window has the browser\'s built-ins as they were before the page ran', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // Measured in TM 5.5.0 and VM 2.49.0: a page's replacement of a
+    // built-in, its `var` / `function` globals and element ids are
+    // left off the sandbox window, while bare names still reach them.
+    scriptsDir.write({
+      relativePath: 'builtins.user.js',
+      meta: { name: 'Builtins', match: [`${fixtureServer.baseUrl}/builtins.html`], runAt: 'document-end', grant: ['GM_setValue'] },
+      body: `
+        document.documentElement.dataset.smSeen = [
+          window.fetch === unsafeWindow.fetch,
+          fetch === unsafeWindow.fetch,
+          Function.prototype.toString.call(window.fetch).includes('native code'),
+          typeof window.pageVar, pageVar,
+          typeof window.pageFn, typeof pageFn,
+          typeof window.probeDiv, typeof probeDiv,
+          window.name,
+          window.document === unsafeWindow.document,
+          (() => { const f = (x) => eval('x + 1'); return f(1); })(),
+        ].join(',');
+      `,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.route(`${fixtureServer.baseUrl}/builtins.html`, (route) => route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      body: `<!doctype html><html><head><script>
+        var pageVar = 'pv';
+        function pageFn() {}
+        const origFetch = window.fetch;
+        window.fetch = function pageFetch() { return origFetch.apply(this, arguments); };
+        window.name = 'pagename';
+      </script></head><body><div id="probeDiv"></div></body></html>`,
+    }));
+    await page.goto(`${fixtureServer.baseUrl}/builtins.html`);
+    await expect(page.locator('html')).toHaveAttribute('data-sm-seen', [
+      'false', 'false', 'true',
+      'undefined', 'pv',
+      'undefined', 'function',
+      'undefined', 'object',
+      'pagename', 'true',
+      '2',
+    ].join(','));
+    await page.close();
+  });
+
+  test('the sandbox window: frames by index, static members, and what a page changed before the script', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'edges.user.js',
+      meta: { name: 'Edges', match: [`${fixtureServer.baseUrl}/edges.html`], runAt: 'document-end', grant: ['GM_setValue'] },
+      body: `
+        window.opener = 'mine';
+        document.documentElement.dataset.smEdges = [
+          // Child frames by index are the page's.
+          window.length, window[0] === unsafeWindow[0], frames[0] === unsafeWindow[0],
+          // A native constructor's static members survive.
+          typeof Proxy.revocable, typeof window.Proxy.revocable,
+          // The language's globals are the originals.
+          window.JSON === unsafeWindow.JSON, typeof JSON.parse,
+          // A constructor the page deleted before the script ran is gone.
+          'Notification' in window,
+          // One the page replaced before first use shows through (read lazily).
+          FormData.name,
+          // A [Replaceable] write reads back.
+          window.opener,
+        ].join(',');
+      `,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.route(`${fixtureServer.baseUrl}/edges.html`, (route) => route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      body: `<!doctype html><html><head><script>
+        window.JSON = { parse: function () {}, stringify: function () {} };
+        delete window.Notification;
+        window.FormData = function PageFormData() {};
+      </script></head><body><iframe srcdoc="<p>child</p>"></iframe></body></html>`,
+    }));
+    await page.goto(`${fixtureServer.baseUrl}/edges.html`);
+    // The [Replaceable] write stayed in the sandbox.
+    await expect.poll(() => page.locator('html').getAttribute('data-sm-edges')).toBeTruthy();
+    expect(await page.evaluate(() => window.opener)).toBeNull();
+    await expect(page.locator('html')).toHaveAttribute('data-sm-edges', [
+      '1', 'true', 'true',
+      'function', 'function',
+      'false', 'function',
+      'false',
+      'PageFormData',
+      'mine',
+    ].join(','));
+    await page.close();
+  });
+
+  test('a script with no @grant line is sandboxed too, as in TM and VM', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'grantless.user.js',
+      meta: { name: 'Grantless', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
+      body: `
+        window.__GRANTLESS_OWN__ = 1;
+        const { unsafeWindow } = window;
+        document.body.dataset.smGrantless = [
+          typeof window.__PAGE_APP__, __PAGE_APP__.name,
+          unsafeWindow === window, unsafeWindow.__PAGE_APP__.name,
+        ].join(',');
+      `,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/${PAGE}`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-grantless', 'undefined,page-app,false,page-app');
+    expect(await page.evaluate(() => typeof (window as any).__GRANTLESS_OWN__)).toBe('undefined');
     await page.close();
   });
 

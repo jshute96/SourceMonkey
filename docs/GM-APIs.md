@@ -1175,10 +1175,11 @@ too.
   - **The page's world** (a sandboxed script):
     `const __smWin_close = reg.gm.windowControl.make(scriptId, "close")`.
     The sandbox `window` holds it as its own `close`, so that script's
-    `window.close()`, `self.close()` and bare `close()` reach it. The
-    page's `window` and other scripts keep the native method, and so
-    do the script's own `top.close()`, `unsafeWindow.close()` and
-    `this.close()` in an event handler, which name the page's window.
+    `window.close()`, `self.close()`, bare `close()`, and `top.close()`
+    in the top frame reach it. The page's `window` and other scripts
+    keep the native method, and so do the script's own
+    `unsafeWindow.close()` and `this.close()` in an event handler,
+    which name the page's window.
     The channel key keeps the page from the runtime and the bridge,
     and the worker's check (`bridgeMayActAs`) is the backstop behind
     it.

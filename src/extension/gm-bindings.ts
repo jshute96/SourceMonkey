@@ -236,7 +236,7 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   //
   //   - MAIN world (the default): `window` IS the page's window, so
   //     this is the real thing. It's emitted outside the sandbox
-  //     `window` a granted script gets, so it isn't the sandbox.
+  //     `window` a sandboxed script gets, so it isn't the sandbox.
   //   - USER_SCRIPT world: reachable only when the script declared
   //     `@inject-into content` or `@sandbox DOM`, i.e. asked for isolation.
   //     `window` is then the isolated realm's, NOT the page's — matching

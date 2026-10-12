@@ -113,22 +113,23 @@ test.describe('unsafeWindow without a grant', () => {
     extensionContext, fixtureServer, sm,
   }) => {
     // The scan strips comments and string literals first. A script that
-    // only talks ABOUT unsafeWindow gets no binding for it; its sandbox
-    // window carries only the bindings it got.
+    // only talks ABOUT unsafeWindow gets no binding for it. Checked
+    // under `@grant none`: a sandboxed script's `window` carries
+    // `unsafeWindow` regardless, as in TM and VM.
     scriptsDir.write({
       relativePath: 'a.user.js',
       meta: {
         name: 'MentionsOnly',
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
-        grant: ['GM_setValue'],
+        grant: ['none'],
       },
       body: `
         // One day this will use unsafeWindow for the page's app object.
         const note = 'needs unsafeWindow';
         const b = document.body.dataset;
         b.smNote = note;
-        b.smBinding = String(typeof this['unsafe' + 'Window']);
+        b.smBinding = eval('typeof unsafe' + 'Window');
       `,
     });
     await sm.addCollection(scriptsDir.path);

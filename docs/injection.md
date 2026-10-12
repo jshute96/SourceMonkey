@@ -723,7 +723,7 @@ after `load` never runs, and nothing happens.
 2026-10-06, on example.com and the `headers-run-at` example page,
 whose `load` comes about 480ms in):
 
-- Tampermonkey, granted script (its sandbox): runs with `readyState`
+- Tampermonkey, sandboxed script (granted): runs with `readyState`
   already `complete`, and the load listener fires, on both pages. Also
   seen on the live sites of five corpus scripts.
 - Tampermonkey, `@grant none` (page world): on the example page it
@@ -845,9 +845,12 @@ Why the page by default:
   an app's state, `customElements`) without `unsafeWindow`, since there
   they run in the page. In USER_SCRIPT world those read as `undefined`
   and the script silently breaks.
-- A granted script still keeps its own writes off the page's `window`:
-  it runs in a [sandbox `window`](#the-sandbox-window), as under TM and
-  VM. A `@grant none` or grantless one gets the page's `window`.
+- Any script but a `@grant none` one still keeps its own writes off
+  the page's `window`: it runs in a
+  [sandbox `window`](#the-sandbox-window), as under TM and VM. That
+  includes a script with no `@grant` line at all, as both run it
+  (measured in TM 5.5.0 and VM 2.49.0). A `@grant none` one gets the
+  page's `window`.
 - What the page costs a script is under
   [Costs of running in MAIN](#costs-of-running-in-main).
   `@inject-into content` / `@sandbox DOM` are the way out.
@@ -872,8 +875,12 @@ is `const unsafeWindow = window;`, emitted outside any sandbox:
 - Chrome's isolated worlds each get their own `window` per document,
   with no synchronous channel to the page's realm, so nothing can stand
   in for it there.
-- A granted script's own `window` is a sandbox over the page's, so
-  `unsafeWindow !== window` for it, as in TM.
+- A sandboxed script's own `window` is a sandbox of the browser's
+  built-ins, so `unsafeWindow !== window` for it, as in TM. The sandbox
+  always carries `unsafeWindow` as its own property, binding or not
+  (TM and VM's do), so `const { unsafeWindow } = window` works.
+- A `@grant none` script without the binding has no `unsafeWindow`,
+  as in TM and VM.
 
 The isolated-world case:
 
@@ -1591,17 +1598,17 @@ arrangement (see [parse-check.md](parse-check.md#what-is-checked)).
 
 ### The sandbox window
 
-A granted script in MAIN world runs inside a sandbox `window`, as
-Tampermonkey and Violentmonkey run theirs. `@grant none` and grantless
-scripts get the page's `window` itself, as under both
-(`runsSandboxed` in `src/script-world.ts`).
+A MAIN-world script runs inside a sandbox `window`, as Tampermonkey and
+Violentmonkey run theirs, whether it grants something or has no
+`@grant` line at all. A `@grant none` script gets the page's `window`
+itself, as under both (`runsSandboxed` in `src/script-world.ts`).
 
 The user scope then has this shape instead of the arrow:
 
 ```
-const __smP=__smReg.prelude,__smS=__smP.sandbox({GM_info:GM_info,…}),__smW=__smP.scopeOf(__smS),__smC=__smP.callAs;with(__smW)return __smC(function(){
+const __smP=__smReg.prelude,__smS=__smP.sandbox({GM_info:GM_info,…,unsafeWindow:window}),__smW=__smP.scopeOf(__smS),__smC=__smP.callAs;with(__smW){const __smU=function(){
 <requires, then the script's own source>
-},__smS);
+};return __smC(__smU,__smS)}
 ```
 
 - `__smS` is the sandbox, the script's `window`. `__smW` is a thin
@@ -1609,10 +1616,15 @@ const __smP=__smReg.prelude,__smS=__smP.sandbox({GM_info:GM_info,…}),__smW=__s
 - `with` makes bare names look in the sandbox first, so a bare `$`
   finds a `@require`'s copy before the page's, and a bare `window`
   reads as the sandbox.
-  - The scope claims only the sandbox's own names and `window` /
-    `self` / `globalThis`. Any other bare name resolves as before, so a
-    page function called bare still gets `undefined` as `this`, not the
-    Proxy.
+  - The scope claims the sandbox's own names, the browser's built-ins
+    (so a bare `setTimeout` is `window.setTimeout`), `window` / `self` /
+    `globalThis`, and `top` / `parent` / `frames` when they are this
+    window. So the usual "skip frames" guard (`if (window.self !== top)
+    return;`) is false in the top frame, as on the real window.
+  - Any other bare name resolves as before: a page global, a page
+    `let` / `class`, an element id. So a bare `pageGlobal` reaches the
+    page, as in TM and VM, and a page function called bare still gets
+    `undefined` as `this`, not the Proxy.
 - A function called with the sandbox as `this` (through the prelude's
   captured `Reflect.apply`), so top-level `this` is the sandbox too.
   Top-level `arguments` is the function's own, empty list.
@@ -1623,18 +1635,50 @@ const __smP=__smReg.prelude,__smS=__smP.sandbox({GM_info:GM_info,…}),__smW=__s
 
 It is a Proxy (`makeSandbox` in `src/userscript-prelude.js`):
 
-- **Reads fall through** to the page's `window`, and so does `in`:
-  `"IntersectionObserver" in window` answers for the page.
+- **It shows the browser's built-ins, not the page's globals**, as
+  TM and VM do (measured in TM 5.5.0 and VM 2.49.0):
+  - `window.pageGlobal`, `"pageGlobal" in window` and
+    `Object.keys(window)` don't see anything the page added (its
+    `var`s, functions, element ids). A bare `pageGlobal` or
+    `unsafeWindow.pageGlobal` does.
+  - Built-ins are as they were before page code ran: after the page
+    replaces `window.fetch`, the sandbox's `fetch` is still the
+    browser's.
+  - The prelude records them at `document_start` (`BUILTINS`), about
+    0.3 ms a page, in MAIN world only.
+  - The window's capitalized names (constructors Chrome creates on
+    first use) are only named then, and read at their first use. So a
+    page's replacement made before then shows through, and one the
+    page deleted is gone.
+    - Read at once: the language's own globals (`JSON`, `Object`,
+      `Promise`, …) and constructors pages often replace
+      (`XMLHttpRequest`, `WebSocket`, …).
+  - Built-in accessors (`document`, `location`, `name`, `onload`) are
+    called on the real window, so they stay live.
+  - Read live instead of recorded:
+    - Child frames by index (`window[0]`, `frames[i]`).
+    - The window's `[Replaceable]` properties (`opener`, `innerWidth`,
+      `event`, …), whose write replaces the page's property, so
+      `window.opener = null` reads back.
+    - Names our GM runtime puts on the page's window (`onurlchange` and
+      its `addEventListener` wrapper). Once one script grants
+      `window.onurlchange`, every sandbox in that world reads these
+      live, a page's later wrapper included.
+    - `addEventListener` while the `load` replay wraps it.
+  - A manual run's prelude can load after the page's code, and then
+    the page's globals show through.
+  - The recorded descriptors have no prototype, so a page's
+    `Object.prototype.get` can't steer a read.
 - **Plain writes stay in the sandbox**: `window.foo = x`,
   `defineProperty`, a library's `window.jQuery = …` or `this.Lib = …`.
   The page never sees them; a script that wants to export something
   writes to `unsafeWindow`.
   - They live on the Proxy's target, so the Proxy invariants hold,
     non-configurable properties included.
-- **Setters go through**: a write to a property the page's `window`
-  has a setter for (`onload`, `location`, `name`, our `onurlchange`)
-  reaches the page. A read-only one (`document`) refuses the write, as
-  the real `window` does.
+- **Setters go through**: a write to a built-in with a setter
+  (`onload`, `location`, `name`, our `onurlchange`) reaches the page.
+  A read-only one (`document`) refuses the write, as the real `window`
+  does.
 - **`window`, `self`, `globalThis`**, and `top` / `parent` / `frames`
   when they are this window, read as the sandbox. `unsafeWindow` is
   the page's.
@@ -1646,9 +1690,11 @@ It is a Proxy (`makeSandbox` in `src/userscript-prelude.js`):
     `onurlchange` support does). TM binds the same list. A script's own
     replacement of one is bound too.
   - Any other native function with no `prototype` is bound as well,
-    which leaves constructors (`Image`, `Promise`) and page functions
-    alone. `Object.prototype`'s methods (`hasOwnProperty`) aren't, so
-    they see the sandbox.
+    which leaves constructors (`Image`, `Promise`) alone. Not one with
+    static members of its own (`Proxy.revocable`), which a bound copy
+    would lose, and not `eval`, so a bare `eval(…)` stays direct.
+    `Object.prototype`'s methods (`hasOwnProperty`) aren't, so they see
+    the sandbox.
   - One bound copy per method, so identity checks still hold, and
     `new` still works through it (`new window.Proxy(…)`).
   - The copy reads as native code exactly when the original does, so a
@@ -1673,15 +1719,16 @@ sandbox has the same shape:
   the page hands back as its window: `event.source === window` in a
   `message` listener, `document.defaultView === window`.
 - Event handlers and timers get the page's window as `this`.
-- A bound method isn't the bare one: `window.setTimeout !== setTimeout`.
-- Bare `top` and `parent` are the page's window, not the sandbox. So
-  `top.close()` gets the page's `close`, not a granted replacement.
 - A sloppy-mode assignment to an undeclared name (`foo = 1`) lands on
-  the page's window, as it always did.
+  the page's window, as it always did. Not for a built-in's name, which
+  the scope claims: `fetch = wrapper` stays in the sandbox, and
+  `onerror = f` reaches the page through its setter.
 - `Object.freeze(window)` throws, as the page's window can't be frozen
   either.
-- Every bare name the script reads goes through the scope's `has`, so
-  global lookups are slower. TM and VM pay the same.
+- Every bare name the script reads goes through the scope's `has`,
+  and a bare built-in through the sandbox too, so global lookups are
+  slower. TM and VM pay the same. A data built-in's value (`JSON`, a
+  bound `setTimeout`) is worked out once per sandbox.
 - The load-listener replay recognizes the sandbox as `window` (see
   [`document-idle` and the `load` event](#document-idle-and-the-load-event)).
 

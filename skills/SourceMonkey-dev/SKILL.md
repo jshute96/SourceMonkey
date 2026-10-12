@@ -372,7 +372,8 @@ $R eval 'config.mode'                        # a top-level const of the script
   (below).
 - Use `eval --page` for the page's own globals (its `$`, an app's
   state object) as the page sees them. An isolated script can't see
-  them, and a granted one may have its own `$` from a `@require`.
+  them, and a sandboxed one (below) may have its own `$` from a
+  `@require`.
 
 For state inside other functions, expose state and functions on
 `window`. Build this in while developing; it's cheap and can stay:
@@ -388,9 +389,13 @@ $R eval 'myScript.currentSlide()'
 $R eval 'myScript.relayout(); myScript.state'
 ```
 
-- With any `@grant` other than `none`, the script's `window` is its
-  own (a sandbox over the page's), so a `window` property there is
-  private to the script.
+- Unless the script has `@grant none` (no `@grant` line counts as
+  sandboxed too), its `window` is its own sandbox, as in Tampermonkey
+  and Violentmonkey, so a `window` property there is private to the
+  script.
+  - The sandbox shows only the browser's built-ins. Read the page's
+    globals by bare name (`$`, `appState`) or as `unsafeWindow.x`;
+    `window.x` is `undefined` for them.
 - A `@grant none` script shares the page's `window`: pick a name the
   site won't collide with. `eval --page` reaches it too.
 

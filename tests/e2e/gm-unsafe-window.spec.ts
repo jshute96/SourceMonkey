@@ -27,7 +27,7 @@ test.describe('@grant unsafeWindow', () => {
   test.beforeEach(() => { scriptsDir = ScriptsDir.create(); });
   test.afterEach(() => { scriptsDir.cleanup(); });
 
-  test('reaches real page globals; its own window is a sandbox over them', async ({
+  test('reaches real page globals; its own window is a sandbox of the built-ins', async ({
     extensionContext, fixtureServer, sm,
   }) => {
     scriptsDir.write({
@@ -42,11 +42,12 @@ test.describe('@grant unsafeWindow', () => {
         const b = document.body.dataset;
         b.smAppName = String(unsafeWindow.__PAGE_APP__ && unsafeWindow.__PAGE_APP__.name);
         b.smFnResult = String(unsafeWindow.__PAGE_FN__ ? unsafeWindow.__PAGE_FN__('x') : 'no-fn');
-        // A granted script's own window is a sandbox over the page's,
-        // so the two differ, as in Tampermonkey. Reads still reach the
-        // page through either.
+        // A granted script's own window is a sandbox, so the two
+        // differ, as in Tampermonkey. The sandbox shows only the
+        // browser's built-ins, so the page's globals are reached
+        // through unsafeWindow or by bare name.
         b.smSameAsWindow = String(unsafeWindow === window);
-        b.smViaWindow = String(window.__PAGE_APP__ && window.__PAGE_APP__.name);
+        b.smViaWindow = String(typeof window.__PAGE_APP__) + ':' + __PAGE_APP__.name;
         // Writes must land where the page can see them.
         unsafeWindow.__FROM_SCRIPT__ = 'hello-page';
       `,
@@ -59,7 +60,7 @@ test.describe('@grant unsafeWindow', () => {
     await expect(page.locator('body')).toHaveAttribute('data-sm-app-name', 'page-app');
     await expect(page.locator('body')).toHaveAttribute('data-sm-fn-result', 'page-fn:x');
     await expect(page.locator('body')).toHaveAttribute('data-sm-same-as-window', 'false');
-    await expect(page.locator('body')).toHaveAttribute('data-sm-via-window', 'page-app');
+    await expect(page.locator('body')).toHaveAttribute('data-sm-via-window', 'undefined:page-app');
 
     // page.evaluate runs in the page's MAIN world, so it sees both the
     // side effect of the page function AND what the script wrote.
@@ -134,7 +135,7 @@ test.describe('@grant unsafeWindow', () => {
       },
       body: `
         const b = document.body.dataset;
-        b.smAppName = String(window.__PAGE_APP__ && window.__PAGE_APP__.name);
+        b.smAppName = String(__PAGE_APP__ && __PAGE_APP__.name);
         const seen = GM_getValue('visits', 0);
         b.smVisits = String(seen);
         GM_setValue('visits', seen + 1);

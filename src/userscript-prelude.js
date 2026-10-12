@@ -30,8 +30,9 @@
  *                matcher + check-pending + @run-at gates resolve.
  *                Concatenation is what gives requires and the body one
  *                shared scope, nested inside the bindings' scope so
- *                its declarations shadow ours. A granted page-world
- *                script's runs inside `with` over its sandbox `window`
+ *                its declarations shadow ours. A sandboxed page-world
+ *                script's (any but `@grant none`) runs inside `with`
+ *                over its sandbox `window`
  *                instead (see makeSandbox). Trailing
  *                `//# sourceURL=sourcemonkey://<id>/<name>.user.js`,
  *                plus an inline source map when requires are present so
@@ -586,6 +587,11 @@
        added by a page `<script>` that a USER_SCRIPT-world body
        injects, since that runs in the page's world.
      See docs/injection.md, "`document-idle` and the `load` event". */
+  /* Set while runWithLoadReplay's wrapper is on the page's window, so a
+     sandbox reads `addEventListener` live and the wrapper sees its
+     calls. */
+  var replayingLoad = false;
+
   function runWithLoadReplay(run) {
     var w = window;
     var queued = [];
@@ -607,8 +613,10 @@
       patched = true;
     } catch (_e) {}
     try {
+      replayingLoad = patched;
       run();
     } finally {
+      replayingLoad = false;
       if (patched) {
         try {
           if (ownAdd) Object.defineProperty(w, "addEventListener", ownAdd);
@@ -1321,40 +1329,60 @@
     });
   };
 
-  /* ---------- The sandbox `window` for granted page-world scripts ----------
-     A granted script in MAIN world runs its user program inside
+  /* ---------- The sandbox `window` for page-world scripts ----------
+     A MAIN-world script runs its user program inside
      `with (scope)`, with the sandbox as top-level `this`, as
-     Tampermonkey and Violentmonkey run theirs. The sandbox is a Proxy
-     standing in for `window`:
-       - Reads fall through to the page's window, so `window.$` and a
-         bare `$` both see the page's jQuery, and `"x" in window`
-         answers for the page's properties too.
+     Tampermonkey and Violentmonkey run theirs, unless it has
+     `@grant none` (`runsSandboxed`). The sandbox is a Proxy
+     standing in for `window`, shaped as theirs are (measured):
+       - It shows the window's built-ins, as they were when this prelude
+         loaded at document_start, before any page code
+         (`BUILTINS`). So `window.fetch` is the browser's even after the
+         page replaced it, and `window.pageGlobal`, `"pageGlobal" in
+         window` and `Object.keys(window)` don't see what the page
+         added. A bare `pageGlobal` still reaches it (see the scope
+         below), and `unsafeWindow` is the page's window itself.
+       - Built-in accessors (`document`, `location`, `name`, `onload`)
+         are called on the real window, so they read and write it live.
        - Plain writes (`window.foo = x`, `defineProperty`) stay in the
          sandbox, so a `@require`d library's `window.jQuery = …` doesn't
          replace the page's. A bare `foo` in the script then finds the
          sandbox's copy first.
-       - Writes to a setter the page's window has (`onload`,
-         `location`, `name`, our `onurlchange`) go through to it.
        - `window`, `self`, `globalThis`, and `top` / `parent` / `frames`
          where they are this window, read as the sandbox.
        - Window methods (`setTimeout`, `addEventListener`, other native
          ones) come back bound to the real window, since a call through
          the sandbox would pass it as `this` and the method would
-         throw.
+         throw. Not `eval`, so a bare `eval(…)` stays a direct eval.
        - The script's own bindings (`GM_info`, granted `GM_*`, `GM`,
          `unsafeWindow`) are on it, so `this.unsafeWindow` and
          `window.GM_setValue` work as they do in TM and VM.
+       - Names our GM runtime puts on the page's window
+         (`onurlchange`, and its wrapped `addEventListener`) are read
+         live: the runtime lists them in `reg.liveWindowNames`. So is
+         `addEventListener` while the load replay wraps it
+         (`replayingLoad`).
        - Our own `__sm*` globals bypass it, both ways: the eval hook's
          map and `__smGate` must stay on the real window.
      The `with` object is a second, thin Proxy over it (the scope). Its
-     `has` claims only the sandbox's own names and `window` / `self` /
-     `globalThis`, so any other bare name resolves as it would without
-     the sandbox; the sandbox's own `has` answers `in` for everything.
+     `has` claims the sandbox's own names, the built-ins, and the
+     window's aliases, so a bare `setTimeout` is the sandbox's too. Any
+     other bare name (a page global, a page `let`, an element id)
+     resolves as it would without the sandbox.
      The sandbox's own properties live on its Proxy target, so the
      Proxy invariants hold for them, non-configurable ones included.
      See docs/injection.md, "The sandbox window". */
   var _Proxy = typeof Proxy === "function" ? Proxy : null;
   var _WeakMap = typeof WeakMap === "function" ? WeakMap : null;
+  /* The maps' methods, captured: the sandbox calls them on every read,
+     and a page that replaced `WeakMap.prototype.get` could otherwise
+     hand back a "bound" method of its own. */
+  var _wmGet = _WeakMap && _WeakMap.prototype.get;
+  var _wmSet = _WeakMap && _WeakMap.prototype.set;
+  var _wmHas = _WeakMap && _WeakMap.prototype.has;
+  function wmGet(m, k) { return _ReflectApply(_wmGet, m, [k]); }
+  function wmSet(m, k, v) { _ReflectApply(_wmSet, m, [k, v]); }
+  function wmHas(m, k) { return _ReflectApply(_wmHas, m, [k]); }
   var _ReflectConstruct = Reflect.construct;
   var _ReflectDefineProperty = Reflect.defineProperty;
   var _ReflectDeleteProperty = Reflect.deleteProperty;
@@ -1377,7 +1405,7 @@
   var nativeVerdicts = _WeakMap ? new _WeakMap() : null;
 
   function isSandbox(v) {
-    return !!(sandboxes && v && (typeof v === "object") && sandboxes.has(v));
+    return !!(sandboxes && v && (typeof v === "object") && wmHas(sandboxes, v));
   }
 
   /* The window's own methods, bound by name whatever their value: a
@@ -1396,10 +1424,26 @@
     "webkitRequestAnimationFrame").split(" ").forEach(function (n) { WINDOW_METHODS[n] = true; });
 
   function isNative(fn) {
-    var v = nativeVerdicts.get(fn);
+    var v = wmGet(nativeVerdicts, fn);
     if (v === undefined) {
       try { v = NATIVE_CODE.test(_ReflectApply(_fnToString, fn, [])); } catch (_e) { v = false; }
-      nativeVerdicts.set(fn, v);
+      wmSet(nativeVerdicts, fn, v);
+    }
+    return v;
+  }
+
+  /* Whether native `fn` has static members of its own (`Proxy.revocable`)
+     past `length` and `name`, which a bound copy would lose. */
+  var staticVerdicts = _WeakMap ? new _WeakMap() : null;
+  function hasStatics(fn) {
+    var v = wmGet(staticVerdicts, fn);
+    if (v === undefined) {
+      var ks = _ownKeys(fn);
+      v = false;
+      for (var i = 0; i < ks.length; i++) {
+        if (ks[i] !== "length" && ks[i] !== "name") { v = true; break; }
+      }
+      wmSet(staticVerdicts, fn, v);
     }
     return v;
   }
@@ -1409,11 +1453,11 @@
      don't). Not `Object.prototype`'s (`hasOwnProperty`, `valueOf`):
      those must see the sandbox as `this`. */
   function isWindowMethod(k, fn) {
-    if (typeof fn !== "function") return false;
+    if (typeof fn !== "function" || k === "eval") return false;
     if (typeof k === "string" && WINDOW_METHODS[k]) return true;
     if (_hasOwn(fn, "prototype")) return false;
     if (_hasOwn(_ObjectProto, k) && _ObjectProto[k] === fn) return false;
-    return isNative(fn);
+    return isNative(fn) && !hasStatics(fn);
   }
 
   /* The same bound copy each time, so `removeEventListener(type,
@@ -1425,7 +1469,7 @@
      - A replacement (a page's wrapper, our `window.close`) gets a plain
        function calling it with the real window. */
   function boundToWindow(fn) {
-    var b = boundMethods.get(fn);
+    var b = wmGet(boundMethods, fn);
     if (!b) {
       if (isNative(fn)) {
         b = _ReflectApply(_bind, fn, [window]);
@@ -1435,22 +1479,142 @@
           return _ReflectApply(fn, window, arguments);
         };
       }
-      boundMethods.set(fn, b);
+      wmSet(boundMethods, fn, b);
     }
     return b;
+  }
+
+  /* The window's built-in properties, own and inherited, as they are
+     now, at document_start before any page code: name -> descriptor,
+     the nearest one along the prototype chain. `BUILTIN_OWN` marks
+     those on the window itself, for `getOwnPropertyDescriptor` and
+     `ownKeys`. Symbols aren't kept (they're read live). A prelude
+     loaded later (a manual run) gets a list with the page's globals in
+     it, so they show through there.
+     - The window's own capitalized names (`Image`, `HTMLDivElement`, a
+       thousand of them) are constructors Chrome creates on first use,
+       and reading their descriptors here would build them all (about
+       3 ms a page). So they're only named here (`LAZY_BUILTIN`), and
+       their descriptor is read at the first use (`builtinDescriptor`).
+       That misses a page's replacement made before then, so those
+       pages commonly replace (`EAGER_CONSTRUCTORS`) are read now. */
+  var BUILTINS = _ObjectCreate(null);
+  var BUILTIN_OWN = _ObjectCreate(null);
+  var BUILTIN_OWN_KEYS = [];
+  var LAZY_BUILTIN = {};
+  /* Read now though capitalized: the language's own globals, which
+     exist from the start so cost nothing, and the constructors pages
+     commonly replace. */
+  var EAGER_CONSTRUCTORS = _ObjectCreate(null);
+  ("Object Function Array Number Boolean String Symbol BigInt Date RegExp " +
+    "Error TypeError RangeError SyntaxError ReferenceError EvalError URIError " +
+    "AggregateError Promise Proxy Reflect JSON Math Intl Atomics Map Set " +
+    "WeakMap WeakSet WeakRef FinalizationRegistry ArrayBuffer SharedArrayBuffer " +
+    "DataView Int8Array Uint8Array Uint8ClampedArray Int16Array Uint16Array " +
+    "Int32Array Uint32Array Float32Array Float64Array BigInt64Array " +
+    "BigUint64Array NaN Infinity " +
+    "XMLHttpRequest WebSocket EventSource MutationObserver " +
+    "IntersectionObserver Worker Request Response Headers Image " +
+    "Event CustomEvent").split(" ").forEach(function (n) { EAGER_CONSTRUCTORS[n] = true; });
+  /* Only MAIN world makes sandboxes; the isolated world skips the
+     work. */
+  if (!OWN_CHANNEL) (function () {
+    for (var o = window; o; o = _getPrototypeOf(o)) {
+      var ks = _ownKeys(o);
+      for (var i = 0; i < ks.length; i++) {
+        var k = ks[i];
+        if (typeof k !== "string" || k in BUILTINS || isOurKey(k)) continue;
+        var d;
+        if (o === window && k[0] >= "A" && k[0] <= "Z" && !EAGER_CONSTRUCTORS[k]) {
+          d = LAZY_BUILTIN;
+        } else {
+          /* No prototype, so a page's `Object.prototype.get` can't
+             steer the reads below. */
+          d = bare(_getOwnPropertyDescriptor(o, k));
+          if (!d) continue;
+        }
+        BUILTINS[k] = d;
+        if (o === window) { BUILTIN_OWN[k] = true; BUILTIN_OWN_KEYS.push(k); }
+      }
+    }
+  })();
+
+  /* The descriptor the sandbox keeps for built-in `k`, or null. */
+  function builtinDescriptor(k) {
+    var d = BUILTINS[k];
+    if (d !== LAZY_BUILTIN) return d || null;
+    d = bare(_getOwnPropertyDescriptor(window, k));
+    if (!d) {
+      /* The page deleted it before first use: gone from the sandbox
+         too, so `in` agrees. */
+      delete BUILTINS[k];
+      delete BUILTIN_OWN[k];
+      return null;
+    }
+    BUILTINS[k] = d;
+    return d;
+  }
+
+  /* Names our GM runtime added to the page's window or wrapped there,
+     which the sandbox reads live rather than from `BUILTINS`. */
+  function isLiveName(k) {
+    if (typeof k !== "string") return false;
+    if (isIndex(k)) return true;
+    if (replayingLoad && k === "addEventListener") return true;
+    var live = reg.liveWindowNames;
+    return !!(live && live[k] === true);
+  }
+
+  /* Child frames by index (`window[0]`, `frames[i]`): there are none
+     at document_start, so they're read live. */
+  function isIndex(k) {
+    /* Indexing, not string methods, which a page may have replaced. */
+    if (!(k[0] >= "0" && k[0] <= "9")) return false;
+    return "" + (k >>> 0) === k && k !== "4294967295";
+  }
+
+  /* The window's [Replaceable] properties: a write through their setter
+     replaces the page's property with a plain value. A write through
+     the sandbox (`window.opener = null`) stays in the sandbox instead,
+     like any other, and reads back from there. */
+  var REPLACEABLE = _ObjectCreate(null);
+  ("opener event length frames parent self external clientInformation " +
+    "innerWidth innerHeight outerWidth outerHeight screenX screenY " +
+    "screenLeft screenTop scrollX scrollY pageXOffset pageYOffset " +
+    "devicePixelRatio origin screen performance visualViewport " +
+    "locationbar menubar personalbar scrollbars statusbar toolbar").split(" ")
+    .forEach(function (n) { REPLACEABLE[n] = true; });
+
+  /* Whether `k` is a built-in the sandbox shows, reading a lazy one's
+     descriptor so a name the page deleted reads as gone. */
+  function isBuiltin(k) {
+    return k in BUILTINS && (BUILTINS[k] !== LAZY_BUILTIN || builtinDescriptor(k) !== null);
+  }
+
+  /* Whether the sandbox shows `k` from the page's window. */
+  function isShown(k) {
+    return typeof k !== "string" || isBuiltin(k) || isLiveName(k);
+  }
+
+  /* The descriptor the sandbox goes by for page name `k`, or null. */
+  function shownDescriptor(k) {
+    if (typeof k !== "string" || isLiveName(k)) return windowDescriptor(k);
+    return builtinDescriptor(k);
   }
 
   /* Called for every bare name the script reads, so it avoids
      allocating. */
   function isOurKey(k) {
-    return typeof k === "string" && k.charCodeAt(0) === 95
-      && k.lastIndexOf("__sm", 0) === 0;
+    /* Indexing, not string methods, which a page may have replaced. */
+    return typeof k === "string" && k[0] === "_" && k[1] === "_"
+      && k[2] === "s" && k[3] === "m";
   }
 
   /* The page window's descriptor for `k`, own or inherited. */
   function windowDescriptor(k) {
     for (var o = window; o; o = _getPrototypeOf(o)) {
-      var d = _getOwnPropertyDescriptor(o, k);
+      /* No prototype: see `BUILTINS`. */
+      var d = bare(_getOwnPropertyDescriptor(o, k));
       if (d) return d;
     }
     return null;
@@ -1458,6 +1622,12 @@
 
   function isWindowAlias(k) {
     return k === "window" || k === "self" || k === "globalThis";
+  }
+
+  /* Names that are this window only sometimes: in the top frame, and
+     always for `frames`. */
+  function isSelfAlias(k) {
+    return k === "top" || k === "parent" || k === "frames";
   }
 
   function makeSandbox(exposed) {
@@ -1473,25 +1643,52 @@
       if (exposed[keys[i]] === undefined) continue;
       _defineProperty(own, keys[i], dataDesc(exposed[keys[i]], true, false, true));
     }
-    /* The page's value for `k`, as the script should see it. */
+    /* The page's value for `k`, as the script should see it: a
+       built-in's original value, or its getter called on the real
+       window; undefined for a name the sandbox doesn't show. */
+    /* Data built-ins' values as the script sees them (bound, say),
+       worked out once: bare `document` and `JSON` are read through
+       here on every use. */
+    var dataValues = _ObjectCreate(null);
     function pageValue(k) {
-      var v = window[k];
-      if (v === window && (isWindowAlias(k) || k === "top" || k === "parent" || k === "frames")) return proxy;
+      var v;
+      if (typeof k !== "string" || isLiveName(k)) {
+        v = window[k];
+      } else {
+        if (k in dataValues) return dataValues[k];
+        var d = builtinDescriptor(k);
+        if (!d) return undefined;
+        if (!d.get && !d.set && "value" in d) {
+          v = d.value;
+          if (v === window && (isWindowAlias(k) || isSelfAlias(k))) v = proxy;
+          else if (isWindowMethod(k, v)) v = boundToWindow(v);
+          dataValues[k] = v;
+          return v;
+        }
+        v = d.get ? _ReflectApply(d.get, window, []) : undefined;
+      }
+      if (v === window && (isWindowAlias(k) || isSelfAlias(k))) return proxy;
       if (isWindowMethod(k, v)) return boundToWindow(v);
       return v;
     }
     proxy = new _Proxy(own, {
       has: function (t, k) {
         if (isOurKey(k)) return k in window;
-        return k in t || k in window;
+        if (k in t) return true;
+        return isShown(k) && (typeof k !== "string" || isLiveName(k) ? k in window : true);
       },
       get: function (t, k) {
         if (isOurKey(k)) return window[k];
         if (_hasOwn(t, k)) {
           var v = _ReflectGet(t, k, proxy);
           /* A script's own replacement of a window method, which
-             likely ends in the native one. */
-          return typeof k === "string" && WINDOW_METHODS[k] && typeof v === "function" ? boundToWindow(v) : v;
+             likely ends in the native one. Not a fixed one: the Proxy
+             must report a non-configurable, read-only value as is. */
+          if (typeof k === "string" && WINDOW_METHODS[k] && typeof v === "function") {
+            var od = _getOwnPropertyDescriptor(t, k);
+            if (od && (od.configurable || od.writable)) return boundToWindow(v);
+          }
+          return v;
         }
         return pageValue(k);
       },
@@ -1501,8 +1698,14 @@
         /* A setter goes through to the page; a read-only property
            (`document`, `undefined`) refuses the write, as the real
            window does. Anything else becomes the sandbox's own. */
-        var w = windowDescriptor(k);
-        if (w && w.set) { _ReflectApply(w.set, window, [v]); return true; }
+        var w = shownDescriptor(k);
+        if (w && w.set && !(typeof k === "string" && REPLACEABLE[k] === true)) {
+          _ReflectApply(w.set, window, [v]);
+          return true;
+        }
+        if (typeof k === "string" && REPLACEABLE[k] === true) {
+          return _ReflectDefineProperty(t, k, dataDesc(v, true, true, true));
+        }
         if (w && (w.get || !w.writable)) return false;
         return _ReflectDefineProperty(t, k, dataDesc(v, true, true, true));
       },
@@ -1516,7 +1719,13 @@
       },
       getOwnPropertyDescriptor: function (t, k) {
         if (!isOurKey(k) && _hasOwn(t, k)) return _getOwnPropertyDescriptor(t, k);
-        var w = _getOwnPropertyDescriptor(window, k);
+        var w;
+        if (isOurKey(k) || typeof k !== "string" || isLiveName(k)) {
+          w = _getOwnPropertyDescriptor(window, k);
+        } else if (BUILTIN_OWN[k]) {
+          /* A copy: the caller may change it. */
+          w = bare(builtinDescriptor(k)) || undefined;
+        }
         if (!w) return undefined;
         /* Reported configurable: the target lacks it, and a Proxy can
            only report a non-configurable property its target has. */
@@ -1525,16 +1734,29 @@
         return w;
       },
       ownKeys: function (t) {
-        var seen = Object.create(null);
+        var seen = _ObjectCreate(null);
         var out = [];
+        /* Plain loops and index writes: a page may have replaced
+           the array methods. */
         var add = function (k) {
-          if (typeof k === "symbol") { if (out.indexOf(k) < 0) out.push(k); return; }
-          if (seen[k]) return;
-          seen[k] = true;
-          out.push(k);
+          if (typeof k === "symbol") {
+            for (var j = 0; j < out.length; j++) if (out[j] === k) return;
+          } else {
+            if (seen[k]) return;
+            seen[k] = true;
+          }
+          _defineProperty(out, out.length, dataDesc(k, true, true, true));
         };
-        _ownKeys(window).forEach(add);
-        _ownKeys(t).forEach(add);
+        var i;
+        for (i = 0; i < BUILTIN_OWN_KEYS.length; i++) {
+          if (BUILTIN_OWN[BUILTIN_OWN_KEYS[i]]) add(BUILTIN_OWN_KEYS[i]);
+        }
+        var wk = _ownKeys(window);
+        for (i = 0; i < wk.length; i++) {
+          if (typeof wk[i] === "symbol" || isLiveName(wk[i])) add(wk[i]);
+        }
+        var tk = _ownKeys(t);
+        for (i = 0; i < tk.length; i++) add(tk[i]);
         return out;
       },
       getPrototypeOf: function () { return _getPrototypeOf(window); },
@@ -1545,7 +1767,15 @@
     var scope = new _Proxy(Object.create(null), {
       has: function (_t, k) {
         if (typeof k !== "string" || isOurKey(k)) return false;
-        return _hasOwn(own, k) || isWindowAlias(k);
+        if (_hasOwn(own, k) || isWindowAlias(k)) return true;
+        /* A built-in, so a bare `setTimeout` is the sandbox's, as
+           `window.setTimeout` is. */
+        if ((!isSelfAlias(k) && isBuiltin(k)) || isLiveName(k)) return true;
+        /* Bare `top`, `parent` and `frames` too, when they are this
+           window, so `self !== top` is false in the top frame, as
+           `window.self !== window.top` is. Otherwise the usual
+           "skip frames" guard would stop the script on the page. */
+        return isSelfAlias(k) && window[k] === window;
       },
       get: function (_t, k) {
         if (k === _unscopables) return undefined;
@@ -1555,13 +1785,13 @@
         return _ReflectSet(proxy, k, v);
       },
     });
-    sandboxes.set(proxy, scope);
+    wmSet(sandboxes, proxy, scope);
     return proxy;
   }
 
   /* The object a sandbox's user program runs `with`. */
   function scopeOf(sandbox) {
-    return (sandboxes && sandboxes.get(sandbox)) || sandbox;
+    return (sandboxes && wmGet(sandboxes, sandbox)) || sandbox;
   }
 
   /* Run the user program with the sandbox as `this`, through the

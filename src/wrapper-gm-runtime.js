@@ -2939,6 +2939,16 @@
     if (!ensureUrlChangePatch()) return;
     urlChangeEnabled = true;
     ensureUrlChangeProperty();
+    /* A sandbox `window` shows the window's built-ins as they were at
+       document_start, so it would miss these; it reads the names
+       listed here live instead (`isLiveName` in the prelude). */
+    if (!reg.liveWindowNames) {
+      var live = _ObjectCreate(null);
+      live.onurlchange = true;
+      live.addEventListener = true;
+      live.removeEventListener = true;
+      reg.liveWindowNames = live;
+    }
   }
 
   var urlchange = {

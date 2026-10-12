@@ -99,6 +99,7 @@ test.describe('user program scope', () => {
           GM_info.mine,
           GM_addStyle('x'),
           unsafeWindow === window,
+          // The sandbox, which shows only the browser's built-ins.
           typeof self.__PAGE_APP__,
           // A name the script left alone still reaches our binding.
           GM_getValue('k', 'dflt'),
@@ -116,7 +117,7 @@ test.describe('user program scope', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/${PAGE}`);
     await expect(page.locator('body')).toHaveAttribute(
-      'data-sm-ran', 'true,own:x,true,object,dflt',
+      'data-sm-ran', 'true,own:x,true,undefined,dflt',
     );
     await page.close();
   });
@@ -126,7 +127,9 @@ test.describe('user program scope', () => {
   }) => {
     // `const unsafeWindow = window.wrappedJSObject || window;` is a real
     // library idiom. The requires share the script's nested scope, so
-    // the library's declaration shadows our granted binding.
+    // the library's declaration shadows our granted binding. On Chrome
+    // that makes it the sandbox, as in Tampermonkey, so the page's
+    // globals are read by bare name here.
     scriptsDir.writeRaw('lib.js', 'const unsafeWindow = window.wrappedJSObject || window;\n');
     scriptsDir.write({
       relativePath: 'a.user.js',
@@ -137,7 +140,7 @@ test.describe('user program scope', () => {
         grant: ['unsafeWindow'],
         extra: ['// @require     lib.js'],
       },
-      body: `document.body.dataset.smApp = String(unsafeWindow.__PAGE_APP__.name);`,
+      body: `document.body.dataset.smApp = String(unsafeWindow === window) + ':' + __PAGE_APP__.name;`,
     });
     const added = await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
@@ -146,7 +149,7 @@ test.describe('user program scope', () => {
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/${PAGE}`);
-    await expect(page.locator('body')).toHaveAttribute('data-sm-app', 'page-app');
+    await expect(page.locator('body')).toHaveAttribute('data-sm-app', 'true:page-app');
     await page.close();
   });
 

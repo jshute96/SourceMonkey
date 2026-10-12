@@ -37,8 +37,10 @@ synchronously from the legacy form and return a Promise from the
 `GM.` form (matches the GM4 contract). Most other APIs are
 pass-through aliases.
 
-`@grant none` (or an absent `@grant`) emits **no** bindings — the
-script gets the page's `window` directly (MAIN world).
+`@grant none` (or an absent `@grant`) emits **no** `GM_*` bindings.
+A `@grant none` script gets the page's `window` directly (MAIN world);
+one with no `@grant` line runs in a sandbox `window`, as in TM and VM
+([injection.md](injection.md#the-sandbox-window)).
 
 Strict gating: every other `@grant` name is canonicalized through
 the catalog. Names we don't recognize (TM-only `GM_audio`, typos
@@ -53,7 +55,7 @@ the script sees a `ReferenceError` at call time, and the SW logs a
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
 | `GM_info` / `GM.info` | ✅ | ✓ | ✓ | ✓ | Implicit — exposed in every script regardless of `@grant` (including `@grant none` and scripts with no `@grant` line), and in both MAIN and USER_SCRIPT worlds. Also spliced into every `@require` entry. Baked into the wrapper at registration time. Surface: `script.{name, version, namespace, description, matches, includes, excludes, grant, runAt}`, `scriptHandler: "SourceMonkey"`, `version: <extension version>`, `scriptMetaStr` (raw `==UserScript==` block), `uuid` (stored script id). `script.grant` is the **canonicalized** set we emitted bindings for, not the raw `@grant` lines — `@grant GM.setValue` shows up as `GM_setValue`. TM and VM both report the raw lines instead. |
-| `unsafeWindow` | ✅ | ✓ | ✓ |   | The page's real `window`. Scripts run in MAIN world unless they ask for isolation (see below), and `unsafeWindow` is the page's own `window`. The script's own `window` is a sandbox over it ([injection.md](injection.md#the-sandbox-window)), so `unsafeWindow === window` is `false`, as in TM and VM on Chrome (measured; see [cross-manager-test-results.md](cross-manager-test-results.md)). Reads, writes, and calls all reach the page's realm. **No grant needed:** a script whose body names `unsafeWindow` without granting it gets the same treatment — TM and VM both expose the name ungranted, so plenty of real scripts never declare it (see below). **Exception:** `@inject-into content` or `@sandbox DOM` pins the script to the isolated world, where it can only be that world's own `window`; that combination is flagged with a startup-log warning. |
+| `unsafeWindow` | ✅ | ✓ | ✓ |   | The page's real `window`. Scripts run in MAIN world unless they ask for isolation (see below), and `unsafeWindow` is the page's own `window`. Unless the script has `@grant none`, its own `window` is a sandbox showing only the browser's built-ins ([injection.md](injection.md#the-sandbox-window)), so `unsafeWindow === window` is `false`, as in TM and VM on Chrome (measured; see [cross-manager-test-results.md](cross-manager-test-results.md)). Reads, writes, and calls through `unsafeWindow` all reach the page's realm. **No grant needed:** a script whose body names `unsafeWindow` without granting it gets the same treatment — TM and VM both expose the name ungranted, so plenty of real scripts never declare it (see below). **Exception:** `@inject-into content` or `@sandbox DOM` pins the script to the isolated world, where it can only be that world's own `window`; that combination is flagged with a startup-log warning. |
 
 ### `unsafeWindow` and the execution world
 

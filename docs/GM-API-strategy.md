@@ -51,7 +51,8 @@ recommends a path.
   matches, runAt, js: [{code}]})`. Chrome owns matching + injection.
 - Two realms in use:
   - `MAIN` world (the default). Shares both DOM and globals with the
-    page; a granted script gets a sandbox `window` over the page's.
+    page; any script but a `@grant none` one gets a sandbox `window`
+    showing the browser's built-ins.
   - `USER_SCRIPT` world (`@inject-into content` / `@sandbox DOM`). An
     isolated world Chrome provides specifically for userscript
     managers. Shares the DOM with the page but has its own globals.

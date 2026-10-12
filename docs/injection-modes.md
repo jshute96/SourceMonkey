@@ -61,7 +61,7 @@ js: [
 //# sourceMappingURL=data:application/json;charset=utf-8;base64,…
 ```
 
-A granted page-world script's user scope opens and closes differently
+A sandboxed page-world script's user scope (any but `@grant none`) opens and closes differently
 (a `with` over its sandbox `window`), on the same lines; see
 [injection.md](injection.md#the-sandbox-window).
 

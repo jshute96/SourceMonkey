@@ -333,7 +333,7 @@ export function wrapPreludeEntry(): string {
 //     declaration SyntaxErrors, so the script never ran. All of these
 //     work under TM and VM, whose GM names live in an outer scope too.
 //
-// A granted page-world script's user program runs in a `with` over its
+// A sandboxed page-world script's user program runs in a `with` over its
 // sandbox `window` instead; see `SANDBOX_SCOPE_OPEN` below.
 //
 // Why an arrow FUNCTION, not a block:
@@ -403,9 +403,12 @@ const userScopeClose = (ret: string): string => `\n};${ret}__smReg.prelude.callA
 //     claims `__sm*` names, so they resolve to these.
 //
 // Same lines as the arrow form: the declaration and opener go on the
-// head line, the closer on the wrap's last line.
-const SANDBOX_SCOPE_OPEN = '__smC(function(){';
-const SANDBOX_SCOPE_CLOSE = '\n},__smS);';
+// head line, the closer on the wrap's last line. Like the arrow, the
+// function is defined on the head line (inside the `with`, so the
+// scope is lexically its) and called on the closing one, so its call
+// frame is past the end of the script's own lines.
+const SANDBOX_SCOPE_OPEN = '{const __smU=function(){';
+const sandboxScopeClose = (ret: string): string => `\n};${ret}__smC(__smU,__smS)}`;
 
 // What a sandbox `window` holds of its own: the script's bindings and
 // its granted window-method replacements.
@@ -414,7 +417,12 @@ type SandboxOwn = Pick<GmBindingEmit, 'declared' | 'windowMethods'>;
 // Declares the sandbox, holding the script's own bindings, ahead of
 // the `with`.
 function sandboxDeclaration(own: SandboxOwn): string {
+  // `unsafeWindow` is always on the sandbox, binding or not, as in TM
+  // and VM: a script with no `@grant` line that takes it from `window`
+  // (`const { unsafeWindow } = window`) still gets the page. This line
+  // is outside the `with`, so `window` here is the page's.
   const exposed = own.declared.map((n) => `${n}:${n}`)
+    .concat(own.declared.includes('unsafeWindow') ? [] : ['unsafeWindow:window'])
     .concat(own.windowMethods.map((m) => `${m}:${windowMethodBinding(m)}`))
     .join(',');
   return `const __smP=__smReg.prelude,__smS=__smP.sandbox({${exposed}}),__smW=__smP.scopeOf(__smS),__smC=__smP.callAs;`;
@@ -426,8 +434,8 @@ function userScope(own: SandboxOwn | null, withReturn: boolean): { open: string;
   const ret = withReturn ? 'return' : '';
   if (!own) return { open: USER_SCOPE_OPEN, close: userScopeClose(ret ? ret + ' ' : '') };
   return {
-    open: `${sandboxDeclaration(own)}with(__smW)${ret ? ret + ' ' : ''}${SANDBOX_SCOPE_OPEN}`,
-    close: SANDBOX_SCOPE_CLOSE,
+    open: `${sandboxDeclaration(own)}with(__smW)${SANDBOX_SCOPE_OPEN}`,
+    close: sandboxScopeClose(ret ? ret + ' ' : ''),
   };
 }
 
@@ -771,6 +779,10 @@ export async function buildGmBindingsForScript(
   // buys nothing on the SW side: `unsafeWindow` has no subsystem the
   // bridge gate can be asked for (`grantedSubsystems` is header-derived
   // and unchanged), so this adds no capability, only a `window` alias.
+  //
+  // A sandboxed script reaches `unsafeWindow` without the binding too:
+  // the sandbox always carries it (`sandboxDeclaration`). So this
+  // matters for `@grant none` and isolated-world scripts.
   //
   // A `@require` that declares the name itself needs no special case:
   // the user program runs in a nested scope (see wrapCombinedEntry), so

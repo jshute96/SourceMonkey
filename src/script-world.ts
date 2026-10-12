@@ -24,9 +24,9 @@ export type InjectionWorld = 'MAIN' | 'USER_SCRIPT';
 // Why the page by default: scripts written against TM and VM read the
 // page's globals (its `$`, an app's state, `customElements`) without
 // `unsafeWindow`, since there they are in the page. In USER_SCRIPT world
-// those read as `undefined` and the script silently breaks. A granted
-// script still keeps its writes off the page's `window`: it runs in a
-// sandbox `window` (`runsSandboxed` below).
+// those read as `undefined` and the script silently breaks. Any script
+// but a `@grant none` one still keeps its writes off the page's
+// `window`: it runs in a sandbox `window` (`runsSandboxed` below).
 //
 // What the page costs a script, and why `@inject-into content` exists:
 // see docs/injection.md, "Execution world".
@@ -56,17 +56,18 @@ export function resolveScriptWorld(
 }
 
 // Whether the script's user program runs inside a sandbox `window`
-// (the prelude's `sandbox`): a page-world script that grants anything.
-// That's how Tampermonkey and Violentmonkey run a granted script in the
-// page: reads reach the page's globals, but the script's own writes,
-// a `@require`d library's `window.jQuery = …` included, stay off the
-// page's `window`. A `@grant none` or grantless script gets the page's
-// `window` itself, as it does under both. See docs/injection.md, "The
-// sandbox window".
+// (the prelude's `sandbox`): a page-world script, unless it has
+// `@grant none`. A script with no `@grant` line at all is sandboxed
+// too, as Tampermonkey 5.5.0 and Violentmonkey 2.49.0 run it
+// (measured). That's how both run a script in the page: bare names
+// reach the page's globals, but the sandbox `window` shows only the
+// browser's built-ins, and the script's own writes, a `@require`d
+// library's `window.jQuery = …` included, stay off the page's
+// `window`. A `@grant none` script gets the page's `window` itself, as
+// under both. See docs/injection.md, "The sandbox window".
 export function runsSandboxed(
   script: Pick<StoredScript, 'header'>,
 ): boolean {
   if (!script.header || resolveScriptWorld(script) !== 'MAIN') return false;
-  const grants = getValues(script.header, 'grant');
-  return grants.length > 0 && !resolveGrants(grants).hasNone;
+  return !resolveGrants(getValues(script.header, 'grant')).hasNone;
 }
