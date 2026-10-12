@@ -1361,6 +1361,10 @@
     var proxy;
     var keys = _ownKeys(exposed);
     for (var i = 0; i < keys.length; i++) {
+      /* An undefined value means the sandbox doesn't hold the name,
+         so the page's shows through: a frame's `window.close`, which
+         keeps the page's own. */
+      if (exposed[keys[i]] === undefined) continue;
       _defineProperty(own, keys[i], { value: exposed[keys[i]], writable: true, enumerable: false, configurable: true });
     }
     /* The page's value for `k`, as the script should see it. */

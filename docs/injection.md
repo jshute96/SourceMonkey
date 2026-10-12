@@ -1011,9 +1011,10 @@ in the isolated one.
   `sm:gm-download-start`. Refusing outright was right while no
   MAIN-world script could need them; now one can, and the gate is a
   tighter statement of the same rule. `window.close` is the sharpest
-  case: in MAIN the override sits on the page's own `window`, so the
-  page can reach it — bounded to closing its own tab, and noted in
-  [TODO.md](../TODO.md).
+  case: the override sits on the granting script's sandbox `window`,
+  not the page's, but the page can still forge the request it sends
+  (or reach the runtime's `windowControl`). That is bounded to closing
+  its own tab.
 - **Failing closed has a cost.** The gate decides "does this script
   match this URL?" with our own matcher (`url-match.ts`), while Chrome
   decided whether to inject with its. Where the two disagree, a
@@ -1049,8 +1050,6 @@ in the isolated one.
   injects no MAIN-world scripts there at all (see
   `src/extension/missing-scripts.ts`). VM falls back to the isolated
   world in that case; we don't yet (TODO.md).
-- **`window.close` / `window.focus` overrides sit on the page's
-  `window`**, where the page can see and call them.
 - **One extra hop per call.** Every `GM_*` SW round-trip pays the
   bridge relay, like `sm:check-pending` already did from MAIN. The
   request leg costs no task hop (it is a synchronous event dispatch);
@@ -1468,7 +1467,8 @@ It is a Proxy (`makeSandbox` in `src/userscript-prelude.js`):
     `window.close` from a replacement.
   - Whether a function is native is worked out once per function.
 - **The script's own bindings are on it**: `GM_info`, granted `GM_*`,
-  `GM`, `unsafeWindow`. So `this.unsafeWindow` and
+  `GM`, `unsafeWindow`, and a granted `close` / `focus` replacement
+  (none for a frame's `close`, which stays the page's). So `this.unsafeWindow` and
   `self.GM_registerMenuCommand` feature tests pass, and a shim
   assigning to a granted name (`GM_xmlhttpRequest = …`) replaces it
   rather than hitting our `const`.
@@ -1485,7 +1485,8 @@ sandbox has the same shape:
   `message` listener, `document.defaultView === window`.
 - Event handlers and timers get the page's window as `this`.
 - A bound method isn't the bare one: `window.setTimeout !== setTimeout`.
-- Bare `top` and `parent` are the page's window, not the sandbox.
+- Bare `top` and `parent` are the page's window, not the sandbox. So
+  `top.close()` gets the page's `close`, not a granted replacement.
 - A sloppy-mode assignment to an undeclared name (`foo = 1`) lands on
   the page's window, as it always did.
 - `Object.freeze(window)` throws, as the page's window can't be frozen
@@ -2053,7 +2054,7 @@ listeners, then arms **both** gates at once — see
   the swap-evaluated body. `buildSwapEvalBody` compensates by
   prepending the script's own binding block (including the eager
   `resource.init` / `urlchange.enable` / `windowControl.enable`
-  calls) to the body it hands
+  or `.make` calls) to the body it hands
   over. See [GM-APIs.md](GM-APIs.md#bindings-layout-in-the-wrapper)
   for how that block is split.
 - **Storage grants on a swap.** The one emitted call that can't be

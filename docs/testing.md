@@ -398,8 +398,8 @@ fetch via the SW). Highlights:
   `@grant window.focus`: a granted `window.close()` really removes the
   tab, an ungranted one hits Chrome's refusal and leaves it open, each
   grant installs only its own override, and the page's MAIN-world
-  `window.close` / `.focus` stay native. `window.focus` is asserted by
-  its tab-selection half (a second tab is opened, then the script is
+  `window.close` / `.focus` stay native, as do a page-world sibling's.
+  `window.focus` is asserted by its tab-selection half (a second tab is opened, then the script is
   cued through the DOM to call `focus()`, and the active tab flips
   back) — the window-raising half isn't observable headlessly, since a
   headless browser reports every window as focused. Unit tests cover
@@ -431,11 +431,11 @@ fetch via the SW). Highlights:
   the default world (`@sandbox DOM` isolates).
 - `tests/e2e/gm-main-world-surface.spec.ts` — GM_* surfaces from MAIN
   world where the world matters. Two reasons a surface is in here:
-  - **It installs itself on the world's `window`**, which in MAIN is the
-    *page's*: `window.onurlchange` (the `=== null` feature test has to
-    hold, and the page can see the accessor too — pinned deliberately,
-    see TODO.md) and `window.close` / `window.focus` (the override
-    replaces the page's method, and the tab really closes).
+  - **It installs itself on a `window`**: `window.onurlchange` on the
+    *page's* (the `=== null` feature test has to hold, and the page can
+    see the accessor too — pinned deliberately, see TODO.md) and
+    `window.close` / `window.focus` on the script's sandbox (the tab
+    really closes).
   - **It depends on an unprompted SW push**, which MAIN world can only
     receive via `wrapper-bridge.js` re-posting it: `sm:url-change`,
     `sm:gm-value-update` (cross-tab listener), `sm:gm-menu-fire`,

@@ -386,10 +386,6 @@ wasn't checked.
   - Under a strict page CSP, `GM_addStyle` / `GM_addElement` styles are
     dropped in MAIN world (we log a warning). Many styling scripts now
     run there. Route their DOM insertion through the isolated world?
-  - `window.close` / `window.focus` overrides sit on the page's
-    `window`, visible to the page and to ungranted sibling scripts. A
-    sandboxed script could get them on its own sandbox instead, which
-    is how TM gates them per script.
   - `window.__SM_GM__` is on many more pages now, and page code can
     tamper with the built-ins a script uses (docs/GM-API-strategy.md,
     section 3, decided against VM's safe-builtins when granted scripts
@@ -641,7 +637,8 @@ Adding any of these is a catalog entry + a body — nothing structural.
   `reasons` array in `parse-check.ts`, which is fixed at creation
   time.
 - **`window.close` / `window.focus` failures are filed under the
-  first granting script.** The override closes over the scriptId of
+  first granting script** in the isolated world (a page-world script
+  has its own override). The override closes over the scriptId of
   whichever script installed it, so a sibling script's refused close
   lands on the wrong Log tab. Cosmetic, and it disappears with
   per-script worlds (below).
@@ -649,21 +646,18 @@ Adding any of these is a catalog entry + a body — nothing structural.
   script on a page grants `window.onurlchange`, the `urlchange`
   surface exists on that world's shared `window`, so a sibling script
   in the same world that did NOT grant it can also feature-detect and
-  subscribe. `@grant window.close` / `window.focus` leak the same way
-  — their overrides replace the methods on that same shared `window`.
-  TM sandboxes each script's `window` and gets exact per-script
-  gating. Same shared-realm root cause as the storage-spoofing entry
-  below; a real fix needs per-script worlds.
+  subscribe. In the isolated world, `@grant window.close` /
+  `window.focus` leak the same way: their overrides replace the
+  methods on that same shared `window`. (A page-world script's
+  overrides go on its own sandbox `window`, as TM does.) Same
+  shared-realm root cause as the storage-spoofing entry below; a real
+  fix needs per-script worlds.
   - In MAIN world the shared `window` is the **page's**, so the page
-    sees these too: it can subscribe to `urlchange`, and its own
-    `window.close()` reaches our override. The override is
-    scriptId-scoped SW-side (`bridgeMayActAs`), so the page gets no
-    more than the MAIN-world script it shares a realm with already
-    had — but "the page can close its own tab" is a behavior change
-    worth knowing about. TM has the same exposure in its page-context
-    mode.
+    sees `urlchange` too: it can subscribe to it. It could go on the
+    sandbox `window`, where the `window.close` override is.
 - **`window.*` reload-fast-path coverage.** The stated reason the
-  `urlchange.enable` and `windowControl.enable` calls live in the
+  `urlchange.enable` and `windowControl.enable` / `.make` calls live
+  in the
   emitter's `js` (rather than `prelude`) is that a hot-swapped body
   still needs the surface. Only the emitted string's position is
   asserted today; an e2e driving the run-new swap with these grants

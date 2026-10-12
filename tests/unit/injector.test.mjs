@@ -3538,6 +3538,26 @@ test('wrapCombinedEntry: a sandboxed script runs `with` its scope, `this` the sa
   assert.deepEqual(Object.keys(stub.calls.exposed).sort(), ['GM', 'GM_info', 'GM_setValue']);
 });
 
+test('wrapCombinedEntry: a sandboxed script\'s window.close goes on its sandbox only', async () => {
+  const header = { tags: [...SANDBOXED_HEADER.tags, { tag: 'grant', value: 'window.close' }] };
+  const spec = await buildRegistrationSpec(makeScript({ header, bodyText: 'return 1;' }));
+  const replacement = () => {};
+  const made = [];
+  const stub = sandboxStub();
+  runCombined(spec, {
+    __smPrelude: stub.prelude,
+    __SM_GM__: {
+      storage: { init: () => {} },
+      windowControl: {
+        make: (id, method) => { made.push([id, method]); return replacement; },
+        enable: () => { throw new Error('installed on the world\'s window'); },
+      },
+    },
+  });
+  assert.deepEqual(made, [['script-1', 'close']]);
+  assert.equal(stub.calls.exposed.close, replacement);
+});
+
 test('wrapCombinedEntry: an ungranted page-world script keeps the arrow scope', async () => {
   const spec = await buildRegistrationSpec(makeScript({
     header: { tags: [{ tag: 'name', value: 'Foo' }, { tag: 'grant', value: 'none' }] },

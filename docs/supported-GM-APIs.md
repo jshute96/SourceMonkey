@@ -133,24 +133,24 @@ performs, because the browser hobbles the page's own version.
 - Both take no arguments and return `undefined` immediately. The work
   itself happens in the background, so a `window.close()` isn't
   guaranteed to have happened by the next statement.
-- The override lives only inside the userscript's world. The page's
-  own `window.close` / `window.focus` are unchanged, so a site can't
+- The override is on the granting script's own `window` (`window.close()`,
+  `self.close()`, bare `close()`), not on the page's. The page's own
+  `window.close` / `window.focus` are unchanged, so a site can't
   detect the grant.
-- **Any script on the page gets the override once one script grants
-  it.** All SourceMonkey scripts on a page share one isolated world,
-  and the override replaces the method on that world's shared
-  `window`. So a script that never asked for `window.close` can still
-  close your tab if a sibling script on the same page did ask. TM
-  gates this exactly; we can't without per-script worlds.
+- **Isolated scripts (`@inject-into content`) share it.** They share
+  one isolated world, and there the override replaces the method on
+  that world's `window`. So an isolated script that never asked for
+  `window.close` can still close your tab if a sibling isolated script
+  on the same page did ask.
 - A refused close or focus is logged to the page console and to the
   script's Log tab. A successful close takes the page with it, so
   there's nothing to report.
 
 Differences from TM, detailed in
-[GM-APIs.md](GM-APIs.md#windowclose--windowfocus): grant enforcement is
-per-document rather than per-script (the bullet above), and
-`@inject-into page` (MAIN world) is unsupported. What each call does is
-matched to TM 5.5.0's own implementation.
+[GM-APIs.md](GM-APIs.md#windowclose--windowfocus): in the isolated
+world, grant enforcement is per-document rather than per-script (the
+bullet above). What each call does is matched to TM 5.5.0's own
+implementation.
 
 ### `window.onurlchange`
 

@@ -1,10 +1,9 @@
 // MAIN-world coverage for the GM_* surfaces where the world matters.
 //
 // Why these and not the others: the surfaces below either install
-// themselves on the world's own `window` (`window.onurlchange`,
-// `window.close` / `window.focus` — in MAIN that window is the
-// PAGE's), or depend on an unprompted service-worker PUSH reaching the
-// script. MAIN world has no `chrome.runtime.onMessage`, so every push
+// themselves on a `window` (`window.onurlchange` on the PAGE's,
+// `window.close` / `window.focus` on the script's sandbox), or depend
+// on an unprompted service-worker PUSH reaching the script. MAIN world has no `chrome.runtime.onMessage`, so every push
 // has to be re-posted by wrapper-bridge.js and is gated there on the
 // destination script's world (`smWorld`) — the direction most likely
 // to be silently missing for a subsystem nobody exercised from MAIN.
@@ -15,8 +14,8 @@
 // headlessly: `sm:gm-notification-event` (no way to click a Chrome
 // notification) and `sm:gm-download-event` (needs a real download).
 //
-// Every script here grants `unsafeWindow` purely to land in MAIN
-// world; the assertions are about the other grant on the script.
+// The scripts' `unsafeWindow` grants don't matter here (MAIN world is
+// the default); the assertions are about the other grant.
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
@@ -83,7 +82,7 @@ test.describe('GM_* surfaces in MAIN world', () => {
     await page.close();
   });
 
-  test('window.close from MAIN world closes the tab, and the override replaces the page\'s method', async ({
+  test('window.close from MAIN world closes the tab, through the script\'s own override', async ({
     extensionContext, fixtureServer, sm,
   }) => {
     scriptsDir.write({
@@ -96,8 +95,9 @@ test.describe('GM_* surfaces in MAIN world', () => {
       },
       body: `
         // '[native code]' is the tell that the override didn't take:
-        // ours is ordinary script. In MAIN world these overwrite the
-        // methods on the page's own window.
+        // ours is ordinary script. In MAIN world these are on the
+        // script's sandbox window (the page's stay native; see
+        // window-close-focus.spec.ts).
         const native = (fn) => Function.prototype.toString.call(fn).includes('native code');
         document.body.dataset.nativeClose = String(native(window.close));
         document.body.dataset.nativeFocus = String(native(window.focus));

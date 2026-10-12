@@ -400,6 +400,18 @@ test('emitGmBindings: window.close / window.focus emit eager enable calls, not c
   assert.deepEqual(out.granted.sort(), ['window.close', 'window.focus']);
 });
 
+test('emitGmBindings: a sandboxed script gets its own window.close / window.focus', () => {
+  const out = emitGmBindings(['window.close', 'window.focus'], makeInfo({
+    grants: ['window.close', 'window.focus'],
+  }), true);
+  // Made for the sandbox, not installed on the world's window.
+  assert.doesNotMatch(out.js, /windowControl\.enable/);
+  assert.match(out.js, /const __smWin_close = .*windowControl\.make\("script-1", "close"\)/);
+  assert.match(out.js, /const __smWin_focus = .*windowControl\.make\("script-1", "focus"\)/);
+  assert.deepEqual(out.windowMethods, ['close', 'focus']);
+  assert.deepEqual(emitGmBindings(['window.close'], makeInfo({ grants: ['window.close'] })).windowMethods, []);
+});
+
 test('emitGmBindings: each window control grant is emitted on its own', () => {
   const closeOnly = emitGmBindings(['window.close'], makeInfo({ grants: ['window.close'] }));
   assert.match(closeOnly.js, /windowControl\.enable\("script-1", "close"\)/);

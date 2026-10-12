@@ -67,7 +67,8 @@ names shadows ours (see
   is safe even when the runtime spec hasn't run yet — the
   dereference doesn't fire until the user body actually calls a
   `GM_*` API. The eager calls ride along at the end —
-  `urlchange.enable`, `windowControl.enable`, and `resource.init` —
+  `urlchange.enable`, `windowControl.enable` / `.make`, and
+  `resource.init` —
   because they need nothing but the runtime and baked literals, which
   makes them safe in the swap eval that also gets this string.
 - `prelude` — eager `__SM_GM__.*` calls that need identifiers only
@@ -174,7 +175,8 @@ output ships whether the script lands in USER_SCRIPT or MAIN.
 - **Runtime ordering safety rests on the wrap function, not on
   laziness.** Everything the emitter produces — the `const GM_X = ...`
   declarations, the eager `urlchange.enable` /
-  `windowControl.enable` / `resource.init` at the end of `js`, and the
+  `windowControl.enable` / `.make` / `resource.init` at the end of
+  `js`, and the
   eager `prelude` call (`storage.init`) — is
   spliced into the main-body wrap function, which the prelude invokes
   only after its `awaitDecision` + `waitForRunAt` gates resolve (both
@@ -185,8 +187,8 @@ output ships whether the script lands in USER_SCRIPT or MAIN.
     `window.__SM_GM__` only from inside their own bodies), which is
     belt-and-braces rather than the load-bearing argument.
   - The eager forms differ deliberately on failure: a missing runtime
-    makes `urlchange.enable` / `windowControl.enable` a no-op (the
-    script runs without the feature), while a missing storage snapshot
+    makes `urlchange.enable` / `windowControl.enable` / `.make` a no-op
+    (the script runs without the feature), while a missing storage snapshot
     aborts the body (running with stale values would corrupt the
     user's data).
 
@@ -1166,17 +1168,31 @@ too.
 
 ### What the grant emits
 
-- No `const` binding — `window.close` isn't a legal identifier either.
-- One eager statement appended to `js` per granted name:
-  `window.__SM_GM__.windowControl.enable(scriptId, "close" | "focus")`.
+- No `GM_*`-style binding — `window.close` isn't a legal identifier
+  either.
+- One eager statement appended to `js` per granted name. Which one
+  depends on the world:
+  - **The page's world** (a sandboxed script):
+    `const __smWin_close = window.__SM_GM__.windowControl.make(scriptId, "close")`.
+    The sandbox `window` holds it as its own `close`, so that script's
+    `window.close()`, `self.close()` and bare `close()` reach it. The
+    page's `window` and other scripts keep the native method, and so
+    do the script's own `top.close()`, `unsafeWindow.close()` and
+    `this.close()` in an event handler, which name the page's window.
+    The worker's check (`bridgeMayActAs`) is what actually limits who
+    can close the tab: the page can still reach `__SM_GM__` and the
+    bridge.
+  - **The isolated world:**
+    `window.__SM_GM__.windowControl.enable(scriptId, "close" | "focus")`,
+    which replaces the method on that world's `window`. The page's own
+    `window.close` / `window.focus` are untouched, since the two worlds
+    have separate global objects.
 - In `js` rather than `prelude` for the same reasons as
   `urlchange.enable`: same ordering guarantees, and only `js` is
   prepended by `buildSwapEvalBody`, so a hot-swapped script gets its
   overrides back.
-- The runtime replaces the method on the USER_SCRIPT world's `window`.
-  The page's own `window.close` / `window.focus` are untouched — the
-  two worlds have separate global objects — so a site cannot detect
-  the grant, and its own close/focus behavior is unchanged.
+- Either way, a site cannot detect the grant, and its own close/focus
+  behavior is unchanged.
 
 ### Call semantics
 
@@ -1221,10 +1237,12 @@ too.
 
 ### Observable differences from Tampermonkey
 
-- **Grant enforcement is per-document, not per-script** — the same
-  shared-realm caveat as `window.onurlchange` above. Once one script
-  on the page grants `window.close`, a sibling SourceMonkey script in
-  the same isolated world calls the override too.
+- **In the isolated world, grant enforcement is per-document, not
+  per-script** — the same shared-realm caveat as `window.onurlchange`
+  above. Once one script on the page grants `window.close`, a sibling
+  SourceMonkey script in the same isolated world calls the override
+  too. In the page's world each script's sandbox `window` has its own,
+  as in TM.
   - Worse here than there: the onurlchange leak hands a non-granting
     script an observation channel, this one hands it the user's tab.
     The fix is the same (per-script worlds) and equally out of reach
@@ -1233,10 +1251,6 @@ too.
 - **Sub-frames.** As TM does (`page.js` hands a sub-frame the page's
   own `close`), we override `window.close` in the **top** frame only.
   `window.focus` has no such guard in either: it focuses the tab.
-- **MAIN world is unsupported**, as with every other non-`GM_info`
-  binding. `@grant window.close` on its own puts the script in
-  USER_SCRIPT world, so only the explicit `@inject-into page`
-  combination is affected.
 ## DOM injection (`GM_addStyle` / `GM_addElement`)
 
 Both run entirely in USER_SCRIPT world — no SW round-trip, no per-

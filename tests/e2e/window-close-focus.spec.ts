@@ -3,8 +3,9 @@
 // What makes these grants worth testing end to end is that the page's
 // own versions are hobbled by the browser: Chrome refuses
 // `window.close()` for a tab the script didn't open, and ignores
-// `window.focus()` for a background tab. The grant swaps the method on
-// the USER_SCRIPT world's `window` for one that asks the service
+// `window.focus()` for a background tab. The grant swaps the method the
+// script sees (on its sandbox `window` in the page's world, on the
+// isolated world's `window` there) for one that asks the service
 // worker to do it (`chrome.tabs.remove` / `chrome.windows.update`), so
 // the assertions below are "the tab actually went away" and "the
 // method the script sees is no longer the native one".
@@ -194,8 +195,8 @@ test.describe('window.close / window.focus', () => {
   }) => {
     // Pinning a KNOWN LIMITATION, not a feature. All isolated
     // SourceMonkey scripts on a page share one USER_SCRIPT world, so
-    // the override lands on a `window` the ungranted sibling also sees
-    // (in MAIN it's the page's, same leak), and here
+    // the override lands on a `window` the ungranted sibling also sees,
+    // and here
     // that hands it the user's tab, not just an observation channel.
     // TM gates per script because it sandboxes each script's window.
     // See docs/GM-APIs.md and the per-script-worlds item in TODO.md;
@@ -245,6 +246,98 @@ test.describe('window.close / window.focus', () => {
     await expect(page.locator('body')).toHaveAttribute('data-granter-ran', 'yes');
     // The leak: the sibling granted nothing and sees the override.
     await expect(page.locator('body')).toHaveAttribute('data-sibling-native', 'false');
+
+    await page.close();
+  });
+
+  test('page world: only the granting script sees the override', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // In the page's world the override goes on the granting script's
+    // sandbox `window`, so neither the page nor an ungranted sibling
+    // can close or focus the tab with it.
+    scriptsDir.write({
+      relativePath: 'granter.user.js',
+      meta: {
+        name: 'Granter',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['window.close', 'window.focus'],
+      },
+      body: `
+        const native = (f) => String(Function.prototype.toString.call(f).includes('native code'));
+        document.body.dataset.granterClose = native(window.close);
+        document.body.dataset.granterFocus = native(focus);
+        document.body.dataset.granterRan = 'yes';
+      `,
+    });
+    scriptsDir.write({
+      relativePath: 'sibling.user.js',
+      meta: {
+        name: 'Ungranted Sibling',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-idle',
+        grant: ['GM_addStyle'],
+      },
+      body: `
+        document.body.dataset.siblingClose = String(
+          Function.prototype.toString.call(window.close).includes('native code'),
+        );
+        document.body.dataset.siblingRan = 'yes';
+      `,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-granter-ran', 'yes');
+    await expect(page.locator('body')).toHaveAttribute('data-sibling-ran', 'yes');
+    await expect(page.locator('body')).toHaveAttribute('data-granter-close', 'false');
+    await expect(page.locator('body')).toHaveAttribute('data-granter-focus', 'false');
+    await expect(page.locator('body')).toHaveAttribute('data-sibling-close', 'true');
+    const pageSide = await page.evaluate(() => ({
+      close: Function.prototype.toString.call(window.close).includes('native code'),
+      focus: Function.prototype.toString.call(window.focus).includes('native code'),
+    }));
+    expect(pageSide).toEqual({ close: true, focus: true });
+
+    await page.close();
+  });
+
+  test('page world: a frame keeps the page\'s own close', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // The override closes the whole tab, which a frame's close() never
+    // does, so a frame's sandbox gets none (docs/frames.md).
+    scriptsDir.write({
+      relativePath: 'frame-closer.user.js',
+      meta: {
+        name: 'Frame Closer',
+        match: [`${fixtureServer.baseUrl}/frames/*`],
+        runAt: 'document-end',
+        grant: ['window.close'],
+      },
+      body: `
+        document.body.dataset.closeNative = String(
+          Function.prototype.toString.call(window.close).includes('native code'),
+        );
+      `,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/frames/frames.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-close-native', 'false');
+    await expect.poll(async () => {
+      for (const f of page.frames()) {
+        if (f === page.mainFrame()) continue;
+        const v = await f.evaluate(() => document.body?.dataset.closeNative ?? '').catch(() => '');
+        if (v) return v;
+      }
+      return '';
+    }).toBe('true');
 
     await page.close();
   });

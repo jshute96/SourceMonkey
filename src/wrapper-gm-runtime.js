@@ -2814,15 +2814,20 @@
      is a no-op. Chrome refuses `window.close()` for a tab the script
      didn't open with `window.open`, and it ignores `window.focus()`
      for a background tab. The extension is not bound by either rule,
-     so the grant REPLACES the method on this world's `window` with one
-     that asks the SW to do it (`chrome.tabs.remove` /
+     so the grant REPLACES the method the script sees with one that
+     asks the SW to do it (`chrome.tabs.remove` /
      `chrome.windows.update`).
 
      Notes:
-       - The replacement lives on the USER_SCRIPT world's `window`, so
-         the page's own `window.close` is untouched. Sibling scripts in
-         this world do see it — the same per-document grant caveat as
-         window.onurlchange; see docs/GM-APIs.md.
+       - Where the replacement goes depends on the script's world:
+         - Isolated (`@inject-into content`): on that world's `window`,
+           so the page's own `window.close` is untouched. Sibling
+           scripts in this world do see it, the same per-document
+           grant caveat as window.onurlchange; see docs/GM-APIs.md.
+         - The page's world: on the granting script's sandbox `window`
+           only (`make` below, which the bindings hand to the sandbox).
+           Put on the page's `window`, the page and every other script
+           could close or focus the tab with it.
        - The call returns `undefined` synchronously, as TM's does. The
          SW round-trip is fire-and-forget: nothing useful can be
          reported to a caller whose tab is about to disappear, and a
@@ -2837,23 +2842,16 @@
     try { return window.top === window.self; } catch (_te) { return false; }
   }
 
-  /* Replace one method. Idempotent per name: a second granting script
-     (or a re-registration inside the same document) reuses the
-     override that's already there.
-
-     A failure to install is swallowed — the script keeps the page's
-     native method, which is the same thing it would have without the
-     grant. There is no feature test to keep honest here (unlike
-     window.onurlchange, `window.close` exists either way), so
-     degrading quietly is the whole story. */
-  function installWindowControl(scriptId, method) {
-    if (windowControlInstalled[method]) return;
+  /* The replacement for `method`, calling on behalf of `scriptId`, or
+     undefined where the script keeps the page's own method. */
+  function makeWindowControl(scriptId, method) {
+    if (method !== "close" && method !== "focus") return undefined;
     /* As in TM: a frame keeps the page's own `close`, which is a no-op
        there. The override closes the whole tab, which a frame's
        `window.close()` never does (docs/frames.md). */
-    if (method === "close" && !isTopFrame()) return;
+    if (method === "close" && !isTopFrame()) return undefined;
     var msgType = (method === "close") ? "sm:gm-window-close" : "sm:gm-window-focus";
-    var replacement = function () {
+    return function () {
       try {
         var p = api.sendAsync({ type: msgType, scriptId: scriptId });
         if (p && typeof p.then === "function") {
@@ -2870,6 +2868,21 @@
       }
       return undefined;
     };
+  }
+
+  /* Replace one method on this world's `window`. Idempotent per name: a
+     second granting script (or a re-registration inside the same
+     document) reuses the override that's already there.
+
+     A failure to install is swallowed — the script keeps the page's
+     native method, which is the same thing it would have without the
+     grant. There is no feature test to keep honest here (unlike
+     window.onurlchange, `window.close` exists either way), so
+     degrading quietly is the whole story. */
+  function installWindowControl(scriptId, method) {
+    if (windowControlInstalled[method]) return;
+    var replacement = makeWindowControl(scriptId, method);
+    if (!replacement) return;
     try {
       _ObjectDefineProperty(window, method, {
         value: replacement,
@@ -2889,18 +2902,22 @@
   }
 
   var windowControl = {
-    /* Called from the compile-in bindings of every script that granted
-       `window.close` / `window.focus`, ahead of the script body.
-       `method` is the bare name ("close" / "focus"). The scriptId is
-       used only to attribute SW-side failures to a script in its Log
-       tab — the override itself is world-wide, not per-script, so the
-       FIRST granting script's id is the one every later failure is
-       filed under. Same per-document grant scope as window.onurlchange
-       (docs/GM-APIs.md); exact attribution needs per-script worlds. */
+    /* For an isolated-world script that granted `window.close` /
+       `window.focus`, from its compile-in bindings ahead of the script
+       body. `method` is the bare name ("close" / "focus"). The
+       scriptId is used only to attribute SW-side failures to a script
+       in its Log tab; the override is world-wide, so the FIRST
+       granting script's id is the one every later failure is filed
+       under. */
     enable: function (scriptId, method) {
       if (method !== "close" && method !== "focus") return;
       installWindowControl(scriptId, method);
     },
+    /* For a page-world script: the replacement itself, which its
+       bindings put on its sandbox `window` (see `windowMethods` in
+       gm-bindings.ts). Each script gets its own, so failures are filed
+       under the right script. */
+    make: makeWindowControl,
   };
 
   /* Wire the SW-originated tab-close, notification-event, menu-fire,

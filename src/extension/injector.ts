@@ -98,7 +98,7 @@ import { canonicalMatchPatterns, hostEndsInTld, matchPatternProblem, tldCoarseGl
 import { dlog } from '../debug-log.js';
 import { startPhaseTimer, type PhaseTimer } from '../phase-timing.js';
 import {
-  emitGmBindings, GM_INFO_PASSTHROUGH_TAGS,
+  emitGmBindings, GM_INFO_PASSTHROUGH_TAGS, windowMethodBinding,
   type GmBindingEmit, type GmInfoInput, type GmInfoPassthroughTag, type UserAgentDataSnapshot,
 } from './gm-bindings.js';
 import { iconRefFromHeader } from '../script-icon.js';
@@ -391,20 +391,26 @@ const USER_SCOPE_CLOSE = '\n})();';
 const SANDBOX_SCOPE_OPEN = '__smC(function(){';
 const SANDBOX_SCOPE_CLOSE = '\n},__smS);';
 
+// What a sandbox `window` holds of its own: the script's bindings and
+// its granted window-method replacements.
+type SandboxOwn = Pick<GmBindingEmit, 'declared' | 'windowMethods'>;
+
 // Declares the sandbox, holding the script's own bindings, ahead of
 // the `with`.
-function sandboxDeclaration(declared: readonly string[]): string {
-  const exposed = declared.map((n) => `${n}:${n}`).join(',');
+function sandboxDeclaration(own: SandboxOwn): string {
+  const exposed = own.declared.map((n) => `${n}:${n}`)
+    .concat(own.windowMethods.map((m) => `${m}:${windowMethodBinding(m)}`))
+    .join(',');
   return `const __smP=self.__smPrelude,__smS=__smP.sandbox({${exposed}}),__smW=__smP.scopeOf(__smS),__smC=__smP.callAs;`;
 }
 
 // The user scope's opener, after any `return`, and closer, for a script
 // that is or isn't sandboxed. `declared` is what its bindings declare.
-function userScope(declared: readonly string[] | null, withReturn: boolean): { open: string; close: string } {
+function userScope(own: SandboxOwn | null, withReturn: boolean): { open: string; close: string } {
   const ret = withReturn ? 'return' : '';
-  if (!declared) return { open: ret + USER_SCOPE_OPEN, close: USER_SCOPE_CLOSE };
+  if (!own) return { open: ret + USER_SCOPE_OPEN, close: USER_SCOPE_CLOSE };
   return {
-    open: `${sandboxDeclaration(declared)}with(__smW)${ret ? ret + ' ' : ''}${SANDBOX_SCOPE_OPEN}`,
+    open: `${sandboxDeclaration(own)}with(__smW)${ret ? ret + ' ' : ''}${SANDBOX_SCOPE_OPEN}`,
     close: SANDBOX_SCOPE_CLOSE,
   };
 }
@@ -487,9 +493,9 @@ export function wrapCombinedEntry(args: {
   // sm-dev's eval hook (src/eval-hook.ts), under this key. None for the
   // person's own scripts.
   evalHookKey?: string;
-  // The names `gmBindings` declares, when the script runs sandboxed
-  // (`runsSandboxed`); absent otherwise.
-  sandboxed?: readonly string[];
+  // What `gmBindings` declares for the sandbox, when the script runs
+  // sandboxed (`runsSandboxed`); absent otherwise.
+  sandboxed?: SandboxOwn;
 }): string {
   const idLit = jsLit(args.scriptId);
   const hooked = (program: string, mainStart = 0): string => withScriptEvalHook(program, mainStart, args.scriptId, args.evalHookKey);
@@ -722,7 +728,7 @@ export async function buildGmBindingsForScript(
   // No header at all → no GM_info either (we'd have nothing to put
   // in it). Production callers never hit this because validateHeader
   // rejects headerless scripts upstream; the guard is for unit tests.
-  if (!script.header) return { js: '', prelude: '', granted: [], needsValues: false, declared: [] };
+  if (!script.header) return { js: '', prelude: '', granted: [], needsValues: false, declared: [], windowMethods: [] };
   const grants = getValues(script.header, 'grant');
   const resolved = resolveGrants(grants);
   // `@grant none` and no-grants both fall through to emitGmBindings
@@ -750,7 +756,7 @@ export async function buildGmBindingsForScript(
     && !grantedNames.includes('unsafeWindow')
     ? [...grantedNames, 'unsafeWindow']
     : grantedNames;
-  return emitGmBindings(emittedNames, buildGmInfoInput(script, scriptHandlerVersion, grantedNames));
+  return emitGmBindings(emittedNames, buildGmInfoInput(script, scriptHandlerVersion, grantedNames), runsSandboxed(script));
 }
 
 // Build the body string for the reload-fast-path swap eval. Prepends
@@ -801,7 +807,7 @@ export async function buildSwapEvalBody(
   // gmEmit.js is single-line and ends with a space (or is empty), so
   // it occupies generated line 0 exactly as `wrapCombinedEntry`'s wrap
   // head does.
-  const scope = userScope(runsSandboxed(script) ? gmEmit.declared : null, false);
+  const scope = userScope(runsSandboxed(script) ? gmEmit : null, false);
   const head = gmEmit.js + scope.open;
   // An sm-dev test collection's script keeps its eval hook when swapped.
   const hookKey = scratchEvalHookKey(script.fileUrl);
@@ -1027,7 +1033,7 @@ export async function buildRegistrationSpec(
     gmBindings: gmEmit.js,
     gmPrelude: gmEmit.prelude,
     evalHookKey: options.evalHookKey ?? scratchEvalHookKey(script.fileUrl),
-    ...(runsSandboxed(script) ? { sandboxed: gmEmit.declared } : {}),
+    ...(runsSandboxed(script) ? { sandboxed: gmEmit } : {}),
   });
 
   // Register at document_start regardless of the declared @run-at. The

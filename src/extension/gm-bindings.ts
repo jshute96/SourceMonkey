@@ -4,7 +4,7 @@
 // time. The result is `{ js, prelude, granted }`:
 //   - `js` holds the `const GM_X = ...` declarations plus the eager
 //     calls that need nothing but `window.__SM_GM__` and baked
-//     literals (`urlchange.enable`, `windowControl.enable`,
+//     literals (`urlchange.enable`, `windowControl.enable` / `.make`,
 //     `resource.init`). It is used
 //     TWICE: `wrapCombinedEntry` splices it into the main-body wrap
 //     function ahead of the body, and `buildSwapEvalBody` prepends it
@@ -117,10 +117,10 @@ export interface UserAgentDataSnapshot {
 //                  `urlchange.enable(scriptId)` for `@grant
 //                  window.onurlchange` (so the body's
 //                  `window.onurlchange === null` feature test
-//                  succeeds), `windowControl.enable(scriptId, …)` for
-//                  `@grant window.close` / `window.focus` (so the
-//                  overrides are in place before the body calls
-//                  them), and `resource.init` — all of which are
+//                  succeeds), `windowControl.enable(scriptId, …)` or
+//                  `.make` for `@grant window.close` / `window.focus`
+//                  (so the overrides are in place before the body
+//                  calls them), and `resource.init` — all of which are
 //                  self-contained enough to run in the swap eval too.
 //   - `prelude`  — eager calls that have to run BEFORE the user body,
 //                  AFTER the GM runtime is installed, and that need
@@ -152,6 +152,16 @@ export interface GmBindingEmit {
   // `GM`, `unsafeWindow`). A sandboxed script gets them as properties
   // of its sandbox `window` too; see `sandboxDeclaration` in injector.ts.
   declared: readonly string[];
+  // For a sandboxed script, the window methods it granted (`close`,
+  // `focus`): `js` declares each one's replacement as
+  // `windowMethodBinding(name)`, for its sandbox `window`.
+  windowMethods: readonly string[];
+}
+
+// The name `js` declares a sandboxed script's `window.<method>`
+// replacement under.
+export function windowMethodBinding(method: string): string {
+  return `__smWin_${method}`;
 }
 
 // JSON-encode but inside a JavaScript source context: the standard
@@ -243,8 +253,8 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
     return '';
   }
   // `window.close` / `window.focus` are methods we replace on the
-  // world's `window`, not new names — same deal: the grant's effect is
-  // the eager `windowControl.enable` call emitted at the end of `js`.
+  // script's `window`, not new names — same deal: the grant's effect is
+  // the eager `windowControl` call emitted at the end of `js`.
   if (spec.subsystem === 'window-control') {
     return '';
   }
@@ -459,6 +469,8 @@ function emitGmObject(grantedSpecs: readonly GmApiSpec[]): string {
 export function emitGmBindings(
   granted: readonly string[],
   info: GmInfoInput,
+  // The script runs with a sandbox `window` (`runsSandboxed`).
+  sandboxed = false,
 ): GmBindingEmit {
   const specs: GmApiSpec[] = [];
   for (const n of granted) {
@@ -528,13 +540,29 @@ export function emitGmBindings(
   // page's own `window.close()` / `.focus()` — which the browser
   // mostly ignores — is better than a TypeError that stops the script
   // from running at all.
+  //
+  // A sandboxed script (the page's world) gets its replacement on its
+  // own sandbox `window` instead of the world's, so the page and other
+  // scripts can't call it: `make` hands it back, and the sandbox takes
+  // it from `windowMethods`. Undefined (a frame's `close`, or a runtime
+  // from before `make` that a page kept across an extension update)
+  // leaves the page's method showing through.
+  const windowMethods: string[] = [];
   for (const spec of specs) {
     if (spec.subsystem !== 'window-control') continue;
     // `window.close` -> "close", `window.focus` -> "focus".
     const method = spec.name.slice('window.'.length);
-    parts.push(
-      `if (window.__SM_GM__ && window.__SM_GM__.windowControl) window.__SM_GM__.windowControl.enable(${jsLit(info.scriptId)}, ${jsLit(method)});`,
-    );
+    const args = `${jsLit(info.scriptId)}, ${jsLit(method)}`;
+    if (sandboxed) {
+      windowMethods.push(method);
+      parts.push(
+        `const ${windowMethodBinding(method)} = window.__SM_GM__ && window.__SM_GM__.windowControl && window.__SM_GM__.windowControl.make ? window.__SM_GM__.windowControl.make(${args}) : undefined;`,
+      );
+    } else {
+      parts.push(
+        `if (window.__SM_GM__ && window.__SM_GM__.windowControl) window.__SM_GM__.windowControl.enable(${args});`,
+      );
+    }
   }
   // `resource.init`: emitted whenever GM_getResource* is granted,
   // even when `resources` is empty. Why "even when empty": the
@@ -636,6 +664,7 @@ export function emitGmBindings(
     granted: specs.map((s) => s.name),
     needsValues: hasStorageGrant,
     declared,
+    windowMethods,
   };
 }
 
