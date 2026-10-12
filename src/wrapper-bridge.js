@@ -50,18 +50,21 @@
    to one physical line.
 
    Timing vs. MAIN-world preludes. The bridge is a separate
-   chrome.userScripts registration from the per-script wrappers;
-   their relative injection order isn't guaranteed by the API, and
-   the page -> SW direction is now synchronous — a request dispatched
-   before this IIFE ran finds no listener and is simply dropped. A sync
-   that widens this spec's patterns re-registers it behind the
-   wrappers, so this happens. Lost, the wrapper would wait out its
-   timeout and not run, whatever the SW would have decided, so it sends
-   its check-pending again on our ready event (READY_MARKER). The script's own GM_* calls
-   are not exposed to the same race: the body doesn't run until that
-   handshake settles, and by then every document_start registration has
-   executed. We still emit the bridge spec ahead of the wrapper specs
-   (see buildBridgeSpec in injector.ts) so the handshake usually wins.
+   chrome.userScripts registration from the per-script wrappers and
+   the GM runtime; their relative injection order isn't guaranteed by
+   the API, and the page -> SW direction is synchronous, so a request
+   dispatched before this IIFE ran finds no listener. A sync that
+   widens this spec's patterns re-registers it behind the wrappers, so
+   this happens, and a `document-start` script on a first load runs
+   (reporting its start, making GM_* calls) without waiting for
+   anything. So:
+     - we cancel every sync event we take (preventDefault), as a
+       receipt the sender reads off dispatchEvent's return value;
+     - the senders (userscript-prelude.js and the MAIN-world
+       wrapper-gm-runtime.js) hold what nobody took;
+     - our ready event (READY_MARKER) tells them to send it again.
+   We still emit the bridge spec ahead of the wrapper specs (see
+   buildBridgeSpec in injector.ts), so usually nothing is held.
 
    Trust model. Everything here is observable by the page and
    forgeable by it: MAIN world can dispatch our event as easily as it
@@ -118,7 +121,10 @@
        Same footing: the page shares the realm with that script and can
        already call its callbacks directly.
    None grant script execution or SW privilege beyond what the page
-   already has. */
+   already has. The receipt (Timing, above) is as forgeable: a page
+   listener can cancel our event to make a request look taken, or stop
+   it reaching us so it stays held. That only loses or delays the
+   page's own scripts' traffic, so nothing may rely on it for safety. */
 (function () {
   "use strict";
   var REPLY_MARKER = "sourcemonkey-bridge-reply";
@@ -233,6 +239,11 @@
 
   document.addEventListener(SYNC_MARKER, function (ev) {
     try {
+      /* The receipt: the sender holds and resends what nobody cancelled
+         (see Timing, above). Every event, whatever its type, so the
+         receipt says only that the bridge is in, which READY_MARKER
+         says anyway. */
+      if (ev && typeof ev.preventDefault === "function") ev.preventDefault();
       if (!ev || typeof ev.detail !== "string") return;
       var env = JSON.parse(ev.detail);
       if (!env || typeof env !== "object") return;
@@ -277,11 +288,10 @@
       });
     }
   } catch (_e4) {}
-  /* Announce that requests are heard now. A MAIN-world wrapper injected
-     before this bridge (one a re-registration put ahead of it) sent its
-     sm:check-pending into nothing, and sends it again on this. A page
-     can fire it too, which repeats one request: the SW answers it with
-     the same claim or skip, or at worst a plain run in place of a
-     reload hot-swap. */
+  /* Announce that requests are heard now. A MAIN-world wrapper or GM
+     runtime injected before this bridge holds what it sent into
+     nothing, and sends it again on this. A page can fire it too, which
+     sends nothing new: what is held is held because no bridge took it,
+     and stays held while there is none. */
   try { window.dispatchEvent(new CustomEvent(READY_MARKER)); } catch (_e5) {}
 })();

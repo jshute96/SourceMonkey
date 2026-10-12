@@ -381,8 +381,9 @@ test.describe('injection', () => {
   // A sync that widens the page bridge's patterns re-registers it, and
   // Chrome puts it after the scripts already registered. A page-world
   // script injected ahead of it asks whether to run before it listens,
-  // so it asks again when the bridge announces itself, rather than
-  // waiting out its 2s timer and running whatever the answer would be.
+  // so its request is held and sent when the bridge announces itself,
+  // rather than it waiting out its 10s timer and not running. More
+  // late-bridge cases are in late-bridge.spec.ts.
   test('a page-world script ahead of the bridge gets its answer at once', async ({
     extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {

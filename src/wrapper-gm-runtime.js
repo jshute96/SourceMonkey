@@ -312,7 +312,53 @@
       throw new _Error("[SourceMonkey] This call carries a value SourceMonkey cannot send. "
         + "Pass data that survives JSON: no circular references, functions, or BigInt");
     }
-    _dispatchEvent(new _CustomEvent(BRIDGE_SYNC_MARKER, { detail: detail }));
+    if (!dispatchToBridge(detail)) holdForBridge(detail, requestId);
+  }
+
+  /* A request the bridge didn't take is held and sent again when the
+     bridge announces itself. The bridge is its own registration, which
+     Chrome can inject after this one, and a `document-start` script can
+     call GM_* in its first, synchronous run before it is in. The caller
+     notices nothing: a held request's reply arrives a little later, and
+     a fire-and-forget one still gets there. Same scheme as
+     `bridgeDispatch` in userscript-prelude.js.
+
+     The bridge cancels each event it takes, as a receipt. Its listener
+     runs inside our dispatch, so `dispatchEvent` returning true (not
+     cancelled) means nobody took it. A request leaves the list when its
+     caller times out (`dropHeld`), so a late bridge doesn't start an
+     XHR or register a menu command nobody is waiting on any more.
+     The one fire-and-forget send is the teardown flush, so the list
+     can't grow without bound and needs no cap. */
+  var BRIDGE_READY_MARKER = "sourcemonkey-bridge-ready";
+  var _bridgeHeld = [];   /* [{detail, requestId}] */
+  var _bridgeReadyListening = false;
+  function dispatchToBridge(detail) {
+    return !_dispatchEvent(new _CustomEvent(BRIDGE_SYNC_MARKER, { detail: detail, cancelable: true }));
+  }
+  function holdForBridge(detail, requestId) {
+    _bridgeHeld.push({ detail: detail, requestId: requestId });
+    if (_bridgeReadyListening) return;
+    _bridgeReadyListening = true;
+    try { window.addEventListener(BRIDGE_READY_MARKER, resendHeld, true); } catch (_rlE) {}
+  }
+  function dropHeld(requestId) {
+    var kept = [];
+    for (var i = 0; i < _bridgeHeld.length; i++) {
+      if (_bridgeHeld[i].requestId !== requestId) kept.push(_bridgeHeld[i]);
+    }
+    _bridgeHeld = kept;
+  }
+  /* Kept on, not removed after one ready: the page can fire the ready
+     event too, with still no bridge, and what is held then stays held. */
+  function resendHeld() {
+    var held = _bridgeHeld;
+    _bridgeHeld = [];
+    for (var i = 0; i < held.length; i++) {
+      try {
+        if (!dispatchToBridge(held[i].detail)) _bridgeHeld.push(held[i]);
+      } catch (_rsE) {}
+    }
   }
 
   function bridgeSend(payload) {
@@ -323,6 +369,7 @@
     return new _Promise(function (resolve, reject) {
       var timer = setTimeout(function () {
         delete _bridgePending[requestId];
+        dropHeld(requestId);
         reject(new _Error("[SourceMonkey] GM bridge timed out after " + BRIDGE_TIMEOUT_MS + "ms"));
       }, BRIDGE_TIMEOUT_MS);
       _bridgePending[requestId] = { resolve: resolve, timer: timer };

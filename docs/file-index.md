@@ -335,6 +335,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/tld-hosts.spec.ts` | `.tld` hosts ("any public suffix") in `@match` / `@include` / `@exclude` run where the header says, and only there |
 | `tests/e2e/include-regex.spec.ts` | A regex `@include` beside a `@match` registers `<all_urls>` and runs on the regex's pages too |
 | `tests/e2e/injection.spec.ts` | End-to-end userscript injection: matching, non-matching, lenient-`@match`, and multiple-script cases |
+| `tests/e2e/late-bridge.spec.ts` | Page-world scripts injected before the bridge or GM runtime: start, errors and `GM_*` calls still reach the worker |
 | `tests/e2e/sync-window.spec.ts` | A navigation racing a registration sync still gets injected, and the set never empties mid-sync |
 | `tests/e2e/badge.spec.ts` | Per-tab badge and tooltip: green/red/orange/purple, MISSING, RELOAD, disabled since load, warnings |
 | `tests/e2e/sandbox-csp.spec.ts` | Pages sent with a CSP `sandbox` header: MAIN-world scripts skipped, USER_SCRIPT-world ones run, the Log hint |
@@ -383,7 +384,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/file-access-banner.spec.ts` | "File access is disabled." banner with the toggle probe stubbed off: where it appears, where it must not, and that a good Refresh clears it |
 | `tests/e2e/script-details.spec.ts` | E2E for which rows the details panel shows, and for the row-label tooltips |
 | `tests/e2e/script-preview.spec.ts` | E2E for the viewer's preview mode: Add install, Update, invalid-header refusal, a web page reported rather than followed, `@require` tabs |
-| `tests/unit/prelude-gates.test.mjs` | Drives the minified prelude in a `node:vm` DOM stub to pin the decision / @run-at join at max(decision, run-at) |
+| `tests/unit/prelude-gates.test.mjs` | Drives the minified prelude in a `node:vm` DOM stub to pin the decision / @run-at join and when `document-start` skips asking |
 | `tests/unit/sample.test.mjs` | Placeholder Node `--test` unit test |
 | `tests/unit/refresh-targets.test.mjs` | Unit tests for targeted-refresh selection: local-only, path overlap, manifest dirs, container rows |
 | `tests/unit/directories.test.mjs` | Unit tests for the `file://` listing parser and path/URL helpers |
@@ -457,7 +458,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/unsafe-window.test.mjs` | Unit tests for `unsafeWindow` — world resolution (granted and ungranted), per-world GM runtime need, isolated-world warning, bridge wire markers |
 | `tests/unit/unsafe-window-use.test.mjs` | Unit tests for the ungranted-`unsafeWindow` source scan: comments, strings, templates, declarations, limits |
 | `tests/unit/gm-value-codec.test.mjs` | Unit tests for the page-side stored-value codec — type fidelity, raw storage of JSON-clean values, legacy-row decoding |
-| `tests/unit/gm-runtime-transport.test.mjs` | Unit tests for the runtime's transport choice — direct channel only with `chrome.runtime.id`, bridge on an `externally_connectable` page |
+| `tests/unit/gm-runtime-transport.test.mjs` | Unit tests for the runtime's transport choice — direct channel only with `chrome.runtime.id`, bridge on an `externally_connectable` page, held until the bridge is in |
 | `tests/unit/gm-runtime-values.test.mjs` | Unit tests for the runtime's ordering of GM value updates — held broadcasts, answers, resyncs, sequence numbers |
 | `tests/unit/value-store.test.mjs` | Unit tests for the worker's value store — reads before disk, sequence numbers, combined saves, wipe, no other row-layer users |
 | `tests/unit/gm-values.test.mjs` | Unit tests for the SW-side `gmval:` storage helpers — key composition, batch apply with last-write-wins, sentinel deletes, namespace isolation |

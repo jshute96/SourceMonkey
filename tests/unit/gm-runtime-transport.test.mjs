@@ -91,7 +91,8 @@ test('a reply delivered inside the dispatch still resolves the caller', async ()
           reply: { ok: true, echoed: env.payload.type },
         },
       });
-      return true;
+      // The bridge cancels what it takes, as a receipt.
+      return false;
     },
   };
   // eslint-disable-next-line no-new-func
@@ -113,4 +114,92 @@ test('a bridge request rejects when the DOM-event path is unusable', async () =>
     window.__SM_GM__.sendAsync({ type: 'sm:gm-log', scriptId: 's', message: 'x' }),
     /GM bridge unavailable/,
   );
+});
+
+test('a request sent before the bridge is in goes out when it announces itself', async () => {
+  // The bridge is its own registration and can come after the runtime.
+  // An event nobody cancels is one no bridge took; the runtime holds it
+  // and sends it again on the bridge's ready event. A ready event with
+  // still no bridge (the page can fire one) keeps it held.
+  const window = Object.create(globalThis);
+  let onMessage = null;
+  let onReady = null;
+  window.addEventListener = (type, fn) => {
+    if (type === 'message') onMessage = fn;
+    if (type === 'sourcemonkey-bridge-ready') onReady = fn;
+  };
+  window.postMessage = () => {};
+  let bridgeIn = false;
+  const taken = [];
+  const document = {
+    visibilityState: 'visible',
+    addEventListener: () => {},
+    dispatchEvent: (ev) => {
+      assert.equal(ev.cancelable, true);
+      if (!bridgeIn) return true;
+      const env = JSON.parse(ev.detail);
+      taken.push(env.payload.type);
+      if (env.requestId) {
+        onMessage({
+          source: window,
+          data: { __sm: 'sourcemonkey-bridge-reply', requestId: env.requestId, reply: { ok: true } },
+        });
+      }
+      return false;
+    },
+  };
+  // eslint-disable-next-line no-new-func
+  new Function('window', 'document', 'chrome', WRAPPER_GM_RUNTIME)(window, document, undefined);
+  let settled = false;
+  const reply = window.__SM_GM__.sendAsync({ type: 'sm:gm-menu-register', scriptId: 's' })
+    .then((r) => { settled = true; return r; });
+  const second = window.__SM_GM__.sendAsync({ type: 'sm:gm-xhr-start', scriptId: 's' });
+  assert.equal(typeof onReady, 'function', 'listening for the bridge');
+
+  onReady();
+  await Promise.resolve();
+  assert.equal(settled, false);
+  assert.deepEqual(taken, []);
+
+  bridgeIn = true;
+  onReady();
+  assert.deepEqual(await reply, { ok: true });
+  assert.deepEqual(await second, { ok: true });
+  assert.deepEqual(taken, ['sm:gm-menu-register', 'sm:gm-xhr-start']);
+  // Sent once: a later ready event finds nothing held.
+  onReady();
+  assert.equal(taken.length, 2);
+});
+
+test('a request that timed out before the bridge came is not sent', async () => {
+  // Its caller has already been rejected; sending it now would start
+  // an XHR or register a menu command nobody is waiting on.
+  const window = Object.create(globalThis);
+  let onReady = null;
+  window.addEventListener = (type, fn) => { if (type === 'sourcemonkey-bridge-ready') onReady = fn; };
+  window.postMessage = () => {};
+  let bridgeIn = false;
+  const taken = [];
+  const document = {
+    visibilityState: 'visible',
+    addEventListener: () => {},
+    dispatchEvent: (ev) => {
+      if (!bridgeIn) return true;
+      taken.push(JSON.parse(ev.detail).payload.type);
+      return false;
+    },
+  };
+  // The bridge timeout, held for the test to fire.
+  const timers = [];
+  const setTimeoutStub = (fn, ms) => { timers.push({ fn, ms }); return timers.length; };
+  // eslint-disable-next-line no-new-func
+  new Function('window', 'document', 'chrome', 'setTimeout', 'clearTimeout', WRAPPER_GM_RUNTIME)(
+    window, document, undefined, setTimeoutStub, () => {});
+  const call = window.__SM_GM__.sendAsync({ type: 'sm:gm-xhr-start', scriptId: 's' });
+  timers.find((t) => t.ms === 30000).fn();
+  await assert.rejects(call, /GM bridge timed out/);
+
+  bridgeIn = true;
+  onReady();
+  assert.deepEqual(taken, []);
 });
