@@ -2,8 +2,9 @@
 
 A summary. `pnpm sm-dev help` lists the help topics, and
 `help <topic>` shows one. `help <command>` (or `<command> --help`)
-shows a command's exact options; `help commands` lists the commands,
-and `help all` everything.
+shows a command's exact options, and `help script save` (or
+`script save --help`) one subcommand's; `help commands` lists the
+commands, and `help all` everything.
 
 ## Shape of a command line
 

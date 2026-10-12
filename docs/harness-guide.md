@@ -293,12 +293,19 @@ up:
   usage, arguments, and only the options it takes.
   - `--help` on a command always gives the command, even where a
     topic shares its name (`scripts --help`).
-- It takes several names at once: `sm-dev help status tabs`.
+- `sm-dev help script save` (or `sm-dev script save --help`) shows one
+  subcommand: its usage, and only the options it takes, its own and
+  the command's shared ones.
+  - A subcommand the command doesn't have is an error, listing the
+    ones it has. So is a word shaped like one with `--help`
+    (`script savexx --help`).
+  - With other words, `--help` shows the forms with no subcommand
+    (`script E4 --help` shows `script <script>`).
 - At a terminal with color, commands and flags show in cyan, and
   headings in bold. `NO_COLOR` turns that off, and `FORCE_COLOR` on.
 - `--help` (or `-h`) anywhere on a line shows the help for each command
   on it, once each, and runs none of them.
-- In a run, `help [command]` or `?` does the same.
+- In a run, `help [command [subcommand]]` or `?` does the same.
 
 ### Color
 
@@ -1007,8 +1014,11 @@ Some commands take several lines as a block, at the prompt or on stdin:
   - An unknown flag, a missing or empty value, a value on a flag that
     takes none, and a flag given twice are refused. An unknown flag's
     error names the flags the command takes.
+  - Each subcommand (`script save`, `wait log`) takes only its own
+    flags and the command's shared ones. Another subcommand's flag is
+    refused, naming the subcommands that take it.
   - `--help` on any command shows its help, as `help <command>` does,
-    rather than running it.
+    rather than running it: the subcommand's, when one is named.
   - A quoted word is never a flag: `probe '--x'` looks for `--x`.
   - Flags can go anywhere, in free text too (`eval`'s JavaScript,
     `type`'s text, a menu label). There, a word of its own shaped like

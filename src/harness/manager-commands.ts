@@ -25,7 +25,7 @@ import {
   jsonResult, type Collection, type CollectionListData, type CollectionRef, type Script, type ScriptListData, type TabActivity,
 } from './json-output.js';
 import type * as J from './json-output.js';
-import { commandSyntax, noSuchFlag } from './command-list.js';
+import { commandSyntax } from './command-list.js';
 import { errorSentence, writeProblem } from './input-file.js';
 import { shownPath } from './prepare.js';
 import {
@@ -163,21 +163,6 @@ export const MANAGER_VERBS = {
   collection: ['list', 'show', 'enable', 'disable', 'refresh', 'rename'],
   script: ['list', 'show', 'print', 'save', 'enable', 'disable', 'refresh', 'install', 'uninstall', 'move'],
 } as const;
-
-/**
- * Said for a flag given to a verb of `command` that only another verb
- * takes (`script save --file`), since the flags are the command's; null
- * when there is none. Flags in no verb's usage (`--json`) go with every
- * verb.
- */
-export function otherVerbsFlag(command: 'collection' | 'script', verb: string, flags: Record<string, string | true>): string | null {
-  const usages = commandSyntax(command).usage;
-  const flagsIn = (text: string): string[] => text.match(/--[\w-]+/g) ?? [];
-  const own = new Set(usages.filter((u) => new RegExp(`^\\S+ (\\S+ )?${verb}(\\s|$)`).test(u)).flatMap(flagsIn));
-  const verbs = new Set(usages.flatMap(flagsIn));
-  const wrong = Object.keys(flags).find((f) => verbs.has(f) && !own.has(f));
-  return wrong === undefined ? null : noSuchFlag(`${command} ${verb}`, wrong, [...own]);
-}
 
 /** Said for `collection <words>` with no verb it takes: `C3 frob`, or one word alone. */
 export function noSuchVerb(words: readonly string[]): string {

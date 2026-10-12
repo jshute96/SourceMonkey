@@ -28,10 +28,10 @@ import { firstLine } from './extension-link.js';
 import type { ConnectPromptRecord, HarnessHost, MenuCommandRecord } from './host.js';
 import type { PageAttachment } from './page-watch.js';
 import {
-  collectionList, count, managerVerb, noSuchScript, noSuchVerb, otherVerbsFlag, scriptList, type ManagerControl, type ManagerRun, type RunView,
+  collectionList, count, managerVerb, noSuchScript, noSuchVerb, scriptList, type ManagerControl, type ManagerRun, type RunView,
 } from './manager-commands.js';
-import { parseCommandArgs, splitWords, unquoteWhole, type ParsedArgs } from './command-args.js';
-import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, SAME_COMMANDS, commandSyntax, commandsHelp, unsupportedCommand } from './command-list.js';
+import { helpRequest, helpSubcommand, parseCommandArgs, splitWords, unquoteWhole, type ParsedArgs } from './command-args.js';
+import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, SAME_COMMANDS, commandHelp, commandSyntax, unsupportedCommand } from './command-list.js';
 import { errorSentence, readJsonFile, writeProblem } from './input-file.js';
 import { CDP_FRAME_ARG, PAGE_COMMANDS, runPageCommand, type EvalIn } from './page-commands.js';
 import { editMultiLine } from './prompt-editor.js';
@@ -346,12 +346,16 @@ async function answerConnectCommand(ctx: ConsoleContext, args: string[]): Promis
   ctx.out(`[sm-dev] ${said} for ${prompt.name}`);
 }
 
-/** The run command whose help `--help` asks for (`click --help`), or null. */
-export function runCommandHelp(input: { line: string } | { words: string[] }): string | null {
+/**
+ * The run command, and its subcommand, whose help `--help` asks for
+ * (`click --help`, `script save --help`), or null when it isn't asked;
+ * an error for words that name no subcommand.
+ */
+export function runCommandHelp(input: { line: string } | { words: string[] }): { command: string; subcommand?: string } | { error: string } | null {
   const own = ownWords(input);
   if (!own) return null;
   const parsed = parseCommandArgs(own.command, own.rest);
-  return 'help' in parsed && parsed.help ? own.command : null;
+  return 'help' in parsed && parsed.help ? helpRequest(own.command, own.rest) : null;
 }
 
 // The error for a word that names no command a run takes.
@@ -539,9 +543,15 @@ export async function runConsoleCommand(
     if (ctx.json !== undefined) ctx.jsonLayout = ownJson as JsonLayout;
   }
   if (ctx.json !== undefined) ctx.json = !parsed.help && (parsed.flags['--nojson'] ? false : ownJson ? true : ctx.json);
-  // `click --help`: its help, as `help click` gives it, rather than a click.
+  // `click --help`: its help, as `help click` gives it, rather than a
+  // click; `script save --help`, the subcommand's.
   if (parsed.help) {
-    for (const l of commandsHelp([command]).text.trimEnd().split('\n')) ctx.out(l);
+    const subcommand = helpSubcommand(command, parsed);
+    if (typeof subcommand === 'object') {
+      ctx.out(`${MISTAKE_PREFIX}${subcommand.error}`);
+      return false;
+    }
+    for (const l of commandHelp(command, subcommand).trimEnd().split('\n')) ctx.out(l);
     return;
   }
   const unsupported = unsupportedCommand(command, ctx.managerName ?? DEFAULT_MANAGER, 'this run uses');
@@ -1213,11 +1223,6 @@ export async function managerCommand(
     return false;
   }
   const kind = command === 'script' ? 'script' : 'collection';
-  const wrongFlag = form === undefined ? null : otherVerbsFlag(kind, form, flags);
-  if (wrongFlag) {
-    ctx.out(`${MISTAKE_PREFIX}${wrongFlag}`);
-    return false;
-  }
   if (form !== undefined && form !== 'list') {
     return managerVerb({
       manager: ctx.manager,

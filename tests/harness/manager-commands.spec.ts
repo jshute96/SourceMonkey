@@ -313,5 +313,5 @@ test('in a run, its own scripts and its test collection', async ({ scriptsDir })
   expect(uninstall.stdout + uninstall.stderr).toContain('1: Mine is one of this run\'s own scripts, which go when the run ends');
   // Never the selected one by leaving it out.
   const unnamed = await cli('start', '--notab', file, '--', 'script', 'uninstall');
-  expect(unnamed.stdout + unnamed.stderr).toContain('The `script uninstall` command needs a script: `script <script> uninstall [--force]`');
+  expect(unnamed.stdout + unnamed.stderr).toContain('The `script uninstall` command needs a script: `script <script> uninstall`');
 });

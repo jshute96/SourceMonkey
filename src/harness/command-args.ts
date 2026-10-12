@@ -17,11 +17,17 @@
 //   `--name=...`) is a flag, and an unknown or global one is refused
 //   rather than run as code. A `/regex/` starting the text is all text.
 // - A quoted word is never a flag, so `'--x'` is an argument.
+// - Each subcommand (`script save`) takes only its own flags and the
+//   command's shared ones, as its help lists them.
 // - `--help`, where a flag can go, asks for the command's help, as
-//   `help <command>` does, rather than running it.
+//   `help <command>` does, rather than running it: the subcommand's,
+//   when one is named (`helpRequest`).
 // - Arguments a command doesn't take are refused.
 
-import { commandSyntax, GLOBAL_FLAGS, globalFlagMistake, noSuchFlag, TIMEOUT_FLAG, TIMEOUT_NEEDS_SECONDS, timeoutSecondsMs, type ArgSyntax, type CommandSyntax } from './command-list.js';
+import {
+  commandSyntax, GLOBAL_FLAGS, globalFlagMistake, hasPlainForm, noSuchFlag, noSuchSubcommand, plainFormWords, SAME_COMMANDS, subcommandsOf,
+  TIMEOUT_FLAG, TIMEOUT_NEEDS_SECONDS, timeoutSecondsMs, type ArgSyntax, type CommandSyntax,
+} from './command-list.js';
 import { TAB_ARG } from './tab-refs.js';
 import { quoted } from './output-style.js';
 
@@ -240,7 +246,74 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
       break;
     }
   }
+  // Each flag one the subcommand takes. Not for help, which a slip
+  // shouldn't stand in the way of.
+  if (!parsed.help) {
+    const { name, flags } = flagScope(command, syntax, parsed.form, true);
+    // One that doesn't list `--timeout-seconds` takes it as any command
+    // does: checked, then left out.
+    const timeout = parsed.flags[TIMEOUT_FLAG];
+    if (timeout !== undefined && !flags.includes(TIMEOUT_FLAG)) {
+      if (timeoutSecondsMs(timeout) === null) return { error: TIMEOUT_NEEDS_SECONDS, flag: TIMEOUT_FLAG };
+      delete parsed.flags[TIMEOUT_FLAG];
+    }
+    const wrong = Object.keys(parsed.flags).find((flag) => !flags.includes(flag));
+    if (wrong !== undefined) return { error: noSuchFlag(name, wrong, flags) + forOthers(command, syntax, wrong), flag: wrong };
+  }
   return parsed;
+}
+
+// The flags `command` takes as its subcommand `form` (`script save`),
+// and the name messages give it. With no subcommand named yet, any
+// subcommand's, unless `final`: then those of its forms with none.
+function flagScope(command: string, syntax: CommandSyntax, form: string | undefined, final = false): { name: string; flags: string[] } {
+  if (form !== undefined) return { name: `${command} ${form}`, flags: syntax.formFlags[form] ?? [] };
+  return { name: command, flags: final || Object.keys(syntax.forms).length === 0 ? syntax.formFlags[''] : Object.keys(syntax.flags) };
+}
+
+// For a flag only other subcommands take, which they are: ` The
+// `--frame` flag is for `wait selector` and `wait selector-gone`.`
+function forOthers(command: string, syntax: CommandSyntax, flag: string): string {
+  const takers = Object.keys(syntax.forms).filter((form) => syntax.formFlags[form]?.includes(flag)).map((form) => quoted(`${command} ${form}`));
+  if (takers.length === 0) return '';
+  const list = takers.length === 1 ? takers[0] : `${takers.slice(0, -1).join(', ')} and ${takers.at(-1)}`;
+  return ` The ${quoted(flag)} flag is for ${list}.`;
+}
+
+/**
+ * What `<command> ... --help` asks help for, from its parsed words: the
+ * subcommand named, `''` for the forms with none when they were given
+ * arguments (`script E4 --help`, `wait 2s --help`), or undefined for
+ * the whole command. An error for a word shaped like a subcommand's
+ * name that is none (`script savexx --help`), unless those forms spell
+ * it out (`wait all`). Another word, for a command with only
+ * subcommands, asks for the whole command (`collection C1 --help`).
+ */
+export function helpSubcommand(command: string, parsed: ParsedArgs): string | undefined | { error: string } {
+  if (parsed.form !== undefined) return parsed.form;
+  const given = parsed.words[0] ?? parsed.text?.split(/\s+/)[0];
+  if (!given || subcommandsOf(command).length === 0) return undefined;
+  const named = /^[a-z][a-z-]*$/.test(given) && !plainFormWords(command).includes(given);
+  if (named) return { error: noSuchSubcommand(command, given)! };
+  // What a subcommand acts on (`collection C1 --help`), or the plain forms' argument.
+  return hasPlainForm(command) ? '' : undefined;
+}
+
+/**
+ * What `<command> <words> --help` asks help for: the command its words
+ * make it (`scripts E4 save` is `script`'s), and the subcommand, as
+ * `helpSubcommand` says. Words it can't read ask for the whole command.
+ */
+export function helpRequest(command: string, input: { line: string } | { words: string[] }): { command: string; subcommand?: string } | { error: string } {
+  for (const single of Object.keys(SAME_COMMANDS).filter((name) => SAME_COMMANDS[name] === command)) {
+    const parsed = parseCommandArgs(single, input);
+    if (!('error' in parsed) && parsed.form !== undefined) return { command: single, subcommand: parsed.form };
+  }
+  const parsed = parseCommandArgs(command, input);
+  if ('error' in parsed) return { command };
+  const subcommand = helpSubcommand(command, parsed);
+  if (typeof subcommand === 'object') return subcommand;
+  return { command, ...(subcommand !== undefined ? { subcommand } : {}) };
 }
 
 // The flag at `list[i]`, recorded in `parsed`: the index of its last
@@ -259,7 +332,10 @@ function takeFlag(command: string, syntax: CommandSyntax, parsed: ParsedArgs, li
     return eq > 0 ? i : i + 1;
   }
   if (!kind && GLOBAL_FLAGS.includes(name)) return { error: globalFlagMistake(name), flag: name };
-  if (!kind) return { error: noSuchFlag(command, name, Object.keys(syntax.flags)), flag: name };
+  if (!kind) {
+    const scope = flagScope(command, syntax, parsed.form);
+    return { error: noSuchFlag(scope.name, name, scope.flags), flag: name };
+  }
   if (Object.hasOwn(parsed.flags, name)) return { error: `The ${name} flag can be given once`, flag: name };
   if (kind === 'bool' || (kind === 'optional' && eq < 0)) {
     if (eq > 0) return { error: `The ${name} flag takes no value`, flag: name };

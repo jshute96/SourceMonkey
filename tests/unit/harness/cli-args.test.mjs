@@ -569,9 +569,47 @@ test('help topic names are unique, and none is a topic help has of its own', asy
   for (const reserved of ['all', 'full', 'commands']) assert.ok(!names.includes(reserved), reserved);
 });
 
-test('an unknown name given twice is named once', () => {
+test('help takes one topic, or a command and one of its subcommands', () => {
   assert.deepEqual(help('frob', '--help', '--', 'frob', '-h'), { code: 2, out: 'ERROR: `frob` is not a command. Use `sm-dev help commands` to list the commands.\n' });
-  assert.match(help('help', 'nope', 'nope').out, /^ERROR: `nope` is not a command or help topic\./);
+  assert.deepEqual(help('help', 'nope', 'save'), { code: 2, out: 'ERROR: `nope` is not a command. Use `sm-dev help commands` to list the commands.\n' });
+  assert.deepEqual(help('help', 'logs', 'tabs'), { code: 2, out: 'ERROR: The `logs` command has no subcommands\n' });
+  assert.deepEqual(help('help', 'waiting', 'log'), { code: 2, out: 'ERROR: The `help` command takes a topic, or a command and one of its subcommands: `help script save`\n' });
+  assert.equal(help('help', 'script', 'save', 'x').code, 2);
+});
+
+test('help for a subcommand shows only its forms, and the options it takes', () => {
+  const save = help('help', 'script', 'save');
+  assert.equal(save.code, 0);
+  assert.match(save.out, /^Usage: sm-dev script \[script\] save <dir> \[options\]$/m);
+  assert.match(save.out, /^ {2}--flat +Save all files/m);
+  assert.match(save.out, /^Common options:\n {2}--json/m);
+  assert.doesNotMatch(save.out, /--file|--collection|script list/);
+  // --help on the subcommand, before or after its words, asks the same.
+  assert.equal(help('script', 'save', '--help').out, save.out);
+  assert.equal(help('script', 'E4', 'save', '/tmp/x', '--help').out, save.out);
+  assert.equal(help('scripts', 'E4', 'save', '-h').out, save.out);
+  // wait log has the Logs options; the forms with no subcommand don't.
+  assert.match(help('help', 'wait', 'log').out, /^Logs:\n {2}--log-source/m);
+  const plain = help('wait', '2s', '--help').out;
+  assert.match(plain, /^Usage: sm-dev wait \[T<n>\|all\]\n {7}sm-dev wait <time>$/m);
+  assert.doesNotMatch(plain, /--log-source|--frame|wait log/);
+  // A subcommand the command doesn't have is a mistake, not its whole help.
+  assert.deepEqual(help('help', 'script', 'frob'), {
+    code: 2,
+    out: 'ERROR: The `script` command has no `frob` subcommand. It has `list`, `show`, `print`, `save`, `enable`, `disable`, `refresh`, `install`, `uninstall`, `move`.\n',
+  });
+  assert.equal(help('manager', 'frob', '--help').code, 2);
+  // So is a word shaped like one, though `script <script>` could take it;
+  // the forms with no subcommand get theirs for other words.
+  assert.deepEqual(help('script', 'savexx', '--help'), help('help', 'script', 'savexx'));
+  assert.match(help('script', 'E4', '--help').out, /^Usage: sm-dev scripts\n {7}sm-dev script <script>$/m);
+  assert.match(help('wait', 'all', '--help').out, /^Usage: sm-dev wait \[T<n>\|all\]$/m);
+  // A flag the subcommand doesn't take doesn't stand in the way of its help.
+  assert.equal(help('wait', 'log', '--frame', 'F1', '--help').out, help('help', 'wait', 'log').out);
+  // What a subcommand acts on, with none named: the whole command.
+  assert.equal(help('collection', 'C1', '--help').out, help('help', 'collection').out);
+  // A command with no subcommands: its help, whatever its words.
+  assert.match(help('click', '.x', '--help').out, /^Usage: sm-dev click /);
 });
 
 test('help for one command shows its entry and only its flags', () => {
@@ -635,17 +673,14 @@ test('each run command takes the flags its help lists, and no others', async () 
 });
 
 test('help covers a run\'s commands and aliases, and refuses unknown names', () => {
-  const typed = help('help', 'status', 'script', 'get');
-  assert.equal(typed.code, 0);
-  assert.match(typed.out, /^Usage: sm-dev status \[options\]$/m);
+  assert.match(help('help', 'status').out, /^Usage: sm-dev status \[options\]$/m);
   // `script` is `scripts`'s singular, so its help is the same.
-  assert.match(typed.out, /^Usage: sm-dev scripts\n {7}sm-dev script <script>$/m);
+  assert.match(help('help', 'script').out, /^Usage: sm-dev scripts\n {7}sm-dev script <script>$/m);
   assert.equal(help('help', 'script').out, help('scripts', '--help').out);
-  assert.match(typed.out, /^Usage: sm-dev get <key> \[options\]$/m);
-  assert.doesNotMatch(typed.out, /menu \[what\]/);
+  assert.match(help('help', 'get').out, /^Usage: sm-dev get <key> \[options\]$/m);
   // Every form of a command of several.
   // help's own, with the row for --help after it.
-  assert.match(help('help', 'help').out, /^ {7}sm-dev <command> --help$/m);
+  assert.match(help('help', 'help').out, /^ {7}sm-dev <command> \[subcommand\] --help$/m);
   assert.equal(help('help', 'wait').out.match(/^ {2}wait/gm).length, 5);
   // ? is help, and keys is key.
   assert.equal(help('?', 'keys').out, help('help', 'key').out);

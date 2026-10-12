@@ -724,7 +724,7 @@ test('logs reads the run\'s log by source, tab, text, tail and position; streams
     // Mistakes.
     expect(await setup.cli('logs', '--log-source', 'pages')).toEqual(['[sm-dev] ERROR: The --log-source flag takes sm, event, script, page or all, or multiple separated by commas, not pages']);
     expect(await setup.cli('logs', '--since', 'soon')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The --since flag takes a log ID, /)]);
-    expect(await setup.cli('wait', '2s', '--find', 'x')).toEqual(['[sm-dev] ERROR: The --find flag only applies to wait log']);
+    expect(await setup.cli('wait', '2s', '--find', 'x')).toEqual(['ERROR: The `wait` command has no --find flag. It takes --timeout-seconds. The --find flag is for `wait log`.']);
 
     // A client following the run sees the sources it asked for. Logged
     // later, as eval's own reply would show it either way.

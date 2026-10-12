@@ -350,7 +350,7 @@ Command marks:
 ### The command line (`cli.ts`)
 
 - `--help` anywhere on the line is found first: the help for each
-  command named, and nothing run or checked.
+  command named (or its subcommand), and nothing run or checked.
 - The global options are taken off the front of the line first:
   `--run`, `--root`, `--local`, `--stdin`, `--interactive`, and the
   browser's `--browser`, `--manager`, `--open-browser`, `--profile`,
@@ -400,7 +400,10 @@ Command marks:
     `help commands` gives each command's first sentence (or its
     `summary`), by topic; `help all` renders everything.
   - `help <command>` picks one command out of it, with the options any
-    section lists for it.
+    section lists for it. `help <command> <subcommand>` picks one
+    subcommand, with only the options it takes.
+  - `help` takes one topic, or a command and a subcommand. A
+    subcommand the command doesn't have is an error.
   - A section that is just the command of its name (`frames`, `logs`)
     shows that command's help instead, which has all its options.
 - The help reads like markdown (`help-format.ts`): `##` headings,
@@ -427,6 +430,11 @@ Command marks:
   names Tab completes, and which commands go to a run.
   - Its flags come from its options and usage lines (`cdp [tab] --file
     <path>`). One whose term names a value (`--out FILE`) takes one.
+  - A subcommand is a form named by a keyword with a `syntax` of its
+    own (`script [script] save`, `wait log`). Each takes the flags of
+    its own entry, and the shared ones a section lists for the command
+    (`commands: ['wait']`) or for it alone (`commands: ['wait log']`).
+    The forms with no keyword (`wait <time>`) share one flag set.
   - Its `syntax` says what its arguments are. See below.
 
 ### Reading a command's words (`command-args.ts`)
@@ -451,12 +459,15 @@ sm-dev's up-front check runs it too.
     whole, or in JavaScript write it so the `--` isn't a word of its
     own (`a = '--b'`).
     - A `/regex/` starting the text is all text; flags can follow it.
+  - Once the subcommand is known, a flag it doesn't take is refused,
+    wherever it was given (`script --out x enable`).
   - A quoted word is never a flag.
   - `--timeout-seconds` is taken by any command: one that waits on
     nothing (`accept`) checks its value and ignores it, unlisted.
   - `--help` where a flag can go is a request for the command's help
     (`help` in the result). The prompt, stdin and the run show
-    `help <command>`'s text for it.
+    `help <command>`'s text for it, or the subcommand's
+    (`helpRequest`).
   - The global options (`--run`, `--root`, `--local`, which can repeat,
     ...) go before any command, and `takeGlobalFlags` in `cli.ts` reads
     them.

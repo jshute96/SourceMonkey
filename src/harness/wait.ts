@@ -57,8 +57,6 @@ const SELECTOR_LOOK_MS = 1000;
 // says plainly whether it got it.
 const WAIT_DONE = '[sm-dev] Wait done: ';
 const LOG_MATCHED = '[sm-dev] Wait matched log line: ';
-// The flags only `wait log` takes.
-const LOG_FLAGS = ['--find', '--log-source', '--since'];
 
 // ---------- Settling ----------
 
@@ -230,11 +228,6 @@ export async function waitFor(ctx: ConsoleContext, parsed: ParsedArgs): Promise<
     ctx.out(`${MISTAKE_PREFIX}${text}`);
     return false;
   };
-  // Only an element is looked for in a frame: settling, a delay and the
-  // log are the tab's.
-  if (parsed.flags['--frame'] !== undefined && parsed.form !== 'selector' && parsed.form !== 'selector-gone') {
-    return mistake('The `--frame` flag is for `wait selector` and `wait selector-gone`, which look for an element in a frame');
-  }
   const timeout = parsed.flags['--timeout-seconds'];
   const given = timeoutFlagMs(parsed.flags, ctx.out);
   if (given === null) return false;
@@ -244,8 +237,6 @@ export async function waitFor(ctx: ConsoleContext, parsed: ParsedArgs): Promise<
     if (parsed.tab !== undefined) return mistake('The `wait log` command takes no tab, since it watches all of the run\'s output');
     return waitForLog(ctx, parsed, timeoutMs);
   }
-  const logFlag = LOG_FLAGS.find((flag) => parsed.flags[flag] !== undefined);
-  if (logFlag) return mistake(`The ${logFlag} flag only applies to wait log`);
 
   // A plain delay. A tab or `all` before it (`wait T2 3s`) is allowed
   // and has no effect: a delay waits the same whichever tab is named.

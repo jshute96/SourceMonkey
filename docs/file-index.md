@@ -255,10 +255,10 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/checks.ts` | `match` and `validate`'s shared half: finding the scripts named, and the lines each prints |
 | `src/harness/path-args.ts` | Globs (`*`, `**`) and directory searches for sm-dev's file arguments |
 | `src/harness/command-lines.ts` | Input lines into a run's commands: multi-line `{{ ... }}` blocks (`eval`, `set`, `type`, `cdp`), comments, sent lists |
-| `src/harness/command-list.ts` | Every sm-dev command in one list, in the help's named sections, with arguments, options, and the help views' layouts |
+| `src/harness/command-list.ts` | Every sm-dev command in one list, in the help's named sections, with subcommands, their options, and the help views |
 | `src/harness/output-style.ts` | Output markup by role (IDs, URLs, commands), sm-dev's message prefixes, tables, and painting lines for a terminal |
 | `src/harness/help-format.ts` | Help text layout: wrapping by shown width, bullets, `code` spans, and painting them in color for a terminal |
-| `src/harness/command-args.ts` | The one parser of every sm-dev command's words: quotes, flags, a leading tab, text, forms (and what one acts on), blocks |
+| `src/harness/command-args.ts` | The one parser of every sm-dev command's words: quotes, flags per subcommand, a leading tab, text, blocks, `--help` |
 | `src/harness/prompt-editor.ts` | Multi-line editing of `{{` blocks at the `--interactive` prompt, on top of readline |
 | `src/harness/prompt-history.ts` | The `--interactive` prompt's history file (`~/.sm-dev-history`), shared by parallel sessions |
 | `src/harness/console-commands.ts` | A run's commands across its tabs (`logs` among them), the page-dialog tracker, and the client's `--interactive` prompt |

@@ -368,16 +368,3 @@ test('script save puts a local file where a relative @require finds it, and skip
     rmSync(cwd, { recursive: true, force: true });
   }
 });
-
-test('a flag only another verb takes is refused', async () => {
-  const { managerCommand } = await import('../../lib/harness/console-commands.js');
-  const run = async (form, flags) => {
-    const out = [];
-    const ok = await managerCommand({ manager: withFiles, out: (l) => out.push(plainLine(l)), json: false }, 'script', { form, subject: 'E4', words: ['/tmp/x'], flags });
-    return { ok, out };
-  };
-  assert.deepEqual(await run('save', { '--file': 'xx' }), {
-    ok: false, out: ['[sm-dev] ERROR: The `script save` command has no --file flag. It takes --only, --flat, --force.'],
-  });
-  assert.deepEqual(await run('enable', { '--out': 'x' }), { ok: false, out: ['[sm-dev] ERROR: The `script enable` command has no --out flag. It takes no flags.'] });
-});
