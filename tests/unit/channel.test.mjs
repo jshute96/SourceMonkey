@@ -84,7 +84,7 @@ test('the registry carries built-ins as they were when it was made', async () =>
   const { window, document } = page;
   // eslint-disable-next-line no-new-func
   const reg = new Function('document', `return ${registryExpr()};`)(document);
-  assert.equal(reg.freeze, Object.freeze);
+  assert.equal(reg.apply, Reflect.apply);
   assert.equal(typeof reg.info, 'function');
   // A later entry gets the same one.
   // eslint-disable-next-line no-new-func

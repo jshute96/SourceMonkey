@@ -339,15 +339,6 @@ Gaps that made corpus scripts fail on their live sites (see
 the scripts). Comparisons are against Violentmonkey's source; Tampermonkey
 wasn't checked.
 
-- **`GM` is frozen** (`gm-frozen`: 30766, 19993, 437569).
-  - `src/extension/gm-bindings.ts` emits `const GM = Object.freeze({...})`.
-  - GM_config's polyfill sets `GM.getValue` when only `GM_getValue` is
-    granted, and the assignment is silently dropped, so 30766 never
-    starts. 19993 adds a `GM.cookie` stub, which throws.
-  - 437569 wraps `GM` in a `Proxy` whose `get` returns bound copies,
-    which breaks the Proxy invariant for a frozen target and throws.
-  - VM builds `GM` as a plain writable object. Fix: drop the freeze,
-    or freeze only the API properties and leave the object extensible.
 - **Granted `GM_*` names are `const`** (`gm-reassign`: 2129, 2128,
   419798, 438053, 2130).
   - A shim like `GM_xmlhttpRequest = GM.xmlHttpRequest;` throws
@@ -358,12 +349,6 @@ wasn't checked.
     for scripts that ask to be isolated. Fix there: declare them with
     `let`.
   - About 50 corpus files assign to a `GM_*` name; some are guarded.
-- **No `cloneInto` / `exportFunction` / `createObjectIn`**
-  (`needs-cloneinto`: 19993).
-  - Older scripts call these Firefox helpers unchecked and throw
-    `cloneInto is not defined`.
-  - VM defines pass-through stand-ins on Chrome (`makeComponentUtils`
-    in `src/injected/web/util.js`). Cheap to copy.
 - **Re-test the scripts the page-world default should fix**
   (`needs-page-globals`: 561432, 382030, 485608, 395461, 37314, 382359,
   386908, 387955, 432423, and earlier ones; `needs-custom-elements`:
@@ -413,17 +398,6 @@ Violentmonkey 2.49.0 with a throwaway `tests/examples/` probe script
     also wrong after a redirect for error and timeout); consider
     delivering `onabort` asynchronously, which contradicts the comment
     at the local abort dispatch.
-- **Undeclared `exports`, `module` and `define` throw**
-  (`needs-module-globals`: 30954).
-  - Webpack and UMD bundles pass or test these names; in SourceMonkey
-    that's `ReferenceError: exports is not defined` before anything
-    runs.
-  - TM and VM both give `undefined` for these three names only (other
-    undeclared names still throw). VM wraps each script in
-    `(define,module,exports)=>{...}` called with no arguments
-    (`background/utils/preinject-prepare.js`).
-  - Fix: declare them as undefined parameters or locals in the script
-    wrapper.
 - **`GM_setClipboard` ignores its callback** (`setclipboard-callback`:
   483847).
   - TM documents `GM_setClipboard(data, info, cb)`; the binding in

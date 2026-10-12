@@ -359,8 +359,8 @@ What we **do not** do:
 
 - No safe-bind Babel transform (we're not Webpack-ing).
 - No `createNullObj` / `setOwnProp` style — plain TypeScript.
-- No `cloneInto` / `exportFunction` (those are Firefox primitives;
-  we're Chrome MV3-only).
+- No real `cloneInto` / `exportFunction` (those are Firefox primitives;
+  we're Chrome MV3-only). Scripts get pass-through stand-ins, as in VM.
 - No defensive copy of every Array / String / RegExp method. The
   trade-off above ("hostile other userscript" is low-stakes) makes
   going further not worth the readability cost.

@@ -215,7 +215,7 @@ test('buildRegistrationSpec: MAIN-world scripts get REAL GM_* bindings, not just
   // MAIN too — so these resolve rather than ReferenceError.
   assert.match(combined, /const GM_setValue = function[^]*__smReg\.gm\.storage\.set/);
   assert.match(combined, /const GM_getValue = function[^]*__smReg\.gm\.storage\.get/);
-  assert.match(combined, /const GM_info = __smReg\.freeze/);
+  assert.match(combined, /const GM_info = \{/);
 });
 
 test('buildRegistrationSpec: a storage-granting MAIN script still asks for its snapshot', async () => {
@@ -231,7 +231,7 @@ test('buildRegistrationSpec: @grant none MAIN scripts are unchanged (GM_info onl
   const spec = await buildRegistrationSpec(makeScript({ header: grantHeader('none') }));
   assert.equal(spec.world, 'MAIN');
   const combined = spec.js[2].code;
-  assert.match(combined, /const GM_info = __smReg\.freeze/);
+  assert.match(combined, /const GM_info = \{/);
   assert.doesNotMatch(combined, /const unsafeWindow/);
   assert.doesNotMatch(combined, /__smReg\.gm/);
 });

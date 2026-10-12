@@ -92,17 +92,17 @@ export function withChannelKey(code: string): string {
 // - Registries have no prototype either, so reading a field one lacks
 //   can't hand it to a getter the page put on `Object.prototype`.
 // - Each carries built-ins as they were when the gate was made, for
-//   generated code that runs after the page's: `freeze`, `apply`
+//   generated code that runs after the page's: `apply`
 //   (Reflect.apply), `resolve` / `reject` (a promise made with the
 //   `Promise` constructor of then), `info` (console.info). See
 //   `emitGmBindings`.
 export function registryExpr(): string {
   return '(function(k){var g=document.__smGate;if(typeof g!=="function"){'
-    + 'var m=Object.create(null),c=Object.create,f=Object.freeze,a=Reflect.apply,p=Promise;'
+    + 'var m=Object.create(null),c=Object.create,a=Reflect.apply,p=Promise;'
     + 'var i=console.info.bind(console);'
     + 'var rs=function(v){return new p(function(y){y(v)})};var rj=function(e){return new p(function(y,n){n(e)})};'
     + 'g=function(x){if(typeof x!=="string")return void 0;var r=m[x];'
-    + 'if(!r){r=c(null);r.freeze=f;r.apply=a;r.resolve=rs;r.reject=rj;r.info=i;m[x]=r}return r};'
+    + 'if(!r){r=c(null);r.apply=a;r.resolve=rs;r.reject=rj;r.info=i;m[x]=r}return r};'
     + 'var d=c(null);d.value=g;Object.defineProperty(document,"__smGate",d)}return g(k)})'
     + `(${JSON.stringify(channelKey())})`;
 }

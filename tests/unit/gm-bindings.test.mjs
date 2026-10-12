@@ -33,7 +33,7 @@ function makeInfo(over = {}) {
 test('emitGmBindings: empty granted set → only GM_info (always implicit)', () => {
   // TM/VM both expose GM_info even with no @grant line. We follow.
   const out = emitGmBindings([], makeInfo({ grants: [] }));
-  assert.match(out.js, /const GM_info = __smReg\.freeze/);
+  assert.match(out.js, /const GM_info = \{/);
   // No other GM_* bindings.
   assert.doesNotMatch(out.js, /const GM_(?!info\b)\w+ = function/);
   assert.deepEqual(out.granted, []);
@@ -44,8 +44,29 @@ test('emitGmBindings: empty granted set → only GM_info (always implicit)', () 
 test('emitGmBindings: emits GM_info even with a single grant', () => {
   const out = emitGmBindings(['GM_setValue'], makeInfo());
   assert.match(out.js, /const GM_info = /);
-  // GM_info is frozen — match the freeze wrapper (the registry's copy).
-  assert.match(out.js, /__smReg\.freeze\(/);
+  // Not frozen, as in TM and VM.
+  assert.doesNotMatch(out.js, /freeze/);
+});
+
+test('emitGmBindings: every script gets the module names and Firefox stand-ins', () => {
+  for (const granted of [[], ['GM_setValue']]) {
+    const out = emitGmBindings(granted, makeInfo());
+    // eslint-disable-next-line no-new-func
+    const names = new Function('__smReg', `${out.js}; return { exports, module, define, cloneInto, exportFunction, createObjectIn };`)({
+      info: () => {}, apply: Reflect.apply, resolve: (v) => Promise.resolve(v), reject: (e) => Promise.reject(e), gm: {},
+    });
+    assert.equal(names.exports, undefined);
+    assert.equal(names.module, undefined);
+    assert.equal(names.define, undefined);
+    const obj = {};
+    assert.equal(names.cloneInto(obj, {}), obj);
+    const target = {};
+    const fn = () => 7;
+    assert.equal(names.exportFunction(fn, target, { defineAs: 'f' }), fn);
+    assert.equal(target.f, fn);
+    const made = names.createObjectIn(target, { defineAs: 'o' });
+    assert.equal(target.o, made);
+  }
 });
 
 test('emitGmBindings: emits a const for each granted GM_x', () => {
@@ -230,7 +251,7 @@ test('emitGmBindings: emits a GM object with the GM4 aliases for granted APIs', 
   const out = emitGmBindings(['GM_setValue', 'GM_xmlhttpRequest'], makeInfo({
     grants: ['GM_setValue', 'GM_xmlhttpRequest'],
   }));
-  assert.match(out.js, /const GM = __smReg\.freeze\(\{/);
+  assert.match(out.js, /const GM = \{ /);
   assert.match(out.js, /setValue:/);
   assert.match(out.js, /xmlHttpRequest:/);
   // GM4 storage forms wrap in a promise, through the registry's copies.
@@ -262,7 +283,7 @@ test('emitGmBindings: unknown granted names are silently dropped (GM_info still 
   // The unknown name is dropped from `granted` and produces no
   // binding, but GM_info is still emitted (it's implicit, not driven
   // by the resolved-spec set).
-  assert.match(out.js, /const GM_info = __smReg\.freeze/);
+  assert.match(out.js, /const GM_info = \{/);
   assert.doesNotMatch(out.js, /const GM_audio = /);
   assert.deepEqual(out.granted, []);
 });
@@ -438,7 +459,7 @@ test('emitGmBindings: the emitted js stays on one physical line', () => {
 test('emitGmBindings: the top level calls nothing the page could have replaced', () => {
   // It runs in the sloppy-mode wrap function, which a page function it
   // called could reach through `.caller` (the channel key is in its
-  // source). So `Object.freeze` and `console.info` are the registry's.
+  // source). So `console.info` is the registry's.
   const out = emitGmBindings(['GM_setValue', 'GM_xmlhttpRequest', 'window.close', 'GM_getResourceText'], makeInfo({
     grants: ['GM_setValue', 'GM_xmlhttpRequest', 'window.close', 'GM_getResourceText'],
   }), true);

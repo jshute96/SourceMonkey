@@ -80,14 +80,14 @@
   var reg = (function (k) {
     var g = document.__smGate;
     if (typeof g !== "function") {
-      var m = Object.create(null), c = Object.create, f = Object.freeze, a = Reflect.apply, p = Promise;
+      var m = Object.create(null), c = Object.create, a = Reflect.apply, p = Promise;
       var i = console.info.bind(console);
       var rs = function (v) { return new p(function (y) { y(v); }); };
       var rj = function (e) { return new p(function (y, n) { n(e); }); };
       g = function (x) {
         if (typeof x !== "string") return void 0;
         var r = m[x];
-        if (!r) { r = c(null); r.freeze = f; r.apply = a; r.resolve = rs; r.reject = rj; r.info = i; m[x] = r; }
+        if (!r) { r = c(null); r.apply = a; r.resolve = rs; r.reject = rj; r.info = i; m[x] = r; }
         return r;
       };
       var d = c(null);

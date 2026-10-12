@@ -218,7 +218,8 @@ function emitGmInfo(info: GmInfoInput): string {
     scriptWillUpdate: true,
     userAgentData: info.userAgentData,
   };
-  return `const GM_info = __smReg.freeze(${jsLit(gmInfo)});`;
+  // Not frozen, as in TM and VM: a script may add to its own copy.
+  return `const GM_info = ${jsLit(gmInfo)};`;
 }
 
 // Build a single GM_x binding statement.
@@ -423,7 +424,8 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   ].join(' ');
 }
 
-// Build the GM4 namespace object — `const GM = Object.freeze({ ... })`.
+// Build the GM4 namespace object — `const GM = { ... }`. Not frozen, as
+// in TM and VM: GM_config and other libraries add to it.
 // For each granted API with a `gmDotName`, expose a property on `GM`.
 // When `gmDotPromised` is true, wrap the GM_x return value in a promise
 // so the GM4 caller can `await` it uniformly. Both go through the
@@ -452,8 +454,31 @@ function emitGmObject(grantedSpecs: readonly GmApiSpec[]): string {
     }
   }
   if (props.length === 0) return '';
-  return `const GM = __smReg.freeze({ ${props.join(', ')} });`;
+  return `const GM = { ${props.join(', ')} };`;
 }
+
+// Names every script gets, as in TM and VM (measured in TM 5.5.0 and VM
+// 2.49.0), declared here so they stay out of the page:
+//   - `exports`, `module`, `define` are undefined, so a bare reference
+//     doesn't throw, and a UMD library a script `@require`s sees no
+//     module system (not the page's AMD `define`) and sets a global.
+//   - `cloneInto`, `exportFunction` and `createObjectIn` are Firefox's
+//     for passing values into the page; on Chrome there's nothing to
+//     cross, so as in both managers `cloneInto` returns its argument,
+//     `exportFunction` its function and `createObjectIn` a new object,
+//     the last two put on the target first when given `defineAs`.
+// A script's own declaration of any of them shadows these (its program
+// runs in a nested scope). `let`, not `const`, so a sloppy
+// `define = undefined` works, as in VM, where they're parameters; `let`
+// also keeps them off the page's `window` in the reload swap's global
+// eval, where a `var` would land there.
+const FIREFOX_AND_MODULE_NAMES =
+  'let exports = void 0, module = void 0, define = void 0, '
+  + 'cloneInto = function (obj) { return obj; }, '
+  + 'exportFunction = function (fn, target, options) { '
+  + 'if (options && options.defineAs != null) target[options.defineAs] = fn; return fn; }, '
+  + 'createObjectIn = function (target, options) { var obj = {}; '
+  + 'if (options && options.defineAs != null) target[options.defineAs] = obj; return obj; };';
 
 // Public entry point. Build the binding source string for one script.
 //
@@ -466,6 +491,8 @@ function emitGmObject(grantedSpecs: readonly GmApiSpec[]): string {
 //   - For each known granted API: a `const GM_x = ...` binding.
 //   - The GM4 `GM` object covers granted APIs with gmDotName, plus
 //     `GM.info`.
+//   - `exports` / `module` / `define` and the Firefox stand-ins, for
+//     every script (`FIREFOX_AND_MODULE_NAMES`).
 //   - Granted names not in the catalog (resolveGrants should have
 //     filtered these but be defensive) are skipped.
 //
@@ -495,11 +522,11 @@ export function emitGmBindings(
   // called directly could reach it through `.caller`, and its
   // `arguments` hold the script's entry (its stored values among them).
   // So the top level calls nothing the page could have replaced:
-  // `Object.freeze` and `console.info` are the registry's copies, taken
-  // at document_start (`freeze`, `info`). Calls from inside a GM
+  // `console.info` is the registry's copy, taken at document_start
+  // (`info`). Calls from inside a GM
   // function don't lead back here: the runtime is strict, and the user
   // program runs through the prelude's strict `callAs`.
-  const parts: string[] = [emitGmInfo(info)];
+  const parts: string[] = [emitGmInfo(info), FIREFOX_AND_MODULE_NAMES];
   const declared: string[] = ['GM_info'];
   for (const spec of specs) {
     if (spec.name === 'GM_info') continue;

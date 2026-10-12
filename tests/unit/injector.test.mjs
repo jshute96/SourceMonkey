@@ -1258,7 +1258,7 @@ test('buildRegistrationSpec: @require entries get GM_info even without any other
   }));
   const combined = spec.js[2];
   assert.ok('code' in combined);
-  assert.match(combined.code, /const GM_info = __smReg\.freeze/);
+  assert.match(combined.code, /const GM_info = \{/);
   assert.ok(combined.code.indexOf('const GM_info') < combined.code.indexOf('P();'));
 });
 
@@ -1482,7 +1482,7 @@ test('buildRegistrationSpec: MAIN-world script gets GM_info only (no other bindi
   // Shape: [config, prelude, combined, seal]
   const mainEntry = spec.js[2];
   assert.ok('code' in mainEntry);
-  assert.match(mainEntry.code, /const GM_info = __smReg\.freeze/);
+  assert.match(mainEntry.code, /const GM_info = \{/);
   assert.doesNotMatch(mainEntry.code, /__smReg\.gm/);
 });
 

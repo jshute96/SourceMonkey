@@ -17,9 +17,14 @@ SourceMonkey actually does today.
   + the script's parsed header, returns the JS source to splice into
   the wrapper. Always emits `GM_info` (matching TM/VM: implicit, no
   `@grant` required); emits a `const GM_x = function (...){...}` for
-  each granted legacy name; emits a `const GM = Object.freeze({...})`
-  GM4 namespace covering the granted APIs with `gmDotName` plus
-  `GM.info`.
+  each granted legacy name; emits a `const GM = {...}` GM4 namespace
+  covering the granted APIs with `gmDotName` plus `GM.info`. Neither
+  `GM` nor `GM_info` is frozen, as in TM and VM: GM_config and other
+  libraries add to `GM`.
+- Every script also gets `exports`, `module` and `define` as
+  `undefined`, and pass-through `cloneInto` / `exportFunction` /
+  `createObjectIn`, as TM and VM give them
+  (`FIREFOX_AND_MODULE_NAMES`).
 - **`src/wrapper-gm-runtime.js`** — shared runtime (`reg.gm`, in the world's registry; see [injection.md](injection.md#the-channel-key)),
   registered once per page **per execution world** at `document_start`.
   The same source runs in USER_SCRIPT and in MAIN; it picks its
@@ -266,7 +271,8 @@ output ships whether the script lands in USER_SCRIPT or MAIN.
 
 ## GM4 alias namespace
 
-`GM` is a `const` Object.freeze'd at compile time. Each granted API
+`GM` is a `const` built at compile time, and not frozen, as in TM and
+VM (GM_config and other libraries add to it). Each granted API
 with a `gmDotName` becomes a property. Where `gmDotPromised` is true
 (storage primitives), the GM4 form wraps the legacy `GM_x` call in
 `Promise.resolve` so callers can `await` it uniformly — matching the

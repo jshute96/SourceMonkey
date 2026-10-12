@@ -73,6 +73,64 @@ test.describe('user program scope', () => {
     await page.close();
   });
 
+  test('names TM and VM give every script: an open GM, the module names, the Firefox stand-ins', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // Measured in TM 5.5.0 and VM 2.49.0. A UMD library sees no module
+    // system, not even the page's AMD `define`, so it sets a global.
+    scriptsDir.writeRaw('umd.js', [
+      '(function (root, factory) {',
+      '  if (typeof define === "function" && define.amd) define([], factory);',
+      '  else if (typeof module === "object" && module.exports) module.exports = factory();',
+      '  else root.UmdLib = factory();',
+      '})(this, function () { return { name: "umd" }; });',
+    ].join('\n'));
+    const body = `
+      GM.myExtra = 1;
+      const fn = () => 7;
+      const target = {};
+      document.documentElement.dataset['sm_' + GM_info.script.name] = [
+        Object.isFrozen(GM), GM.myExtra, Object.isFrozen(GM_info),
+        exports, module, define,
+        UmdLib.name,
+        cloneInto(target, {}) === target,
+        exportFunction(fn, target, { defineAs: 'f' }) === fn && target.f === fn,
+        typeof createObjectIn(target, { defineAs: 'o' }) === 'object' && typeof target.o,
+      ].join(',');
+    `;
+    for (const [name, extra] of [['page', []], ['isolated', ['// @inject-into content']]] as const) {
+      scriptsDir.write({
+        relativePath: `${name}.user.js`,
+        meta: {
+          name,
+          match: [`${fixtureServer.baseUrl}/*`],
+          runAt: 'document-end',
+          grant: ['GM_setValue'],
+          extra: ['// @require     umd.js', ...extra],
+        },
+        body,
+      });
+    }
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.route(`${fixtureServer.baseUrl}/amd.html`, (route) => route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      body: `<!doctype html><html><head><script>
+        window.define = function () { window.__pageDefineCalled = true; };
+        window.define.amd = {};
+      </script></head><body></body></html>`,
+    }));
+    await page.goto(`${fixtureServer.baseUrl}/amd.html`);
+    const expected = 'false,1,false,,,,umd,true,true,object';
+    await expect(page.locator('html')).toHaveAttribute('data-sm_page', expected);
+    await expect(page.locator('html')).toHaveAttribute('data-sm_isolated', expected);
+    expect(await page.evaluate(() => (window as any).__pageDefineCalled)).toBeUndefined();
+    await page.close();
+  });
+
   test('a script redeclaring wrapper-provided names shadows them', async ({
     extensionContext, fixtureServer, sm,
   }) => {
@@ -93,6 +151,8 @@ test.describe('user program scope', () => {
         if (typeof GM_setValue === 'undefined') { var GM_setValue = function () {}; }
         function GM_addStyle(css) { return 'own:' + css; }
         const self = window;
+        var define = 'mine';
+        exports = 'assigned';
         var __smE = 1;
         let __smDecision = 2;
         document.body.dataset.smRan = [
@@ -103,6 +163,7 @@ test.describe('user program scope', () => {
           typeof self.__PAGE_APP__,
           // A name the script left alone still reaches our binding.
           GM_getValue('k', 'dflt'),
+          define, exports,
         ].join(',');
       `,
     });
@@ -117,7 +178,7 @@ test.describe('user program scope', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/${PAGE}`);
     await expect(page.locator('body')).toHaveAttribute(
-      'data-sm-ran', 'true,own:x,true,undefined,dflt',
+      'data-sm-ran', 'true,own:x,true,undefined,dflt,mine,assigned',
     );
     await page.close();
   });

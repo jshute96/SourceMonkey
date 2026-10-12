@@ -1043,10 +1043,9 @@ where the page can't get hold of it later:
   reach it, both closed:
   - `.caller`, from a page function the wrap's top level calls
     directly. So that top level (the GM bindings) calls nothing the
-    page could have replaced: `Object.freeze`, `console.info`,
-    `Reflect.apply` and promise-making are the registry's copies
-    (`freeze`, `info`, `apply`, `resolve` / `reject`), taken when the
-    gate was made.
+    page could have replaced: `console.info`, `Reflect.apply` and
+    promise-making are the registry's copies (`info`, `apply`,
+    `resolve` / `reject`), taken when the gate was made.
   - V8's stack-trace API (`Error.prepareStackTrace` with
     `CallSite.getFunction`), which hands a page every sloppy function
     on the stack down to the first strict one. So the user program
@@ -1539,7 +1538,10 @@ The entry has two scopes, one inside the other:
 
 - **Outer** (the wrap function): our own declarations — the `__sm*`
   preamble, `const GM_info`, granted `GM_*`, `const unsafeWindow =
-  window;`. The registry (`__smReg`) comes from the function around
+  window;`, and the names TM and VM give every script: `exports`,
+  `module` and `define` as `undefined`, and pass-through `cloneInto` /
+  `exportFunction` / `createObjectIn` (see
+  [GM-APIs.md](GM-APIs.md)). The registry (`__smReg`) comes from the function around
   it, whose argument holds the channel key (see
   [The channel key](#the-channel-key)).
 - **Inner** (an arrow function; a sandboxed script gets a `with` and a
