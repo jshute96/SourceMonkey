@@ -870,9 +870,13 @@ follows from that:
   the page's window already is. `@grant unsafeWindow` resolves to MAIN,
   and the binding is the same `const unsafeWindow = window;` we always
   emitted — what changed is which realm that `window` belongs to.
-- TM and VM land in the same place by different routes (TM's
-  `@sandbox JavaScript`, VM's page-context injection); both give a
-  Chrome script `unsafeWindow === window`.
+- TM and VM also run these scripts in the page's realm (TM's
+  `@sandbox JavaScript`, VM's page-context injection), so
+  `unsafeWindow` reads the page's globals directly in both.
+- But TM's `window` is a wrapper over the page's, not the page's
+  itself: a script's `window.setTimeout = ...` stays in the wrapper
+  under TM, and replaces the page's own under SourceMonkey (TODO.md,
+  "`@require` libraries land on the page's `window`").
 
 The isolated-world case that remains:
 

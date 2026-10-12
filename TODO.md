@@ -369,6 +369,14 @@ wasn't checked.
     in the USER_SCRIPT world) fail. `@inject-into page` copies work.
   - TM ran 386908 (which hooks the page's event APIs) in the page,
     where SourceMonkey's isolated copy had no effect.
+  - The same goes for scripts that patch built-ins
+    (`patches-page-builtins`: 450253, 455252, 478080, 373903, 546581,
+    495177): `XMLHttpRequest.prototype.open`, `Object.prototype`
+    setters, `performance.now` or the EME APIs change only the
+    isolated world's copies, so the page's own calls never reach the
+    hook. Under TM the page's `XMLHttpRequest.prototype.open` and
+    `Object.prototype` showed the patches; `@inject-into page` copies
+    work.
   - The sharpest case: a script whose only `@grant` lines are unknown
     names (27929's `@grant aoh72931`, 432423's `@grant Math.mod`,
     437552's `@grant noneT`) gets no APIs at all, yet runs isolated
@@ -448,6 +456,11 @@ against Tampermonkey with `sm-dev --manager tm` probes (2026-10-05).
   - Fix ideas: run requires with a scope object as `this`/`window`
     for MAIN-world scripts, or snapshot and restore the page globals a
     require overwrites. Both are partial; needs a design.
+  - The script's own writes to `window` reach the page the same way
+    (`window-writes-reach-page`: 475153). Its `window.setTimeout = fn
+    => fn()` and `window.setInterval = ...` replaced moomoo.io's, and
+    the game overflowed its stack. Under TM the page's timers stayed
+    native and it loaded; an `@inject-into content` copy works.
 - **`unsafeWindow` and `GM_*` aren't properties of `window`/`self`**
   (`unsafewindow-on-window`: 593, 4881, 4882, 455261, 455855;
   `gm-on-window`: 456077, 455261, 455855).
@@ -511,6 +524,76 @@ scripts, checked against Tampermonkey 5.5 with `sm-dev --manager tm`
     the script starts anyway.
   - Fix ideas: register `/X/*` with an `excludeGlobs` entry for
     `/X`, or send these scripts through the prelude recheck.
+
+The next items came from sweeping the last untested valid corpus
+scripts, checked against Tampermonkey 5.5.1 with `sm-dev --manager tm`
+(2026-10-10).
+
+- **A tab's GM value cache drifts from storage** (seen on 459137).
+  - Tab A deletes a key; an older write of the same key from tab B
+    then arrives by broadcast and re-adds it to A's cache. The SW
+    (service worker) never sends A's own delete back to A, so the
+    cache keeps the key for good.
+  - On 459137, which writes and deletes a packet per ping, the
+    lichess tab's `GM_listValues()` grew to 657 keys while storage
+    held 8.
+  - Fix idea: order writes per key (a sequence number from the SW) so
+    a tab ignores a broadcast older than its own last write.
+- **Cross-tab value changes take 155-240 ms** (`value-sync-latency`:
+  459137).
+  - The 150 ms write batching (docs/GM-APIs-storage.md, "Backing store
+    and write batching") is paid once in each direction.
+  - A.C.A.S passes packets between tabs through GM values and gives
+    up on a reply after 250 ms, so it never connects. Under TM it
+    connected within seconds.
+  - Fix ideas: a much shorter debounce, or flush at once when another
+    tab has a value-change listener on the key.
+- **`GM.xmlHttpRequest` returns `{abort}`, not a Promise**
+  (`gm-xhr-promise`: 494467).
+  - `emitGmObject` in `src/extension/gm-bindings.ts` passes the
+    `GM_xmlhttpRequest` result through (documented in
+    docs/supported-GM-APIs.md).
+  - TM and VM return a Promise of the response, with `abort` on it.
+    494467 does `await GM.xmlHttpRequest(...)`, gets `{abort}` at
+    once, and falls back to stale data (TM: stored 117 KB of fresh
+    market JSON).
+  - Fix: return a Promise that resolves on `onload` and rejects on
+    error/timeout/abort, still calling the details' callbacks, with
+    `abort` added to it.
+- **Unhandled rejections aren't reported after `document.write()`**
+  (seen on 437625).
+  - A `@run-at document-start` script that calls `document.write()`
+    and then throws in a promise gets no `threw` report and nothing
+    in the console. The same throw without the `document.write()` is
+    reported.
+  - Likely cause: the implicit `document.open()` drops the
+    `unhandledrejection` listener the prelude adds to `window`
+    (`src/userscript-prelude.js`). Diagnostics only.
+- **`GM_unregisterMenuCommand(caption)` doesn't remove the command**
+  (seen on 420475).
+  - 420475 unregisters by the caption, not the id
+    `GM_registerMenuCommand` returned, so each pause toggle adds a
+    menu entry.
+  - VM (2.48 source) keys commands by `options.id || caption` and
+    returns that key, so its id is normally the caption; its
+    unregister also falls back to a caption match. A script tested
+    under VM can't tell the two apart.
+  - TM documents only the id. What TM does with a caption isn't
+    checked: probe it before deciding.
+  - Fix, if we follow VM: when the argument matches no id, remove
+    this script's commands with that caption.
+- **Unconfirmed: a frame script skipped by the 10 s decision timeout**
+  (seen on 446887, Nitro Type).
+  - In a headed browser, after the script's own reloads, the race
+    iframe's copy was skipped each time with "SourceMonkey did not
+    answer whether to run it within 10 seconds"
+    (`DECISION_TIMEOUT_MS` in `src/userscript-prelude.js`).
+  - Each time the frame had shown nothing for about 30 s and the skip
+    landed in the same millisecond as the top frame's start. That
+    looks like a stalled renderer firing the timer on resume, before
+    the answer it was about to receive. Headless reloads were fine.
+  - If it repeats: measure the wait with a clock that excludes stalls,
+    or recheck for a late answer before giving up.
 
 ## Cross-manager coverage
 
