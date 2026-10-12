@@ -169,6 +169,10 @@ It runs against real headless Chromium with `chrome.userScripts`,
     CDP (`Browser.setDownloadBehavior: default`) and writes the
     `download.*` Preferences. The browser is shared across the worker's
     tests, so a spec cleans its own files in `beforeEach`.
+  - `testWithBackForwardCache` — the same fixtures, in a browser that
+    keeps Chrome's back/forward cache, which Playwright turns off by
+    default. Go back with `history.back()` from the page: Playwright's
+    `goBack` loses track of a page restored from the cache.
 - `extension-id.ts` — computes Chrome's deterministic
   unpacked-extension ID (SHA-256 of the path, first 16 bytes, mapped
   `0`–`f` → `a`–`p`). Needed because we have to write Preferences for
@@ -270,11 +274,12 @@ tests:
   crashed-run cleanup as if at `now`, past the grace period. sm-dev
   drives these; see
   [sm-dev-design.md](sm-dev-design.md#test-collections).
-- GM values: `getGmValues(id)` returns every **persisted** value for a
-  script, deliberately excluding the SW's in-flight overlay.
-  `GM_setValue` batches its write 150ms after the last one, so a test
-  waits on this rather than pausing — and because it reads only what
-  survived, a predicate that passes has passed against durable state.
+- GM values: `getGmValues(id)` returns a script's values from the
+  worker's value store, which includes writes not yet on disk. A page
+  sends its writes a microtask after making them, so a test waits on
+  this rather than pausing. `gmValuesSaved()` resolves once every
+  write the worker has taken is on disk, for a test about durable
+  state.
 
 These mirror production functions. Two of them wait where production
 deliberately doesn't, so a test can't observe a half-written state:

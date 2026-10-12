@@ -194,9 +194,9 @@ and the dominant costs are gone: the slowest per-script check is 181 ms
 of a 500 ms budget, the decision lands at ~243 ms. What remains:
 
 - **`getKeys()` itself costs ~40 ms** on a 266-row namespace, paid
-  inside the window by every storage-granting script. A per-script
-  in-memory value cache in the SW (invalidated by `gmval:` writes)
-  would remove it — see the GM storage note below.
+  inside the window by a storage-granting script's first load after a
+  worker start. Later loads come from the value store's memory
+  (`src/extension/value-store.ts`).
 - **The script-row scans are gone from the worker**: the match index,
   registration sync, log labels and sticky numbers read the row cache,
   loaded once per worker start (77–93 ms for 344 rows).
@@ -481,6 +481,57 @@ scripts, checked against Tampermonkey 5.5 with `sm-dev --manager tm`
   - Fix ideas: register `/X/*` with an `excludeGlobs` entry for
     `/X`, or send these scripts through the prelude recheck.
 
+The next items came from sweeping the last untested valid corpus
+scripts, checked against Tampermonkey 5.5.1 with `sm-dev --manager tm`
+(2026-10-10).
+
+- **`GM.xmlHttpRequest` returns `{abort}`, not a Promise**
+  (`gm-xhr-promise`: 494467).
+  - `emitGmObject` in `src/extension/gm-bindings.ts` passes the
+    `GM_xmlhttpRequest` result through (documented in
+    docs/supported-GM-APIs.md).
+  - TM and VM return a Promise of the response, with `abort` on it.
+    494467 does `await GM.xmlHttpRequest(...)`, gets `{abort}` at
+    once, and falls back to stale data (TM: stored 117 KB of fresh
+    market JSON).
+  - Fix: return a Promise that resolves on `onload` and rejects on
+    error/timeout/abort, still calling the details' callbacks, with
+    `abort` added to it.
+- **Unhandled rejections aren't reported after `document.write()`**
+  (seen on 437625).
+  - A `@run-at document-start` script that calls `document.write()`
+    and then throws in a promise gets no `threw` report and nothing
+    in the console. The same throw without the `document.write()` is
+    reported.
+  - Likely cause: the implicit `document.open()` drops the
+    `unhandledrejection` listener the prelude adds to `window`
+    (`src/userscript-prelude.js`). Diagnostics only.
+- **`GM_unregisterMenuCommand(caption)` doesn't remove the command**
+  (seen on 420475).
+  - 420475 unregisters by the caption, not the id
+    `GM_registerMenuCommand` returned, so each pause toggle adds a
+    menu entry.
+  - VM (2.48 source) keys commands by `options.id || caption` and
+    returns that key, so its id is normally the caption; its
+    unregister also falls back to a caption match. A script tested
+    under VM can't tell the two apart.
+  - TM documents only the id. What TM does with a caption isn't
+    checked: probe it before deciding.
+  - Fix, if we follow VM: when the argument matches no id, remove
+    this script's commands with that caption.
+- **Unconfirmed: a frame script skipped by the 10 s decision timeout**
+  (seen on 446887, Nitro Type).
+  - In a headed browser, after the script's own reloads, the race
+    iframe's copy was skipped each time with "SourceMonkey did not
+    answer whether to run it within 10 seconds"
+    (`DECISION_TIMEOUT_MS` in `src/userscript-prelude.js`).
+  - Each time the frame had shown nothing for about 30 s and the skip
+    landed in the same millisecond as the top frame's start. That
+    looks like a stalled renderer firing the timer on resume, before
+    the answer it was about to receive. Headless reloads were fine.
+  - If it repeats: measure the wait with a clock that excludes stalls,
+    or recheck for a late answer before giving up.
+
 ## Cross-manager coverage
 
 - **No `tests/examples/` script exercises `@require` under
@@ -591,6 +642,28 @@ Adding any of these is a catalog entry + a body — nothing structural.
   and VM let it surface as the script's uncaught error. Report it as
   the script's error (and check the other runtime callbacks: value
   listeners, menu commands, notifications, downloads).
+- **Value sequence numbers after a backward clock step.** The value
+  store starts its counter from `Date.now()` (`src/extension/value-store.ts`).
+  If the clock steps back by more than an earlier worker's lifetime,
+  open documents hold numbers above the new worker's and drop its
+  updates for those keys until they navigate (resync can't repair
+  it either). Fix: keep a high-water mark in `chrome.storage.session`
+  and start from the larger of the two.
+- **A value write can race a wipe.** `wipeValues` lists a script's
+  rows, then removes them; a write landing in between saves a key that
+  the removal then deletes from disk, while the store's map keeps it.
+  The only caller removes an sm-dev run's collection, so it's low
+  impact. Fix: hold new saves for the script until the wipe finishes.
+- **sm-dev runs never use the back/forward cache.** Playwright turns
+  it off in every browser it launches, sm-dev's included, so a page a
+  script runs on is never restored from it, as it often is in Chrome.
+  `launchExtensionBrowser` takes `backForwardCache` to keep it; sm-dev
+  could do so by default, after checking how its tab tracking copes
+  (Playwright's own `goBack` loses a restored page).
+- **Coalesce value writes per task** if a script floods the worker:
+  writes spread across `await`s or animation frames are a message
+  and a broadcast each (docs/GM-APIs-storage.md, "Sending writes").
+
 - **Menu commands vanish on a bfcache restore.** `src/extension/gm-menu.ts`
   holds ONE document's commands per tab, so leaving a page drops its
   registrations — and Chrome doesn't re-inject on back/forward, so
@@ -834,12 +907,6 @@ Adding any of these is a catalog entry + a body — nothing structural.
   - Copy only if storage reads ever show up in a profile, and note
     the win is smaller for us — `chrome.storage.local` deserializes
     the row either way.
-- **Cache the gmValues snapshot in SW memory.** Every storage-
-  granting script's `sm:check-pending` reply triggers a
-  `chrome.storage.local.get(null)` on the document-start critical
-  path. A per-script in-SW cache invalidated by `handleBatchWrite`
-  would skip it on cache hit. See
-  [docs/GM-APIs-storage.md](docs/GM-APIs-storage.md#cost-on-the-document-start-critical-path).
 - **Shim cache audit.** The page-side runtime captures `Promise`,
   `Error`, `Object.keys`, `Object.create`, `Object.prototype.
   hasOwnProperty`, `document.createElement`, `Node.appendChild`,
@@ -1031,6 +1098,10 @@ See [docs/harness-design.md](docs/harness-design.md).
   otherwise. Seen on www.la7.it with a `@grant none` script that does
   nothing: "Function statements require a function name", before the
   script started. Same on `main`.
+- `settleWrites` waits 250 ms after firing a menu command, sized for
+  the old 150 ms value-write debounce
+  (`src/harness/console-commands.ts`). Writes now reach the worker a
+  message later, so it could probably be much shorter.
 - After SourceMonkey's worker restarts mid-run, the events from while it
   was stopped are lost (the run says so). The scripts' Log entries are
   read back; the rest (starts, menu commands, values) could be caught

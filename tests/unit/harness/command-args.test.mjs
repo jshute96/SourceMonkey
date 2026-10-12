@@ -80,9 +80,9 @@ test('--help asks for the command\'s help, where a flag can go', () => {
   assert.equal(typed('closetab', '--help').help, true);
   assert.equal(typed('click', '.x --help').help, true);
   assert.deepEqual(sent('stop', '--help').help, true);
-  // In text, it's text.
-  assert.equal(typed('eval', 'x --help').text, 'x --help');
-  assert.equal(typed('eval', 'x --help').help, undefined);
+  // In text too; quoted, it's text.
+  assert.equal(typed('eval', 'x --help').help, true);
+  assert.equal(typed('eval', `x '--help'`).help, undefined);
 });
 
 test('a tab can lead a page command\'s arguments, among its flags', () => {
@@ -94,9 +94,26 @@ test('a tab can lead a page command\'s arguments, among its flags', () => {
   assert.deepEqual(typed('key', 'j T2').words, ['j', 'T2']);
 });
 
-test('text is the rest of the line, its --words its own', () => {
+test('text is the rest of the line, less the flags in it', () => {
   assert.equal(typed('eval', '"abc".length').text, '"abc".length');
-  assert.equal(typed('eval', 'x --script').text, 'x --script');
+  assert.deepEqual(typed('eval', 'x --script'), { flags: { '--script': true }, words: [], text: 'x' });
+  // A flag anywhere in the text, with its value, as typed or from a shell.
+  const js = 'new Promise((r) => setTimeout(r, 30000))';
+  assert.deepEqual(typed('eval', `T2 '${js}' --timeout-seconds 45`), { flags: { '--timeout-seconds': '45' }, tab: 'T2', words: [], text: `'${js}'` });
+  assert.deepEqual(sent('eval', 'T2', js, '--timeout-seconds', '45'), { flags: { '--timeout-seconds': '45' }, tab: 'T2', words: [], text: js });
+  assert.deepEqual(typed('eval', 'a --timeout-seconds=4 + b').text, 'a + b');
+  // An unknown one is refused, not run as code; a global one is named as such.
+  assert.equal(typed('eval', 'x --y').error, 'The `eval` command has no `--y` flag. It takes `--page`, `--script`, `--file`, `--out`, `--timeout-seconds`, `--frame`.');
+  assert.equal(typed('eval', '1 --run D1').error, 'The `--run` flag is for the whole command line, so it goes first, before any command: `sm-dev --run ... <command>`');
+  // Any command takes --timeout-seconds, and one that waits on nothing
+  // ignores it; its value is still checked.
+  assert.deepEqual(typed('accept', 'yes --timeout-seconds 5'), { flags: {}, words: [], text: 'yes' });
+  assert.deepEqual(sent('dismiss', '--timeout-seconds=5'), { flags: {}, words: [] });
+  assert.equal(typed('accept', '--timeout-seconds x').error, 'The --timeout-seconds flag needs a number of seconds, up to 2147483');
+  // Code that only looks like one somewhere stays code: quoted, inside a
+  // word, or not a name after the dashes.
+  for (const code of [`a = '--y'`, 'i--', '--i;', 'x -- y', 'f(--n)']) assert.equal(typed('eval', code).text, code, code);
+  assert.equal(sent('eval', 'x = 1 --y').text, 'x = 1 --y');
   assert.deepEqual(typed('set', `k '["a"]'`), { flags: {}, words: ['k'], text: '["a"]' });
   assert.equal(typed('set', 'k "metric"').text, '"metric"');
   assert.deepEqual(typed('set', 'k --file v.json'), { flags: { '--file': 'v.json' }, words: ['k'], text: '' });
@@ -119,29 +136,31 @@ test('a selector is the rest of the line less its flags, which go anywhere', () 
   assert.equal(sent('click', 'e4', '--modifiers=Alt').text, 'e4');
 });
 
-test('wait: a tab, then the form, and flags ending wait log\'s text', () => {
+test('wait: a tab, then the form, and flags in wait log\'s text', () => {
   assert.deepEqual(typed('wait', 'T1 selector #go'), { flags: {}, tab: 'T1', form: 'selector', words: [], text: '#go' });
   assert.deepEqual(typed('wait', 'log ready --timeout-seconds 9'), { flags: { '--timeout-seconds': '9' }, form: 'log', words: [], text: 'ready' });
   assert.deepEqual(typed('wait', 'log ready --timeout-seconds=9').flags, { '--timeout-seconds': '9' });
-  // A near miss of it is refused; other --words are text.
-  assert.equal(typed('wait', 'log ready --timeout 40').error, 'The `wait` command has no `--timeout` flag. It takes `--timeout-seconds`, `--log-source`, `--find`, `--since`, `--frame`.');
-  assert.equal(typed('wait', 'log Running --dry-run mode').text, 'Running --dry-run mode');
+  // Any other --name is refused.
+  assert.equal(typed('wait', 'log ready --timeout 40').error, 'The `wait log` command has no `--timeout` flag. It takes `--timeout-seconds`, `--log-source`, `--find`, `--since`.');
+  assert.equal(typed('wait', 'log Running --dry-run mode').error, 'The `wait log` command has no `--dry-run` flag. It takes `--timeout-seconds`, `--log-source`, `--find`, `--since`.');
   // Quoted, or a regex, it's all text.
   assert.equal(typed('wait', `log 'x --timeout 40'`).text, 'x --timeout 40');
   assert.equal(typed('wait', 'log /a --timeout b/').text, '/a --timeout b/');
+  // Flags can follow the regex, typed or from a shell.
+  assert.deepEqual(typed('wait', 'log /a --b c/ --timeout-seconds 3'), { flags: { '--timeout-seconds': '3' }, form: 'log', words: [], text: '/a --b c/' });
+  assert.deepEqual(sent('wait', 'log', '/a', '--b', 'c/', '--timeout-seconds', '3').flags, { '--timeout-seconds': '3' });
+  assert.equal(sent('wait', 'log', '/a', '--b', 'c/', '--timeout-seconds', '3').text, '/a --b c/');
   // From a shell, only a word of its own is a flag.
   assert.equal(sent('wait', 'log', 'Running --timeout mode').text, 'Running --timeout mode');
-  assert.equal(sent('wait', 'log', 'x', '--timeout', '40').error, 'The `wait` command has no `--timeout` flag. It takes `--timeout-seconds`, `--log-source`, `--find`, `--since`, `--frame`.');
+  assert.equal(sent('wait', 'log', 'x', '--timeout', '40').error, 'The `wait log` command has no `--timeout` flag. It takes `--timeout-seconds`, `--log-source`, `--find`, `--since`.');
   assert.deepEqual(sent('wait', '2s').words, ['2s']);
-  // A near miss is one that starts like a flag, or a flag's start.
-  assert.equal(typed('wait', 'log x --timeouts 4').error, 'The `wait` command has no `--timeouts` flag. It takes `--timeout-seconds`, `--log-source`, `--find`, `--since`, `--frame`.');
-  assert.equal(typed('wait', 'log x --help-me').text, 'x --help-me');
-  // Only flags that end the text are taken.
+  // Flags anywhere in it are taken.
   assert.deepEqual(typed('wait', 'log --timeout-seconds 4 x').flags, { '--timeout-seconds': '4' });
+  assert.deepEqual(typed('wait', 'log a --timeout-seconds 4 b'), { flags: { '--timeout-seconds': '4' }, form: 'log', words: [], text: 'a b' });
   // The text with --find instead, and the log flags ending it too.
   assert.deepEqual(typed('wait', 'log --find ready'), { flags: { '--find': 'ready' }, form: 'log', words: [], text: '' });
   assert.deepEqual(typed('wait', 'log ready --since 14:05:12 --log-source all').flags, { '--since': '14:05:12', '--log-source': 'all' });
-  assert.equal(typed('wait', 'log a --other=b').text, 'a --other=b');
+  assert.equal(typed('wait', 'log a --other=b').error, 'The `wait log` command has no `--other` flag. It takes `--timeout-seconds`, `--log-source`, `--find`, `--since`.');
 });
 
 test('sm-dev\'s own commands read the same way', () => {
@@ -161,6 +180,27 @@ test('a form can name what it acts on before its keyword, or leave it out', () =
   assert.deepEqual(typed('script', 'list C3'), { flags: {}, form: 'list', words: ['C3'] });
   assert.equal(typed('script', 'C3 list').form, undefined);
   // The old order says the new one.
-  assert.deepEqual(typed('script', 'enable E4'), { error: 'Name the script before the verb: script E4 enable' });
-  assert.deepEqual(typed('script', 'move E4 C2'), { error: 'Name the script before the verb: script E4 move C2' });
+  assert.deepEqual(typed('script', 'enable E4'), { error: 'Name the script before the verb: `script E4 enable`' });
+  assert.deepEqual(typed('script', 'move E4 C2'), { error: 'Name the script before the verb: `script E4 move ...`' });
+});
+
+test('each subcommand takes its own flags and the command\'s shared ones, and no other\'s', () => {
+  assert.deepEqual(typed('script', 'save /tmp/x --file xx'), {
+    error: 'The `script save` command has no `--file` flag. It takes `--only`, `--flat`, `--force`, `--json`, `--nojson`. The `--file` flag is for `script print`.', flag: '--file',
+  });
+  // Given before the subcommand, it is checked once the subcommand is known.
+  assert.equal(typed('script', '--out x enable').error, 'The `script enable` command has no `--out` flag. It takes `--json`, `--nojson`. The `--out` flag is for `script print`.');
+  assert.deepEqual(typed('script', 'E4 print --file jq --json').flags, { '--file': 'jq', '--json': true });
+  // The forms with no subcommand take the shared ones only.
+  assert.match(typed('script', 'E4 --flat').error, /^The `script` command has no `--flat` flag\. It takes `--json`, `--nojson`\. The `--flat` flag is for `script save`\.$/);
+  // An option a section lists for one subcommand (`wait log`).
+  assert.deepEqual(typed('wait', 'log ready --since 5').flags, { '--since': '5' });
+  assert.match(typed('wait', '2s --since 5').error, /^The `wait` command has no `--since` flag\./);
+  assert.match(typed('wait', 'selector .x --frame F2').error ?? '', /^$/);
+  assert.match(typed('wait', 'T1 --frame F2').error, /^The `wait` command has no `--frame` flag\./);
+  // Any subcommand takes --timeout-seconds, as any command does: checked, then left out.
+  assert.deepEqual(typed('script', 'save /tmp/x --timeout-seconds 3').flags, {});
+  assert.match(typed('script', 'save /tmp/x --timeout-seconds soon').error, /^The --timeout-seconds flag needs a number of seconds/);
+  // Help isn't refused for a slip.
+  assert.equal(typed('script', 'save --file x --help').help, true);
 });

@@ -107,6 +107,7 @@
   var _ReflectApply = Reflect.apply;
   var _hasOwn = Object.hasOwn;
   var _ObjectCreate = Object.create;
+  var _definePropertyEarly = Object.defineProperty;
   /* Timers and microtasks, likewise: a page function we called while
      handling one of the bridge's events could read `window.event`,
      whose type carries the channel key. */
@@ -169,9 +170,10 @@
    *
    * For each script we maintain:
    *   cfg          : the {id, name, sourceUrl, runAt, loadedAt,
-   *                  matching?, needsGmValues, startupLogs?,
-   *                  manualRun?} passed in by the per-script config
-   *                  blob. A manual script's next run replaces it.
+   *                  matching?, needsGmValues, needsGmRuntime?,
+   *                  startupLogs?, manualRun?} passed in by the
+   *                  per-script config blob. A manual script's next
+   *                  run replaces it.
    *   matched      : did the in-page matcher accept this URL? Sync;
    *                  set during initScript.
    *   decision     : null|run|run-new|skip — settled by check-pending,
@@ -243,9 +245,22 @@
      carry the channel key, so the page can't send or hear them, and
      the options object has no prototype, so a page getter on
      `Object.prototype` can't read the detail as the event is built.
-     Returns false if the dispatch could not happen at all; a dropped
-     payload (no bridge listening, unallowlisted type) looks the same
-     as a delivered one from here. */
+     Returns false if the dispatch could not happen at all.
+
+     The bridge is its own registration, which Chrome can inject after
+     this wrapper, and a `document-start` script can run (and report
+     its start, errors and GM_* calls) before it is in. So the bridge
+     cancels each event it takes, as a receipt: its listener runs
+     inside our dispatch, so `dispatchEvent` returning true (not
+     cancelled) means nobody took it. Such a payload is held and sent
+     again when the bridge announces itself (READY_MARKER in
+     wrapper-bridge.js). The GM runtime holds its own requests the same
+     way (`bridgeDispatch` in wrapper-gm-runtime.js).
+
+     A request leaves the list when its caller stops waiting
+     (`dropHeld`), so the bridge never hears a question nobody will
+     read the answer to. The list has no cap: what stays is reports,
+     and they pile up only on a page the bridge never reaches. */
   var _indirectEval = eval;
   var _CustomEvent = null;
   var _dispatchEvent = null;
@@ -260,14 +275,50 @@
       _dispatchEvent = document.dispatchEvent.bind(document);
     }
   } catch (_deE) {}
+  var bridgeHeld = [];   /* [{detail, requestId}] */
+  var bridgeReadyListening = false;
+  function dispatchToBridge(detail) {
+    var init = _ObjectCreate(null);
+    init.detail = detail;
+    init.cancelable = true;
+    return !_dispatchEvent(new _CustomEvent(SYNC_EVENT, init));
+  }
   function bridgeDispatch(payload, requestId) {
     try {
       if (!_CustomEvent || !_dispatchEvent || !_stringify) return false;
-      var init = _ObjectCreate(null);
-      init.detail = _stringify({ requestId: requestId == null ? undefined : requestId, payload: payload });
-      _dispatchEvent(new _CustomEvent(SYNC_EVENT, init));
+      var detail = _stringify({ requestId: requestId == null ? undefined : requestId, payload: payload });
+      if (!dispatchToBridge(detail)) holdForBridge(detail, requestId);
       return true;
     } catch (_e) { return false; }
+  }
+  /* Added to without `push`, so a page's `Array.prototype` hook
+     doesn't see what is held. */
+  function addHeld(list, item) {
+    _definePropertyEarly(list, list.length, dataDesc(item, true, true, true));
+  }
+  function holdForBridge(detail, requestId) {
+    addHeld(bridgeHeld, { detail: detail, requestId: requestId });
+    if (bridgeReadyListening) return;
+    bridgeReadyListening = true;
+    try { window.addEventListener("sourcemonkey-bridge-ready", resendHeld, true); } catch (_rlE) {}
+  }
+  function dropHeld(requestId) {
+    var kept = [];
+    for (var i = 0; i < bridgeHeld.length; i++) {
+      if (bridgeHeld[i].requestId !== requestId) addHeld(kept, bridgeHeld[i]);
+    }
+    bridgeHeld = kept;
+  }
+  /* Kept on, not removed after one ready: the page can fire the ready
+     event too, with still no bridge, and what is held then stays held. */
+  function resendHeld() {
+    var held = bridgeHeld;
+    bridgeHeld = [];
+    for (var i = 0; i < held.length; i++) {
+      try {
+        if (!dispatchToBridge(held[i].detail)) addHeld(bridgeHeld, held[i]);
+      } catch (_rsE) {}
+    }
   }
   /* The bridge's replies, in MAIN world: one listener for all of them,
      each handed to the waiter for its requestId. The detail is read
@@ -410,25 +461,17 @@
         needsValues: !!cfg.needsGmValues,
         tld: tld
       };
-      /* The bridge can be injected after this wrapper: a sync that
-         widens its patterns re-registers it behind the scripts already
-         registered. Its request event, sent before the bridge listened,
-         is gone, so when the bridge announces itself the request is
-         sent again, once. Without this the wrapper would wait out its
-         timer and not run, whatever the SW would have decided. */
-      var resent = false;
-      var onReady = function () {
-        if (resent) return;
-        resent = true;
-        bridgeDispatch(request, requestId);
-      };
       onReply(requestId, function (reply) { seal(decided(reply)); });
-      /* READY_MARKER in wrapper-bridge.js. */
-      window.addEventListener("sourcemonkey-bridge-ready", onReady, true);
+      /* A request still held when this gives up is dropped, so a
+         bridge landing later doesn't ask the SW for an answer nobody
+         reads (it could use up a reload's hot swap). */
       cleanup = function () {
         offReply(requestId);
-        try { window.removeEventListener("sourcemonkey-bridge-ready", onReady, true); } catch (_e2) {}
+        dropHeld(requestId);
       };
+      /* If the bridge isn't in yet, `bridgeDispatch` holds the request
+         and sends it when the bridge is, rather than this waiting out
+         its timer and not running, whatever the SW would have decided. */
       var dispatched = bridgeDispatch(request, requestId);
       /* Nothing left the page, so no reply is coming. Seal now rather
          than costing this script the full timeout. */
@@ -1026,7 +1069,10 @@
   function startManualRun(entry, cfg) {
     entry.runAtFired = true;
     entry.decision = bare({ action: "run" });
-    if (cfg.manualRun.gmValues) entry.decision.gmValues = cfg.manualRun.gmValues;
+    if (cfg.manualRun.gmValues) {
+      entry.decision.gmValues = cfg.manualRun.gmValues;
+      entry.decision.gmSeq = cfg.manualRun.gmSeq;
+    }
   }
 
   /* Another run of a manual script already run in this document. The
@@ -1060,13 +1106,18 @@
      script that must patch the page before its own code runs.
 
      Skipping it is safe only where the SW's answer is known to be
-     `run`. Every other answer needs something this skips:
+     `run` and nothing needs the wait itself. Each of these needs
+     something this skips:
      - `run-new` (reload fast path) and the "Reload page with no
        userscripts" `skip` happen only on a reload. That `skip` covers
        the tab's subframes too, and a subframe can't see the top
        page's navigation type, so subframes always ask.
      - the reply carries a GM storage snapshot (`needsGmValues`).
      - a `.tld` rule needs the SW's exact match check.
+     - the script needs the GM runtime and it isn't in yet: it is its
+       own registration, which Chrome can inject after this wrapper.
+       Asking takes long enough for every document_start registration
+       to run, so the body then finds it.
      - an sm-dev tab claim can `skip` on any navigation, so in a browser
        sm-dev is connected to the wrapper asks, unless the tab vouches
        for the script's run. A scratch script (`cfg.run`) runs only in
@@ -1078,6 +1129,7 @@
     if (cfg.runAt !== "document-start") return false;
     if (cfg.needsGmValues) return false;
     if (cfg.matching && hasTldRule(cfg.matching)) return false;
+    if (cfg.needsGmRuntime && !hasGmRuntime()) return false;
     try {
       if (window.top !== window) return false;
       var nav = performance.getEntriesByType("navigation")[0];
@@ -1177,7 +1229,7 @@
         var swapSnap = decision.gmValues;
         if (swapSnap && typeof swapSnap === "object") {
           try {
-            reg.gm.storage.init(cfg.id, swapSnap);
+            reg.gm.storage.init(cfg.id, swapSnap, decision.gmSeq);
             swapReady = true;
           } catch (_smSI) {}
         }
@@ -1218,6 +1270,9 @@
           name: cfg.name,
           fromLoadedAt: cfg.loadedAt,
           loadedAt: newLoadedAt,
+          /* The snapshot the cache was seeded from, so the worker can
+             say if writes came in after it (sm:gm-values-stale). */
+          gmSeq: decision.gmSeq,
           url: location.href
         });
         if (evalErr) {
@@ -1244,6 +1299,9 @@
       id: cfg.id,
       name: cfg.name,
       loadedAt: cfg.loadedAt,
+      /* As on sm:swapped. Sent in the same task as the body's
+         storage.init, just before it. */
+      gmSeq: decision.gmSeq,
       url: location.href
     });
     try {

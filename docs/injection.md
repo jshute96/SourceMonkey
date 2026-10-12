@@ -390,28 +390,45 @@ set, *how* the calls are grouped decides the result.
   repaired, and re-placing the world's scripts behind it would cost
   each an injection gap:
   - the runtime: a wrapper checks for it lazily (see the reload fast
-    path's `needsRuntime`);
-  - the bridge: a wrapper ahead of it sends its check-pending again
-    when the bridge announces itself (below).
+    path's `needsRuntime`), and a `document-start` script that needs it
+    asks the SW before running when it isn't in yet (below);
+  - the bridge: whatever is sent before it listens is held and sent
+    again when the bridge announces itself (below).
 - **User specs then go out as batches**, since the relative order of two
   user scripts is not something we promise anyway — see
   [`@run-at` gating](#run-at-gating).
 - Cross-registration ordering isn't guaranteed by the API; in practice
   Chrome runs registrations in order.
-  - The GM runtime doesn't rest on it: its bindings are spliced inside
-    the wrap function the prelude invokes only after its gates resolve.
-  - The bridge does. A request is a synchronous event dispatch, so a
-    bridge that hasn't installed its listener yet misses it rather than
-    picking it up from a queue.
-  - The only request exposed is `sm:check-pending`. Lost, the wrapper
-    would wait out its timeout and not run, whatever the SW would have
-    decided (see [No decision](#no-decision)).
-  - So the bridge announces itself once its listener is in
-    (`sourcemonkey-bridge-ready`), and a wrapper still waiting sends its
-    request again, once. The bridge can land after the wrappers: an
-    incremental sync that widens its patterns updates it, which Chrome
-    moves to the end.
-  - Keeping our specs first still saves that round trip.
+  - The GM runtime and the bridge can both land after a wrapper, and
+    a `document-start` script on a first load runs its body at once,
+    without the check-pending round trip (`canSkipDecision`). So
+    neither can be assumed in place when the body runs.
+  - The GM runtime: such a script that needs it (`needsGmRuntime` in
+    its config) asks the SW instead when the registry has no `gm` yet
+    (`hasGmRuntime`). The answer takes long enough for every `document_start`
+    registration to run.
+  - The bridge: a request is a synchronous event dispatch, so a bridge
+    that hasn't installed its listener yet misses it.
+    - The bridge cancels every event it takes, as a receipt: its
+      listener runs inside the sender's dispatch, so the sender sees
+      at once whether it was taken.
+    - What wasn't taken is held, and sent again when the bridge
+      announces itself (`sourcemonkey-bridge-ready`). The prelude
+      (reports, check-pending) and the MAIN-world GM runtime (every
+      `GM_*` call) each hold their own.
+    - Held, a check-pending still gets its answer, a report still
+      arrives, and a `GM_*` call's reply comes a little later. Lost,
+      a script would show as MISSING or go unrun, and a `GM_*` call
+      would time out.
+    - A request whose caller stops waiting (check-pending's timeout,
+      a `GM_*` call's) is dropped from the list, so a bridge landing
+      after that doesn't start work nobody is waiting on.
+    - The two lists are sent separately, so the SW can get what the
+      prelude held (reports) before what the runtime held (`GM_*`
+      calls), whatever order they were made in. No SW handler depends
+      on that order.
+  - Keeping our specs first means that usually nothing is held, and
+    no script needs to ask for the runtime.
 
 ### Update, never unregister-then-register
 
@@ -1274,7 +1291,7 @@ What crosses it:
   replies, even on failure, so the caller's awaiter settles instead of
   running out its timeout.
 - **SW-originated pushes** — `sm:gm-xhr-event`, `sm:gm-value-update`,
-  `sm:gm-tab-closed`, `sm:gm-notification-event`, `sm:gm-menu-fire`,
+  `sm:gm-values-stale`, `sm:gm-tab-closed`, `sm:gm-notification-event`, `sm:gm-menu-fire`,
   `sm:gm-download-event` (the bridge's `PUSHED` list is authoritative).
   Those arrive on `chrome.runtime.onMessage`, which only USER_SCRIPT
   world can listen on, so the bridge re-sends them into the page as
@@ -1333,13 +1350,10 @@ Mechanics (`<key>` is the channel key; see
 - `buildBridgeSpec` (in `src/extension/injector.ts`) emits the bridge
   registration when at least one active script resolves to MAIN. It
   runs at `document_start`, ahead of the wrapper specs, because the
-  request path is synchronous now: an event dispatched before the
-  bridge's listener exists is dropped, not queued. Only the
-  `sm:check-pending` handshake is exposed to that race, and the
-  wrapper sends it again when the bridge announces itself (see
-  [Ordering](#ordering)). The script's own `GM_*` calls aren't: the
-  body doesn't run until the handshake settles, by which point every
-  `document_start` registration has executed.
+  request path is synchronous: an event dispatched before the bridge's
+  listener exists finds no one. Senders hold what the bridge didn't
+  take and send it again when the bridge announces itself (see
+  [Ordering](#ordering)).
 - The bridge is scoped like the runtime: its patterns are the union of
   every MAIN-world script's (granted or not — telemetry and the reload
   handshake ride it too), fingerprinted so an incremental sync
@@ -1502,10 +1516,10 @@ An inline source map restores the original file and line in devtools;
 
 The per-script config blob carries every value that varies between
 scripts — `id`, `name`, `sourceUrl`, `runAt`, `loadedAt`,
-`needsGmValues`, the optional matcher block, and the optional startup
-logs. The prelude reads it once and stashes a
-per-script entry on `reg.prelude.scripts[id]`, in the world's registry
-(see [The channel key](#the-channel-key)).
+`needsGmValues`, `needsGmRuntime` (only when true), the optional
+matcher block, and the optional startup logs. The prelude reads it
+once and stashes a per-script entry on `reg.prelude.scripts[id]`, in
+the world's registry (see [The channel key](#the-channel-key)).
 
 The combined user-program entry is wrapped (in `wrapCombinedEntry`) to:
 
@@ -1967,11 +1981,19 @@ these holds:
     its run's tabs.
 - No GM storage grant: the reply carries the values snapshot.
 - No `.tld` rule: the reply carries the SW's exact match check.
+- The GM runtime is already in, for a script that grants an API it
+  provides. It can be registered after the wrapper (see
+  [Ordering](#ordering)).
+
+What it sends before the bridge is in (its start, errors, `GM_*`
+calls) is held until the bridge is (see [Ordering](#ordering)).
 
 Gaps:
 
 - On a reload, `document-start` scripts still wait, so a page's
   first inline scripts can win there.
+- So does a script that needs the GM runtime when it landed after the
+  wrapper.
 
 ### sm:check-pending handler
 
@@ -2264,8 +2286,9 @@ script's initial GM_setValue cache contents:
   `sm:check-pending` payload iff it @grants a storage API
   (computed at register time).
 - **SW side.** For `needsValues: true` payloads, attaches a
-  `gmValues` field carrying the script's current snapshot
-  (`chrome.storage.local` rows merged with the in-flight overlay).
+  `gmValues` field carrying the script's current snapshot, from the
+  worker's value store (writes not yet on disk included), and `gmSeq`,
+  the sequence number it's current to.
 - **No fallback.** This is the **only** way the wrapper learns
   its initial storage state — there's no baked literal.
 - **On missing snapshot.** Prelude logs a console error, sends

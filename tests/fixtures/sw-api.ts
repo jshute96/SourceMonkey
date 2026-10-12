@@ -133,12 +133,14 @@ export interface SmApi {
   // The `loglevel:` sentinel behind WARNING / ERROR — only
   // script-originated entries move it (see docs/script-log.md).
   getMaxLogLevel(scriptId: string): Promise<'info' | 'warning' | 'error' | undefined>;
-  // Every PERSISTED GM value for a script, excluding the SW's in-flight
-  // overlay. The wrapper's write is batched, so this is what a test
-  // waits on instead of pausing.
+  // A script's GM values from the worker's value store, including writes
+  // not yet on disk. A page's write reaches the worker a message later,
+  // so this is what a test waits on instead of pausing.
   getGmValues(scriptId: string): Promise<Record<string, unknown>>;
   // The channel key, for a test playing a page that has it.
   channelKey(): Promise<string>;
+  // Resolves once every value write the worker has taken is on disk.
+  gmValuesSaved(): Promise<void>;
   // Write values (wire form) as another tab of the script would.
   writeGmValues(scriptId: string, writes: { key: string; value?: unknown; deleted?: boolean }[]): Promise<void>;
   // Seeds an entry directly. For tests that need a specific message,
@@ -451,15 +453,12 @@ export async function waitFor<T>(
   );
 }
 
-// Wait until the single registered script's persisted GM values satisfy
-// `predicate`. `GM_setValue` batches its write 150ms after the last one,
-// so "the page reported the value" is not "storage has it" — a test that
-// needs it durable waits for this rather than pausing.
-//
-// Reads persisted rows only, deliberately excluding the SW's in-flight
-// `gmValueOverlay`: a predicate that passes here has passed against what
-// actually survives, which is stronger than what production needs to
-// answer a check-pending.
+// Wait until the single registered script's GM values satisfy
+// `predicate`, with every write the worker has taken saved to disk
+// first. A page sends its writes a microtask after making them, so "the
+// page reported the value" is not "the worker has it": a test waits for
+// this rather than pausing. Waiting for the save too means a predicate
+// that passes has passed against what survives a worker restart.
 export async function waitForGmValues(
   api: SmApi,
   predicate: (values: Record<string, unknown>) => boolean,
@@ -467,7 +466,7 @@ export async function waitForGmValues(
 ): Promise<Record<string, unknown>> {
   const scriptIds = (await api.getCollections()).flatMap((s) => s.scriptIds);
   // Guarded rather than indexed blindly: with no script registered,
-  // `loadAllValues(undefined)` returns {} quite happily and the caller
+  // `getGmValues(undefined)` returns {} quite happily and the caller
   // burns the full timeout reporting a storage problem, when the real
   // failure was that nothing registered at all.
   if (scriptIds.length !== 1) {
@@ -475,7 +474,10 @@ export async function waitForGmValues(
       `waitForGmValues expects exactly one registered script, saw ${scriptIds.length}`,
     );
   }
-  return waitFor(() => api.getGmValues(scriptIds[0]), predicate, { label });
+  return waitFor(async () => {
+    await api.gmValuesSaved();
+    return api.getGmValues(scriptIds[0]);
+  }, predicate, { label });
 }
 
 // Convenience: wait until a tab's badge state matches `predicate`.

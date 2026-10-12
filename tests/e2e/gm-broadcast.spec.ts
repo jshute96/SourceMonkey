@@ -149,9 +149,9 @@ test.describe('GM_* cross-tab broadcast (Phase 6)', () => {
     await pageA.evaluate(() => { document.body.dataset.smCmd = 'set:fromA'; });
     await expect(pageA.locator('body')).toHaveAttribute('data-sm-value', 'fromA');
 
-    // Tab B should see the new value once the batched-write flushes
-    // (150ms debounce) and the SW broadcasts. The polling loop in
-    // page B then reports the new cache value. Give it ample time.
+    // Tab B should see the new value once the write reaches the SW and
+    // it broadcasts. The polling loop in page B then reports the new
+    // cache value. Give it ample time.
     await expect(pageB.locator('body')).toHaveAttribute('data-sm-value', 'fromA', { timeout: 3000 });
 
     await pageA.close();

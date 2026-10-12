@@ -152,6 +152,35 @@ test('an installed script not on the tab can be picked, and its values read and 
   expect(missing.stdout + missing.stderr).toContain('There is no script E99. Use `script list` to list the installed scripts.');
 });
 
+test('print --file and save read the installed @require and @resource files', async ({ scriptsDir }) => {
+  test.setTimeout(90_000);
+  scriptsDir.writeRaw('a/lib/util.js', 'var util = 1;\n');
+  scriptsDir.writeRaw('a/lib/data.json', '{"a": 1}\n');
+  const file = scriptsDir.write({
+    relativePath: 'a/one.user.js',
+    meta: { name: 'One', match: ['https://example.com/*'], extra: ['// @require lib/util.js', '// @resource data lib/data.json'] },
+    body: '',
+  });
+  await worker.evaluate((d) => (self as unknown as Sm).SourceMonkey.addCollection(d), path.join(scriptsDir.path, 'a'));
+
+  expect((await cli('script', 'E1', 'print', '--file', 'util')).stdout).toBe('var util = 1;\n');
+  expect((await cli('script', 'E1', 'print', '--file', 'data')).stdout).toBe('{"a": 1}\n');
+
+  const out = mkdtempSync(path.join(os.tmpdir(), 'sm-dev-save-'));
+  try {
+    const saved = await cli('script', 'E1', 'save', out);
+    expect(saved.stderr).toBe('');
+    expect(saved.stdout).toBe(`Saved E1: One to ${out}: 3 files\n  ${out}/one.user.js\n  ${out}/lib/util.js\n  ${out}/lib/data.json\n`);
+    expect(readFileSync(path.join(out, 'one.user.js'), 'utf8')).toBe(readFileSync(file, 'utf8'));
+    expect(readFileSync(path.join(out, 'lib/data.json'), 'utf8')).toBe('{"a": 1}\n');
+    const again = await cli('script', 'E1', 'save', out, '--only', 'requires');
+    expect(again.code).not.toBe(0);
+    expect(again.stdout + again.stderr).toContain(`These files already exist. Use --force to replace them:\n  ${out}/lib/util.js\n`);
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+  }
+});
+
 test('show, print, enable, disable and refresh, with no run', async ({ scriptsDir }) => {
   test.setTimeout(120_000);
   const file = scriptsDir.write({
@@ -211,7 +240,7 @@ test('show, print, enable, disable and refresh, with no run', async ({ scriptsDi
 
   const missing = await cli('script', 'show');
   expect(missing.stderr).toContain('The `script show` command needs a script: `script <script> show`. There is no selected script outside a run.');
-  expect((await cli('script', 'enable', 'E1')).stderr).toContain('Name the script before the verb: script E1 enable');
+  expect((await cli('script', 'enable', 'E1')).stderr).toContain('Name the script before the verb: `script E1 enable`');
 });
 
 test('install, uninstall and move', async ({ scriptsDir }) => {
@@ -284,5 +313,5 @@ test('in a run, its own scripts and its test collection', async ({ scriptsDir })
   expect(uninstall.stdout + uninstall.stderr).toContain('1: Mine is one of this run\'s own scripts, which go when the run ends');
   // Never the selected one by leaving it out.
   const unnamed = await cli('start', '--notab', file, '--', 'script', 'uninstall');
-  expect(unnamed.stdout + unnamed.stderr).toContain('The `script uninstall` command needs a script: `script <script> uninstall [--force]`');
+  expect(unnamed.stdout + unnamed.stderr).toContain('The `script uninstall` command needs a script: `script <script> uninstall`');
 });

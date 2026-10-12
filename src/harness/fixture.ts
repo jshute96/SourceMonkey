@@ -265,7 +265,7 @@ export const test = base.extend<HarnessFixtures & InternalFixtures>({
     const idOf = (script?: string): string => {
       if (_smLoaded.length === 0) throw new Error('No userscript is loaded');
       if (script === undefined) {
-        if (_smLoaded.length > 1) throw new Error('Several userscripts are loaded; name one');
+        if (_smLoaded.length > 1) throw new Error('Multiple userscripts are loaded; name one');
         return _smLoaded[0].id!;
       }
       const found = _smLoaded.find((p) => preparedScriptMatches(p, script));

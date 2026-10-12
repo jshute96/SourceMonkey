@@ -15,7 +15,7 @@ import vm from 'node:vm';
 
 import { WRAPPER_PRELUDE } from '../../dist/generated-wrappers.js';
 import { SM_DEV_MARKERS } from '../../dist/sm-dev-protocol.js';
-import { registryOf } from './channel-helpers.mjs';
+import { eventName, registryOf } from './channel-helpers.mjs';
 
 const SCRIPT_ID = 'script-1';
 const SOURCE_URL = 'sourcemonkey://SourceMonkey/Demo/demo.user.js';
@@ -26,8 +26,10 @@ const SOURCE_URL = 'sourcemonkey://SourceMonkey/Demo/demo.user.js';
 //
 // `firstLoad`: a top frame on a navigation that isn't a reload, where a
 // `document-start` wrapper may run without asking. `markers`: the event
-// types sm-dev's markers cancel (`SM_DEV_MARKERS`).
-function makeEnv({ readyState = 'loading', firstLoad = false, markers = [] } = {}) {
+// types sm-dev's markers cancel (`SM_DEV_MARKERS`). `pageWorld`: no
+// chrome.runtime, so traffic goes over the bridge's DOM event, which
+// a stub bridge takes once `bridgeIn()` is called.
+function makeEnv({ readyState = 'loading', firstLoad = false, markers = [], pageWorld = false } = {}) {
   const docListeners = new Map();
   const winListeners = new Map();
   const sent = [];
@@ -95,6 +97,30 @@ function makeEnv({ readyState = 'loading', firstLoad = false, markers = [] } = {
       return !ev.defaultPrevented;
     };
   }
+  // What the stub bridge took, as {requestId, payload}.
+  const taken = [];
+  let bridgeIn = false;
+  if (pageWorld) {
+    delete sandbox.chrome;
+    // `detail` is a getter, as on a real CustomEvent: the prelude reads
+    // it through the one it captured.
+    sandbox.CustomEvent = class {
+      constructor(type, init = {}) {
+        this.type = type;
+        this._detail = init.detail;
+        this.cancelable = !!init.cancelable;
+        this.defaultPrevented = false;
+      }
+
+      get detail() { return this._detail; }
+    };
+    sandbox.document.dispatchEvent = (ev) => {
+      if (ev.type !== eventName('sync') || !bridgeIn) return true;
+      assert.equal(ev.cancelable, true);
+      taken.push(JSON.parse(ev.detail));
+      return false;
+    };
+  }
   vm.createContext(sandbox);
   vm.runInContext(WRAPPER_PRELUDE, sandbox);
 
@@ -131,6 +157,16 @@ function makeEnv({ readyState = 'loading', firstLoad = false, markers = [] } = {
       fire(docListeners, 'readystatechange');
     },
     sentTypes() { return sent.map((m) => m.type); },
+    taken,
+    takenTypes() { return taken.map((t) => t.payload.type); },
+    bridgeIn() { bridgeIn = true; },
+    // The bridge's ready event; the page can fire one too.
+    ready() { fire(winListeners, 'sourcemonkey-bridge-ready'); },
+    // The bridge's reply to a request it took.
+    reply(requestId, reply) {
+      const ev = new sandbox.CustomEvent(eventName('reply'), { detail: JSON.stringify({ requestId, reply }) });
+      for (const fn of docListeners.get(eventName('reply')) ?? []) fn(ev);
+    },
   };
 }
 
@@ -221,6 +257,70 @@ for (const [label, markers, extra, asks] of [
     assert.equal(ran.count, asks ? 0 : 1);
   });
 }
+
+// The GM runtime is its own registration and can come after the
+// wrapper. A script that needs it asks rather than run without it.
+for (const [label, runtimeIn, asks] of [
+  ['needs the GM runtime, not in yet: asks', false, true],
+  ['needs the GM runtime, already in: runs at once', true, false],
+]) {
+  test(`document-start: ${label}`, async () => {
+    const env = makeEnv({ firstLoad: true });
+    if (runtimeIn) registryOf(env.sandbox.document).gm = {};
+    const ran = install(env, 'document-start', { needsGmRuntime: true });
+    await settle();
+    assert.equal(env.sentTypes().includes('sm:check-pending'), asks);
+    assert.equal(ran.count, asks ? 0 : 1);
+  });
+}
+
+// In the page world, traffic goes over the bridge, which Chrome can
+// inject after the wrapper. What it didn't take (it cancels the event
+// as a receipt) is held and sent when it announces itself.
+test('page world: a start sent before the bridge is in goes out when it is', async () => {
+  const env = makeEnv({ firstLoad: true, pageWorld: true });
+  const ran = install(env, 'document-start');
+  await settle();
+  assert.equal(ran.count, 1, 'ran without asking');
+  assert.deepEqual(env.takenTypes(), []);
+
+  // A ready event with still no bridge (the page can fire one).
+  env.ready();
+  assert.deepEqual(env.takenTypes(), []);
+
+  env.bridgeIn();
+  env.ready();
+  assert.deepEqual(env.takenTypes(), ['sm:start']);
+  env.ready();
+  assert.deepEqual(env.takenTypes(), ['sm:start'], 'sent once');
+});
+
+test('page world: a held check-pending is answered once the bridge is in', async () => {
+  const env = makeEnv({ pageWorld: true });
+  const ran = install(env, 'document-end');
+  env.bridgeIn();
+  env.ready();
+  assert.deepEqual(env.takenTypes(), ['sm:check-pending']);
+  env.reply(env.taken[0].requestId, { action: 'run' });
+  env.domContentLoaded();
+  await settle();
+  assert.equal(ran.count, 1);
+});
+
+// One that timed out isn't sent: nobody reads the answer, and the SW
+// could use up a reload's hot swap on it. What the wrapper reports
+// about not running still goes.
+test('page world: a check-pending that timed out is not sent later', async () => {
+  const env = makeEnv({ pageWorld: true });
+  const ran = install(env, 'document-end');
+  env.timeOut();
+  env.bridgeIn();
+  env.ready();
+  assert.deepEqual(env.takenTypes(), ['sm:abandoned']);
+  env.domContentLoaded();
+  await settle();
+  assert.equal(ran.count, 0);
+});
 
 // The property that keeps the concurrent arming from ever being LATER
 // than the old chained shape: a lifecycle gate whose event has already

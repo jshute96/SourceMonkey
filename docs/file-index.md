@@ -213,7 +213,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/refresh-error.ts` | Session-storage map of collections whose last refresh was read but could not be saved, plus its shared message |
 | `src/extension/sw-teardown.ts` | Marks `No SW` rejections (chrome.* calls cut off by service-worker shutdown) handled so they stay out of the Errors panel |
 | `src/extension/script-log-id.ts` | Computes each script's "log ID" (`foo.user.js#E4`: basename and script number) used in every log line and the viewer |
-| `src/extension/managed-changes.ts` | sm-dev's changes to collections and installed scripts, and the details `script show` and `print` read |
+| `src/extension/managed-changes.ts` | sm-dev's changes to collections and installed scripts, and what `script show`, `print` and `save` read |
 | `src/extension/managed-items.ts` | The collections and installed scripts in the shapes sm-dev's `collection list` and `script list` read |
 | `src/extension/sticky-numbers.ts` | Script and collection numbers (sm-dev's `E4`, `C3`): handing them out, and holding removed ones back before reuse |
 | `src/extension/script-log.ts` | Per-script event log store: chrome.storage.session keyed by script ID, serialized appends with a fixed cap, a sibling `loglevel:` sentinel, and a page→worker write relay kept as a guard |
@@ -221,7 +221,8 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/script-rejection.ts` | Session-storage record of registrations `chrome.userScripts` refused, plus the one sentence every surface reports it with |
 | `src/extension/site-icon.ts` | Site-favicon discovery, `@icon`-header override (incl. local file stand-ins), fetch-and-cache (in the worker, a few at a time), and the one-icon-per-site slot renderer |
 | `src/extension/gm-bindings.ts` | Per-script `GM_*` / `GM.*` binding emitter — generates compile-in `const GM_X = ...` source spliced into the wrapper |
-| `src/extension/gm-values.ts` | SW-side persistent storage for `GM_*` values — `gmval:<scriptId>:<key>` rows in `chrome.storage.local`, batched writes |
+| `src/extension/gm-values.ts` | Row layer for `GM_*` values: `gmval:<scriptId>:<key>` rows in `chrome.storage.local`, used only by the value store |
+| `src/extension/value-store.ts` | The worker's one store for `GM_*` values: in-memory maps, numbered writes, saving to disk behind them |
 | `src/extension/gm-xhr.ts` | SW-side `GM_xmlhttpRequest` runner — fetch + AbortController, the body streamed to the page in pieces, cookies, timeout |
 | `src/extension/gm-xhr-headers.ts` | Forbidden-request-header surgery for `GM_xmlhttpRequest` — classify, tag the URL, compile to a DNR session rule, stale-rule sweep |
 | `src/extension/gm-tab.ts` | SW-side `GM_openInTab` dispatcher (`chrome.tabs.create` + per-request mapping for close-event routing) |
@@ -256,10 +257,10 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/checks.ts` | `match` and `validate`'s shared half: finding the scripts named, and the lines each prints |
 | `src/harness/path-args.ts` | Globs (`*`, `**`) and directory searches for sm-dev's file arguments |
 | `src/harness/command-lines.ts` | Input lines into a run's commands: multi-line `{{ ... }}` blocks (`eval`, `set`, `type`, `cdp`), comments, sent lists |
-| `src/harness/command-list.ts` | Every sm-dev command in one list, in the help's named sections, with arguments, options, and the help views' layouts |
+| `src/harness/command-list.ts` | Every sm-dev command in one list, in the help's named sections, with subcommands, their options, and the help views |
 | `src/harness/output-style.ts` | Output markup by role (IDs, URLs, commands), sm-dev's message prefixes, tables, and painting lines for a terminal |
 | `src/harness/help-format.ts` | Help text layout: wrapping by shown width, bullets, `code` spans, and painting them in color for a terminal |
-| `src/harness/command-args.ts` | The one parser of every sm-dev command's words: quotes, flags, a leading tab, text, forms (and what one acts on), blocks |
+| `src/harness/command-args.ts` | The one parser of every sm-dev command's words: quotes, flags per subcommand, a leading tab, text, blocks, `--help` |
 | `src/harness/prompt-editor.ts` | Multi-line editing of `{{` blocks at the `--interactive` prompt, on top of readline |
 | `src/harness/prompt-history.ts` | The `--interactive` prompt's history file (`~/.sm-dev-history`), shared by parallel sessions |
 | `src/harness/console-commands.ts` | A run's commands across its tabs (`logs` among them), the page-dialog tracker, and the client's `--interactive` prompt |
@@ -274,7 +275,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/run.ts` | The run process `sm-dev start` spawns: open a browser, push the scripts into SourceMonkey, follow tabs, serve clients |
 | `src/harness/extension-launch.ts` | Launches Chromium with the built extension (or a fetched manager) on a temp profile: `--temp-browser`, and the e2e suites' browser |
 | `src/harness/extension-link.ts` | A run's or fixture test's connection to the real extension: version check, worker calls, pushes, claims and lease, page markers, events; the collection and script calls, also run-less |
-| `src/harness/manager-commands.ts` | The `collection` and `script` verbs: list, show and change a manager's collections and scripts, as text or JSON |
+| `src/harness/manager-commands.ts` | The `collection` and `script` verbs: list, show, print, save and change a manager's collections and scripts |
 | `src/harness/external-manager.ts` | Violentmonkey and Tampermonkey: their `collection`/`script` calls, a run's scripts in them, and scripts on a tab |
 | `src/harness/violentmonkey.ts` | Violentmonkey, driven by the messages its own pages send, from a hidden options page |
 | `src/harness/tampermonkey.ts` | Tampermonkey, driven by the messages its dashboard sends, with local `@require`s rewritten and stack lines mapped back |
@@ -299,7 +300,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 
 | File | Description |
 |------|-------------|
-| `tests/fixtures/extension.ts` | Playwright fixture: launches Chromium with the extension, exposes SW handle, HTTP fixture server, and the `sm` SW-api proxy; `testWithBrowserDownloads` variant leaves downloads to Chrome |
+| `tests/fixtures/extension.ts` | Playwright fixture: launches Chromium with the extension, exposes SW handle, HTTP fixture server, and the `sm` SW-api proxy; `testWithBrowserDownloads` variant leaves downloads to Chrome, `testWithBackForwardCache` keeps the back/forward cache |
 | `tests/fixtures/harness.ts` | Fixtures for the `sm-dev` project: the package fixture plus fixture server, scripts dir, `loadScript`, `watchPage` |
 | `tests/fixtures/debug-browser.ts` | A headless Chromium with SourceMonkey, a CDP debugging port and a temp profile, stopped with its helper processes |
 | `tests/fixtures/manager.ts` | Manager-agnostic Playwright fixture for the examples suite: SM (unpacked build) or TM/VM (persistent CWS profile) per project metadata |
@@ -337,6 +338,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/tld-hosts.spec.ts` | `.tld` hosts ("any public suffix") in `@match` / `@include` / `@exclude` run where the header says, and only there |
 | `tests/e2e/include-regex.spec.ts` | A regex `@include` beside a `@match` registers `<all_urls>` and runs on the regex's pages too |
 | `tests/e2e/injection.spec.ts` | End-to-end userscript injection: matching, non-matching, lenient-`@match`, and multiple-script cases |
+| `tests/e2e/late-bridge.spec.ts` | Page-world scripts injected before the bridge or GM runtime: start, errors and `GM_*` calls still reach the worker |
 | `tests/e2e/sync-window.spec.ts` | A navigation racing a registration sync still gets injected, and the set never empties mid-sync |
 | `tests/e2e/badge.spec.ts` | Per-tab badge and tooltip: green/red/orange/purple, MISSING, RELOAD, disabled since load, warnings |
 | `tests/e2e/sandbox-csp.spec.ts` | Pages sent with a CSP `sandbox` header or in an `<iframe sandbox>`: MAIN-world scripts run isolated instead |
@@ -385,7 +387,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/file-access-banner.spec.ts` | "File access is disabled." banner with the toggle probe stubbed off: where it appears, where it must not, and that a good Refresh clears it |
 | `tests/e2e/script-details.spec.ts` | E2E for which rows the details panel shows, and for the row-label tooltips |
 | `tests/e2e/script-preview.spec.ts` | E2E for the viewer's preview mode: Add install, Update, invalid-header refusal, a web page reported rather than followed, `@require` tabs |
-| `tests/unit/prelude-gates.test.mjs` | Drives the minified prelude in a `node:vm` DOM stub to pin the decision / @run-at join at max(decision, run-at) |
+| `tests/unit/prelude-gates.test.mjs` | Drives the minified prelude in a `node:vm` DOM stub to pin the decision / @run-at join and when `document-start` skips asking |
 | `tests/unit/sample.test.mjs` | Placeholder Node `--test` unit test |
 | `tests/unit/refresh-targets.test.mjs` | Unit tests for targeted-refresh selection: local-only, path overlap, manifest dirs, container rows |
 | `tests/unit/directories.test.mjs` | Unit tests for the `file://` listing parser and path/URL helpers |
@@ -461,7 +463,9 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/unsafe-window.test.mjs` | Unit tests for `unsafeWindow`: world resolution, the ungranted binding, per-world GM runtime need, isolated-world warning, bridge wire markers |
 | `tests/unit/unsafe-window-use.test.mjs` | Unit tests for the ungranted-`unsafeWindow` source scan: comments, strings, templates, declarations, limits |
 | `tests/unit/gm-value-codec.test.mjs` | Unit tests for the page-side stored-value codec — type fidelity, raw storage of JSON-clean values, legacy-row decoding |
-| `tests/unit/gm-runtime-transport.test.mjs` | Unit tests for the runtime's transport choice — direct channel only with `chrome.runtime.id`, bridge on an `externally_connectable` page |
+| `tests/unit/gm-runtime-transport.test.mjs` | Unit tests for the runtime's transport choice — direct channel only with `chrome.runtime.id`, bridge on an `externally_connectable` page, held until the bridge is in |
+| `tests/unit/gm-runtime-values.test.mjs` | Unit tests for the runtime's ordering of GM value updates — held broadcasts, answers, resyncs, sequence numbers |
+| `tests/unit/value-store.test.mjs` | Unit tests for the worker's value store — reads before disk, sequence numbers, combined saves, wipe, no other row-layer users |
 | `tests/unit/gm-values.test.mjs` | Unit tests for the SW-side `gmval:` storage helpers — key composition, batch apply with last-write-wins, sentinel deletes, namespace isolation |
 | `tests/unit/line-diff.test.mjs` | Unit tests for the line diff: round-trip, shortest script, hunk boundaries, the large-edit fallback |
 | `tests/unit/script-identity.test.mjs` | Unit tests for the related-versions lookup — identity key rules, absolute-URL matching, list disjointness, install / move target cases |
@@ -473,6 +477,9 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/user-script-world-csp.spec.ts` | E2E tests for userscript-inserted `<script>` elements (inline and `src`) under the world CSP and a strict page CSP |
 | `tests/e2e/gm-dom.spec.ts` | E2E tests for `GM_addStyle` / `GM_addElement` — CSS application, tag-aware default parent (head/body), explicit-parent form, GM4 alias, permission gating, CSP exemption in both worlds, the closed-shadow-root CSP report |
 | `tests/e2e/gm-clipboard.spec.ts` | E2E tests for `GM_setClipboard` via `navigator.clipboard.writeText` — text round-trip, GM4 alias, permission gating |
+| `tests/e2e/gm-value-ordering.spec.ts` | E2E: two tabs churning the same GM value keys end up agreeing with the worker |
+| `tests/e2e/gm-storage-quota.spec.ts` | E2E: a GM value save refused for a full storage quota logs one error on the script |
+| `tests/e2e/gm-storage-bfcache.spec.ts` | E2E: a page restored from the back/forward cache reads GM values written while it was cached |
 | `tests/e2e/gm-broadcast.spec.ts` | E2E tests for cross-tab `GM_setValue` broadcast — tab B sees tab A's write, survives an SW restart, re-syncs after a missed write or delete |
 | `tests/e2e/gm-storage-types.spec.ts` | E2E: `Date`/`Map`/`Set`/`NaN`/binary/`Error` survive a reload, plain values stay untagged, pre-codec rows still read |
 | `tests/e2e/gm-storage-freshness.spec.ts` | E2E: fresh documents see the latest `GM_setValue` (same-tab nav, fresh tab, write-then-navigate race) |

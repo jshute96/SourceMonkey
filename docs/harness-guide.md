@@ -293,12 +293,19 @@ up:
   usage, arguments, and only the options it takes.
   - `--help` on a command always gives the command, even where a
     topic shares its name (`scripts --help`).
-- It takes several names at once: `sm-dev help status tabs`.
+- `sm-dev help script save` (or `sm-dev script save --help`) shows one
+  subcommand: its usage, and only the options it takes, its own and
+  the command's shared ones.
+  - A subcommand the command doesn't have is an error, listing the
+    ones it has. So is a word shaped like one with `--help`
+    (`script savexx --help`).
+  - With other words, `--help` shows the forms with no subcommand
+    (`script E4 --help` shows `script <script>`).
 - At a terminal with color, commands and flags show in cyan, and
   headings in bold. `NO_COLOR` turns that off, and `FORCE_COLOR` on.
 - `--help` (or `-h`) anywhere on a line shows the help for each command
   on it, once each, and runs none of them.
-- In a run, `help [command]` or `?` does the same.
+- In a run, `help [command [subcommand]]` or `?` does the same.
 
 ### Color
 
@@ -1007,11 +1014,21 @@ Some commands take several lines as a block, at the prompt or on stdin:
   - An unknown flag, a missing or empty value, a value on a flag that
     takes none, and a flag given twice are refused. An unknown flag's
     error names the flags the command takes.
+  - Each subcommand (`script save`, `wait log`) takes only its own
+    flags and the command's shared ones. Another subcommand's flag is
+    refused, naming the subcommands that take it.
   - `--help` on any command shows its help, as `help <command>` does,
-    rather than running it.
+    rather than running it: the subcommand's, when one is named.
   - A quoted word is never a flag: `probe '--x'` looks for `--x`.
-  - In free text (`eval`'s JavaScript, `type`'s text, a menu label), a
-    `--word` is the text's own. Flags go before it.
+  - Flags can go anywhere, in free text too (`eval`'s JavaScript,
+    `type`'s text, a menu label). There, a word of its own shaped like
+    a flag (`--name`, `--name=...`) is taken as one, and an unknown one
+    is refused rather than run as code.
+    - To keep such a word as text, quote the text as a whole
+      (`type #q 'a --b'`), or in JavaScript write it so the `--` isn't
+      a word of its own (`a = '--b'`, `(--n)`).
+    - A `/regex/` starting the text is all text, and flags can follow
+      it (`wait log /a --b/ --timeout-seconds 9`).
 - Arguments a command doesn't take are refused: `status now`, `focus T1
   T2 T3`, `stop D1 D2` (with its usage).
 - An invalid command prints `ERROR:` and its message, not the help,
@@ -1026,12 +1043,17 @@ Some commands take several lines as a block, at the prompt or on stdin:
 - Later on the line they are refused: `The --run flag is for the whole
   command line, so it goes first, before any command: sm-dev --run ...
   <command>`.
-  - That includes one ending a command's text (`eval 1 --run D1`),
-    unless the command takes the flag itself, or the text is quoted
-    as a whole.
-- A command's own flag goes after it. One put before it is refused
-  with the line as it should be: `The --nowait flag goes after the
-  command: open <url> --nowait`.
+  - That includes one anywhere in a command's text (`eval 1 --run D1`),
+    unless the command takes the flag itself, or the word is quoted.
+- A command's own flag goes after it. One put before it is refused:
+  `The --nowait flag goes after the command (open), not before it`.
+- Mistake messages don't repeat the whole command back, which could be
+  a long script or selector. Where they show a fix, it's only the part
+  that matters (`sm-dev --run D1 <command>`).
+- Flags where the command goes are checked left to right, so the
+  first wrong one is what's reported: `sm-dev --stdin --xx` gives
+  `There is no --xx flag`, not that a command is needed. The same
+  goes for a stdin or prompt line that starts with a flag.
 
 The options:
 
@@ -1149,9 +1171,11 @@ The shapes of every command's result, with examples:
 - Per script, `status` gives active or not, the other tabs it is
   active on, and counts of its menu commands, stored values and errors
   that are not zero.
-- `menu <label>` piped in while none is registered yet waits a moment
-  for a script that is still loading. Typed at the prompt, it answers
-  at once.
+- `menu <label>` piped in while none is registered yet waits up to 5
+  seconds for a script that is still loading. Typed at the prompt, it
+  answers at once.
+  - With `--timeout-seconds S`, it waits up to S seconds for the
+    command in any case, even while others are registered.
 - A read waits out the page's write batching first, so `menu Bump`
   followed by `values` prints what the command just stored rather than
   what was there before it.
@@ -1671,7 +1695,7 @@ from narrowest to broadest:
 - `page`: full Chrome console logs. (Off by default, except for
   `wait log`.)
 
-A line can be in several sources, and asking for any of them shows it:
+A line can be in multiple sources, and asking for any of them shows it:
 
 - A script's console line is `script`, and also `page`.
 - A script's throw is an `event`, and also `sm`, `script` and `page`.
@@ -1778,6 +1802,9 @@ Limits of the heuristic:
 - `--timeout-seconds S` works on every command that waits, and sets
   each of its waits (an element being ready, a load, settling).
   - On `cdp`, it's each call's limit (default 10 seconds).
+  - Every other command takes it too, unlisted, and ignores it, so a
+    timeout given out of habit (`accept --timeout-seconds 5`) isn't a
+    mistake.
 - An explicit `wait` that gives up fails, so a line of several commands
   (or a list in one argument, or commands piped in) stops there, and
   says the rest weren't run.
@@ -1803,9 +1830,9 @@ Limits of the heuristic:
 - It ends with the line it matched, then where:
   `[sm-dev] Found at 1759512345678901 (14:05:12.678)`. One that gives up
   says where it searched to: `[sm-dev] Searched up to ...`.
-- A near miss of `--timeout-seconds` ending unquoted text (`--timeout
-  40`) is refused, rather than looked for as text. Other `--words` in
-  the text are text.
+- A `--word` in unquoted text is a flag, so a near miss of
+  `--timeout-seconds` (`--timeout 40`) is refused, rather than looked
+  for as text. Quote text that has one: `wait log 'Running --dry-run'`.
 
 ## Background runs and logs
 

@@ -49,7 +49,8 @@ Where to look:
 - [references/other-managers.md](references/other-managers.md): testing
   under Violentmonkey.
 - `pnpm sm-dev help`: the authoritative, current reference. Alone it
-  lists the topics; `help <topic>` or `help <command>` shows one,
+  lists the topics; `help <topic>`, `help <command>` or
+  `help <command> <subcommand>` (`help script save`) shows one,
   `help commands` lists the commands, and `help all` everything.
 - The `SourceMonkey-friction` skill, when installed: log where these
   tools got in the way once the task is done.
@@ -186,7 +187,7 @@ What the stream looks like:
     so a page helper it calls counts;
   - `[page log]`, `[page error]`: the rest of Chrome's console, hidden
     by default.
-  - A line can be in several sources: `--log-source page` shows all
+  - A line can be in multiple sources: `--log-source page` shows all
     the page's console, the script's lines too, and `[event] X threw`
     also counts as `sm`, `script` and `page`.
 - `[sm-dev]` lines are sm-dev's own notices.
@@ -534,7 +535,7 @@ $R savehtml pages/some-page.html              # the DOM, with the URL recorded
 - It can't capture shadow roots, typed form values or canvas pixels.
   Check selectors inside a shadow root on the live page.
 
-### Several tabs
+### Multiple tabs
 
 - Tabs the run's tab opens (links, `window.open`, `GM_openInTab`) get
   the scripts too, as `T2`, `T3`. Tabs the person opens are left

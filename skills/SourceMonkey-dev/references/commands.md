@@ -2,8 +2,9 @@
 
 A summary. `pnpm sm-dev help` lists the help topics, and
 `help <topic>` shows one. `help <command>` (or `<command> --help`)
-shows a command's exact options; `help commands` lists the commands,
-and `help all` everything.
+shows a command's exact options, and `help script save` (or
+`script save --help`) one subcommand's; `help commands` lists the
+commands, and `help all` everything.
 
 ## Shape of a command line
 
@@ -48,6 +49,12 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 - Quotes: in `--stdin` lines, most commands take off one level of
   quotes around an argument. `eval` and `cdp` don't: their quotes are
   JavaScript's and JSON's. A quoted word is never a flag.
+- Flags can go anywhere, also after or inside `eval`'s JavaScript or
+  `wait log`'s text (`eval 'await x()' --timeout-seconds 45`). A word
+  there shaped like a flag (`--name`) is taken as one, and an unknown
+  one is an error. To keep one as text, quote the text as a whole
+  (`type #q 'a --b'`), or in JavaScript write it so the `--` isn't a
+  word of its own (`a = '--b'`, `(--n)`).
 
 ## Names
 
@@ -134,6 +141,8 @@ test a script under VM or TM:
 | `collection list` (or `collections`) | SourceMonkey's collections (C1, ...), with kind, script count, enabled. No run needed |
 | `script list [collection]` | Every installed script (E1, ...) under its collection, or one collection's. No run needed |
 | `script [script] show`, `script [script] print` | One script in full (rules, status, files, values count, and in a run its state on each tab); its installed text. No run needed |
+| `script [script] print --file <name> [--out <file>]` | One of its `@require` / `@resource` files as installed, by a `@resource`'s name or part of its URL; `--out` writes it to a file |
+| `script [script] save <dir> [--only script,requires,resources] [--flat] [--force]` | Save the script and its files as installed into a directory, in folders by URL (`--flat`: all in one). `--force` replaces existing files |
 | `collection <collection> show` | One collection and its scripts. No run needed |
 
 ### Changing what's installed
@@ -222,7 +231,7 @@ own: change them only when asked to.
 | `accept [tab] [text]`, `dismiss [tab]` | Answer an open dialog |
 | `connect once\|cancel\|allow\|deny\|allow-all [host]` | Answer SourceMonkey's prompt for a host the selected script's `@connect` doesn't cover |
 | `--nowait` | On any of these: don't wait for the page to settle |
-| `--timeout-seconds S` | On any command that waits (these, `start`, `eval`, `snapshot`, `probe`, `screenshot`, `closetab`, `load`, `update`): S seconds for each wait, in place of its default. On `cdp`, for each call (default 10) |
+| `--timeout-seconds S` | On any command that waits (these, `start`, `eval`, `snapshot`, `probe`, `screenshot`, `closetab`, `load`, `update`, `menu`): S seconds for each wait, in place of its default. On `cdp`, for each call (default 10) |
 
 ## Waiting
 
@@ -232,7 +241,7 @@ own: change them only when asked to.
 | `wait selector <css>`, `wait selector-gone <css>` | An element to appear / disappear |
 | `wait log <text>`, `wait log /regex/` | A log line since the previous command began (or `--since`). `--find <text>` works too |
 | `wait 500ms`, `wait 2s` | Time (last resort) |
-| `--timeout-seconds S` | Give up after S seconds (default 5). On `wait log`, put it after the text. On a delay, it may be given if not shorter |
+| `--timeout-seconds S` | Give up after S seconds (default 5). On a delay, it may be given if not shorter |
 
 - A tab goes before the form: `wait T2 selector '.x'`.
 - `wait log` sees every log source, the site's own lines too, unless
@@ -249,7 +258,7 @@ old) or DOM changes for 200ms. Timers aren't waited for.
 | Command | Does |
 | --- | --- |
 | `menu`, `menu all` | List menu commands (`M1`...) |
-| `menu <label or M1>` | Fire one |
+| `menu <label or M1>` | Fire one. Piped in, waits up to 5 s for it to be registered; `--timeout-seconds S` for longer |
 | `values [script\|T2\|E1]` | Stored values (`E1`: a SourceMonkey-managed script) |
 | `get <key>`, `set <key> <json>` | One value; `set` fires change listeners |
 | `set <key> --file <path>` | The value from a JSON file (or a `{{` block, as `eval` takes) |

@@ -1,5 +1,5 @@
 // What sm-dev's collection and script commands change, and the details
-// `script show` and `script print` read: through the same store calls
+// `script show`, `script print` and `script save` read: through the same store calls
 // the collections page and the viewer make. See docs/sm-dev-managers.md.
 //
 // - Each call names its collection or script by the extension's own id;
@@ -10,26 +10,41 @@
 // - A refused change throws an Error with its message, which sm-dev
 //   shows as it is.
 
-import { canonicalCollectionInput, containerPath, isContainerCollection } from '../file-locations.js';
+import { bytesToBase64 } from '../bytes.js';
+import { canonicalCollectionInput, containerPath, isContainerCollection, isHttpUrl } from '../file-locations.js';
 import type { ScriptMeta } from '../script-build.js';
 import {
   CONTAINER_TARGET_ONLY, LISTED_BY_LOCATION, RUN_COLLECTION_LOCKED,
-  type CollectionRefresh, type ManagedCollection, type ManagedFile, type ManagedOnDisk, type ManagedScript, type ManagedScriptDetails,
+  type CollectionRefresh, type ManagedCollection, type ManagedFile, type ManagedFileContent, type ManagedOnDisk, type ManagedScript, type ManagedScriptDetails,
   type ScriptEnable, type ScriptInstall, type ScriptRefresh,
 } from '../sm-dev-protocol.js';
 import { getValue, getValues, joinFullSource } from '../userscript-header.js';
 import { containerKindForSingleFileInput, isScratchUrl, isSmDevCollection, scratchSourceKey, type ScratchSource } from './directories.js';
 import { manifestToProbe, pendingOnDisk, probeFiles, scriptFileTag } from './file-changes.js';
-import { loadAllValues } from './gm-values.js';
+import { countValues } from './value-store.js';
 import { turnOffOtherCopies } from './script-identity.js';
 import { setCollectionEnabledExclusive } from './script-enablement.js';
 import { managedCollection, managedScript } from './managed-items.js';
+import { mirrorPath } from './local-copy.js';
 import {
   canonicalLocation, getAllScriptMetas, getCollection, getCollections, getCollectionWithScriptMeta, getScript, getScriptMeta, installScript, moveScript,
   removeScript, setCollectionOptions, setScriptEnabled, ALREADY_INSTALLED_IN_TARGET, COLLECTION_GONE, SCRIPT_GONE,
   type StoredCollection,
 } from './script-store.js';
 import { updateCollection, updateScript } from './script-updater.js';
+
+// Where `script save` writes a file, relative to the script: an http(s)
+// URL laid out as the viewer's local copy does, a `file:` URL by its
+// file name. None for a `data:` URL.
+function savePath(url: string): string | undefined {
+  if (isHttpUrl(url)) return mirrorPath(url) ?? undefined;
+  if (!url.startsWith('file:')) return undefined;
+  try {
+    return decodeURIComponent(new URL(url).pathname.split('/').pop() ?? '') || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** The numbers sm-dev names things by, assigned first: `assignAllNumbers` in background.ts. */
 export interface Numbers {
@@ -237,7 +252,7 @@ export function managedChanges(numbers: () => Promise<Numbers>) {
         grants: all('grant'),
         requires,
         resources,
-        valueCount: Object.keys(await loadAllValues(id)).length,
+        valueCount: await countValues(id),
       };
     },
 
@@ -272,6 +287,21 @@ export function managedChanges(numbers: () => Promise<Numbers>) {
     async scriptText(id: string): Promise<string | null> {
       const script = await getScript(id);
       return script ? joinFullSource(script.leadingText ?? '', script.headerText, script.bodyText) : null;
+    },
+
+    /** A script's `@require` and `@resource` files as installed; null for no script. */
+    async scriptFiles(id: string): Promise<ManagedFileContent[] | null> {
+      const script = await getScript(id);
+      if (!script) return null;
+      const file = (kind: ManagedFileContent['kind'], url: string, base64: string, contentType: string): ManagedFileContent => {
+        const path = savePath(url);
+        return { kind, url, ...(path ? { path } : {}), base64, ...(contentType ? { contentType } : {}) };
+      };
+      const encoder = new TextEncoder();
+      return [
+        ...(script.requires ?? []).map((r) => file('require', r.url, bytesToBase64(encoder.encode(r.source)), 'text/javascript')),
+        ...(script.resources ?? []).map((r) => ({ ...file('resource', r.url, r.bytesBase64, r.contentType), name: r.name })),
+      ];
     },
   };
 }

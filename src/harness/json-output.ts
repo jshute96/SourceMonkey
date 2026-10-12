@@ -548,8 +548,24 @@ export interface ScriptPrintData {
   /** Its id, absent for another run's script. */
   script?: string;
   name: string;
-  /** The installed text. */
-  text: string;
+  /** With `--file`, the `@require` or `@resource` printed. */
+  file?: { kind: 'require' | 'resource'; url: string; name?: string };
+  /** The installed text; absent with `--out`. */
+  text?: string;
+  /** With `--out`, the file written, absolute. */
+  out?: string;
+}
+
+export interface ScriptSaveData {
+  /** Its id, absent for another run's script. */
+  script?: string;
+  name: string;
+  /** The directory saved into, absolute. */
+  dir: string;
+  /** Each file written; `path` is absolute. */
+  files: { kind: 'script' | 'require' | 'resource'; url?: string; name?: string; path: string }[];
+  /** What wasn't saved, and why. */
+  notes?: string[];
 }
 
 /** A `@require` or `@resource`. */

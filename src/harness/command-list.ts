@@ -22,13 +22,14 @@ export const CONTEXT_LINES = 10;
 // How the collection and script commands name a collection.
 const COLLECTION_ARG: HelpItem = { term: '<collection>', about: 'A collection: `C3`, its name or a part of it, or `id=<id>`. A run\'s test collection is `D1`, by its run.' };
 
-// Said of `script uninstall`, which removes one of the person's own scripts.
-const FORCE_NOTE = 'Outside a `--temp-browser` the scripts are your own, so this needs `--force`.';
+// `script uninstall --force`, which removes one of the person's own scripts.
+const FORCE_NOTE = 'Needed outside a `--temp-browser`, where the scripts are your own.';
 
 /**
  * A term and what it means: an argument, an option, a way to name
  * something. `commands`: for an option listed in a section rather than
- * under one command, the commands that take it.
+ * under one command, the commands that take it, or a subcommand alone
+ * (`wait log`).
  */
 export interface HelpItem {
   term: string;
@@ -44,8 +45,9 @@ export interface HelpItem {
  * - `words`: separate words, quotes grouping one; `max` of them.
  * - `selector`: the rest of the line as typed, less the flags, which can
  *   be anywhere (a selector never starts with --).
- * - `text`: `before` words, then the rest of the line as typed. Flags
- *   come before it; a `--word` in it is its own.
+ * - `text`: `before` words, then the rest of the line as typed, less
+ *   the flags in it: a word of its own shaped like one (`--name`,
+ *   `--name=...`) is a flag anywhere, unless the text is one `/regex/`.
  */
 export interface ArgSyntax {
   args: 'none' | 'words' | 'selector' | 'text';
@@ -59,8 +61,6 @@ export interface ArgSyntax {
   bracesInText?: boolean;
   /** Text quoted as a whole is unquoted: `any` quotes (default), `single` (JSON), or `none` (JavaScript). */
   unquote?: 'any' | 'single' | 'none';
-  /** Its flags can also end unquoted text, and a near miss of one there is refused (wait log). */
-  trailingFlags?: boolean;
 }
 
 export interface HelpCommand {
@@ -116,6 +116,9 @@ export interface HelpSection {
 /** The longest a Node timer can wait, in seconds. */
 export const MAX_TIMER_SECONDS = Math.floor((2 ** 31 - 1) / 1000);
 
+/** The flag any command takes, listed where it waits on something (command-args.ts). */
+export const TIMEOUT_FLAG = '--timeout-seconds';
+
 /** A `--timeout-seconds` that isn't a number of seconds, on any command. */
 export const TIMEOUT_NEEDS_SECONDS = `The --timeout-seconds flag needs a number of seconds, up to ${MAX_TIMER_SECONDS}`;
 
@@ -128,18 +131,19 @@ export function timeoutSecondsMs(value: string | true): number | null {
 // The common syntaxes.
 const NONE: ArgSyntax = { args: 'none' };
 const WORDS: ArgSyntax = { args: 'words' };
-// Text that `--json` or `--nojson` can end (`values 2 --json`).
-const JSON_TEXT: ArgSyntax = { args: 'text', trailingFlags: true };
+// The rest of the line as one argument (a script, a key), so it can
+// hold spaces.
+const TEXT: ArgSyntax = { args: 'text' };
 const TAB_LOADS = ['newtab', 'open', 'reload'];
 const SETTLING = ['start', ...TAB_LOADS, 'click', 'hover', 'type', 'key'];
 // The commands that wait on the page, so take --timeout-seconds. Those
 // whose help lists it themselves (its default differs) aren't here.
 const TIMED = ['start', 'click', 'hover', 'type', 'key', 'eval', 'snapshot', 'probe', 'screenshot', 'closetab', 'load', 'update'];
 // wait log, listed under both Logs and Waiting.
-const WAIT_LOG: HelpCommand = { usage: 'wait log [--find=]<text>', syntax: { args: 'text', trailingFlags: true }, about: [] };
+const WAIT_LOG: HelpCommand = { usage: 'wait log [--find=]<text>', syntax: { args: 'text' }, about: [] };
 const WAIT_LOG_ABOUT = ['Wait for a log line with the text, or matching `/regex/`, logged since the previous command began.'];
 // The page commands that act in an iframe with `--frame`.
-const IN_FRAME = ['eval', 'click', 'hover', 'type', 'snapshot', 'screenshot', 'probe', 'wait', 'cdp'];
+const IN_FRAME = ['eval', 'click', 'hover', 'type', 'snapshot', 'screenshot', 'probe', 'wait selector', 'wait selector-gone', 'cdp'];
 // `status` and `tabs` print each tab's frame tree with this.
 const FRAMES_OPTION: HelpItem = { term: '--frames', about: 'Show each tab\'s iframes as a tree, with the scripts running in each (see `help frames`).' };
 // The commands that work through SourceMonkey, which a run under
@@ -200,10 +204,11 @@ export const HELP_SECTIONS: HelpSection[] = [
     summary: '`help` and `exit` commands',
     commands: [
       { usage: 'help', summary: 'Show help: the topics, one topic or command, or all.', about: 'Show the list of help topics.' },
-      { usage: 'help <topic>...', syntax: WORDS, about: 'Show help for a topic or command.' },
+      { usage: 'help <topic>', about: 'Show help for a topic.' },
+      { usage: 'help <command> [subcommand]', syntax: { args: 'words', max: 2 }, about: 'Show help for a command, or one of its subcommands (`help script save`).' },
       { usage: 'help commands', about: 'Show a short list of all commands.' },
       { usage: 'help all', about: 'Show help for all topics.' },
-      { usage: '<command> --help', about: 'Show help for one command.', pointer: true },
+      { usage: '<command> [subcommand] --help', about: 'Show help for a command, or one of its subcommands.', pointer: true },
       { usage: 'exit', syntax: NONE, about: 'End this sm-dev. Runs it started without `--detach` stop.' },
     ],
   },
@@ -299,10 +304,10 @@ export const HELP_SECTIONS: HelpSection[] = [
     name: 'scripts',
     summary: 'Work with scripts',
     commands: [
-      { usage: 'scripts', syntax: JSON_TEXT, about: 'List the loaded scripts, and the manager\'s other scripts on the current tab.' },
+      { usage: 'scripts', syntax: TEXT, about: 'List the loaded scripts, and the manager\'s other scripts on the current tab.' },
       { usage: 'script <script>', about: 'Select the active script by ID. With `T2.3`, pick tab `T2` too.' },
       { usage: 'load <script>...', syntax: WORDS, about: 'Load more scripts from disk: files, directories, or globs. See `help files`.' },
-      { usage: 'update [script]', syntax: { args: 'text', trailingFlags: true }, about: 'Re-read one (or all) scripts from disk, and reload all affected tabs.' },
+      { usage: 'update [script]', syntax: { args: 'text' }, about: 'Re-read one (or all) scripts from disk, and reload all affected tabs.' },
     ],
     subsections: [
       {
@@ -482,7 +487,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       '3. `script`: Chrome console logs that came from the run\'s scripts.',
       '4. `page`: Full Chrome console logs.',
       '',
-      'Some lines are in several sources: a script\'s console line is also `page`, and its throw is an `event`, and also `sm`, `script` and `page`.',
+      'Some lines are in multiple sources: a script\'s console line is also `page`, and its throw is an `event`, and also `sm`, `script` and `page`.',
       '',
       'By default, sm-dev prints log lines from 1-3 as they arrive.',
       '',
@@ -506,16 +511,16 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         term: '--log-source SOURCE',
         about: [
-          'The log source to show: `sm`, `event`, `script`, `page`, or `all`. Several can be given, separated by commas.',
+          'The log source to show: `sm`, `event`, `script`, `page`, or `all`. Multiple can be given, separated by commas.',
           'On `start` and `attach`, what logs that sm-dev session shows.',
         ],
-        commands: ['start', 'attach', 'logs', 'wait'],
+        commands: ['start', 'attach', 'logs', 'wait log'],
       },
-      { term: '--find TEXT', about: 'Only log lines with the text, or matching `/regex/`.', commands: ['logs', 'wait'] },
+      { term: '--find TEXT', about: 'Only log lines with the text, or matching `/regex/`.', commands: ['logs', 'wait log'] },
       {
         term: '--since POSITION',
         about: 'Only log lines after a log ID or a time (e.g. `2026-10-03T14:05:12Z` or `14:05:12`).',
-        commands: ['logs', 'wait'],
+        commands: ['logs', 'wait log'],
       },
     ],
   },
@@ -547,7 +552,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       },
       {
         usage: 'type [tab] <selector> <text>',
-        syntax: { args: 'text', before: 1, tab: true, block: true, bracesInText: true, trailingFlags: true },
+        syntax: { args: 'text', before: 1, tab: true, block: true, bracesInText: true },
         about: ['Type text into an element. (Text box, etc.)', '`type <selector> {{` starts multi-line text, ended by `}}`.'],
         options: [
           { term: '--file <path>', about: 'Type a file\'s text, in place of `<text>`.' },
@@ -622,7 +627,7 @@ export const HELP_SECTIONS: HelpSection[] = [
           {
             usage: 'cdp [tab] <Method> [params]',
             summary: 'Send raw CDP calls to the page.',
-            syntax: { args: 'text', tab: true, block: true, unquote: 'none', trailingFlags: true },
+            syntax: { args: 'text', tab: true, block: true, unquote: 'none' },
             about: ['Make one `Method` call, and print the result as JSON.', 'e.g. `cdp Input.insertText \'{"text": "hello"}\'`'],
           },
           { usage: 'cdp [tab] {{', about: 'Make multiple `Method` calls, one per line, ended by `}}`.', gap: true },
@@ -640,7 +645,7 @@ export const HELP_SECTIONS: HelpSection[] = [
           {
             managers: SM,
             usage: 'menu [what]',
-            syntax: { args: 'text', unquote: 'none', trailingFlags: true },
+            syntax: { args: 'text', unquote: 'none' },
             about: 'List the tab\'s menu commands, or fire one.',
             args: [
               { term: 'T2', about: 'List a tab\'s.' },
@@ -649,6 +654,9 @@ export const HELP_SECTIONS: HelpSection[] = [
               { term: '<label>', about: 'Fire one, by its label.' },
             ],
           },
+        ],
+        options: [
+          { term: '--timeout-seconds S', about: 'Wait up to `S` seconds for the command to be registered.', commands: ['menu'] },
         ],
       },
       {
@@ -659,7 +667,7 @@ export const HELP_SECTIONS: HelpSection[] = [
           {
             managers: SM,
             usage: 'values [what]',
-            syntax: JSON_TEXT,
+            syntax: TEXT,
             about: 'Print values scripts have stored in GM Storage.',
             args: [
               { term: '<script>', about: 'One script.' },
@@ -667,12 +675,11 @@ export const HELP_SECTIONS: HelpSection[] = [
               { term: 'T2', about: 'Scripts running on a tab.' },
             ],
           },
-          { managers: SM, usage: 'get <key>', syntax: JSON_TEXT, about: 'Print one value for the selected script.', gap: true },
+          { managers: SM, usage: 'get <key>', syntax: TEXT, about: 'Print one value for the selected script.', gap: true },
           {
             managers: SM,
             usage: 'set <key> <json>',
-            // JSON can't end with a `--flag`, so one there is a flag.
-            syntax: { args: 'text', before: 1, block: true, unquote: 'single', trailingFlags: true },
+            syntax: { args: 'text', before: 1, block: true, unquote: 'single' },
             about: ['Store a value for the selected script.', '`set <key> {{` starts a multi-line block of JSON, ended by `}}`.'],
             options: [
               { term: '--file <path>', about: 'Read the JSON from a file, in place of `<json>`.' },
@@ -796,7 +803,28 @@ export const HELP_SECTIONS: HelpSection[] = [
               about: ['A script: `E12`, its name or a part of it, or `id=<id>`. In a run, one of its own scripts by its number (`2`).', 'Without one, the selected script.'],
             }],
           },
-          { usage: 'script [script] print', syntax: NONE, about: 'Print a script\'s installed text.' },
+          {
+            usage: 'script [script] print',
+            syntax: NONE,
+            about: 'Print a script\'s installed text, or one of its `@require` or `@resource` files.',
+            options: [
+              { term: '--file <name>', about: 'The file to print: part of one `@require` or `@resource` file\'s URL, a `@resource`\'s name, or `script`.' },
+              { term: '--out <file>', about: 'Write it to a file instead. A file that isn\'t text must use `--out`.' },
+            ],
+          },
+          {
+            usage: 'script [script] save <dir>',
+            syntax: { args: 'words', max: 1 },
+            about: [
+              'Save a script and its `@require` and `@resource` files into a directory, which is created if necessary.',
+              'By default, each file is saved in directories matching its URL (`cdn.example.com/lib/x.js`).',
+            ],
+            options: [
+              { term: '--only <parts>', about: 'A comma-separated list of items to save, e.g. `--only script,requires,resources`.' },
+              { term: '--flat', about: 'Save all files in the target directory.' },
+              { term: '--force', about: 'Overwrite files that already exist.' },
+            ],
+          },
           { usage: 'script [script] enable', syntax: NONE, about: 'Turn a script on. In a run, one of its own scripts too, in the run\'s tabs.' },
           { usage: 'script [script] disable', syntax: NONE, about: 'Turn a script off. In a run, one of its own scripts too, in the run\'s tabs.' },
           {
@@ -805,18 +833,25 @@ export const HELP_SECTIONS: HelpSection[] = [
             about: ['Re-read a script from its location, as its `Refresh` button does.', 'One of the run\'s own scripts is re-read from disk, as `update` does.'],
           },
           {
-            usage: 'script install <file|url> [--collection <collection>] [--force]',
+            usage: 'script install <file|url>',
             syntax: { args: 'words', max: 1 },
             about: [
               'Install a `.user.js` file or URL in SourceMonkey, for every tab, to stay. (`load` adds one to the run instead, for its tabs only.)',
-              'It goes into the container collection named, or the one SourceMonkey keeps for its kind: Scripts from local disk, from web, or from GitHub.',
-              'Under Tampermonkey or Violentmonkey, it replaces the script with the same name and namespace, which outside a `--temp-browser` needs `--force`.',
+              'Under Tampermonkey or Violentmonkey, it replaces the script with the same name and namespace.',
+            ],
+            options: [
+              {
+                term: '--collection <collection>',
+                about: 'The container collection to install it in. (Default: the one SourceMonkey keeps for its kind: Scripts from local disk, from web, or from GitHub)',
+              },
+              { term: '--force', about: 'Under Tampermonkey or Violentmonkey, outside a `--temp-browser`: replace a script with the same name and namespace.' },
             ],
           },
           {
-            usage: 'script <script> uninstall [--force]',
+            usage: 'script <script> uninstall',
             syntax: NONE,
-            about: ['Remove a script from its container collection. A directory or manifest collection\'s scripts come from its files, so they can\'t be.', FORCE_NOTE],
+            about: 'Remove a script from its container collection. A directory or manifest collection\'s scripts come from its files, so they can\'t be.',
+            options: [{ term: '--force', about: FORCE_NOTE }],
           },
           {
             usage: 'script [script] move <collection>',
@@ -1136,16 +1171,21 @@ function indexLines(): string[] {
   };
   add(HELP_SECTIONS, 0);
   const usage: [string, string][] = [
-    ['help <topic>...', 'Help for a topic or command'],
+    ['help <topic>', 'Help for a topic'],
+    ['help <command> [subcommand]', 'Help for a command, or one of its subcommands'],
     ['help commands', 'Short list of all commands'],
     ['help all', 'All topics'],
-    ['<command> --help', 'Help for one command'],
+    ['<command> [subcommand] --help', 'Help for a command, or one of its subcommands'],
   ].map(([term, about]) => [`- ${quiet(term)}`, about]);
-  // One column for both lists, so their descriptions line up.
-  const column = Math.max(...[...usage, ...rows].map(([lead]) => visibleLength(lead))) + 2;
+  // One column for both lists, so their descriptions line up, sized by
+  // the topics: a longer help row has its description on the next line,
+  // rather than pushing every topic's far from its name.
+  const column = Math.max(...rows.map(([lead]) => visibleLength(lead))) + 2;
   const table = (list: [string, string][]): string[] => list.flatMap(([lead, about]) => {
     const [first, ...rest] = wrap(about, WIDTH - column);
-    return [padTo(lead, column) + first, ...rest.map((line) => ' '.repeat(column) + line)];
+    const indented = rest.map((line) => ' '.repeat(column) + line);
+    if (visibleLength(lead) + 2 > column) return [lead, ' '.repeat(column) + first, ...indented];
+    return [padTo(lead, column) + first, ...indented];
   });
   return [...INTRO, '', heading('Help', 0), ...table(usage), '', heading('Topics', 0), ...table(rows)];
 }
@@ -1194,30 +1234,53 @@ function sectionTopic(topic: string): HelpSection | null {
   return section;
 }
 
+/** What help shows: a topic (`all`, `commands`, a section), or a command or one of its subcommands. */
+export type HelpTarget = { topic: string } | { command: string; subcommand?: string };
+
 /**
- * `sm-dev help [topic]...`: with none, the index; else each topic once
- * (all or full, commands, a section), then the commands named. `commands`
- * are commands only, never sections (`scripts --help`). `unknown`: the
- * names that are none of those. In color, for a terminal that has it.
+ * `sm-dev help [topic|command [subcommand]]`'s words, as what they ask
+ * for: none for the index. An error for a name that is no topic or
+ * command, a subcommand the command doesn't have, or more words.
  */
-export function helpText(topics: string[], commandNames: string[] = [], color = false): { text: string; unknown: string[] } {
-  const unknown = [...new Set(commandNames.filter((name) => !commandNamed(name)))];
-  const text = render(color, () => {
-    if (topics.length === 0 && commandNames.length === 0) return indexLines();
-    const blocks: string[][] = [];
-    const commands = commandNames.filter((name) => commandNamed(name));
-    for (const topic of new Set(topics.map((t) => (t === 'full' ? 'all' : t)))) {
-      const section = sectionTopic(topic);
-      if (topic === 'all') blocks.push(fullLines());
-      else if (topic === 'commands') blocks.push(commandListLines());
-      else if (section) blocks.push(sectionLines(section, 0));
-      else if (commandNamed(topic)) commands.push(topic);
-      else if (!unknown.includes(topic)) unknown.push(topic);
-    }
-    if (commands.length > 0) blocks.push(commandsLines(commands));
-    return blocks.flatMap((block, i) => (i === 0 ? block : ['', ...block]));
+export function helpTarget(words: readonly string[]): HelpTarget | null | { error: string } {
+  if (words.length === 0) return null;
+  const [first, second] = words;
+  const takes = `The ${quoted('help')} command takes a topic, or a command and one of its subcommands: ${quoted('help script save')}`;
+  if (words.length > 2) return { error: takes };
+  const topic = first === 'full' ? 'all' : first;
+  const command = commandNamed(first);
+  if (second === undefined) {
+    if (topic === 'all' || topic === 'commands' || sectionTopic(topic)) return { topic };
+    if (command) return { command };
+    return { error: `${quoted(first)} is not a command or help topic. Use ${quoted('sm-dev help')} to list the topics, or ${quoted('sm-dev help commands')} for the commands.` };
+  }
+  if (!command) {
+    if (topic === 'all' || topic === 'commands' || sectionTopic(topic)) return { error: takes };
+    return { error: `${quoted(first)} is not a command. Use ${quoted('sm-dev help commands')} to list the commands.` };
+  }
+  const missing = noSuchSubcommand(command, second);
+  return missing ? { error: missing } : { command, subcommand: second };
+}
+
+/** `sm-dev help`'s text for `target` (the index for null), in color for a terminal that has it. */
+export function helpText(target: HelpTarget | null, color = false): string {
+  return render(color, () => {
+    if (target === null) return indexLines();
+    if ('command' in target) return commandBlock(target.command, target.subcommand);
+    if (target.topic === 'all') return fullLines();
+    if (target.topic === 'commands') return commandListLines();
+    return sectionLines(sectionTopic(target.topic)!, 0);
   });
-  return { text, unknown };
+}
+
+/**
+ * One command's help, or one subcommand's (`save`), or with `''`, its
+ * forms with none (`script <script>`), in color for a terminal that has
+ * it. For `<command> --help`, which always means the command, never a
+ * topic of the same name.
+ */
+export function commandHelp(name: string, subcommand?: string, color = false): string {
+  return render(color, () => commandBlock(commandNamed(name) ?? name, subcommand));
 }
 
 // Each command's forms (wait has several), with the section listing them.
@@ -1278,23 +1341,87 @@ export function commandNamed(typed: string): string | null {
   return COMMAND_NAMES.includes(name) ? name : null;
 }
 
-// A command's options in titled groups: its own, then those of any
-// section that lists some for it.
-function optionGroupsOf(name: string): { title: string; options: HelpItem[] }[] {
-  const forms = formsOf(name);
-  const home = forms[0]?.section;
+// The keyword naming a subcommand (`wait log`, `script [script] save`),
+// or '' for a form with none (`wait <time>`). Only a form with a syntax
+// of its own is a subcommand: `help commands` is a topic.
+function keywordOf(command: HelpCommand): string {
+  const named = /^\S+ (?:(<[^>]+>|\[[^\]]+\]) )?([a-z][a-z-]*)(\s|$)/.exec(command.usage);
+  return named && command.syntax ? named[2] : '';
+}
+
+// The names whose forms a command's help shows: its own, and those of
+// its singular (`scripts` with `script`).
+function namesOf(name: string): string[] {
+  return [name, ...Object.keys(SAME_COMMANDS).filter((single) => SAME_COMMANDS[single] === name)];
+}
+
+/** A command's subcommands (`list`, `show`, ... for `script`), in its help's order. */
+export function subcommandsOf(name: string): string[] {
+  return [...new Set(namesOf(SAME_COMMANDS[name] ?? name).flatMap(formsOf).map(({ command }) => keywordOf(command)).filter(Boolean))];
+}
+
+/**
+ * Said for a subcommand `name` doesn't have, or null when it has it.
+ * `''` names its forms with no subcommand (`script <script>`).
+ */
+export function noSuchSubcommand(name: string, subcommand: string): string | null {
+  const subs = subcommandsOf(name);
+  if (subcommand === '' ? hasPlainForm(name) : subs.includes(subcommand)) return null;
+  if (subs.length === 0) return `The ${quoted(name)} command has no subcommands`;
+  return `The ${quoted(name)} command has no ${quoted(subcommand)} subcommand. It has ${subs.map((sub) => quoted(sub)).join(', ')}.`;
+}
+
+/**
+ * The words a command's forms with no subcommand spell out as they are
+ * (`all` in `wait [T<n>|all]`), which are arguments, not subcommands.
+ */
+export function plainFormWords(name: string): string[] {
+  return namesOf(SAME_COMMANDS[name] ?? name).flatMap(formsOf).filter(({ command }) => keywordOf(command) === '')
+    .flatMap(({ command }) => command.usage.split(' ').slice(1).join(' ').replace(/<[^>]*>/g, '').match(/[a-z][a-z-]*/g) ?? []);
+}
+
+/** Whether a command has a form with no subcommand (`script <script>`, `wait <time>`), as opposed to only subcommands (`manager`). */
+export function hasPlainForm(name: string): boolean {
+  return namesOf(SAME_COMMANDS[name] ?? name).flatMap(formsOf).some(({ command }) => keywordOf(command) === '');
+}
+
+// Whether a shared option (listed in a section) is for `name`'s
+// subcommand `subcommand`: listed for the command, or for that
+// subcommand alone. Undefined `subcommand`: any of them.
+function sharedFor(item: HelpItem, name: string, subcommand?: string): boolean {
+  return (item.commands ?? []).some((c) => c === name || (c.startsWith(`${name} `) && (subcommand === undefined || c === `${name} ${subcommand}`)));
+}
+
+// A command's shared options in titled groups: its own section's, then
+// those of any other section that lists some for it. `subcommand`:
+// only those it takes.
+function sharedGroupsOf(name: string, subcommand?: string): { title: string; options: HelpItem[] }[] {
+  const home = formsOf(name)[0]?.section;
   const groups: { title: string; options: HelpItem[] }[] = [];
-  const own = forms.flatMap(({ command }) => command.options ?? []);
-  const shared = (section: HelpSection): HelpItem[] => (section.options ?? []).filter((item) => item.commands?.includes(name));
-  if (home) own.push(...shared(home));
-  if (own.length > 0) groups.push({ title: 'Options', options: own });
-  for (const { command } of forms) groups.push(...command.optionGroups ?? []);
+  const shared = (section: HelpSection): HelpItem[] => (section.options ?? []).filter((item) => sharedFor(item, name, subcommand));
+  if (home && shared(home).length > 0) groups.push({ title: 'Options', options: shared(home) });
   for (const section of allSections()) {
     if (section === home) continue;
     const options = shared(section);
     if (options.length > 0) groups.push({ title: section.title, options });
   }
   return groups;
+}
+
+// A form's own options, in titled groups.
+function ownGroupsOf(command: HelpCommand): { title: string; options: HelpItem[] }[] {
+  return [...(command.options?.length ? [{ title: 'Options', options: command.options }] : []), ...command.optionGroups ?? []];
+}
+
+// Groups with the same title made one, each option once.
+function mergedGroups(groups: { title: string; options: HelpItem[] }[]): { title: string; options: HelpItem[] }[] {
+  const merged: { title: string; options: HelpItem[] }[] = [];
+  for (const group of groups) {
+    const same = merged.find((g) => g.title === group.title);
+    if (!same) merged.push({ title: group.title, options: [...group.options] });
+    else for (const item of group.options) if (!same.options.some((o) => o.term === item.term)) same.options.push(item);
+  }
+  return merged;
 }
 
 /**
@@ -1320,89 +1447,124 @@ export interface CommandSyntax {
   forms: Record<string, ArgSyntax>;
   /** The forms that name what they act on before their keyword (`script <script> show`). */
   subjectForms: Set<string>;
-  /** Its flags: each takes a value, none, or one only as `--name=value`. */
+  /** Its flags, any subcommand's: each takes a value, none, or one only as `--name=value`. */
   flags: Record<string, FlagKind>;
+  /** The flags each subcommand takes, by its keyword; `''` for the forms with none. */
+  formFlags: Record<string, string[]>;
   /** What a value flag's value is, as its help names it (`<path>`, `FILE`). */
   values: Record<string, string>;
   /** Its usage lines, without `sm-dev`, for messages. */
   usage: string[];
 }
 
+// An option's flag, how it takes a value, and what the value is:
+// `--out FILE`, `--visible`, `--script[=<script>]`. Null for a term
+// that is no flag (`<frame>`).
+function termFlag(term: string): { flag: string; kind: FlagKind; value?: string } | null {
+  const optional = /^(--[\w-]+)\[=([^\]]+)\]$/.exec(term);
+  if (optional) return { flag: optional[1], kind: 'optional', value: optional[2] };
+  const [flag, value] = term.split(/\s+/);
+  if (!flag.startsWith('--')) return null;
+  return { flag: flag.split(',')[0], kind: value ? 'value' : 'bool', ...(value ? { value } : {}) };
+}
+
 /** A command's syntax, from its help; `words` and no flags for a name that is none. */
 export function commandSyntax(name: string): CommandSyntax {
   const forms = formsOf(name);
   const syntax: CommandSyntax = {
-    base: WORDS, forms: {}, subjectForms: new Set(), flags: {}, values: {}, usage: forms.map(({ command }) => command.usage),
+    base: WORDS, forms: {}, subjectForms: new Set(), flags: {}, formFlags: { '': [] }, values: {}, usage: forms.map(({ command }) => command.usage),
+  };
+  const take = (term: string, keywords: string[]): void => {
+    const found = termFlag(term);
+    if (!found) return;
+    const { flag, kind, value } = found;
+    syntax.flags[flag] ??= kind;
+    // One listed twice (`--tail N`, `--tail PERIOD`) names both: N|PERIOD.
+    if (value) syntax.values[flag] = syntax.values[flag] && syntax.values[flag] !== value ? `${syntax.values[flag]}|${value}` : value;
+    for (const keyword of keywords) {
+      const list = (syntax.formFlags[keyword] ??= []);
+      if (!list.includes(flag)) list.push(flag);
+    }
   };
   for (const { command } of forms) {
     // A form named by a keyword (`wait log <text>`), perhaps after what
     // it acts on (`script [script] enable`), or the command's own.
-    const named = /^\S+ (?:(<[^>]+>|\[[^\]]+\]) )?([a-z][a-z-]*)(\s|$)/.exec(command.usage);
-    const keyword = named?.[2];
-    if (keyword && command.syntax) {
-      syntax.forms[keyword] = command.syntax;
-      if (named![1] !== undefined) syntax.subjectForms.add(keyword);
+    const keyword = keywordOf(command);
+    if (keyword) {
+      syntax.forms[keyword] = command.syntax!;
+      if (/^\S+ (<[^>]+>|\[[^\]]+\]) /.test(command.usage)) syntax.subjectForms.add(keyword);
     } else if (command.syntax) syntax.base = command.syntax;
+    syntax.formFlags[keyword] ??= [];
   }
-  // `--out FILE`: a value; `--visible`: none; `--script[=<script>]`: an
-  // optional one.
-  for (const group of optionGroupsOf(name)) {
-    for (const item of group.options) {
-      const optional = /^(--[\w-]+)\[=([^\]]+)\]$/.exec(item.term);
-      if (optional) {
-        syntax.flags[optional[1]] = 'optional';
-        syntax.values[optional[1]] = optional[2];
-        continue;
-      }
-      const [flag, value] = item.term.split(/\s+/);
-      if (!flag.startsWith('--')) continue;
-      const name = flag.split(',')[0];
-      syntax.flags[name] = value ? 'value' : 'bool';
-      // One listed twice (`--tail N`, `--tail PERIOD`) names both: N|PERIOD.
-      if (value) syntax.values[name] = syntax.values[name] && syntax.values[name] !== value ? `${syntax.values[name]}|${value}` : value;
-    }
-  }
+  const keywords = Object.keys(syntax.formFlags);
+  // Its forms' own options, then the shared ones, each for the forms it is for.
   for (const { command } of forms) {
-    for (const [, flag, value] of command.usage.matchAll(/(--[\w-]+)(?:\s+(<[^>]+>))?/g)) {
-      syntax.flags[flag] ??= value ? 'value' : 'bool';
-      if (value) syntax.values[flag] ??= value;
-    }
+    for (const group of ownGroupsOf(command)) for (const item of group.options) take(item.term, [keywordOf(command)]);
+  }
+  for (const group of sharedGroupsOf(name)) {
+    for (const item of group.options) take(item.term, keywords.filter((k) => sharedFor(item, name, k)));
+  }
+  // The flags in a form's usage line (`script install ... [--force]`).
+  for (const { command } of forms) {
+    for (const [, flag, value] of command.usage.matchAll(/(--[\w-]+)(?:\s+(<[^>]+>))?/g)) take(value ? `${flag} ${value}` : flag, [keywordOf(command)]);
   }
   return syntax;
+}
+
+// The flags for the whole line, which go before any command.
+export const GLOBAL_FLAGS = ['--run', '--root', '--local', '--stdin', '--interactive', '--browser', '--manager', '--open-browser', '--profile', '--temp-browser', '--headed', '--mute', '--nomute', '--json'];
+
+// Those of them that take a value.
+export const VALUE_GLOBALS = new Set(['--run', '--root', '--local', '--browser', '--manager', '--profile']);
+
+// A global flag given where a command's own go.
+export function globalFlagMistake(flag: string): string {
+  return `The ${quoted(flag)} flag is for the whole command line, so it goes first, before any command: ${quoted(`sm-dev ${flag}${VALUE_GLOBALS.has(flag) ? ' ...' : ''} <command>`)}`;
 }
 
 /**
  * A command's flag it doesn't have, naming the ones it does, so a near
  * miss (`--timeout` for `--timeout-seconds`) shows the right one.
+ * `command` can be a subcommand (`script save`).
  */
 export function noSuchFlag(command: string, flag: string, known: string[] = commandFlags(command)): string {
   const takes = known.length === 0 ? 'It takes no flags.' : `It takes ${known.map((f) => quoted(f)).join(', ')}.`;
   return `The ${quoted(command)} command has no ${quoted(flag)} flag. ${takes}`;
 }
 
-// One command's help: its usage, what it does, its arguments and options.
-// With the forms of its singular too (`script` with `scripts`).
-function commandBlock(name: string): string[] {
-  const names = [name, ...Object.keys(SAME_COMMANDS).filter((single) => SAME_COMMANDS[single] === name)];
-  const forms = names.flatMap(formsOf);
-  const groups: { title: string; options: HelpItem[] }[] = [];
-  for (const group of names.flatMap(optionGroupsOf)) {
-    const same = groups.find((g) => g.title === group.title);
-    if (!same) groups.push({ title: group.title, options: [...group.options] });
-    else for (const item of group.options) if (!same.options.some((o) => o.term === item.term)) same.options.push(item);
-  }
+/**
+ * A command's help: its usage, what it does, its arguments and options,
+ * with the forms of its singular too (`script` with `scripts`).
+ * `subcommand`: only that one's forms and the options it takes; `''`
+ * for the forms with none (`script <script>`).
+ */
+function commandBlock(name: string, subcommand?: string): string[] {
+  const names = namesOf(SAME_COMMANDS[name] ?? name);
+  const forms = names.flatMap(formsOf).filter(({ command }) => subcommand === undefined || keywordOf(command) === subcommand);
+  const shared = mergedGroups(names.flatMap((n) => sharedGroupsOf(n, subcommand)));
   // Each form, and a row after one that names no command
   // (`<command> --help`, after help's).
   const rows = forms.flatMap(({ command, section }) => {
     const next = section.commands?.[section.commands.indexOf(command) + 1];
-    return next?.pointer && !commandNamed(nameOf(next)) ? [command, next] : [command];
+    return subcommand === undefined && next?.pointer && !commandNamed(nameOf(next)) ? [command, next] : [command];
   });
+  // One form's own options lead its groups; with several forms, each
+  // form's are listed under it.
+  const groups = rows.length === 1 ? mergedGroups([...ownGroupsOf(rows[0]), ...shared]) : shared;
   // Said once, for a command of one form; several list their options below.
   const options = groups.length > 0 && rows.length === 1 ? ' [options]' : '';
   const lines = rows.map((command, i) => `${i === 0 ? 'Usage:' : '      '} ${quiet(`sm-dev ${command.usage}${options}`)}`);
   lines.push('');
   if (rows.length === 1) lines.push(...aboutLines(rows[0].about, WIDTH));
-  else for (const command of rows) lines.push(...itemLines(command.usage, command.about, 0));
+  else {
+    for (const command of rows) {
+      lines.push(...itemLines(command.usage, command.about, 0));
+      for (const group of ownGroupsOf(command)) {
+        if (group.title !== 'Options') lines.push(`  ${group.title}:`);
+        for (const item of group.options) lines.push(...itemLines(item.term, item.about, 2));
+      }
+    }
+  }
   const args = forms.flatMap(({ command }) => command.args ?? []);
   const list = (title: string, items: HelpItem[]): string[] => ['', `${title}:`, ...items.flatMap((item) => itemLines(item.term, item.about, 0))];
   if (args.length > 0) lines.push(...list('Arguments', args));
@@ -1411,16 +1573,4 @@ function commandBlock(name: string): string[] {
   while (text.at(-1) === '') text.pop();
   if (text.length > 0) lines.push('', ...text.flatMap((line) => textLines(line, WIDTH)));
   return lines;
-}
-
-// `sm-dev help <command>...`: each command once, in the list's order.
-function commandsLines(names: string[]): string[] {
-  const wanted = [...new Set(names.map(commandNamed).filter((name): name is string => name !== null).map((name) => SAME_COMMANDS[name] ?? name))]
-    .sort((a, b) => COMMAND_NAMES.indexOf(a) - COMMAND_NAMES.indexOf(b));
-  return wanted.flatMap((name, i) => [...(i > 0 ? [''] : []), ...commandBlock(name)]);
-}
-
-/** `sm-dev help <command>...`, in color for a terminal that has it. `unknown`: the names no command has. */
-export function commandsHelp(names: string[], color = false): { text: string; unknown: string[] } {
-  return { text: render(color, () => commandsLines(names)), unknown: names.filter((name) => !commandNamed(name)) };
 }

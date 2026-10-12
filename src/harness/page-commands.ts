@@ -665,7 +665,7 @@ export async function runPageCommand(
 const CUT_OFF_BY_NAVIGATION = /context was destroyed|Cannot find context|navigated or closed/i;
 
 const CDP_USAGE = 'e.g. `cdp Input.dispatchMouseEvent \'{"type": "mouseWheel", "x": 400, "y": 300, "deltaX": 0, "deltaY": 600}\'`';
-const ONE_CALL = 'A `cdp` command makes one call. For several in one session, put one per line in a `cdp {{` block.';
+const ONE_CALL = 'A `cdp` command makes one call. For multiple in one session, put one per line in a `cdp {{` block.';
 const notAMethod = (word: string): string => `${quoted(word)} is not a CDP method. Methods are named Domain.method, as in ${quoted('Page.reload')}.`;
 
 type CdpCall = { method: string; params: object };
@@ -1072,7 +1072,7 @@ async function frameByCdpId(id: string, tab: ControlledTab, say: (line: string) 
   if (hits.length === 1) return hits[0];
   const ids = tab.link.host.frameIds;
   say(hits.length > 1
-    ? `Several of T${tab.n}'s frames' ids start with ${quoted(id)} (${hits.map((f) => `F${ids.number(f)}`).join(', ')}). Give more of it.`
+    ? `Multiple frames in T${tab.n} have ids starting with ${quoted(id)} (${hits.map((f) => `F${ids.number(f)}`).join(', ')}). Give more of it.`
     : `No frame of T${tab.n} has an id starting with ${quoted(id)}. Use ${quoted('frames')} to list them.`);
   return null;
 }

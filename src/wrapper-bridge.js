@@ -53,31 +53,37 @@
    to one physical line.
 
    Timing vs. MAIN-world preludes. The bridge is a separate
-   chrome.userScripts registration from the per-script wrappers;
-   their relative injection order isn't guaranteed by the API, and
-   the page -> SW direction is now synchronous — a request dispatched
-   before this IIFE ran finds no listener and is simply dropped. A sync
-   that widens this spec's patterns re-registers it behind the
-   wrappers, so this happens. Lost, the wrapper would wait out its
-   timeout and not run, whatever the SW would have decided, so it sends
-   its check-pending again on our ready event (READY_MARKER). The script's own GM_* calls
-   are not exposed to the same race: the body doesn't run until that
-   handshake settles, and by then every document_start registration has
-   executed. We still emit the bridge spec ahead of the wrapper specs
-   (see buildBridgeSpec in injector.ts) so the handshake usually wins.
+   chrome.userScripts registration from the per-script wrappers and
+   the GM runtime; their relative injection order isn't guaranteed by
+   the API, and the page -> SW direction is synchronous, so a request
+   dispatched before this IIFE ran finds no listener. A sync that
+   widens this spec's patterns re-registers it behind the wrappers, so
+   this happens, and a `document-start` script on a first load runs
+   (reporting its start, making GM_* calls) without waiting for
+   anything. So:
+     - we cancel every sync event we take (preventDefault), as a
+       receipt the sender reads off dispatchEvent's return value;
+     - the senders (userscript-prelude.js and the MAIN-world
+       wrapper-gm-runtime.js) hold what nobody took;
+     - our ready event (READY_MARKER) tells them to send it again.
+   We still emit the bridge spec ahead of the wrapper specs (see
+   buildBridgeSpec in injector.ts), so usually nothing is held.
 
    Trust model. The channel key keeps the page out: it can't send our
    events or hear them, since it doesn't know their names. What it can
    still do:
      - send the two bare announcements: READY_MARKER, which makes a
-       waiting MAIN-world wrapper send its check-pending again (the SW
-       answers the same), and MAIN_READY, which only keeps the
-       sandboxed-page fallback off.
+       waiting MAIN-world wrapper or GM runtime send what it holds (what
+       is held is held because no bridge took it, so this sends nothing
+       new), and MAIN_READY, which only keeps the sandboxed-page fallback
+       off.
      - hook the built-ins our MAIN-world code touches after
        document_start (an `Object.prototype` getter, a `toJSON`), which
        a page that targets SourceMonkey specifically could use to see
        some of what passes. The MAIN-world side captures what it can at
        document_start (the event's `detail` getter, JSON, dispatch).
+   It can't cancel our sync events either, to make a request look taken
+   (the receipt, see Timing above), since it can't name them.
    We still check the payload type against a small allowlist per
    direction, and stamp every relayed message `__viaBridge:true` (see
    `stamp` below), set last so nothing can pre-set it false. The SW
@@ -161,7 +167,7 @@
      unprompted via chrome.tabs.sendMessage; MAIN world has no
      chrome.runtime to receive them on. */
   var PUSHED = [
-    "sm:gm-value-update", "sm:gm-xhr-event", "sm:gm-tab-closed",
+    "sm:gm-value-update", "sm:gm-values-stale", "sm:gm-xhr-event", "sm:gm-tab-closed",
     "sm:gm-notification-event", "sm:gm-menu-fire",
     "sm:gm-download-event"
   ];
@@ -245,6 +251,11 @@
 
   document.addEventListener(SYNC_EVENT, function (ev) {
     try {
+      /* The receipt: the sender holds and resends what nobody cancelled
+         (see Timing, above). Every event, whatever its type, so the
+         receipt says only that the bridge is in, which READY_MARKER
+         says anyway. */
+      if (ev && typeof ev.preventDefault === "function") ev.preventDefault();
       if (!ev || typeof ev.detail !== "string") return;
       var env = JSON.parse(ev.detail);
       if (!env || typeof env !== "object") return;
@@ -316,12 +327,11 @@
       });
     }
   } catch (_e4) {}
-  /* Announce that requests are heard now. A MAIN-world wrapper injected
-     before this bridge (one a re-registration put ahead of it) sent its
-     sm:check-pending into nothing, and sends it again on this. A page
-     can fire it too, which repeats one request: the SW answers it with
-     the same claim or skip, or at worst a plain run in place of a
-     reload hot-swap. */
+  /* Announce that requests are heard now. A MAIN-world wrapper or GM
+     runtime injected before this bridge holds what it sent into
+     nothing, and sends it again on this. A page can fire it too, which
+     sends nothing new: what is held is held because no bridge took it,
+     and stays held while there is none. */
   var mainSeen = false;
   try { window.addEventListener(MAIN_READY, function () { mainSeen = true; }, true); } catch (_e6) {}
   try { window.dispatchEvent(new CustomEvent(READY_MARKER)); } catch (_e5) {}

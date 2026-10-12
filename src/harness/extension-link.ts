@@ -24,7 +24,7 @@ import { randomBytes } from 'node:crypto';
 import type { BrowserContext, CDPSession, Page, Worker } from '@playwright/test';
 
 import {
-  SM_DEV_EVENT, SM_DEV_MARKERS, SM_DEV_PROTOCOL, type ManagedCollection, type ManagedOnDisk, type ManagedScript, type ProtocolVersion,
+  SM_DEV_EVENT, SM_DEV_MARKERS, SM_DEV_PROTOCOL, type ManagedCollection, type ManagedFileContent, type ManagedOnDisk, type ManagedScript, type ProtocolVersion,
 } from '../sm-dev-protocol.js';
 import type { StackLayout } from '../composed-source.js';
 import type { PushedFile } from '../external-files.js';
@@ -583,7 +583,7 @@ export class ExtensionLink {
   }
 
   /** The collections and installed scripts, for the `collection` and `script` commands. */
-  readonly manager: ManagerControl = managerControl((fn, arg) => this.call(fn, arg));
+  readonly manager: ManagerControl = managerControl((fn, arg) => this.call(fn, arg), (minor, feature) => this.requireMinor(minor, feature));
 
   /** Clicks a shown notification, as the person would. False when it isn't showing. */
   async clickNotification(notificationId: string): Promise<boolean> {
@@ -646,17 +646,19 @@ export function firstLine(err: unknown): string {
  */
 export async function openManagerLink(context: BrowserContext): Promise<{ manager: ManagerControl; versionNote: string | null }> {
   const worker = await findExtensionWorker(context);
-  const { note } = await checkedProtocol(worker);
+  const { protocol, note } = await checkedProtocol(worker);
   return {
     versionNote: note,
     // Playwright's argument types don't follow a generic through.
-    manager: managerControl((fn, arg) => worker.evaluate(fn as never, arg as never)),
+    manager: managerControl((fn, arg) => worker.evaluate(fn as never, arg as never), (minor, feature) => requireMinorOf(protocol, minor, feature)),
   };
 }
 
-// The manager calls, made with `invoke` (in the worker).
+// The manager calls, made with `invoke` (in the worker). `requireMinor`
+// throws for an extension too old for a call.
 function managerControl(
   invoke: <A, R>(fn: (arg: A) => R | Promise<R>, arg: A) => Promise<R>,
+  requireMinor: (minor: number, feature: string) => void,
 ): ManagerControl {
   // `self.SourceMonkey.managed`'s calls. A change it refuses fails with
   // its message alone, without the `worker.evaluate: Error: `
@@ -685,6 +687,10 @@ function managerControl(
     renameCollection: (id, name) => managed(({ i, n }) => (self as unknown as Sm).SourceMonkey.managed.renameCollection(i, n), { i: id, n: name }),
     scriptDetails: (id) => managed((i) => (self as unknown as Sm).SourceMonkey.managed.scriptDetails(i), id),
     scriptText: (id) => managed((i) => (self as unknown as Sm).SourceMonkey.managed.scriptText(i), id),
+    scriptFiles: (id) => {
+      requireMinor(3, 'Reading a script\'s @require and @resource files');
+      return managed((i) => (self as unknown as Sm).SourceMonkey.managed.scriptFiles(i), id);
+    },
   };
 }
 
@@ -709,5 +715,8 @@ interface Api {
   answerConnectPrompt(promptId: string, choice: 'once' | 'cancel' | 'allow' | 'allow-all' | 'deny'): Promise<boolean>;
   managedCollections(): Promise<ManagedCollection[]>;
   managedScripts(): Promise<ManagedScript[]>;
-  managed: Omit<ManagerControl, 'label' | 'collections' | 'scripts' | 'onDisk'> & { onDisk(): Promise<ManagedOnDisk> };
+  managed: Omit<ManagerControl, 'label' | 'collections' | 'scripts' | 'onDisk'> & {
+    onDisk(): Promise<ManagedOnDisk>;
+    scriptFiles(id: string): Promise<ManagedFileContent[] | null>;
+  };
 }

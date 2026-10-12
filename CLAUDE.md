@@ -111,6 +111,9 @@ and how it is built: [docs/worker-writes.md](docs/worker-writes.md).
   worker doesn't take a stale session record.
 - Tests that seed script rows use `sm.seedStorage`, which writes under
   the lock.
+- **GM values (`gmval:` rows) go through `src/extension/value-store.ts`**,
+  reads and writes alike. It keeps the live maps and saves them to disk
+  behind ([docs/GM-APIs-storage.md](docs/GM-APIs-storage.md#the-workers-value-store)).
 
 ### sm-dev protocol version
 `SM_DEV_PROTOCOL` in `src/sm-dev-protocol.ts` versions what sm-dev and

@@ -46,7 +46,7 @@ test.describe('sm-dev typed commands', () => {
     // By exact file name, or by a piece of a name that only one has.
     expect(await run('scripts first.user.js')).toEqual([`[sm-dev] Selected First (${scriptsDir.path}/first.user.js)`]);
     expect(await run('scripts cond')).toEqual([`[sm-dev] Selected Second (${scriptsDir.path}/second.user.js)`]);
-    expect(await run('scripts user.js')).toEqual(['[sm-dev] Several loaded scripts match user.js (1, 2). Name one by its number.']);
+    expect(await run('scripts user.js')).toEqual(['[sm-dev] Multiple loaded scripts match user.js (1, 2). Name one by its number.']);
     expect(await run('scripts Nobody')).toEqual(['[sm-dev] No loaded script matches Nobody. Use `scripts` to list them.']);
     expect(await run('scripts 3')).toEqual(['[sm-dev] There is no script 3. Use `scripts` to list them.']);
 
@@ -89,7 +89,8 @@ test.describe('sm-dev typed commands', () => {
       relativePath: 'menus.user.js',
       meta: { name: 'Menus', match: ['*://*/target.html'], grant: ['GM_registerMenuCommand', 'GM_setValue'] },
       body: `GM_registerMenuCommand('Say one', () => GM_setValue('said', 1));
-        GM_registerMenuCommand('Say two', () => GM_setValue('said', 2));`,
+        GM_registerMenuCommand('Say two', () => GM_setValue('said', 2));
+        document.addEventListener('sm-late', () => setTimeout(() => GM_registerMenuCommand('Late', () => GM_setValue('said', 3)), 1000));`,
     });
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect.poll(() => host.reports.menuCommands.length).toBe(2);
@@ -114,6 +115,12 @@ test.describe('sm-dev typed commands', () => {
     expect(await run('menu abc')).toEqual(['[sm-dev] No menu command named "abc" is registered. Use `menu` to list them.']);
     expect(Date.now() - started).toBeLessThan(1000);
     expect(await run('menu M3')).toEqual(['[sm-dev] There is no menu command M3. Use `menu` to list them.']);
+    // With --timeout-seconds, waited for even typed at the prompt, and
+    // while others are registered.
+    await page.evaluate(() => document.dispatchEvent(new Event('sm-late')));
+    ctx.interactive = true;
+    expect(await run('menu Late --timeout-seconds 5')).toEqual(['[sm-dev] Fired "Late"']);
+    await expect.poll(() => host.getValue(script.id!, 'said')).toBe(3);
   });
 
   test('menu lists a manual script\'s Run this script before it has run, and runs it', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {
@@ -249,7 +256,7 @@ test.describe('sm-dev typed commands', () => {
         `[sm-dev] The page commands now act on T1 (${target})`,
       ]);
       expect(await run('focus AB12CD')).toEqual([
-        '[sm-dev] Several tabs\' target ids start with AB12CD (T1, T2). Give more of it.',
+        '[sm-dev] Multiple tabs have target ids starting with AB12CD (T1, T2). Give more of it.',
       ]);
       expect(await run('reload ABCDEF')).toEqual(['[sm-dev] No open tab\'s target id starts with ABCDEF. Use `tabs` to list them.']);
       // Too short to be taken for an id, and a long number is still a slip.
@@ -476,7 +483,7 @@ test.describe('sm-dev typed commands', () => {
     expect(await run('newtab all --offline')).toEqual(['[sm-dev] ERROR: The `newtab` command takes all by itself, to open each script\'s page']);
     // A glob matching several files is more than open can load.
     expect(await run(`open ${scriptsDir.path}/*.user.js`)).toEqual([
-      '[sm-dev] ERROR: The `open` command opens one page, so it takes one URL, file or script. To open several, use `newtab`.',
+      '[sm-dev] ERROR: The `open` command opens one page, so it takes one URL, file or script. To open multiple, use `newtab`.',
     ]);
     expect(await run('newtab T1.1')).toEqual([
       '[sm-dev] ERROR: The `newtab` command opens a tab of its own, so it takes URLs, files or script numbers, not T1.1',
@@ -556,7 +563,7 @@ test.describe('sm-dev typed commands', () => {
 
       // `set` reaches every tab, so T2's dialog would hold it up.
       expect(await run('set k 1')).toEqual(['[sm-dev] T2 is waiting on an alert dialog. Use `accept T2` or `dismiss T2` first.']);
-      expect(await run('accept')).toEqual(['[sm-dev] No dialog is open on T1. T2 has one; use `accept T2`.']);
+      expect(await run('accept')).toEqual(['[sm-dev] No dialog is open on T1. T2 has one; name its tab: `accept T2`.']);
       expect(await run('tabs')).toEqual([
         'Tabs:', `* T1: ${fixtureServer.baseUrl}/target.html`, '   * 1: Store',
         `  T2: ${fixtureServer.baseUrl}/other.html (opened by T1)`, '    Waiting on an alert dialog: "Hi"', '     1: Store',

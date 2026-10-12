@@ -10,13 +10,15 @@
 // thing in every run and every command. Another manager's scripts go
 // by its own numbers, in one collection, `C0`.
 
+import { existsSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import {
   LISTED_BY_LOCATION, RUN_COLLECTION_LOCKED,
-  type CollectionRefresh, type ManagedCollection, type ManagedFile, type ManagedOnDisk, type ManagedScript, type ManagedScriptDetails,
-  type ScriptEnable, type ScriptInstall, type ScriptRefresh,
+  type CollectionRefresh, type ManagedCollection, type ManagedFile, type ManagedFileContent, type ManagedOnDisk, type ManagedScript,
+  type ManagedScriptDetails, type ScriptEnable, type ScriptInstall, type ScriptRefresh,
 } from '../sm-dev-protocol.js';
 import { pendingSummary } from '../script-display.js';
 import {
@@ -24,7 +26,11 @@ import {
 } from './json-output.js';
 import type * as J from './json-output.js';
 import { commandSyntax } from './command-list.js';
-import { asError, cmd, code, heading, id as idRole, MISTAKE_PREFIX, name as nameRole, quoted, selected, ui, url } from './output-style.js';
+import { errorSentence, writeProblem } from './input-file.js';
+import { shownPath } from './prepare.js';
+import {
+  asError, cmd, code, err as errorLine, heading, id as idRole, MISTAKE_PREFIX, name as nameRole, plainLine, quoted, selected, SM_DEV_PREFIX, ui, url,
+} from './output-style.js';
 
 /**
  * The calls these commands make into the manager: SourceMonkey's
@@ -51,6 +57,8 @@ export interface ManagerControl {
   renameCollection(id: string, name: string): Promise<ManagedCollection>;
   scriptDetails(id: string): Promise<ManagedScriptDetails | null>;
   scriptText(id: string): Promise<string | null>;
+  /** A script's `@require` and `@resource` files as installed; null for no script. Absent when the manager doesn't give them. */
+  scriptFiles?(id: string): Promise<ManagedFileContent[] | null>;
 }
 
 /**
@@ -153,7 +161,7 @@ function scriptJson(s: ManagedScript, collection: ManagedCollection | undefined,
 /** The verbs each command takes. `script` without one picks a script instead. */
 export const MANAGER_VERBS = {
   collection: ['list', 'show', 'enable', 'disable', 'refresh', 'rename'],
-  script: ['list', 'show', 'print', 'enable', 'disable', 'refresh', 'install', 'uninstall', 'move'],
+  script: ['list', 'show', 'print', 'save', 'enable', 'disable', 'refresh', 'install', 'uninstall', 'move'],
 } as const;
 
 /** Said for `collection <words>` with no verb it takes: `C3 frob`, or one word alone. */
@@ -301,7 +309,7 @@ export interface ManagerContext {
 
 // What each verb takes after it, for the message when it's missing.
 const NEEDS: Record<string, string> = {
-  'script install': 'a .user.js file or URL', 'script move': 'the collection to move it to', 'collection rename': 'the new name',
+  'script install': 'a .user.js file or URL', 'script save': 'a directory to save into', 'script move': 'the collection to move it to', 'collection rename': 'the new name',
 };
 
 /**
@@ -395,7 +403,7 @@ export async function managerVerb(
   const selectable = command === 'script' && verb !== 'uninstall' && ctx.run?.selected !== undefined;
   // The old order: `collection rename C3 New name`.
   if (command === 'collection' && subject === undefined && args.length > 0) {
-    ctx.out(`${MISTAKE_PREFIX}Name the collection before the verb: ${quoted(`collection ${args[0]} ${verb}${args.slice(1).map((w) => ` ${w}`).join('')}`)}`);
+    ctx.out(`${MISTAKE_PREFIX}Name the collection before the verb: ${quoted(`collection ${args[0]} ${verb}${args.length > 1 ? ' ...' : ''}`)}`);
     return false;
   }
   if (verb !== 'install' && subject === undefined && !selectable) {
@@ -414,6 +422,11 @@ export async function managerVerb(
     if (command === 'collection') return await collectionVerb(ctx, verb, subject!, args);
     return await scriptVerb(ctx, verb, subject, args, flags);
   } catch (err) {
+    if (err instanceof MarkedFailure) {
+      ctx.out(SM_DEV_PREFIX + err.lines[0]);
+      for (const line of err.lines.slice(1)) ctx.out(line);
+      return false;
+    }
     // Its own message: these start with what they're about (`E2: One`).
     ctx.out(`[sm-dev] ${(err as Error).message}`);
     return false;
@@ -552,14 +565,10 @@ async function scriptVerb(
     case 'show':
       await scriptShow(ctx, picked, collection);
       return true;
-    case 'print': {
-      const text = await ctx.manager.scriptText(picked.id);
-      if (text === null) throw new Error(noSuchScript(scriptShown(picked, view)));
-      const id = scriptLabel(picked, view);
-      if (ctx.json) ctx.out(jsonResult('script print', { ...(id !== undefined ? { script: id } : {}), name: picked.name, text } satisfies J.ScriptPrintData));
-      else for (const line of text.replace(/\n$/, '').split('\n')) ctx.out(line);
-      return true;
-    }
+    case 'print':
+      return scriptPrint(ctx, picked, flags);
+    case 'save':
+      return scriptSave(ctx, picked, args[0], flags);
     case 'enable':
     case 'disable': {
       const enabled = verb === 'enable';
@@ -612,6 +621,266 @@ async function scriptVerb(
     }
   }
   return false;
+}
+
+// ---------- Printing and saving a script's files ----------
+
+/**
+ * A failure said as lines of markup: the first after `[sm-dev] `, the
+ * rest as they are. Its message is the same as plain text.
+ */
+class MarkedFailure extends Error {
+  constructor(readonly lines: string[]) {
+    super(lines.map(plainLine).join('\n'));
+  }
+}
+
+// Said when the manager doesn't give sm-dev the files.
+function noFilesUnder(label: string): string {
+  return `${label} doesn't give sm-dev its scripts' @require and @resource files, so only the script itself can be printed or saved`;
+}
+
+// The script's `@require` and `@resource` files as installed.
+async function filesOf(ctx: ManagerContext, script: ManagedScript): Promise<ManagedFileContent[]> {
+  if (!ctx.manager.scriptFiles) throw new Error(noFilesUnder(ctx.manager.label));
+  const files = await ctx.manager.scriptFiles(script.id);
+  if (files === null) throw new Error(noSuchScript(scriptShown(script, ctx.run)));
+  return files;
+}
+
+// The installed text.
+async function textOf(ctx: ManagerContext, script: ManagedScript): Promise<string> {
+  const text = await ctx.manager.scriptText(script.id);
+  if (text === null) throw new Error(noSuchScript(scriptShown(script, ctx.run)));
+  return text;
+}
+
+// A file's URL as shown: a `data:` URL by its type alone, since it
+// holds the whole file.
+function fileUrlShown(f: ManagedFileContent): string {
+  return f.url.startsWith('data:') ? `${f.url.split(',')[0]},...` : f.url;
+}
+
+// `@resource icon https://x/icon.png`, `@require https://x/lib.js`, marked up.
+function fileMarked(f: ManagedFileContent): string {
+  return ui`@${f.kind} ${f.name !== undefined ? ui`${code(f.name)} ` : ''}${url(fileUrlShown(f))}`;
+}
+
+/**
+ * The file of `files` that `name` names: a `@resource`'s name, exactly,
+ * or a part of its URL only it has; or `script` for the script itself.
+ * For none or several, throws a failure listing them. `shown`: the
+ * script, marked up.
+ */
+export function pickScriptFile(files: readonly ManagedFileContent[], name: string, shown: string): ManagedFileContent | 'script' {
+  const named = files.filter((f) => f.name === name);
+  if (named.length === 1) return named[0];
+  if (name === 'script') return 'script';
+  const lower = name.toLowerCase();
+  const found = files.filter((f) => f.url.toLowerCase().includes(lower));
+  if (found.length === 1) return found[0];
+  if (files.length === 0) throw new MarkedFailure([ui`${shown} has no @require or @resource files`]);
+  const listed = (these: readonly ManagedFileContent[]): string[] => these.map((f) => ui`  ${fileMarked(f)}`);
+  if (found.length === 0) throw new MarkedFailure([ui`No file of ${shown} matches ${cmd(name)}. Its files:`, ...listed(files)]);
+  throw new MarkedFailure([ui`The name ${cmd(name)} matches multiple files of ${shown}. Give more of the URL, or a @resource's name:`, ...listed(found)]);
+}
+
+// Bytes as text, or null for bytes that aren't text: not UTF-8, or with a NUL.
+function asText(bytes: Buffer): string | null {
+  if (bytes.includes(0)) return null;
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+// Why a file or directory couldn't be written.
+function writeFailure(err: unknown): string {
+  return writeProblem(err) ?? errorSentence(err);
+}
+
+// Does `work`, which writes `shown`, saying which and why when it can't.
+async function writing(shown: string, work: () => Promise<unknown>): Promise<void> {
+  try {
+    await work();
+  } catch (err) {
+    throw new MarkedFailure([ui`Could not write ${url(shown)}: ${writeFailure(err)}`]);
+  }
+}
+
+// `script [script] print [--file <name>] [--out <file>]`.
+async function scriptPrint(ctx: ManagerContext, script: ManagedScript, flags: Record<string, string | true>): Promise<boolean> {
+  const view = ctx.run;
+  const which = typeof flags['--file'] === 'string' ? pickScriptFile(await filesOf(ctx, script), flags['--file'], scriptMarked(script, view)) : 'script';
+  const file = which === 'script' ? undefined : which;
+  const bytes = file ? Buffer.from(file.base64, 'base64') : Buffer.from(await textOf(ctx, script));
+  const id = scriptLabel(script, view);
+  const about = {
+    ...(id !== undefined ? { script: id } : {}),
+    name: script.name,
+    ...(file ? { file: { kind: file.kind, url: file.url, ...(file.name !== undefined ? { name: file.name } : {}) } } : {}),
+  };
+  const outFile = flags['--out'];
+  if (typeof outFile === 'string') {
+    const target = path.resolve(ctx.cwd, outFile);
+    const shown = shownPath(target, ctx.cwd);
+    await writing(shown, () => writeFile(target, bytes));
+    if (ctx.json) ctx.out(jsonResult('script print', { ...about, out: target } satisfies J.ScriptPrintData));
+    else ctx.out(ui`Wrote ${url(shown)} (${count(bytes.length, 'byte')})`);
+    return true;
+  }
+  const text = asText(bytes);
+  if (text === null) {
+    throw new MarkedFailure([
+      ui`${fileMarked(file!)} is not text${file!.contentType ? ` (${file!.contentType})` : ''}, so it can't be printed. Use ${cmd('--out <file>')} to write it to a file.`,
+    ]);
+  }
+  if (ctx.json) ctx.out(jsonResult('script print', { ...about, text } satisfies J.ScriptPrintData));
+  else for (const line of text.replace(/\n$/, '').split('\n')) ctx.out(line);
+  return true;
+}
+
+/** What `script save --only` takes. */
+const SAVE_PARTS = ['script', 'requires', 'resources'] as const;
+type SavePart = typeof SAVE_PARTS[number];
+
+// The file name a saved script takes: its own, when that's a
+// `.user.js`, else its name made one.
+function scriptFileName(s: ManagedScript): string {
+  const where = s.loadedAs ?? s.location ?? '';
+  let last = where.split(/[?#]/)[0].split(/[\\/]/).pop() ?? '';
+  try {
+    last = decodeURIComponent(last);
+  } catch {
+    // Kept as written.
+  }
+  if (/\.user\.js$/i.test(last) && !/[\\/:*?"<>|]/.test(last)) return last;
+  return `${s.name.replace(/[\\/:*?"<>|]/g, '_')}.user.js`;
+}
+
+// A `file:` dependency's path from the script's own folder, as a
+// relative `@require` names it (`lib/util.js`), so a saved copy finds
+// it there too. Undefined for one outside that folder. A run's script
+// by the file it was read from.
+function besideScript(fileUrl: string, script: ManagedScript): string | undefined {
+  const own = script.sourceFile ?? script.location;
+  if (!own?.startsWith('file:')) return undefined;
+  const folder = own.slice(0, own.lastIndexOf('/') + 1);
+  if (!fileUrl.startsWith(folder)) return undefined;
+  try {
+    return decodeURIComponent(fileUrl.slice(folder.length));
+  } catch {
+    return undefined;
+  }
+}
+
+// One file `script save` writes.
+interface SavedFile {
+  kind: 'script' | 'require' | 'resource';
+  url?: string;
+  name?: string;
+  /** Relative to the directory, with `/`. */
+  path: string;
+  bytes: Buffer;
+}
+
+// `script [script] save <dir> [--only <parts>] [--flat] [--force]`.
+async function scriptSave(ctx: ManagerContext, script: ManagedScript, dirGiven: string, flags: Record<string, string | true>): Promise<boolean> {
+  const view = ctx.run;
+  const shown = scriptMarked(script, view);
+  let parts: Set<SavePart> = new Set(SAVE_PARTS);
+  if (typeof flags['--only'] === 'string') {
+    const given = flags['--only'].split(',').map((p) => p.trim()).filter(Boolean);
+    const unknown = given.find((p) => !(SAVE_PARTS as readonly string[]).includes(p));
+    if (unknown !== undefined || given.length === 0) {
+      ctx.out(`${MISTAKE_PREFIX}The ${quoted('--only')} flag takes ${SAVE_PARTS.map((p) => quoted(p)).join(', ')}, comma-separated${unknown !== undefined ? `, and not ${quoted(unknown)}` : ''}`);
+      return false;
+    }
+    parts = new Set(given as SavePart[]);
+  }
+  const flat = flags['--flat'] === true;
+  const dir = path.resolve(ctx.cwd, dirGiven);
+  const files: SavedFile[] = [];
+  // What wasn't saved and why: plain for JSON, and marked up.
+  const notes: { plain: string; marked: string }[] = [];
+  const note = (marked: string): void => {
+    notes.push({ plain: plainLine(marked), marked });
+  };
+  if (parts.has('script')) files.push({ kind: 'script', path: scriptFileName(script), bytes: Buffer.from(await textOf(ctx, script)) });
+  if (parts.has('requires') || parts.has('resources')) {
+    // Without `--only`, under a manager that doesn't give them, the script alone.
+    if (!ctx.manager.scriptFiles && typeof flags['--only'] !== 'string') note(ui`${noFilesUnder(ctx.manager.label)}`);
+    else {
+      for (const f of await filesOf(ctx, script)) {
+        if (!parts.has(`${f.kind}s` as SavePart)) continue;
+        const kept = f.url.startsWith('file:') ? besideScript(f.url, script) ?? f.path : f.path;
+        const where = kept === undefined ? undefined : flat ? path.posix.basename(kept) : kept;
+        // Not one that would land outside the directory.
+        if (where === undefined || !path.resolve(dir, where).startsWith(dir + path.sep)) {
+          note(ui`Skipped ${fileMarked(f)}: It has no file name to save it as`);
+          continue;
+        }
+        files.push({ kind: f.kind, url: f.url, ...(f.name !== undefined ? { name: f.name } : {}), path: where, bytes: Buffer.from(f.base64, 'base64') });
+      }
+    }
+  }
+  // One URL declared twice writes one file; two files with one name can't be.
+  const byPath = new Map<string, SavedFile>();
+  const clashes: string[] = [];
+  for (const f of files) {
+    const same = byPath.get(f.path);
+    if (!same) byPath.set(f.path, f);
+    else if (!same.bytes.equals(f.bytes)) clashes.push(f.path);
+  }
+  const shownFile = (relative: string): string => shownPath(path.join(dir, relative), ctx.cwd);
+  if (clashes.length > 0) {
+    throw new MarkedFailure([
+      ui`Multiple files of ${shown} would be saved under the same name${flat ? ui`. Leave out ${cmd('--flat')} to save them in folders by URL` : ''}:`,
+      ...[...new Set(clashes)].map((p) => ui`  ${url(shownFile(p))}`),
+    ]);
+  }
+  const saving = [...byPath.values()];
+  if (saving.length === 0) {
+    const what = [...parts].map((p) => `@${p.slice(0, -1)}`).join(' or ');
+    throw new MarkedFailure([ui`${shown} has no ${what} files to save`, ...notes.map((n) => ui`  ${n.marked}`)]);
+  }
+  const existing = saving.filter((f) => existsSync(path.join(dir, f.path)));
+  if (existing.length > 0 && flags['--force'] !== true) {
+    ctx.out(MISTAKE_PREFIX + errorLine(ui`These files already exist. Use ${cmd('--force')} to replace them:`));
+    for (const f of existing) ctx.out(ui`  ${url(shownFile(f.path))}`);
+    return false;
+  }
+  const dirShown = shownPath(dir, ctx.cwd);
+  try {
+    await mkdir(dir, { recursive: true });
+  } catch (error) {
+    throw new MarkedFailure([ui`Could not create the directory ${url(dirShown)}: ${writeFailure(error)}`]);
+  }
+  for (const f of saving) {
+    const target = path.join(dir, f.path);
+    await writing(shownFile(f.path), async () => {
+      await mkdir(path.dirname(target), { recursive: true });
+      await writeFile(target, f.bytes);
+    });
+  }
+  const id = scriptLabel(script, view);
+  if (ctx.json) {
+    ctx.out(jsonResult('script save', {
+      ...(id !== undefined ? { script: id } : {}),
+      name: script.name,
+      dir,
+      files: saving.map((f) => ({
+        kind: f.kind, ...(f.url !== undefined ? { url: f.url } : {}), ...(f.name !== undefined ? { name: f.name } : {}), path: path.join(dir, f.path),
+      })),
+      ...(notes.length > 0 ? { notes: notes.map((n) => n.plain) } : {}),
+    } satisfies J.ScriptSaveData));
+    return true;
+  }
+  ctx.out(ui`Saved ${shown} to ${url(dirShown)}: ${count(saving.length, 'file')}`);
+  for (const f of saving) ctx.out(ui`  ${url(shownFile(f.path))}`);
+  for (const n of notes) ctx.out(ui`  ${n.marked}`);
+  return true;
 }
 
 // `script install <file|url>`: a path is the sender's, made a `file://` URL.

@@ -34,7 +34,8 @@ can't.
 
 `GM_setValue` is the other half of the contract: it must also
 return synchronously. We satisfy that by writing into the same
-in-memory cache and queueing a debounced flush to the SW.
+in-memory cache and sending the write to the SW right after (see
+[Sending writes](#sending-writes)).
 
 ## How the cache gets seeded
 
@@ -68,12 +69,31 @@ snapshot:
 
 - The wrapper sends `needsValues: true` in its payload iff it
   @grants a storage API (resolved at register time).
-- The SW reads the script's `gmval:*` rows from
-  `chrome.storage.local`, merges in the in-flight write overlay
-  (see [Closing the persist race](#closing-the-persist-race-in-flight-overlay)),
-  and attaches the merged map as `gmValues` on the reply.
-- The prelude reads that off `__smDecision` and calls
-  `storage.init(scriptId, gmValues)`.
+- The SW reads the script's values from its
+  [value store](#the-workers-value-store) and attaches them as
+  `gmValues` on the reply, with `gmSeq`, the sequence number they're
+  current to.
+- The prelude reads those off `__smDecision` and calls
+  `storage.init(scriptId, gmValues, gmSeq)`.
+
+### Writes between the snapshot and the start
+
+The document only starts hearing broadcasts when it reports
+`sm:start` (or `sm:swapped`), which joins it to the openers table. A
+write from another tab between the snapshot and that report reaches
+it neither way. So:
+
+- The report carries the snapshot's `gmSeq`.
+- If the script's values changed after it, or it predates this
+  worker (which can't tell), the SW sends that document
+  `sm:gm-values-stale`, and the runtime resyncs at once (see
+  [Resync](#resync-recovering-a-document-that-missed-one)).
+- The report goes out in the same task as `storage.init` (`sm:start`
+  just before it, `sm:swapped` after), so no broadcast can arrive
+  before the cache is ready.
+- A broadcast for a script with no ready store in this runtime is
+  ignored. The tab-wide send reaches every frame, including ones
+  that don't run the script, and nothing there will ever read it.
 
 This is the **single source of truth**. There is no baked literal
 in the wrapper source — every fresh document round-trips to the
@@ -90,7 +110,7 @@ calling the main-body wrap function — so the GM prelude's
   script row and returns it as `seedValues` on the `run-new` reply,
   alongside the same `gmValues` snapshot.
 - `runMain` (in `userscript-prelude.js`) calls
-  `storage.init(scriptId, gmValues)` before the eval — the decision
+  `storage.init(scriptId, gmValues, gmSeq)` before the eval — the decision
   object is in its scope, which is exactly what the eval'd body
   lacks.
 - No snapshot, or an init that throws → **no swap**. The prelude
@@ -145,7 +165,7 @@ than a silently-misbehaving script.
 
 A script runs in the page's own world unless it asks for isolation
 (see [injection.md](injection.md#execution-world)), and its storage
-grants work there too. Same cache, same batching, same snapshot
+grants work there too. Same cache, same sending, same snapshot
 contract; only the transport differs, and that has consequences.
 
 - **The snapshot is gated.** MAIN world has no `chrome.runtime`, so
@@ -169,38 +189,44 @@ contract; only the transport differs, and that has consequences.
   - With the `postMessage` this replaced, the bridge read the request
     on a later task that a document in `pagehide` never gets:
     `GM_setValue(); location.href = …` lost the write every time.
-  - The `pagehide` / `visibilitychange → hidden` flush additionally
-    skips the reply (`transportSendNow`), since nothing would be left
-    to read it.
-  - Pinned by `tests/e2e/gm-storage-teardown-main.spec.ts`; deferring
-    the flush to a later task fails both of its tests.
+  - The `pagehide` flush additionally skips the reply
+    (`transportSendNow`), since nothing would be left to read it.
+  - Pinned by `tests/e2e/gm-storage-teardown-main.spec.ts`.
 
 Cross-tab broadcasts reach MAIN-world scripts too: the SW stamps each
 push with the destination script's world and the bridge re-posts only
 the MAIN-addressed ones, so an isolated script's writes never become
 page-visible.
 
+The page can also post a forged `sm:gm-value-update` to the MAIN-world
+runtime. With a huge sequence number, it would make every later real
+broadcast for that key look old, so the key stops updating until the
+page navigates. The page can already read and write this store
+directly, so that's no new access; capping incoming numbers is in
+TODO.md.
+
 ## Propagating writes to other live documents
 
 A `GM_setValue` in tab A reaches new documents through the same
-check-pending mechanism above — when they boot, the SW already
-has the new value (either persisted or in the overlay).
+check-pending mechanism above: the SW's value store has the write as
+soon as it arrives, on disk or not.
 
 For documents that are alive *right now*, we patch their in-page
 caches directly via a broadcast:
 
-- The page-side runtime debounces a burst of `GM_setValue` calls
-  by 150 ms (1 s hard cap) and ships a single `sm:gm-batch-write`
-  to the SW. `pagehide` / `visibilitychange → hidden` force-flush
-  so bfcache eviction doesn't drop in-flight writes.
-- The SW persists the batch to `chrome.storage.local`, then
-  iterates the openers table (`scriptId → Set<tabId>`) and
-  broadcasts a `sm:gm-value-update` to every OTHER tab running
-  the script.
+- The page-side runtime sends the write as described in
+  [Sending writes](#sending-writes).
+- The SW's value store takes it and numbers it. The SW then
+  broadcasts `sm:gm-value-update`, with the writes and their
+  sequence number, to every OTHER document running the script (the
+  openers table, `scriptId → Set<tabId>`, plus the writer tab's
+  other frames). Disk is written behind, without holding this up.
 - Each receiving runtime patches its cache and fires any
-  `GM_addValueChangeListener` callbacks with `remote=true`.
-- The originating tab is excluded — it already applied the write
-  locally and would double-fire its listeners.
+  `GM_addValueChangeListener` callbacks with `remote=true`, unless
+  it already knows the key at a newer number (see
+  [Ordering writes](#ordering-writes)).
+- The writing document isn't sent its own writes: it applied them
+  locally, and learns their number from the reply to its batch.
 
 The broadcast only reaches realms that are still alive. As soon
 as the tab navigates, its in-memory cache is gone — the next
@@ -246,15 +272,12 @@ Delivery is best-effort, so the runtime also has a way back:
 - Bridge-relayed requests go through the same gate as the
   check-pending value read (`bridgeMayActAs`).
 
-A reply is only authoritative for keys that haven't moved since
-the request went out. Skipped:
+The reply carries the sequence number it's current to, and speaks
+only for keys it can. Skipped:
 
-- keys with an unflushed local write (the worker hasn't seen
-  them);
-- keys changed — by a local write or an arriving broadcast —
-  after the request was sent. The runtime stamps each key with a
-  per-store change counter and compares against its value at
-  send time.
+- keys with a local write the worker hasn't answered yet;
+- keys the document already knows at a newer number than the
+  reply's, from a later answer or broadcast.
 
 Triggered by:
 
@@ -262,48 +285,108 @@ Triggered by:
   it starts — the one moment its delivery state was just rebuilt.
   Rate limited to once a minute across worker restarts.
 - The document becoming visible again.
+- `sm:gm-values-stale`, for one document whose starting snapshot
+  is behind (see
+  [Writes between the snapshot and the start](#writes-between-the-snapshot-and-the-start)).
+  Answered whatever the listeners and the rate limit.
+- A restore from the back/forward cache (`pageshow` with
+  `persisted`), for every store, also whatever the listeners and the
+  rate limit. A cached document gets no messages, so it missed every
+  broadcast while it was there, and the answers to the batches it
+  sent going in. `tests/e2e/gm-storage-bfcache.spec.ts` covers it,
+  in a browser that keeps the cache (Playwright turns it off by
+  default; `testWithBackForwardCache`).
 
-Who answers, and why not everyone:
+Who answers the first two, and why not everyone:
 
 - Only scripts with a live `GM_addValueChangeListener`, at most
   once every 5 s per store.
 - Without listeners, the cache is only observable through the
-  script's own reads.
-- Answering costs the worker a storage scan.
+  script's own reads, and a lost broadcast only follows a worker
+  restart or a hidden tab.
+- Each answer is a message to the worker and back, and a storage
+  read when the worker hasn't loaded the script's values yet.
 
-## Closing the persist race: in-flight overlay
+## The worker's value store
 
-`chrome.storage.local.set` is async. A write-then-navigate flow
-can finish the new document's `sm:check-pending` while the prior
-document's `sm:gm-batch-write` is still being persisted — a
-naive snapshot read would land one write behind.
+`src/extension/value-store.ts` is the only code in the worker that
+reads or writes `gmval:` rows. Everything else goes through it:
+script writes, snapshots for new documents and resyncs, sm-dev's
+`values` and `set`, wiping a removed script's values.
 
-The overlay closes that gap:
+- **State.** Each script's whole value map, loaded from storage the
+  first time it's needed and kept until the worker shuts down.
+  Callers that ask while it loads share the load.
+- **Writes** change the map at once and get a sequence number. A
+  read right after sees them, whether or not they've reached disk.
+- **Saving.** At most one `chrome.storage.local` write in flight per
+  script. Writes that arrive meanwhile are combined, latest per key
+  winning, into the next one.
+  - Values buffered here are lost if the worker is killed before
+    the save: the browser exiting or crashing, or the extension
+    being reloaded, updated or turned off.
+- **A save that fails** (most likely the storage quota) is logged
+  with `console.info`, and as an error on the script's Log, so the
+  badge shows it.
+  - The Log entry comes once, and again only after a save has
+    worked in between. With storage nearly full it names the quota
+    and how full storage is; otherwise Chrome's own reason.
+  - The map and the documents keep the values, so only disk is
+    behind, until the worker shuts down.
+  - If loading the script's values fails, its writes are refused
+    (the page's batch is answered `ok: false`) and reported the same
+    way.
+- **Sequence numbers** come from one counter, started from the
+  clock in microseconds, so a later worker's numbers are above an
+  earlier one's.
+  - Unless the clock steps back by more than the earlier worker's
+    lifetime. Open documents would then hold numbers above the new
+    worker's, and drop its updates for those keys until they
+    navigate. Rare; a fix is in TODO.md.
+- **Tests** that change rows behind the store's back (clearing or
+  seeding storage) make it forget its maps
+  (`forgetLoadedValues`).
+- `tests/unit/value-store.test.mjs` checks that nothing else
+  imports the row layer (`gm-values.ts`).
 
-- The SW keeps a per-script in-memory map of writes that have
-  been received but not yet confirmed persisted.
-- `handleBatchWrite` installs writes into the overlay BEFORE
-  awaiting persistence, then evicts only its own entries (by
-  reference identity) after `chrome.storage.local.set` resolves.
-- A later overwrite has its own install/evict pair, so a fast
-  sequence of writes can't race itself out of the overlay.
-- `loadSnapshotForCheckPending` reads `chrome.storage.local` and
-  overlays the bucket on top — overlay wins on conflict because
-  it's strictly newer than the persisted row.
+## Ordering writes
 
-The overlay's eviction-by-identity scheme relies on
-`chrome.storage.local.set` being FIFO per area (so two concurrent
-batch-writes for the same key land in the store in start-order).
-Chrome documents this; if it ever changes, the persisted state
-could disagree with the overlay's last-installed value and the
-scheme would need revisiting.
+Two tabs can write the same key at nearly the same time. The rule
+is last writer wins, where "last" is the order the worker took the
+writes in, and every document must end up agreeing with it.
+
+- **Each document remembers, per key, the newest sequence number it
+  has seen**: from the answer to its own batch, from a broadcast,
+  or from a snapshot (for keys with nothing newer).
+- **A broadcast older than that is dropped.** One at the same
+  number as an earlier broadcast is a later write of the same batch,
+  and applies. One at the snapshot's own number is already in the
+  snapshot, and is dropped.
+- **A remote delete of a key the cache doesn't have** changes
+  nothing, so it fires no value-change listener.
+- **A broadcast for a key with a local write still unanswered is
+  held.** Until the answer arrives, the document can't tell which
+  of the two the worker took last.
+  - The answer and the broadcast travel separately, so either can
+    arrive first.
+  - When the answer comes, the held broadcast applies only if its
+    number is higher.
+- Without the hold, a tab's own delete could be undone in its
+  cache by another tab's older write arriving later, and the tabs
+  stayed apart for good.
+  - Seen on A.C.A.S (GreasyFork 459137), which writes and deletes
+    a packet per message: one tab's `GM_listValues()` reached 657
+    keys while storage held 8.
+  - `tests/e2e/gm-value-ordering.spec.ts` churns the same keys from
+    two tabs and checks both match the worker.
 
 ## Cost on the document-start critical path
 
 Every storage-granting script's `sm:check-pending` blocks its
-body on an SW round-trip that includes a snapshot read. The SW
-lists this script's `gmval:*` keys, reads those rows, merges the
-overlay, and JSON-serializes the result onto the reply.
+body on an SW round-trip that includes a snapshot read. The first
+time after a worker start, the value store lists this script's
+`gmval:*` keys and reads those rows; after that it answers from
+memory. Either way the map is JSON-serialized onto the reply.
 
 What softens it:
 
@@ -333,14 +416,35 @@ It did not start narrow, and the difference is the whole point:
 ### Still on the critical path
 
 The narrow read is smaller, not free — `getKeys()` alone measured
-~40 ms on that profile, paid by every storage-granting script on
+~40 ms on that profile. The value store keeps each script's map once
+loaded, so that is paid once per script per worker start, not on
 every navigation.
 
-A per-script in-memory cache in the SW, invalidated by `gmval:`
-writes, would skip the storage read entirely on a hit. Tracked in
-TODO.md.
+## Sending writes
 
-## Backing store and write batching
+- `GM_setValue` / `GM_deleteValue` update the page-side cache
+  synchronously, fire local value-change listeners, and queue the
+  write.
+- The queue goes to the SW as one `sm:gm-batch-write` from a
+  microtask: at the end of the current run of script code. A loop of
+  writes is one message; a loop with an `await` in it is several.
+  - A microtask rather than a timer, because timers in a background
+    tab are throttled to a second or more.
+  - Not a debounce: holding writes back for a time window delays
+    every cross-tab change by that much, each way. A.C.A.S passes
+    messages between tabs through GM values and gives up on a
+    reply after 250 ms.
+- The SW's reply carries the batch's sequence number.
+- Writes spread over several runs of script code (a loop with
+  `await` in it, or one write per animation frame) are a message
+  each, and each is broadcast to every other tab running the script.
+  Disk saves are still combined. Fine at the rates seen in the
+  corpus; if a script ever floods it, coalescing per task (a
+  `MessageChannel` post) is the next step.
+- `pagehide` sends anything still queued, without waiting for a
+  reply; `visibilitychange → hidden` sends it the ordinary way.
+
+## Backing store
 
 Implementation details below the freshness layer:
 
@@ -348,17 +452,12 @@ Implementation details below the freshness layer:
   `gmval:<scriptId>:<key>` rows per value. Per-key rows so a
   write doesn't churn sibling rows and so we don't bump the
   per-row size ceiling on a large value.
-- **Batched writes.** `GM_setValue` / `GM_deleteValue` update the
-  page-side cache synchronously and queue a write. The runtime
-  debounces 150 ms after each write with a 1 s hard cap, then
-  ships a single `sm:gm-batch-write` envelope to the SW.
 - **Last-write-wins** semantics inside one batch — same as a
   sequence of `set` / `delete` calls run one after the other.
 - **Deletion sentinel.** Page-side `DELETED_SENTINEL` is a
   private reference; on the wire it travels as `{key, deleted:
   true}` so the JSON round-trip preserves intent. The SW
-  translates back to its own symbol when calling
-  `applyBatchValues`.
+  translates back to its own symbol for the store.
 - **GM4 promise forms.** `GM.setValue` / `GM.getValue` / etc are
   emitted by the binding emitter as Promise wrappers around the
   legacy `GM_x` calls — same behavior, async return.

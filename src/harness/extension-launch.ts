@@ -56,6 +56,11 @@ export interface ExtensionLaunchOptions {
   connectedElsewhere?: boolean;
   /** The manager to load in place of SourceMonkey, already fetched. */
   manager?: ManagerName;
+  /**
+   * Keep Chrome's back/forward cache, which Playwright turns off by
+   * default. Tests of pages restored from it ask for it.
+   */
+  backForwardCache?: boolean;
 }
 
 export interface LaunchedExtensionBrowser {
@@ -94,7 +99,7 @@ export async function launchExtensionBrowser(options: ExtensionLaunchOptions = {
     // Port 0 has Chrome pick a free port and write it to the profile.
     // A port picked here could be taken before Chrome binds it, and the
     // run would connect to whatever took it.
-    context = await launch(profile, headed, ['--remote-debugging-port=0', ...(options.muted === false ? [] : ['--mute-audio']), ...(options.args ?? [])], dir);
+    context = await launch(profile, headed, ['--remote-debugging-port=0', ...(options.muted === false ? [] : ['--mute-audio']), ...(options.args ?? [])], dir, options.backForwardCache === true);
     const port = readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0].trim();
     if (options.connectedElsewhere) leaveDialogsOpen(context);
     if (options.downloadsDir) await chromeDownloads(context);
@@ -161,7 +166,9 @@ function fetchedId(dir: string, manager: ManagerName): string {
   return extensionIdFromKey(key);
 }
 
-async function launch(profile: string, headed: boolean, args: string[] = [], dir = EXTENSION_DIR): Promise<BrowserContext> {
+async function launch(
+  profile: string, headed: boolean, args: string[] = [], dir = EXTENSION_DIR, backForwardCache = false,
+): Promise<BrowserContext> {
   const { chromium } = await import('@playwright/test');
   const userAgent = headed ? null : await windowedUserAgent(chromium.executablePath()).catch(() => null);
   try {
@@ -183,6 +190,7 @@ async function launch(profile: string, headed: boolean, args: string[] = [], dir
       // A hidden one keeps the default: nobody sees its windows, and its
       // pages keep the size they always had.
       ...(headed ? { viewport: null } : {}),
+      ...(backForwardCache ? { ignoreDefaultArgs: ['--disable-back-forward-cache'] } : {}),
       args: [
         ...(headed ? [] : ['--headless=new']),
         ...(userAgent ? [`--user-agent=${userAgent}`] : []),

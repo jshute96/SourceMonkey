@@ -515,23 +515,19 @@ its own dispatch doesn't corrupt iteration.
 
 ### Known limitations
 
-- **Last-150ms-before-tab-close writes can be lost.** The page-side
-  cache flushes on `pagehide` and `visibilitychange → hidden`, but
-  the resulting `chrome.runtime.sendMessage` is fire-and-forget. If
-  the SW is idle/suspended and the tab is closing into bfcache, the
-  message can be dropped before the SW listener fires. Writes that
-  haven't yet hit the SW are lost. Real-world impact: a write made
-  within ~150ms of tab close on the last open tab. Future phases
-  can promote this to "write per call" or a synchronous-flush
-  option.
-- **Storage quota errors are silent.** `chrome.storage.local` has
-  per-row and per-extension byte ceilings. If `applyBatchValues`
-  fails because of quota, the page-side cache stays inconsistent
-  (it has the value the SW doesn't). The `applyBatchValues` rejection
-  propagates to the message handler with no SW console line (per the
-  no-warn/no-error policy — see [logging.md](logging.md)); the
-  userscript sees no error. Future phases can surface this on the
-  per-script log.
+- **Values not yet saved are lost if the worker is killed.** The
+  worker saves writes to disk just behind taking them, so values from
+  the last moments before the browser exits or crashes, or the
+  extension reloads or updates, can be lost. See
+  [GM-APIs-storage.md](GM-APIs-storage.md#the-workers-value-store).
+- **Storage quota errors reach the Log, not the script.**
+  `chrome.storage.local` has per-row and per-extension byte ceilings.
+  A value-store save that fails puts an error on the script's Log
+  (naming how full storage is, when it's nearly full), so the badge
+  shows it. The value stays only in memory, in the store's map and
+  the page caches, until the worker shuts down. The userscript itself
+  sees no error. See
+  [GM-APIs-storage.md](GM-APIs-storage.md#the-workers-value-store).
 - **`applyBatchValues` is not transactional.** A batch with both
   sets and removes runs them as two parallel `chrome.storage`
   operations; a failure of one leaves the other applied. Acceptable

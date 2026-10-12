@@ -30,8 +30,8 @@ import type { PageAttachment } from './page-watch.js';
 import {
   collectionList, count, managerVerb, noSuchScript, noSuchVerb, scriptList, type ManagerControl, type ManagerRun, type RunView,
 } from './manager-commands.js';
-import { parseCommandArgs, splitWords, unquoteWhole, type ParsedArgs } from './command-args.js';
-import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, SAME_COMMANDS, commandSyntax, commandsHelp, unsupportedCommand } from './command-list.js';
+import { helpRequest, helpSubcommand, parseCommandArgs, splitWords, unquoteWhole, type ParsedArgs } from './command-args.js';
+import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, SAME_COMMANDS, commandHelp, commandSyntax, unsupportedCommand } from './command-list.js';
 import { errorSentence, readJsonFile, writeProblem } from './input-file.js';
 import { CDP_FRAME_ARG, PAGE_COMMANDS, runPageCommand, type EvalIn } from './page-commands.js';
 import { editMultiLine } from './prompt-editor.js';
@@ -346,12 +346,16 @@ async function answerConnectCommand(ctx: ConsoleContext, args: string[]): Promis
   ctx.out(`[sm-dev] ${said} for ${prompt.name}`);
 }
 
-/** The run command whose help `--help` asks for (`click --help`), or null. */
-export function runCommandHelp(input: { line: string } | { words: string[] }): string | null {
+/**
+ * The run command, and its subcommand, whose help `--help` asks for
+ * (`click --help`, `script save --help`), or null when it isn't asked;
+ * an error for words that name no subcommand.
+ */
+export function runCommandHelp(input: { line: string } | { words: string[] }): { command: string; subcommand?: string } | { error: string } | null {
   const own = ownWords(input);
   if (!own) return null;
   const parsed = parseCommandArgs(own.command, own.rest);
-  return 'help' in parsed && parsed.help ? own.command : null;
+  return 'help' in parsed && parsed.help ? helpRequest(own.command, own.rest) : null;
 }
 
 // The error for a word that names no command a run takes.
@@ -412,7 +416,7 @@ function managedVerb(name: string, rest: { line: string } | { words: string[] })
 }
 
 // The verbs that only look.
-const LOOKING_VERBS = new Set(['list', 'show', 'print']);
+const LOOKING_VERBS = new Set(['list', 'show', 'print', 'save']);
 
 /**
  * A command line's words, as the prompt splits them (quotes kept
@@ -539,9 +543,15 @@ export async function runConsoleCommand(
     if (ctx.json !== undefined) ctx.jsonLayout = ownJson as JsonLayout;
   }
   if (ctx.json !== undefined) ctx.json = !parsed.help && (parsed.flags['--nojson'] ? false : ownJson ? true : ctx.json);
-  // `click --help`: its help, as `help click` gives it, rather than a click.
+  // `click --help`: its help, as `help click` gives it, rather than a
+  // click; `script save --help`, the subcommand's.
   if (parsed.help) {
-    for (const l of commandsHelp([command]).text.trimEnd().split('\n')) ctx.out(l);
+    const subcommand = helpSubcommand(command, parsed);
+    if (typeof subcommand === 'object') {
+      ctx.out(`${MISTAKE_PREFIX}${subcommand.error}`);
+      return false;
+    }
+    for (const l of commandHelp(command, subcommand).trimEnd().split('\n')) ctx.out(l);
     return;
   }
   const unsupported = unsupportedCommand(command, ctx.managerName ?? DEFAULT_MANAGER, 'this run uses');
@@ -588,11 +598,13 @@ export async function runConsoleCommand(
     case 'validate':
       return validateCommand(ctx, args, cwd);
     case 'menu': {
+      const timeoutMs = timeoutFlagMs(flags, ctx.out);
+      if (timeoutMs === null) return false;
       // A label quoted as a whole is just that, even `all` or `T2.x`.
       const label = unquoteWhole(text);
       if (label.quoted) {
         if (blockedByDialog([tab])) return false;
-        return fireMenu(ctx, tab, label.text);
+        return fireMenu(ctx, tab, label.text, timeoutMs);
       }
       if (ctx.json && (text === 'all' || !text || /^[Tt]\d+$/.test(text))) {
         const which = text === 'all' ? ctx.tabs() : [text ? pickTab(ctx, text) : tab];
@@ -619,7 +631,7 @@ export async function runConsoleCommand(
       }
       if (blockedByDialog([ref.tab])) return false;
       // The label after `T2.` may be quoted too.
-      return fireMenu(ctx, ref.tab, unquoteWhole(ref.rest).text);
+      return fireMenu(ctx, ref.tab, unquoteWhole(ref.rest).text, timeoutMs);
     }
     case 'frames':
       return framesCommand(ctx, args, tab);
@@ -958,7 +970,7 @@ export async function runConsoleCommand(
         return false;
       }
       if (page.length > 1) {
-        ctx.out(MISTAKE_PREFIX + 'The `open` command opens one page, so it takes one URL, file or script. To open several, use `newtab`.');
+        ctx.out(MISTAKE_PREFIX + 'The `open` command opens one page, so it takes one URL, file or script. To open multiple, use `newtab`.');
         return false;
       }
       const where = page[0] ?? '';
@@ -1011,7 +1023,7 @@ export async function runConsoleCommand(
       if (!dialog) {
         const elsewhere = ctx.tabs().find((t) => t.dialogs?.current);
         ctx.out(elsewhere
-          ? `[sm-dev] No dialog is open on ${tabName(target)}. ${tabName(elsewhere)} has one; use ${quoted([command, tabName(elsewhere), text].filter(Boolean).join(' '))}.`
+          ? `[sm-dev] No dialog is open on ${tabName(target)}. ${tabName(elsewhere)} has one; name its tab: ${quoted(`${command} ${tabName(elsewhere)}${text ? ' ...' : ''}`)}.`
           : '[sm-dev] No dialog is open');
         return;
       }
@@ -1173,7 +1185,7 @@ function pickScript(ctx: ConsoleContext, arg: string): PreparedScript | null {
     ctx.out(`[sm-dev] No loaded script matches ${quoted(arg)}. Use ${quoted('scripts')} to list them.`);
   } else {
     const numbers = hits.map((script) => ctx.scripts.indexOf(script) + 1).join(', ');
-    ctx.out(`[sm-dev] Several loaded scripts match ${quoted(arg)} (${numbers}). Name one by its number.`);
+    ctx.out(`[sm-dev] Multiple loaded scripts match ${quoted(arg)} (${numbers}). Name one by its number.`);
   }
   return null;
 }
@@ -1740,7 +1752,7 @@ function framesCommand(ctx: ConsoleContext, words: string[], current: Controlled
     ];
     if (hits.length !== 1) {
       ctx.out(hits.length > 1
-        ? `[sm-dev] Several frames' ids start with ${quoted(id)} (${hits.map((h) => h.name).join(', ')}). Give more of it.`
+        ? `[sm-dev] Multiple frames have ids starting with ${quoted(id)} (${hits.map((h) => h.name).join(', ')}). Give more of it.`
         : `[sm-dev] No frame's id starts with ${quoted(id)}. Use ${quoted('frames all')} to list them.`);
       return false;
     }
@@ -2541,14 +2553,15 @@ function noMenusMessage(ctx: ConsoleContext, tab: ControlledTab): string {
 // read once one has started. So for piped input, a miss while nothing
 // is registered yet may just be early, and is worth waiting out. A
 // miss while others are registered is a wrong name, and is reported at
-// once, as is any miss typed at a terminal.
+// once, as is any miss typed at a terminal. A `--timeout-seconds`
+// given waits that long for it in any case.
 const MENU_WAIT_MS = 5000;
 
 // False when nothing was fired.
-async function fireMenu(ctx: ConsoleContext, tab: ControlledTab, argument: string): Promise<boolean> {
+async function fireMenu(ctx: ConsoleContext, tab: ControlledTab, argument: string, timeoutMs?: number): Promise<boolean> {
   const all = (): MenuEntry[] => menuGroups(ctx, tab).flatMap((group) => group.commands);
   const numbered = /^[Mm](\d+)$/.exec(argument);
-  const deadline = Date.now() + MENU_WAIT_MS;
+  const deadline = Date.now() + (timeoutMs ?? MENU_WAIT_MS);
   for (;;) {
     const commands = all();
     // A label wins over a number, for a command whose label is one.
@@ -2577,7 +2590,8 @@ async function fireMenu(ctx: ConsoleContext, tab: ControlledTab, argument: strin
       return true;
     }
     // Registered on another tab is an answer too, not worth waiting past.
-    if (ctx.interactive || commands.length > 0 || Date.now() >= deadline || elsewhereFor(ctx, tab, argument).length > 0) break;
+    const early = timeoutMs === undefined && (ctx.interactive || commands.length > 0);
+    if (early || Date.now() >= deadline || elsewhereFor(ctx, tab, argument).length > 0) break;
     await new Promise((r) => setTimeout(r, 100));
   }
   const elsewhere = numbered ? [] : elsewhereFor(ctx, tab, argument);
@@ -2989,11 +3003,11 @@ export class DialogTracker {
   }
 }
 
-// A script's `GM_setValue` is batched in the page and flushed 150ms
-// after the last write, so a read issued straight after firing a menu
-// command would print what was there before it. Waiting out that window
-// is the difference between "fire, then read" telling the truth and
-// telling yesterday's truth.
+// A script's `GM_setValue` reaches the worker a message after the page
+// makes it, and a menu command's own work may take a moment to get
+// there, so a read issued straight after firing one would print what was
+// there before it. A short wait is the difference between "fire, then
+// read" telling the truth and telling yesterday's truth.
 const WRITE_FLUSH_MS = 250;
 
 function settleWrites(): Promise<void> {

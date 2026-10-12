@@ -185,7 +185,7 @@ test('frames: ids, the scripts in each frame, menus and match', async ({ page, f
   ]);
   expect((await run(`wait selector --frame ${b} ${countInB}`))).toEqual([`[sm-dev] Wait done: The selector ${countInB} matches on T1.${b}`]);
   expect(await run(`wait 10ms --frame ${b}`)).toEqual([
-    '[sm-dev] ERROR: The --frame flag is for `wait selector` and `wait selector-gone`, which look for an element in a frame',
+    '[sm-dev] ERROR: The `wait` command has no --frame flag. It takes --timeout-seconds. The --frame flag is for `wait selector` and `wait selector-gone`.',
   ]);
 
   // A frame's own picture, its target for raw CDP, and a hidden one.

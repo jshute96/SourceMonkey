@@ -82,7 +82,11 @@ type TestFixtures = {
 // downloads through `chrome.downloads` — the local-copy feature reads
 // the saved file's real path back from the download item — need
 // Chrome's own download manager instead (`testWithBrowserDownloads`).
-function makeTest(browserDownloads: boolean) {
+//
+// Playwright also turns off Chrome's back/forward cache. Specs about
+// pages restored from it use `testWithBackForwardCache`, whose browser
+// keeps it.
+function makeTest(browserDownloads: boolean, backForwardCache = false) {
   return base.extend<TestFixtures, WorkerFixtures>({
   fixtureServer: [
     async ({}, use) => {
@@ -110,6 +114,7 @@ function makeTest(browserDownloads: boolean) {
     async ({ downloadsDir }, use) => {
       const launched = await launchSourceMonkeyContext({
         downloads: downloadsDir ? { dir: downloadsDir } : undefined,
+        backForwardCache,
       });
       await use(launched.ctx);
       await launched.close();
@@ -153,6 +158,7 @@ function makeTest(browserDownloads: boolean) {
 
 export const test = makeTest(false);
 export const testWithBrowserDownloads = makeTest(true);
+export const testWithBackForwardCache = makeTest(false, true);
 
 export const expect = test.expect;
 

@@ -253,6 +253,11 @@ interface ScriptCfgLiteral {
   loadedAt: number;
   runAt: string;
   needsGmValues: boolean;
+  // Grants something the shared GM runtime (`__smReg.gm`) provides
+  // (`needsGmRuntime`). A `document-start` wrapper that finds no runtime
+  // yet asks the worker before running: see `canSkipDecision` in
+  // userscript-prelude.js.
+  needsGmRuntime: boolean;
   // The sm-dev run a scratch script belongs to (`scratchRunOf`). Its
   // wrapper waits for the SW's check-pending answer unless the tab
   // vouches for that run (`smDevVouches` in userscript-prelude.js).
@@ -260,7 +265,7 @@ interface ScriptCfgLiteral {
   matching: { matches: string[]; includes: string[]; excludes: string[] } | null;
   startupLogs: ReadonlyArray<StartupLog>;
   // See `RegistrationSpecOptions.manualRun`.
-  manualRun?: { gmValues?: Record<string, unknown> };
+  manualRun?: { gmValues?: Record<string, unknown>; gmSeq?: number };
 }
 
 // Build the per-script config blob. Calls `reg.prelude.init(cfg)`
@@ -281,6 +286,7 @@ export function buildConfigBlob(cfg: ScriptCfgLiteral): string {
     runAt: cfg.runAt,
     needsGmValues: cfg.needsGmValues,
   };
+  if (cfg.needsGmRuntime) wire.needsGmRuntime = true;
   if (cfg.run !== undefined) wire.run = cfg.run;
   if (cfg.manualRun) wire.manualRun = cfg.manualRun;
   if (cfg.matching) wire.matching = cfg.matching;
@@ -906,7 +912,7 @@ export interface RegistrationSpecOptions {
   // registration: the config carries the run decision, with the GM
   // values snapshot a storage script seeds from (what a registered
   // script gets from its check-pending answer).
-  manualRun?: { gmValues?: Record<string, unknown> };
+  manualRun?: { gmValues?: Record<string, unknown>; gmSeq?: number };
 }
 
 export async function buildRegistrationSpec(
@@ -1055,6 +1061,7 @@ export async function buildRegistrationSpec(
     loadedAt: script.loadedAt,
     runAt: declaredRunAt,
     needsGmValues: gmEmit.needsValues,
+    needsGmRuntime: needsGmRuntime(script.header),
     ...(isScratchUrl(script.fileUrl) ? { run: scratchRunOf(script.fileUrl) ?? '' } : {}),
     matching: needsWrapperFilter ? script.matching : null,
     startupLogs: script.startupLogs ?? [],
@@ -1214,8 +1221,8 @@ export async function collectActiveSpecs(
 // listener exists is dropped rather than delivered later. We emit our
 // own specs ahead of the user scripts' for that reason (see
 // `orderWithOwnSpecs`). When it still races (a sync that widened the
-// bridge re-registered it behind them), the wrapper sends its
-// check-pending again when the bridge announces itself.
+// bridge re-registered it behind them), the senders hold what the
+// bridge didn't take and send it when the bridge announces itself.
 //
 // Scoping. The bridge registers on the union of every MAIN-world
 // script's patterns — the same rule as the GM runtime, and for the
@@ -1346,11 +1353,11 @@ export async function buildManualRunInjections(
   script: StoredScript,
   scriptHandlerVersion: string,
   logLabel: string,
-  gmValues: Record<string, unknown> | undefined,
+  gmSnapshot: { values: Record<string, unknown>; seq: number } | undefined,
   isolated = false,
 ): Promise<ManualRunInjection[] | null> {
   const spec = await buildRegistrationSpec(isolated ? asIsolated(script) : script, scriptHandlerVersion, logLabel, {
-    manualRun: gmValues !== undefined ? { gmValues } : {},
+    manualRun: gmSnapshot !== undefined ? { gmValues: gmSnapshot.values, gmSeq: gmSnapshot.seq } : {},
   });
   if (!spec) return null;
   const world = (spec.world ?? 'USER_SCRIPT') as InjectionWorld;
@@ -2761,20 +2768,21 @@ async function runIncrementalSync(
 // Bridge next so MAIN wrappers have a listener for their requests.
 // Then the user scripts. (Cross-registration ordering isn't guaranteed
 // by the userScripts API, but in practice Chrome runs registrations in
-// order. The bridge benefits from it: a request is a synchronous DOM event,
-// so one dispatched before the bridge's IIFE installed its listener is
-// dropped, not queued. The exposure is one message, `sm:check-pending`,
-// which the wrapper sends again when the bridge announces itself
-// (`sourcemonkey-bridge-ready`); every other request originates from
-// code that runs only after that handshake settles. For GM_*: everything gm-bindings.ts emits — both
-// the `const GM_x` declarations and the eager calls (`storage.init`,
-// `urlchange.enable`) — is spliced INSIDE the main-body wrap function,
-// which the prelude only invokes after its awaitDecision + run-at gates
-// resolve. By then the runtime spec has had a microtask or more to
-// install. The declarations are additionally lazy — they touch
-// the runtime only from inside their own bodies — but that's
-// belt-and-braces, not what the ordering argument rests on.)
-//
+// order. Both benefit, but neither relies on it: a `document-start`
+// script on a first load runs its body at once (`canSkipDecision` in
+// the prelude), so either can still be missing then.
+//   - The bridge: a request is a synchronous DOM event, so one
+//     dispatched before the bridge's listener is in finds no one. The
+//     bridge cancels what it takes, and the senders (the prelude, the
+//     MAIN-world GM runtime) hold what it didn't and send it again
+//     when the bridge announces itself (`sourcemonkey-bridge-ready`).
+//   - The GM runtime: the GM_* declarations gm-bindings.ts emits are
+//     lazy, touching `__smReg.gm` only when called, but the eager
+//     calls (`storage.init`, `urlchange.enable`) and any GM_* call in
+//     the body's first run need it in place. A `document-start` wrapper
+//     that needs it and finds none asks the SW rather than skip the
+//     round trip, and by the time the answer comes every
+//     document_start registration has executed.
 // The order is honoured. Chrome moves an UPDATED registration to the
 // end of its set (verified), so grouping the placement calls by kind
 // would silently invert this — `placeSpecs` therefore places our own
@@ -2782,9 +2790,9 @@ async function runIncrementalSync(
 //
 // An incremental sync that moves an own spec's pattern union UPDATES
 // it, which puts it after every user script already registered. That
-// is tolerated rather than repaired: a wrapper ahead of the bridge
-// sends its check-pending again when the bridge announces itself
-// (above), and a wrapper only decides whether it can use a hot-swapped
+// is tolerated rather than repaired: what a wrapper ahead of the bridge
+// sends is held until the bridge announces itself (above), and a
+// wrapper only decides whether it can use a hot-swapped
 // body once the body is about to run, by which point every
 // document_start registration has executed — see `needsRuntime` in
 // `handleCheckPending` and `runMain` in the prelude. Re-placing the
@@ -2826,9 +2834,11 @@ function ownFingerprints(specs: readonly RegistrationSpec[]): Map<string, string
 // only a non-pattern failure can refuse it twice, and that is logged.
 //
 // The retried spec lands after the user scripts in Chrome's order.
-// That is survivable: a script's body only touches the runtime after
-// its async check-pending decision, by which point the runtime has
-// run too; the next full sync restores the order (`helpersFirst`).
+// That is survivable, as for any helper an incremental sync moves (see
+// `orderWithOwnSpecs`): what a wrapper sends before the bridge is in
+// is held until it is, and a `document-start` wrapper that needs the
+// runtime and finds none asks the SW first. The next full sync
+// restores the order (`helpersFirst`).
 async function retryRefusedOwnSpecs(
   applied: AppliedPlan,
   registered: Map<string, Placement>,

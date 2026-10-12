@@ -5,7 +5,7 @@ Status: proposal, partly built. Built so far:
 - `--json` on the existing commands (see [sm-dev-json.md](sm-dev-json.md));
 - script and collection numbers;
 - for SourceMonkey: `collection list|show|enable|disable|refresh|rename`
-  and `script list|show|print|enable|disable|refresh|install|uninstall|move`;
+  and `script list|show|print|save|enable|disable|refresh|install|uninstall|move`;
 - `--manager`, `manager fetch|install|enable|disable`, and the
   managers in `status`;
 - under VM and TM, the `collection` and `script` commands, and runs
@@ -325,7 +325,8 @@ added to or removed.
 | `scripts` | The run's scripts, then the installed scripts on the current tab, as now | yes | yes |
 | `script <id>` | Select the active script, as now | yes | yes |
 | `script [id] show` | Show one script's details (see [Script details](#script-details)) | yes | yes, fewer fields under TM / VM |
-| `script [id] print` | Print the script's installed text | yes | yes |
+| `script [id] print` | Print the script's installed text, or with `--file`, one of its `@require` / `@resource` files; `--out` writes it to a file | yes | yes; `--file` SourceMonkey only |
+| `script [id] save <dir>` | Save the script and its `@require` / `@resource` files into a directory (see [Saving a script's files](#saving-a-scripts-files)) | yes | yes; the files SourceMonkey only |
 | `script [id] enable` / `script [id] disable` | Turn a script on or off | yes, in the run's tabs | yes |
 | `script [id] refresh` | Re-read it: from disk for the run's scripts (as `update` does), from its location under SourceMonkey, or an update check under TM / VM | yes | yes |
 | `script install <file\|url>` | Install a script in the manager, for every tab, to stay | n/a | yes |
@@ -362,6 +363,38 @@ added to or removed.
   test collection, for the run's tabs only, and it goes away with the
   run. `script install` puts it in the manager for every tab, and it
   stays. `load` and `update` keep their names.
+
+### Saving a script's files
+
+`script print --file` and `script save` read the files as installed,
+through `managed.scriptFiles` (protocol 2.3). No refetch: they are what
+runs now.
+
+- **Picking a file (`--file <name>`)**: a `@resource`'s name, exactly,
+  or a part of its URL only one file has. `script` names the script.
+  Several or none is an error listing them.
+- **Printing a file that isn't text** (not UTF-8, or with a NUL) is
+  refused; `--out` writes its bytes.
+- **`--out` replaces** an existing file, as `eval --out` does: the
+  name was given.
+- **`save` lays files out as the viewer's local copy does**
+  ([local-copy.md](local-copy.md#layout-mirror-the-url-beside-the-script)):
+  - The script by its own file name (else its `@name`), and each
+    http(s) file at its URL's `<host>/<path>`, so a copy run from that
+    directory picks them up as local files.
+  - A `file:` dependency by its path from the script's folder, as a
+    relative `@require` names it (`lib/util.js`), else by its file
+    name. A `data:` one is skipped, with a note.
+  - `--flat` puts each in the directory by its file name. Two different
+    files with one name are an error, before anything is written.
+- **`save` replaces nothing without `--force`.** The names are
+  derived, not given, so a second save could quietly overwrite an
+  edited copy. It lists every file that exists and writes none.
+- **`--only script,requires,resources`** picks the parts; all by
+  default.
+- **Under TM and VM** sm-dev doesn't read the files: `--file` and
+  `--only requires|resources` are refused, and a plain `save` writes
+  the script alone, saying why.
 
 ### Changes on disk
 

@@ -25,7 +25,7 @@ import { launchExtensionBrowser } from './extension-launch.js';
 import { fetchManager, fetchedVersion } from './manager-fetch.js';
 import { DEFAULT_MANAGER, MANAGERS, managerFlag, type ManagerName } from './managers.js';
 import { ExtensionLink, linkRunId, type ExtensionEvent } from './extension-link.js';
-import { ISOLATES_SANDBOXED_PAGES_MINOR } from '../sm-dev-protocol.js';
+import { ISOLATES_SANDBOXED_PAGES_MINOR, PAGE_WORLD_DEFAULT_MINOR } from '../sm-dev-protocol.js';
 import { ExternalRunScripts, externalControl, externalOff, externalOthers, openExternalManager, type ExternalManager } from './external-manager.js';
 import type { ErrorReport, ManualReport, PageLink, SkipReport, StartReport } from './host.js';
 import { attachPage, targetIdOf, type AttachOptions, type PageAttachment } from './page-watch.js';
@@ -918,9 +918,9 @@ async function runInBrowser(
     link = manager === 'sourcemonkey' ? await ExtensionLink.open(session.context, linkRunId(remote.id))
       : ExtensionLink.without(session.context, linkRunId(remote.id), runUses(manager));
     // sm-dev works out each script's world itself (`resolveScriptWorld`),
-    // so it has to agree with the extension's: before protocol 2.3,
+    // so it has to agree with the extension's: before protocol 2.4,
     // granted scripts ran isolated.
-    if (manager === 'sourcemonkey') link.requireMinor(3, 'Running scripts in the page\'s world by default');
+    if (manager === 'sourcemonkey') link.requireMinor(PAGE_WORLD_DEFAULT_MINOR, 'Running scripts in the page\'s world by default');
   } catch (err) {
     opts.out(`[sm-dev] ${(err as Error).message}`);
     return 1;
@@ -1774,7 +1774,7 @@ function shortValue(value: unknown): string {
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 // `isolates`: the manager runs such a page's MAIN-world scripts
-// isolated instead (SourceMonkey from protocol 2.4), so the line is a
+// isolated instead (SourceMonkey from protocol 2.5), so the line is a
 // note rather than a warning.
 function wireSandboxCheck(page: Page, scripts: () => readonly PreparedScript[], out: (line: string) => void, isolates: boolean): void {
   page.on('response', (response) => {

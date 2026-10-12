@@ -12,12 +12,22 @@
 //   takes a value. One whose value is optional (`--script[=<script>]`)
 //   takes it only as `--name=value`. An unknown flag, a value on one
 //   that takes none, and a flag given twice are refused.
+// - Flags can go anywhere, a command's free text (eval's JavaScript)
+//   included: there, a word of its own shaped like one (`--name`,
+//   `--name=...`) is a flag, and an unknown or global one is refused
+//   rather than run as code. A `/regex/` starting the text is all text.
 // - A quoted word is never a flag, so `'--x'` is an argument.
+// - Each subcommand (`script save`) takes only its own flags and the
+//   command's shared ones, as its help lists them.
 // - `--help`, where a flag can go, asks for the command's help, as
-//   `help <command>` does, rather than running it.
+//   `help <command>` does, rather than running it: the subcommand's,
+//   when one is named (`helpRequest`).
 // - Arguments a command doesn't take are refused.
 
-import { commandSyntax, noSuchFlag, type ArgSyntax, type CommandSyntax } from './command-list.js';
+import {
+  commandSyntax, GLOBAL_FLAGS, globalFlagMistake, hasPlainForm, noSuchFlag, noSuchSubcommand, plainFormWords, SAME_COMMANDS, subcommandsOf,
+  TIMEOUT_FLAG, TIMEOUT_NEEDS_SECONDS, timeoutSecondsMs, type ArgSyntax, type CommandSyntax,
+} from './command-list.js';
 import { TAB_ARG } from './tab-refs.js';
 import { quoted } from './output-style.js';
 
@@ -142,7 +152,7 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
     parsed.block = block;
   }
 
-  // Flags anywhere before the text starts; the rest are arguments.
+  // Flags anywhere; the rest are arguments.
   let shape: ArgSyntax = syntax.base;
   const args: Word[] = [];
   // The arguments so far that are the command's own, past a tab, a
@@ -150,11 +160,16 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
   const ownCount = (): number => args.length - (parsed.tab !== undefined ? 1 : 0) - (parsed.form !== undefined ? 1 : 0)
     - (parsed.subject !== undefined ? 1 : 0);
   // Once the text has started (its first word after the ones before
-  // it), the words are its own, `--words` included.
+  // it), only a word shaped like a flag is one, and none in a `/regex/`
+  // that starts it: up to word `regexEnd`.
   let inText = false;
+  let regexEnd = -1;
   for (let i = 0; i < list.length; i++) {
     const word = list[i];
-    if (!word.quoted && /^--./.test(word.text) && !inText) {
+    // In a command that takes text, only a flag-shaped word (the text's
+    // first word could be code); elsewhere any `--` word.
+    const flagShaped = shape.args === 'text' ? i > regexEnd && FLAG_WORD.test(word.text) : /^--./.test(word.text);
+    if (!word.quoted && flagShaped) {
       if (word.text === '--help') {
         parsed.help = true;
         continue;
@@ -180,7 +195,20 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
       args.push(word);
       continue;
     }
-    if (shape.args === 'text' && ownCount() >= (shape.before ?? 0)) inText = true;
+    if (shape.args === 'text' && ownCount() >= (shape.before ?? 0) && !inText) {
+      inText = true;
+      // Text starting with a regex (`wait log /a --b/`): its words are
+      // its own, to the first word that closes it. Flags can follow it.
+      if (!word.quoted && word.text.startsWith('/')) {
+        for (let j = i; j < list.length; j++) {
+          const span = typed ? head.slice(word.start, list[j].end) : list.slice(i, j + 1).map((w) => w.text).join(' ');
+          if (REGEX_TEXT.test(span)) {
+            regexEnd = j;
+            break;
+          }
+        }
+      }
+    }
     args.push(word);
   }
   const own = args.slice((parsed.tab !== undefined ? 1 : 0) + (parsed.form !== undefined ? 1 : 0) + (parsed.subject !== undefined ? 1 : 0));
@@ -189,8 +217,7 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
   // other way round from how a subject form is written.
   const max = shape.args === 'none' ? 0 : shape.args === 'words' ? shape.max : undefined;
   if (parsed.form !== undefined && parsed.subject === undefined && syntax.subjectForms.has(parsed.form) && max !== undefined && own.length > max) {
-    const rest = own.slice(1).map((w) => ` ${w.text}`).join('');
-    return { error: `Name the ${command} before the verb: ${command} ${own[0].text} ${parsed.form}${rest}` };
+    return { error: `Name the ${command} before the verb: ${quoted(`${command} ${own[0].text} ${parsed.form}${own.length > 1 ? ' ...' : ''}`)}` };
   }
   switch (shape.args) {
     case 'none':
@@ -214,20 +241,79 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
       parsed.words = own.slice(0, before).map((w) => w.text);
       const rest = own.slice(before);
       let text = typed ? rawOf(head, rest, list) : rest.map((w) => w.text).join(' ');
-      // Flags that end text not quoted as a whole (`wait log ready
-      // --timeout-seconds 9`): known ones taken, a near miss of one
-      // refused. Then the text before them is unquoted.
-      if (shape.trailingFlags && !(typed && unquoteWhole(text).quoted) && !/^\/.+\/[a-z]*$/.test(text)) {
-        const trailing = trailingFlags(command, syntax, parsed, typed ? splitWords(text) : rest);
-        if ('error' in trailing) return trailing;
-        text = typed ? text.slice(0, trailing.cut).trimEnd() : rest.slice(0, trailing.cut).map((w) => w.text).join(' ');
-      }
       if (typed && shape.unquote !== 'none') text = unquoteWhole(text, shape.unquote).text;
       parsed.text = text;
       break;
     }
   }
+  // Each flag one the subcommand takes. Not for help, which a slip
+  // shouldn't stand in the way of.
+  if (!parsed.help) {
+    const { name, flags } = flagScope(command, syntax, parsed.form, true);
+    // One that doesn't list `--timeout-seconds` takes it as any command
+    // does: checked, then left out.
+    const timeout = parsed.flags[TIMEOUT_FLAG];
+    if (timeout !== undefined && !flags.includes(TIMEOUT_FLAG)) {
+      if (timeoutSecondsMs(timeout) === null) return { error: TIMEOUT_NEEDS_SECONDS, flag: TIMEOUT_FLAG };
+      delete parsed.flags[TIMEOUT_FLAG];
+    }
+    const wrong = Object.keys(parsed.flags).find((flag) => !flags.includes(flag));
+    if (wrong !== undefined) return { error: noSuchFlag(name, wrong, flags) + forOthers(command, syntax, wrong), flag: wrong };
+  }
   return parsed;
+}
+
+// The flags `command` takes as its subcommand `form` (`script save`),
+// and the name messages give it. With no subcommand named yet, any
+// subcommand's, unless `final`: then those of its forms with none.
+function flagScope(command: string, syntax: CommandSyntax, form: string | undefined, final = false): { name: string; flags: string[] } {
+  if (form !== undefined) return { name: `${command} ${form}`, flags: syntax.formFlags[form] ?? [] };
+  return { name: command, flags: final || Object.keys(syntax.forms).length === 0 ? syntax.formFlags[''] : Object.keys(syntax.flags) };
+}
+
+// For a flag only other subcommands take, which they are: ` The
+// `--frame` flag is for `wait selector` and `wait selector-gone`.`
+function forOthers(command: string, syntax: CommandSyntax, flag: string): string {
+  const takers = Object.keys(syntax.forms).filter((form) => syntax.formFlags[form]?.includes(flag)).map((form) => quoted(`${command} ${form}`));
+  if (takers.length === 0) return '';
+  const list = takers.length === 1 ? takers[0] : `${takers.slice(0, -1).join(', ')} and ${takers.at(-1)}`;
+  return ` The ${quoted(flag)} flag is for ${list}.`;
+}
+
+/**
+ * What `<command> ... --help` asks help for, from its parsed words: the
+ * subcommand named, `''` for the forms with none when they were given
+ * arguments (`script E4 --help`, `wait 2s --help`), or undefined for
+ * the whole command. An error for a word shaped like a subcommand's
+ * name that is none (`script savexx --help`), unless those forms spell
+ * it out (`wait all`). Another word, for a command with only
+ * subcommands, asks for the whole command (`collection C1 --help`).
+ */
+export function helpSubcommand(command: string, parsed: ParsedArgs): string | undefined | { error: string } {
+  if (parsed.form !== undefined) return parsed.form;
+  const given = parsed.words[0] ?? parsed.text?.split(/\s+/)[0];
+  if (!given || subcommandsOf(command).length === 0) return undefined;
+  const named = /^[a-z][a-z-]*$/.test(given) && !plainFormWords(command).includes(given);
+  if (named) return { error: noSuchSubcommand(command, given)! };
+  // What a subcommand acts on (`collection C1 --help`), or the plain forms' argument.
+  return hasPlainForm(command) ? '' : undefined;
+}
+
+/**
+ * What `<command> <words> --help` asks help for: the command its words
+ * make it (`scripts E4 save` is `script`'s), and the subcommand, as
+ * `helpSubcommand` says. Words it can't read ask for the whole command.
+ */
+export function helpRequest(command: string, input: { line: string } | { words: string[] }): { command: string; subcommand?: string } | { error: string } {
+  for (const single of Object.keys(SAME_COMMANDS).filter((name) => SAME_COMMANDS[name] === command)) {
+    const parsed = parseCommandArgs(single, input);
+    if (!('error' in parsed) && parsed.form !== undefined) return { command: single, subcommand: parsed.form };
+  }
+  const parsed = parseCommandArgs(command, input);
+  if ('error' in parsed) return { command };
+  const subcommand = helpSubcommand(command, parsed);
+  if (typeof subcommand === 'object') return subcommand;
+  return { command, ...(subcommand !== undefined ? { subcommand } : {}) };
 }
 
 // The flag at `list[i]`, recorded in `parsed`: the index of its last
@@ -237,7 +323,19 @@ function takeFlag(command: string, syntax: CommandSyntax, parsed: ParsedArgs, li
   const eq = text.indexOf('=');
   const name = eq > 0 ? text.slice(0, eq) : text;
   const kind = Object.hasOwn(syntax.flags, name) ? syntax.flags[name] : undefined;
-  if (!kind) return { error: noSuchFlag(command, name, Object.keys(syntax.flags)), flag: name };
+  // Any command takes `--timeout-seconds`, unlisted where it waits for
+  // nothing (`accept`), so a timeout given out of habit isn't a mistake.
+  // Checked, then left out.
+  if (!kind && name === TIMEOUT_FLAG) {
+    const value = eq > 0 ? text.slice(eq + 1) : list[i + 1]?.text;
+    if (value === undefined || timeoutSecondsMs(value) === null) return { error: TIMEOUT_NEEDS_SECONDS, flag: name };
+    return eq > 0 ? i : i + 1;
+  }
+  if (!kind && GLOBAL_FLAGS.includes(name)) return { error: globalFlagMistake(name), flag: name };
+  if (!kind) {
+    const scope = flagScope(command, syntax, parsed.form);
+    return { error: noSuchFlag(scope.name, name, scope.flags), flag: name };
+  }
   if (Object.hasOwn(parsed.flags, name)) return { error: `The ${name} flag can be given once`, flag: name };
   if (kind === 'bool' || (kind === 'optional' && eq < 0)) {
     if (eq > 0) return { error: `The ${name} flag takes no value`, flag: name };
@@ -262,38 +360,6 @@ function takeFlag(command: string, syntax: CommandSyntax, parsed: ParsedArgs, li
   return i + 1;
 }
 
-// The known flags ending `words`, taken into `parsed`, and where the
-// text before them ends (in characters when typed, else in words). A
-// near miss of one (`--timeout` for `--timeout-seconds`) is refused:
-// otherwise it would be looked for as text. Other `--words` are text.
-function trailingFlags(command: string, syntax: CommandSyntax, parsed: ParsedArgs, words: Word[]): { cut: number } | { error: string } {
-  const typed = words.some((w) => w.start >= 0);
-  const known = Object.keys(syntax.flags);
-  const flagIn = (w: Word | undefined): string | undefined => (w && !w.quoted && /^--./.test(w.text) ? w.text.split('=')[0] : undefined);
-  // Not a flag, but one's start (`--timeout`), or with more after it.
-  const nearMiss = (flag: string): boolean => !Object.hasOwn(syntax.flags, flag)
-    && known.some((k) => flag.startsWith(k.split('-').slice(0, 3).join('-')) || k.startsWith(flag));
-  let end = words.length;
-  for (;;) {
-    const last = flagIn(words[end - 1]);
-    const before = flagIn(words[end - 2]);
-    // `--flag`, `--flag=value`, or `--flag value`, ending the text.
-    let at: number;
-    const kind = (flag: string | undefined): string | undefined => (flag !== undefined && Object.hasOwn(syntax.flags, flag) ? syntax.flags[flag] : undefined);
-    if (kind(last) === 'bool' || kind(last) === 'optional' || (kind(last) === 'value' && words[end - 1].text.includes('='))) at = end - 1;
-    else if (kind(before) === 'value' && !words[end - 2].text.includes('=')) at = end - 2;
-    else {
-      const miss = [last, before].find((flag) => flag !== undefined && nearMiss(flag));
-      if (miss) return { error: noSuchFlag(command, miss, known) };
-      break;
-    }
-    const taken = takeFlag(command, syntax, parsed, words.slice(0, end), at);
-    if (typeof taken === 'object') return taken;
-    end = at;
-  }
-  return { cut: typed ? (end === 0 ? 0 : words[end - 1].end) : end };
-}
-
 // The typed line from the first of `words` to the last, as typed: its
 // quotes and spaces kept, the flags among them taken out.
 function rawOf(head: string, words: Word[], all: Word[]): string {
@@ -304,12 +370,20 @@ function rawOf(head: string, words: Word[], all: Word[]): string {
   let at = from;
   for (const word of all) {
     if (word.start < from || word.end > to || words.includes(word)) continue;
-    // A flag (or its value) inside the span: left out.
-    text += head.slice(at, word.start);
+    // A flag (or its value) inside the span: left out, with the space
+    // before it, so `a --flag b` leaves `a b`.
+    text += head.slice(at, word.start).trimEnd();
     at = word.end;
   }
   return (text + head.slice(at, to)).trim();
 }
+
+// A word in a command's text that is a flag: `--name`, `--name=...`.
+// Code rarely has one (`--i` alone, say); quoting it keeps it text.
+const FLAG_WORD = /^--[A-Za-z][\w-]*(?:=[\s\S]*)?$/;
+
+// A regex, `/.../flags`.
+const REGEX_TEXT = /^\/.+\/[a-z]*$/;
 
 // How a message says a small count.
 const COUNTS = ['no', 'one', 'two', 'three'];

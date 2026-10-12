@@ -350,7 +350,7 @@ Command marks:
 ### The command line (`cli.ts`)
 
 - `--help` anywhere on the line is found first: the help for each
-  command named, and nothing run or checked.
+  command named (or its subcommand), and nothing run or checked.
 - The global options are taken off the front of the line first:
   `--run`, `--root`, `--local`, `--stdin`, `--interactive`, and the
   browser's `--browser`, `--manager`, `--open-browser`, `--profile`,
@@ -400,7 +400,10 @@ Command marks:
     `help commands` gives each command's first sentence (or its
     `summary`), by topic; `help all` renders everything.
   - `help <command>` picks one command out of it, with the options any
-    section lists for it.
+    section lists for it. `help <command> <subcommand>` picks one
+    subcommand, with only the options it takes.
+  - `help` takes one topic, or a command and a subcommand. A
+    subcommand the command doesn't have is an error.
   - A section that is just the command of its name (`frames`, `logs`)
     shows that command's help instead, which has all its options.
 - The help reads like markdown (`help-format.ts`): `##` headings,
@@ -427,6 +430,11 @@ Command marks:
   names Tab completes, and which commands go to a run.
   - Its flags come from its options and usage lines (`cdp [tab] --file
     <path>`). One whose term names a value (`--out FILE`) takes one.
+  - A subcommand is a form named by a keyword with a `syntax` of its
+    own (`script [script] save`, `wait log`). Each takes the flags of
+    its own entry, and the shared ones a section lists for the command
+    (`commands: ['wait']`) or for it alone (`commands: ['wait log']`).
+    The forms with no keyword (`wait <time>`) share one flag set.
   - Its `syntax` says what its arguments are. See below.
 
 ### Reading a command's words (`command-args.ts`)
@@ -444,29 +452,43 @@ sm-dev's up-front check runs it too.
   - `--name`, or `--name value` / `--name=value` for one that takes a
     value. Unknown flags, missing or empty values, values on flags that
     take none, and repeats are refused.
+  - They can go anywhere, a command's free text included (eval's
+    JavaScript, `wait log`'s text). There, a word of its own shaped like
+    one (`--name`, `--name=...`) is a flag, so an unknown one is refused
+    rather than run as code. To keep one as text, quote the text as a
+    whole, or in JavaScript write it so the `--` isn't a word of its
+    own (`a = '--b'`).
+    - A `/regex/` starting the text is all text; flags can follow it.
+  - Once the subcommand is known, a flag it doesn't take is refused,
+    wherever it was given (`script --out x enable`).
   - A quoted word is never a flag.
+  - `--timeout-seconds` is taken by any command: one that waits on
+    nothing (`accept`) checks its value and ignores it, unlisted.
   - `--help` where a flag can go is a request for the command's help
     (`help` in the result). The prompt, stdin and the run show
-    `help <command>`'s text for it.
+    `help <command>`'s text for it, or the subcommand's
+    (`helpRequest`).
   - The global options (`--run`, `--root`, `--local`, which can repeat,
     ...) go before any command, and `takeGlobalFlags` in `cli.ts` reads
     them.
-    - One later on the line is refused, ending a command's text too
+    - One later on the line is refused, inside a command's text too
       (`eval 1 --run D1`), unless the command takes it itself.
     - A command's own flag put before it (`--nowait open <url>`) is
-      refused with the line as it should be. One it doesn't take is
+      refused, naming the command. One it doesn't take is
       named as unknown, checked alone, since after a command's text it
       would be text.
+    - Flags where the command goes are checked left to right
+      (`leadingFlagMistake` in `cli.ts`), so the first wrong one is
+      reported: `--stdin --xx` names `--xx`, rather than saying a
+      command is needed. A known flag before a word that is no command
+      is reported as that word not being a command.
 - Arguments, by the command's syntax:
   - `none`, or `words` (at most `max`).
   - `selector`: the rest of the line as typed, less its flags, which
     can go anywhere (a selector never starts with `--`).
-  - `text`: some words, then the rest of the line as typed. Flags go
-    before it; its `--words` are its own. Unquoted as a whole unless
-    it's JavaScript or JSON.
-- Also declared: a leading tab (`tab`), a `{{` block (`block`), and
-  flags that may end unquoted text, with a near miss there refused
-  (`trailingFlags`: `wait log`, `type`, `update`, `cdp`, `menu`, ...).
+  - `text`: some words, then the rest of the line as typed, less the
+    flags in it. Unquoted as a whole unless it's JavaScript or JSON.
+- Also declared: a leading tab (`tab`) and a `{{` block (`block`).
 - A form named by a keyword has its own syntax (`wait log <text>`).
 - Every command carries sm-dev's directory, for relative paths.
 
@@ -959,7 +981,7 @@ response, so it says so directly.
 - On each load of such a page that the run's MAIN-world scripts
   match, names them:
   - As a note that they run isolated instead, with a SourceMonkey that
-    does that (protocol 2.4 on; see
+    does that (protocol 2.5 on; see
     [injection.md](injection.md#csp-sandbox-pages)).
   - As a warning that they can't run, with another manager or an older
     SourceMonkey. An older sm-dev gives the warning with any
@@ -1322,13 +1344,13 @@ sm-dev knows a tab by its CDP target id; the extension knows it by its
     any that are still open and lost their claim.
   - It says how many, and the run prints that when a worker restart
     caused it.
-- **Several runs in one browser**: see below.
+- **Multiple runs in one browser**: see below.
 - **A run with no scripts** claims its tabs too, with nothing in its
   test collection yet, so a later `load` runs only its own scripts
   there. Tabs the person opens by hand aren't claimed, and run
   SourceMonkey-managed scripts as usual.
 
-#### Several runs in one browser
+#### Multiple runs in one browser
 
 Two sm-dev runs can share a browser: two shells on the shared browser,
 or a second run pointed at a `--temp-browser`'s port.
@@ -1582,7 +1604,7 @@ Terms used below:
       page is still listed, as `Not on this page`.
   - `set` on one needs `--force` outside a `--temp-browser`, since it
     changes the person's real data: `set key --force <json>`. Like
-    `set`'s other flags, it can also go after the JSON.
+    any flag, it can also go after the JSON.
   - `menu` and `logs` don't take them: they never run in the run's
     tabs. `load`, `update` and `--watch` don't apply either: the run
     didn't push them.

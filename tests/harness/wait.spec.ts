@@ -163,8 +163,8 @@ test('wait and the actions settle the page, and say what kept it busy', async ({
   expect((await run('wait --timeout-seconds 0')).lines).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The --timeout-seconds flag needs a number of seconds/)]);
   expect((await run('wait --soon')).lines).toEqual(['[sm-dev] ERROR: The `wait` command has no --soon flag. It takes --timeout-seconds, --log-source, --find, --since, --frame.']);
   // A flag it doesn't take, after wait log's text, isn't taken as part of it.
-  expect((await run('wait log ready --timeout 40')).lines).toEqual(['[sm-dev] ERROR: The `wait` command has no --timeout flag. It takes --timeout-seconds, --log-source, --find, --since, --frame.']);
-  expect((await run('wait selector T1 #go')).lines).toEqual(['[sm-dev] ERROR: The tab goes before the word selector: `wait T1 selector #go`']);
+  expect((await run('wait log ready --timeout 40')).lines).toEqual(['[sm-dev] ERROR: The `wait log` command has no --timeout flag. It takes --timeout-seconds, --log-source, --find, --since.']);
+  expect((await run('wait selector T1 #go')).lines).toEqual(['[sm-dev] ERROR: The tab goes before the word selector: `wait T1 selector <css>`']);
   // Other --words ending the text are text, as is anything quoted.
   expect((await run('wait log \'Running --dry-run mode\' --timeout-seconds 0.2')).lines).toEqual(['[sm-dev] Wait failed: No log line matched "Running --dry-run mode" within 0.2s', searchedTo]);
   expect((await run('wait T1 log x')).lines).toEqual(['[sm-dev] ERROR: The `wait log` command takes no tab, since it watches all of the run\'s output']);

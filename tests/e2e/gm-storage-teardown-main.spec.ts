@@ -9,8 +9,9 @@
 // before the caller returns. Both shapes below lost the write every
 // time when that hop was a `window.postMessage`, which the bridge sees
 // only on a LATER task — one a document in `pagehide` never gets.
-// These pin that the hop stays synchronous. Deferring the flush to a
-// later task (a `setTimeout` around the dispatch) fails both.
+// These pin that the hop stays synchronous: a write's send, from a
+// microtask or the pagehide flush, has to leave before the document
+// does.
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
@@ -55,7 +56,7 @@ test.describe('MAIN-world storage writes at document teardown', () => {
     await page.close();
   });
 
-  test('write then the tab closes within the debounce: a fresh tab sees it', async ({
+  test('write then the tab closes straight away: a fresh tab sees it', async ({
     extensionContext, fixtureServer, sm,
   }) => {
     scriptsDir.write({
@@ -87,7 +88,7 @@ test.describe('MAIN-world storage writes at document teardown', () => {
     await expect(pageA.locator('body')).toHaveAttribute('data-sm-initial', '_NONE_');
     await pageA.evaluate(() => { document.body.dataset.smCmd = 'set:closedWrite'; });
     await expect(pageA.locator('body')).toHaveAttribute('data-sm-wrote', 'set:closedWrite');
-    // Close BEFORE the 150ms debounce fires.
+    // Close straight after the write, without waiting for the worker.
     await pageA.close();
 
     const pageB = await extensionContext.newPage();

@@ -99,7 +99,7 @@ test('emitGmBindings: storage prelude reads the SW-attached snapshot, no baked l
   // main-body wrap function (runs only after the prelude's
   // awaitDecision + waitForRunAt gates — runtime guaranteed ready).
   assert.doesNotMatch(out.js, /storage\.init/);
-  assert.match(out.prelude, /__smReg\.gm\.storage\.init\("script-1", __smGmSnap\)/);
+  assert.match(out.prelude, /__smReg\.gm\.storage\.init\("script-1", __smGmSnap, __smDecision\.gmSeq\)/);
   // The SW-attached snapshot is the SINGLE source of truth — no
   // baked literal fallback. The prelude hard-aborts (sm:error +
   // return) when the snapshot is missing.

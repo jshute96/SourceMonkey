@@ -36,7 +36,7 @@ export function parseLogSources(text: string): ReadonlySet<LogSource> | { error:
   if (words.length === 1 && words[0] === 'all') return ALL_LOG_SOURCES;
   const wrong = words.find((w) => !LOG_SOURCES.includes(w as LogSource));
   if (words.length === 0 || wrong !== undefined) {
-    return { error: `The --log-source flag takes ${LOG_SOURCES.join(', ')} or all, or several separated by commas${wrong !== undefined ? `, not ${wrong}` : ''}` };
+    return { error: `The --log-source flag takes ${LOG_SOURCES.join(', ')} or all, or multiple separated by commas${wrong !== undefined ? `, not ${wrong}` : ''}` };
   }
   return new Set(words as LogSource[]);
 }

@@ -230,7 +230,7 @@ VM](GM-APIs-storage.md#compared-with-violentmonkey).
 
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
-| `GM_setValue` / `GM.setValue` | ✅ | ✓ | ✓ | ✓ | Sync return on `GM_x`, Promise on `GM.x`. Writes batched (150 ms debounce, 1 s hard cap) and flushed on `pagehide` / `visibilitychange → hidden`. Accepts more than JSON — see above; throws on a circular reference. |
+| `GM_setValue` / `GM.setValue` | ✅ | ✓ | ✓ | ✓ | Sync return on `GM_x`, Promise on `GM.x`. Writes made in one run of script code go to the worker together, a microtask later; anything left goes on `pagehide` / `visibilitychange → hidden`. Accepts more than JSON — see above; throws on a circular reference. |
 | `GM_getValue` / `GM.getValue` | ✅ | ✓ | ✓ | ✓ | Sync read from the in-page cache; returns `defaultValue` for unknown keys. |
 | `GM_deleteValue` / `GM.deleteValue` | ✅ | ✓ | ✓ | ✓ | Same flush/batching shape as `setValue`. |
 | `GM_listValues` / `GM.listValues` | ✅ | ✓ | ✓ | ✓ | Returns the list of currently-known keys. |
@@ -247,8 +247,6 @@ VM](GM-APIs-storage.md#compared-with-violentmonkey).
   value-change listener re-syncs its cache from the SW after an SW
   start or when the tab becomes visible — so a broadcast that does
   get lost is a delay rather than a permanent desync.
-- A write made in the last ~150 ms before tab close may be lost if
-  the SW is idle/suspended and the page goes into bfcache.
 - If the SW doesn't answer whether to run within the wrapper's 10 s
   timeout, no script runs, and each says why in the page console. A
   storage-granting script also refuses to run when its stored values
