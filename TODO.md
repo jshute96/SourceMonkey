@@ -582,6 +582,14 @@ Adding any of these is a catalog entry + a body — nothing structural.
 
 ### GM_* implementation follow-ups
 
+- **A throw in a `GM_xmlhttpRequest` callback never reaches the Log.**
+  `callXhrCallback` (`src/wrapper-gm-runtime.js`) catches it and only
+  logs `console.info("[SourceMonkey] XHR callback threw:", e)` to the
+  page console, so it isn't an `sm:error`, the script's Log doesn't
+  show it, and sm-dev shows it only under `logs --log-source all`. TM
+  and VM let it surface as the script's uncaught error. Report it as
+  the script's error (and check the other runtime callbacks: value
+  listeners, menu commands, notifications, downloads).
 - **Menu commands vanish on a bfcache restore.** `src/extension/gm-menu.ts`
   holds ONE document's commands per tab, so leaving a page drops its
   registrations — and Chrome doesn't re-inject on back/forward, so
@@ -1015,6 +1023,13 @@ See [docs/harness-design.md](docs/harness-design.md).
 
 ## sm-dev runs: follow-ups
 
+- **A page's stackless error is labeled `[script error]`.** A
+  `SyntaxError` from the page's own `eval` has no stack frames, and
+  `pageErrorSource` (`src/harness/page-output.ts`) gives a frameless
+  error to the scripts unless `stacklessIsScripts` (`run.ts`) can tell
+  otherwise. Seen on www.la7.it with a `@grant none` script that does
+  nothing: "Function statements require a function name", before the
+  script started. Same on `main`.
 - After SourceMonkey's worker restarts mid-run, the events from while it
   was stopped are lost (the run says so). The scripts' Log entries are
   read back; the rest (starts, menu commands, values) could be caught
