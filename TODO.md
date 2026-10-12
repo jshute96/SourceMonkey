@@ -349,14 +349,6 @@ wasn't checked.
     for scripts that ask to be isolated. Fix there: declare them with
     `let`.
   - About 50 corpus files assign to a `GM_*` name; some are guarded.
-- **Re-test the scripts the page-world default should fix**
-  (`needs-page-globals`: 561432, 382030, 485608, 395461, 37314, 382359,
-  386908, 387955, 432423, and earlier ones; `needs-custom-elements`:
-  397848; unknown-only grants: 27929, 432423, 437552).
-  - They read the page's globals without `unsafeWindow` and failed when
-    granted scripts ran isolated. Scripts now start in the page, as in
-    TM and VM, with a sandbox `window` when granted
-    (docs/injection.md, "Execution world").
 - **Follow-ups from the page-world default** (docs/injection.md, "Costs
   of running in MAIN"):
   - The channel key keeps the page off the bridge and away from our
@@ -429,10 +421,9 @@ against Tampermonkey with `sm-dev --manager tm` probes (2026-10-05).
     their GM code path, newer ones `!!self.GM_registerMenuCommand`, and
     vite-plugin-monkey builds read every grant off `window` (456077
     throws `GM_getValue is not a function`). TM passes all of these.
-  - Granted scripts get them on their sandbox `window`, since they run
-    in the page by default. Re-test them.
-  - The `@require` clobbering (`require-clobbers-page`: 722) is fixed
-    by the same sandbox. Re-test 722.
+  - Page-world scripts get them on their sandbox `window`, and these
+    scripts now work (re-tested 2026-10-11); this is left for scripts
+    that ask to be isolated.
 
 The next items came from testing the 300 and then 400 oldest corpus
 scripts, checked against Tampermonkey 5.5 with `sm-dev --manager tm`
