@@ -14,7 +14,7 @@ import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 import {
-  waitForTabState, activeTabId, type TabStateSnapshot,
+  waitForTabState, activeTabId, allScripts, type TabStateSnapshot,
 } from '../fixtures/sw-api';
 
 // A 1x1 transparent PNG, for the standalone-image-document case.
@@ -97,7 +97,10 @@ test.describe('CSP sandbox pages', () => {
       await expect(html).toHaveAttribute('data-content-ran', '1');
       await expect(html).toHaveAttribute('data-main-ran', '1');
       const ids = scriptIdsByName(snap);
-      expect((await sm.getScriptLog(ids.MainWorld)).some((e) => e.level === 'warning')).toBe(false);
+      const log = await sm.getScriptLog(ids.MainWorld);
+      expect(log.some((e) => e.level === 'warning')).toBe(false);
+      expect(log.some((e) => e.source === 'sandbox-fallback' && e.level === 'info')).toBe(true);
+      expect((await sm.getScriptLog(ids.ContentWorld)).some((e) => e.source === 'sandbox-fallback')).toBe(false);
       await page.close();
     });
   }
@@ -151,6 +154,84 @@ test.describe('CSP sandbox pages', () => {
     await page.goto(parentUrl);
     const child = page.frames().find((f) => f.url().endsWith('/sandboxed-child.html'))!;
     await expect(child.locator('html')).toHaveAttribute('data-main-ran', '1');
+    await page.close();
+  });
+
+  test('sandbox allow-same-origin keeps the real origin, and still runs the MAIN-world script isolated', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    writeMarkerScripts(scriptsDir, fixtureServer.baseUrl);
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    const url = `${fixtureServer.baseUrl}/sandboxed-same-origin.html`;
+    await serveWithCsp(page, url, 'sandbox allow-same-origin', 'html');
+    await page.goto(url);
+    const tabId = await activeTabId(getServiceWorker);
+    await waitForTabState(
+      sm,
+      tabId,
+      (s) => s.rows.includes('ContentWorld | OK') && s.rows.includes('MainWorld | OK'),
+      'both OK',
+    );
+    await expect(page.locator('html')).toHaveAttribute('data-main-ran', '1');
+    const ids = scriptIdsByName(await sm.getTabState(tabId));
+    expect((await sm.getScriptLog(ids.MainWorld)).some((e) => e.source === 'sandbox-fallback')).toBe(true);
+    await page.close();
+  });
+
+  test('an <iframe sandbox="allow-same-origin">: the MAIN-world script runs isolated in it', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'main-world.user.js',
+      meta: { name: 'MainWorld', match: [`${fixtureServer.baseUrl}/same-origin-child.html`], grant: ['none'], runAt: 'document-end' },
+      body: `document.documentElement.setAttribute('data-main-ran', '1');`,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    const parentUrl = `${fixtureServer.baseUrl}/same-origin-parent.html`;
+    await page.route(parentUrl, (route) => route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      body: '<!doctype html><iframe sandbox="allow-same-origin" src="same-origin-child.html"></iframe>',
+    }));
+    await page.route(`${fixtureServer.baseUrl}/same-origin-child.html`, (route) => route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      body: HTML,
+    }));
+    await page.goto(parentUrl);
+    const child = page.frames().find((f) => f.url().endsWith('/same-origin-child.html'))!;
+    await expect(child.locator('html')).toHaveAttribute('data-main-ran', '1');
+    await page.close();
+  });
+
+  test('a page-world manual script runs isolated when run', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'manual.user.js',
+      meta: { name: 'Manual', match: [`${fixtureServer.baseUrl}/*`], grant: ['GM_setValue', 'GM_getValue'], runAt: 'context-menu' },
+      body: `GM_setValue('k', 'v'); document.documentElement.setAttribute('data-manual-ran', GM_getValue('k'));`,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+    const id = (await allScripts(sm)).find((s) => s.relativePath === 'manual.user.js')!.id;
+
+    const page = await extensionContext.newPage();
+    const url = `${fixtureServer.baseUrl}/sandboxed-manual.html`;
+    await serveWithCsp(page, url, 'sandbox', 'html');
+    await page.goto(url);
+    const tabId = await activeTabId(getServiceWorker);
+    expect(await sm.runManualScript(tabId, id)).toEqual({ ok: true });
+    await expect(page.locator('html')).toHaveAttribute('data-manual-ran', 'v');
+    await expect.poll(async () => (await sm.getPopupView(tabId)).manual[0]?.rows[0]?.status).toBe('OK');
+    // Its Log says why it ran isolated.
+    expect((await sm.getScriptLog(id)).some((e) => e.source === 'sandbox-fallback')).toBe(true);
     await page.close();
   });
 

@@ -329,26 +329,23 @@
   /* Fallback for a sandboxed page. A CSP `sandbox` directive (or an
      `<iframe sandbox>`) without `allow-scripts` turns off script in the
      document's own world, and with it every MAIN-world script: Chrome
-     injects none there, while this world still runs. Such a document has
-     an opaque origin, so on one where no MAIN-world prelude announces
-     itself (MAIN_READY, now or in answer to our ready event above), we
-     ask the SW to run this document's MAIN-world scripts here instead,
-     as Violentmonkey falls back to its content world.
+     injects none there, while this world still runs. So where no
+     MAIN-world prelude announces itself (MAIN_READY, now or in answer
+     to our ready event above), we ask the SW to run this document's
+     MAIN-world scripts here instead, as Violentmonkey falls back to its
+     content world.
 
      - The check waits one task: every document_start registration is
        in by then, so a prelude injected after us has announced too.
-     - The opaque origin is what keeps a script Chrome just hasn't
-       registered yet (a sync in progress) from running here twice.
-     - `sandbox allow-scripts` gives an opaque origin too, but its
-       MAIN-world scripts run and announce, so nothing runs twice.
-     - `sandbox allow-same-origin` keeps the real origin, so it is
-       missed (TODO.md). A probe <script> can't tell either: one we
-       insert reports running even on a sandboxed page.
+     - No announcement also happens on ordinary pages: when Chrome
+       hasn't registered a script yet (a sync in progress), and where
+       our patterns match but no MAIN-world script runs (a frame where
+       all are @noframes, a page one @excludes). The SW finds the
+       scripts first, then runs a bare `true` in this document's own
+       world (`pageWorldRuns`), and falls back only if it doesn't run.
      - The page can send MAIN_READY too, which only keeps the fallback
        off. */
-  var opaque = false;
-  try { opaque = self.origin === "null"; } catch (_e7) {}
-  if (opaque && !mainSeen) {
+  if (!mainSeen) {
     setTimeout(function () {
       if (mainSeen) return;
       try {

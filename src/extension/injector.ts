@@ -1327,14 +1327,17 @@ export interface ManualRunInjection {
 //   - The bridge, for a MAIN-world script (its reports and GM calls
 //     reach the worker through it).
 //   - The GM runtime, for a script that needs one.
+// `isolated` runs a MAIN-world script in USER_SCRIPT world instead, for
+// a page that turns off its own script (see `asIsolated`).
 // Null when the script has nothing Chrome could match on.
 export async function buildManualRunInjections(
   script: StoredScript,
   scriptHandlerVersion: string,
   logLabel: string,
   gmValues: Record<string, unknown> | undefined,
+  isolated = false,
 ): Promise<ManualRunInjection[] | null> {
-  const spec = await buildRegistrationSpec(script, scriptHandlerVersion, logLabel, {
+  const spec = await buildRegistrationSpec(isolated ? asIsolated(script) : script, scriptHandlerVersion, logLabel, {
     manualRun: gmValues !== undefined ? { gmValues } : {},
   });
   if (!spec) return null;
@@ -1351,25 +1354,30 @@ export async function buildManualRunInjections(
   return out;
 }
 
+// `script` as it would be with `@inject-into content` ahead of its own
+// headers, so it builds as an isolated script would. For a page that
+// turns off script in its own world (a CSP `sandbox` without
+// `allow-scripts`), where Chrome injects nothing in MAIN.
+function asIsolated(script: StoredScript): StoredScript {
+  if (!script.header) return script;
+  return {
+    ...script,
+    header: { ...script.header, tags: [{ tag: 'inject-into', value: 'content' }, ...script.header.tags] },
+  };
+}
+
 // What to inject to run MAIN-world script `script` in USER_SCRIPT world
-// instead, on a page that turns off script in its own world (a CSP
-// `sandbox` without `allow-scripts`, where Chrome injects nothing in
-// MAIN). Built as a registration of the same script with
-// `@inject-into content` ahead of its own headers, so it runs as an
-// isolated script would, with the runtime first (a no-op where
-// present). Null when the script has nothing Chrome could match on.
-// See `runBlockedMainScripts` in background.ts.
+// instead, on a page that turns off script in its own world
+// (`asIsolated`), with the runtime first (a no-op where present). Null
+// when the script has nothing Chrome could match on. See
+// `runBlockedMainScripts` in background.ts.
 export async function buildIsolatedFallbackInjections(
   script: StoredScript,
   scriptHandlerVersion: string,
   logLabel: string,
 ): Promise<ManualRunInjection[] | null> {
   if (!script.header) return null;
-  const isolated: StoredScript = {
-    ...script,
-    header: { ...script.header, tags: [{ tag: 'inject-into', value: 'content' }, ...script.header.tags] },
-  };
-  const spec = await buildRegistrationSpec(isolated, scriptHandlerVersion, logLabel);
+  const spec = await buildRegistrationSpec(asIsolated(script), scriptHandlerVersion, logLabel);
   if (!spec) return null;
   const out: ManualRunInjection[] = [];
   if (needsGmRuntime(script.header)) {
@@ -1388,6 +1396,21 @@ interface UserScriptsExecute {
     world?: InjectionWorld;
     injectImmediately?: boolean;
   }): Promise<unknown>;
+}
+
+// Whether document `documentId` of `tabId` runs script in its own
+// (MAIN) world. Chrome drops a MAIN-world injection into a page whose
+// sandbox turns that off, with no error, so this asks for a result.
+export async function pageWorldRuns(tabId: number, documentId: string): Promise<boolean> {
+  await ensureWorldConfigured();
+  const api = chrome.userScripts as unknown as UserScriptsExecute;
+  const results = await api.execute({
+    target: { tabId, documentIds: [documentId] },
+    js: [{ code: 'true' }],
+    world: 'MAIN',
+    injectImmediately: true,
+  }) as { result?: unknown }[] | undefined;
+  return results?.[0]?.result === true;
 }
 
 // Inject a manual run (or a sandboxed page's fallback) into document

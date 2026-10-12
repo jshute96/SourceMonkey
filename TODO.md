@@ -384,17 +384,6 @@ wasn't checked.
   - Any installed userscript reaches the registry (`__smReg` is in its
     scope), so a page-world script can call the runtime as a sibling
     script on the same page. Per-script keys would stop that.
-  - The sandboxed-page fallback misses `sandbox allow-same-origin`
-    without `allow-scripts` (a CSP header, or the common
-    `<iframe sandbox="allow-same-origin">` for untrusted HTML): it keeps
-    the real origin, which is what the bridge keys on. A probe
-    `<script>` the bridge inserts reports running even on a sandboxed
-    page, so it can't tell. Needs another signal (docs/injection.md, "CSP sandbox
-    pages").
-  - A manual (`@run-at context-menu`) MAIN-world script still can't
-    run on a page whose sandbox turns off its own scripting: "Run this
-    script" injects into MAIN, which Chrome drops there. The load-time
-    fallback (docs/injection.md, "CSP sandbox pages") could cover it.
   - No CSP exemption for a MAIN-world `GM_addStyle` / `GM_addElement`
     into a closed shadow root, another frame's document or a detached
     parent; the runtime inserts those itself (docs/GM-APIs.md).

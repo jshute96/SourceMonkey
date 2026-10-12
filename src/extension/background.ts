@@ -83,6 +83,7 @@ import { resolveScriptWorld, type InjectionWorld } from '../script-world.js';
 import {
   buildManualRunInjections,
   buildIsolatedFallbackInjections,
+  pageWorldRuns,
   buildSwapEvalBody,
   executeManualRun,
   isManualRunCandidate,
@@ -2624,12 +2625,26 @@ const MAIN_FALLBACK_DOCS_MAX = 200;
 // reload runs the edited copy. The fallback is late anyway.
 const MAIN_FALLBACK_REFRESH_WAIT_MS = 5_000;
 
+// The Log line for a page-world script run isolated on a sandboxed
+// page, so its Log shows why it saw no page globals. Logged when the
+// copy is injected; it still asks check-pending whether to start.
+const SANDBOX_FALLBACK_MESSAGE = 'This page blocks scripts in its own page (a CSP sandbox), so this script runs in SourceMonkey\'s isolated world instead, as with @inject-into content';
+
+function logSandboxFallback(scriptId: string, tabId: number, documentId: string): void {
+  dlog(`[SourceMonkey] running ${getScriptLogLabel(scriptId)} isolated on sandboxed document ${documentId}`);
+  logScriptEvent(scriptId, { level: 'info', source: 'sandbox-fallback', tabId, message: SANDBOX_FALLBACK_MESSAGE });
+}
+
 // The sandboxed-page fallback. A CSP `sandbox` directive (or an
 // `<iframe sandbox>`) without `allow-scripts` turns off script in the
-// document's own world and gives it an opaque origin, so Chrome
-// injects no MAIN-world script there.
-// The bridge, in USER_SCRIPT world, notices (an opaque origin, and no
-// MAIN-world prelude started) and asks for this. Each MAIN-world script that matches the
+// document's own world, so Chrome injects no MAIN-world script there.
+// The bridge, in USER_SCRIPT world, asks for this when no MAIN-world
+// prelude started. That also happens on ordinary documents: while a
+// sync is registering a script, and wherever the bridge's patterns
+// match but no MAIN-world script runs (a frame where all are
+// `@noframes`, a page a script `@exclude`s). So this finds the scripts
+// first, and then checks that the page's own world runs nothing
+// (`pageWorldRuns`). Each MAIN-world script that matches the
 // document is injected into it in USER_SCRIPT world instead, as
 // Violentmonkey falls back to its content world. There is no page code
 // to share globals with on such a page, so the isolated world costs it
@@ -2638,7 +2653,9 @@ const MAIN_FALLBACK_REFRESH_WAIT_MS = 5_000;
 async function runBlockedMainScripts(tabId: number, sender: chrome.runtime.MessageSender): Promise<void> {
   const documentId = (sender as { documentId?: string }).documentId;
   const url = sender.url;
-  if (!documentId || !url || sender.origin !== 'null') return;
+  if (!documentId || !url) return;
+  // Marked before any await. A check that throws (the document gone)
+  // leaves it marked, which is fine: the bridge asks once per document.
   if (mainFallbackDocs.has(documentId)) return;
   mainFallbackDocs.add(documentId);
   if (mainFallbackDocs.size > MAIN_FALLBACK_DOCS_MAX) mainFallbackDocs.delete(mainFallbackDocs.values().next().value!);
@@ -2648,9 +2665,12 @@ async function runBlockedMainScripts(tabId: number, sender: chrome.runtime.Messa
   // Not one Chrome refused to register: it wasn't skipped by the page.
   const rejected = await rejectedScriptIds();
   const found = findMatchesForUrl(url).filter((m) => m.world === 'MAIN' && !rejected.has(m.id) && !(m.noframes && frameId !== 0));
+  const expected = expectedMatches(found, activeClaim(tabId)?.runId);
+  if (expected.length === 0) return;
+  if (await pageWorldRuns(tabId, documentId)) return;
   const version = chrome.runtime.getManifest().version;
   const reload = fastPathByDoc.get(fastPathKey(tabId, documentId));
-  for (const m of expectedMatches(found, activeClaim(tabId)?.runId)) {
+  for (const m of expected) {
     // On a reload, build from the refreshed copy, so the edit runs (the
     // copy's check-pending then finds nothing newer to swap in).
     const refresh = reload?.scripts.get(m.id)?.promise;
@@ -2659,9 +2679,9 @@ async function runBlockedMainScripts(tabId: number, sender: chrome.runtime.Messa
     if (!script || script.status !== 'ok') continue;
     const injections = await buildIsolatedFallbackInjections(script, version, getScriptLogLabel(m.id));
     if (!injections) continue;
-    dlog(`[SourceMonkey] running ${getScriptLogLabel(m.id)} isolated on sandboxed document ${documentId}`);
     try {
       await executeManualRun(tabId, documentId, injections);
+      logSandboxFallback(m.id, tabId, documentId);
     } catch (err) {
       console.info(`[SourceMonkey] could not run ${getScriptLogLabel(m.id)} on a sandboxed page:`, err);
     }
@@ -2732,9 +2752,10 @@ async function tryManualRun(tabId: number, scriptId: string): Promise<ManualRunR
   const gmValues = scriptGrantsSubsystem(scriptId, STORAGE_SUBSYSTEMS)
     ? await loadSnapshotForCheckPending(scriptId)
     : undefined;
-  const injections = await buildManualRunInjections(
-    script, chrome.runtime.getManifest().version, getScriptLogLabel(scriptId), gmValues,
+  const build = (isolated: boolean) => buildManualRunInjections(
+    script, chrome.runtime.getManifest().version, getScriptLogLabel(scriptId), gmValues, isolated,
   );
+  let injections = await build(false);
   // validateHeader keeps a script with no usable pattern from being `ok`.
   if (!injections) return { ok: false, error: 'Internal error: This script has no page pattern Chrome can use' };
   const name = scriptDisplayName(script);
@@ -2779,10 +2800,21 @@ async function tryManualRun(tabId: number, scriptId: string): Promise<ManualRunR
   // mustn't hold up the tab's other bookkeeping. Aimed at the document
   // checked above, so Chrome refuses rather than run it on another page.
   try {
+    // A page whose sandbox turns off its own script runs a page-world
+    // script isolated, as on load (`runBlockedMainScripts`).
+    let isolated = false;
+    if (injections.some((i) => i.world === 'MAIN') && !await pageWorldRuns(tabId, counted.documentId)) {
+      const built = await build(true);
+      // The same headers as the page-world build, which wasn't null.
+      if (!built) return { ok: false, error: 'Internal error: This script could not be built to run isolated' };
+      injections = built;
+      isolated = true;
+    }
     // Under the document's own key, not the install's: see `documentKey`.
     const key = await documentKey(counted.documentId, scriptId);
     const rekeyed = injections.map((i) => ({ ...i, js: i.js.map((j) => ({ code: rekey(j.code, key) })) }));
     await executeManualRun(tabId, counted.documentId, rekeyed);
+    if (isolated) logSandboxFallback(scriptId, tabId, counted.documentId);
     return { ok: true };
   } catch (err) {
     // The page replaced since it was counted: an expected race, not

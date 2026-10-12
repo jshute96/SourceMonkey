@@ -569,8 +569,9 @@ why (`src/extension/missing-scripts.ts`):
     check. Left off on file:// pages, which have no headers.
 - **For a USER_SCRIPT-world script**, it only notes whether other
   USER_SCRIPT-world scripts started.
-- No probing: the extension doesn't refetch the page or inject test
-  code to find out more. sm-dev, which sees the response headers, says
+- No probing for the hint: it doesn't refetch the page or inject test
+  code to find out more (the sandboxed-page fallback runs its own
+  check, `pageWorldRuns`, but only to decide whether to fall back). sm-dev, which sees the response headers, says
   it directly (see `docs/sm-dev-design.md`).
 - The hints are pinned by `tests/unit/missing-scripts.test.mjs`, and
   the sandboxed-page fallback by `tests/e2e/sandbox-csp.spec.ts`.
