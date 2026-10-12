@@ -228,7 +228,7 @@ own: change them only when asked to.
 | `accept [tab] [text]`, `dismiss [tab]` | Answer an open dialog |
 | `connect once\|cancel\|allow\|deny\|allow-all [host]` | Answer SourceMonkey's prompt for a host the selected script's `@connect` doesn't cover |
 | `--nowait` | On any of these: don't wait for the page to settle |
-| `--timeout-seconds S` | On any command that waits (these, `start`, `eval`, `snapshot`, `probe`, `screenshot`, `closetab`, `load`, `update`): S seconds for each wait, in place of its default. On `cdp`, for each call (default 10) |
+| `--timeout-seconds S` | On any command that waits (these, `start`, `eval`, `snapshot`, `probe`, `screenshot`, `closetab`, `load`, `update`, `menu`): S seconds for each wait, in place of its default. On `cdp`, for each call (default 10) |
 
 ## Waiting
 
@@ -255,7 +255,7 @@ old) or DOM changes for 200ms. Timers aren't waited for.
 | Command | Does |
 | --- | --- |
 | `menu`, `menu all` | List menu commands (`M1`...) |
-| `menu <label or M1>` | Fire one |
+| `menu <label or M1>` | Fire one. Piped in, waits up to 5 s for it to be registered; `--timeout-seconds S` for longer |
 | `values [script\|T2\|E1]` | Stored values (`E1`: a SourceMonkey-managed script) |
 | `get <key>`, `set <key> <json>` | One value; `set` fires change listeners |
 | `set <key> --file <path>` | The value from a JSON file (or a `{{` block, as `eval` takes) |

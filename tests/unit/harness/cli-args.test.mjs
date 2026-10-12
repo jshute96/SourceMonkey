@@ -268,6 +268,16 @@ test('piped stdin is commands with none on the line, or with --stdin, checked in
     ].join('\n'),
   });
   // Checked, then sent: here to no run.
+  // A line starting with a flag is about the flag.
+  assert.deepEqual(piped('--xx\n', '--stdin'), {
+    code: 2, stdout: '', stderr: 'stdin > --xx\nERROR: There is no --xx flag. Use `sm-dev help flags` to list the flags.\nNone of the commands were run.\n',
+  });
+  // A quoted value stays one word, and a command's own flag that is also
+  // global is said to go after it.
+  assert.match(piped("--find 'a b' logs\n", '--stdin').stderr, /ERROR: The --find flag goes after the command \(`logs`\), not before it/);
+  assert.match(piped('--json probe x\n', '--stdin').stderr, /ERROR: The --json flag goes after the command \(`probe`\), not before it/);
+  // A known flag before a word that is no command: that word is the mistake.
+  assert.match(piped('--detach frob\n', '--stdin').stderr, /ERROR: `frob` is not a command a run takes\./);
   assert.deepEqual(piped('tabs\n', '--stdin'), { code: 1, stdout: '', stderr: 'No sm-dev runs are active. Start one with `sm-dev start`.\n' });
   // Not read without --stdin once the line has a command.
   assert.deepEqual(piped('evel\n', 'list'), { code: 0, stdout: 'No sm-dev runs are active\n', stderr: '' });
@@ -360,9 +370,17 @@ test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
   assert.match(cli('frob', '--x').out, /^ERROR: Unknown command: `frob`\./);
   assert.match(cli('--detach', 'frob').out, /^ERROR: Unknown command: `frob`\./);
   assert.match(cli('D1', 'status', '--x').out, /^ERROR: Name the run with --run/);
-  // A run command's flag before the command is moved after it; one it
-  // doesn't take is said to be unknown.
-  assert.deepEqual(cli('--timeout-seconds', '9', 'open', 'http://x/'), { code: 2, out: 'ERROR: The --timeout-seconds flag goes after the command: `open http://x/ --timeout-seconds 9`' });
+  // A flag where the command goes is the first mistake, read left to
+  // right, before a missing command or a run's ID.
+  assert.deepEqual(cli('--xx'), { code: 2, out: 'ERROR: There is no --xx flag. Use `sm-dev help flags` to list the flags.' });
+  assert.equal(cli('--stdin', '--xx=3').out, 'ERROR: There is no --xx flag. Use `sm-dev help flags` to list the flags.');
+  assert.equal(cli('--xx', '--run', 'D1', 'eval', '1').out, 'ERROR: There is no --xx flag. Use `sm-dev help flags` to list the flags.');
+  assert.equal(cli('--stdin', '--timeout-seconds', '5').out, 'ERROR: The --timeout-seconds flag goes after the command it is for');
+  // So is a command sent as one word, after a flag.
+  assert.equal(cli('--timeout-seconds 5 eval 1').out, 'ERROR: The --timeout-seconds flag goes after the command (`eval`), not before it');
+  // A run command's flag before the command is said to go after it; one
+  // it doesn't take is said to be unknown.
+  assert.deepEqual(cli('--timeout-seconds', '9', 'open', 'http://x/'), { code: 2, out: 'ERROR: The --timeout-seconds flag goes after the command (`open`), not before it' });
   assert.match(cli('--log-source', 'all', 'open', 'http://x/').out, /^ERROR: The `open` command has no --log-source flag\./);
   // Checked alone, since after a command's text it would be text.
   assert.match(cli('--nowait', 'eval', '1').out, /^ERROR: The `eval` command has no --nowait flag\./);
@@ -381,7 +399,7 @@ test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
   assert.deepEqual(cli('attach'), none);
   assert.deepEqual(cli('list', 'x'), { code: 2, out: 'ERROR: The `list` command takes no arguments' });
   assert.deepEqual(cli('exit', 'x'), { code: 2, out: 'ERROR: The `exit` command takes no arguments' });
-  assert.deepEqual(cli('D1', 'status'), { code: 2, out: 'ERROR: Name the run with --run, before the command: `sm-dev --run D1 status`' });
+  assert.deepEqual(cli('D1', 'status'), { code: 2, out: 'ERROR: Name the run with --run, before the command: `sm-dev --run D1 <command>`' });
   // wait has nothing to watch without a run.
   assert.deepEqual(cli('wait', '1s'), { code: 2, out: 'ERROR: The `wait` command needs a run to watch. Start or attach one first.' });
   // Only line-wide flags: stdin is read for commands, and has none.
@@ -470,6 +488,12 @@ test('--help and help list the topics by name, and no commands', () => {
   assert.match(r.stdout, /^ {2}- checking +Match and validate scripts$/m);
   assert.doesNotMatch(r.stdout, /click \[tab\]/);
   assert.equal(help('help').out, r.stdout);
+  // help ignores --timeout-seconds, as any command that waits on nothing does.
+  assert.equal(help('--timeout-seconds', '55', 'help').out, r.stdout);
+  assert.equal(help('help', '--timeout-seconds=5').out, r.stdout);
+  // --help finds the command past flags and their values.
+  assert.match(help('--find', 'x', 'logs', '--help').out, /^Usage: sm-dev logs /);
+  assert.match(help('--timeout-seconds', '5', 'help', '--help').out, /^Usage: sm-dev help/);
 });
 
 test('help all lists every command, in sections, and how to name things', () => {
@@ -605,7 +629,7 @@ test('each run command takes the flags its help lists, and no others', async () 
     click: ['--at', '--button', '--count', '--modifiers', '--nowait', '--frame', T], hover: ['--at', '--modifiers', '--nowait', '--frame', T], type: ['--nowait', '--file', '--clear', '--frame', T], key: ['--nowait', T],
     eval: ['--page', '--script', '--frame', '--file', '--out', T], snapshot: ['--visible', '--out', '--find', '--up', '--context', '--limit', '--frame', T], screenshot: ['--full', '--frame', T], probe: ['--css', '--html', '--frame', ...json, T],
     load: [T], update: [T],
-    wait: ['--timeout-seconds', '--log-source', '--find', '--since', '--frame'], logs: ['--tail', '--log-source', '--find', '--since', ...json], status: ['--frames', ...json], values: json, set: ['--file', '--force'], menu: json, tabs: ['--frames', ...json], frames: json, focus: [],
+    wait: ['--timeout-seconds', '--log-source', '--find', '--since', '--frame'], logs: ['--tail', '--log-source', '--find', '--since', ...json], status: ['--frames', ...json], values: json, set: ['--file', '--force'], menu: [...json, T], tabs: ['--frames', ...json], frames: json, focus: [],
   };
   for (const [name, flags] of Object.entries(expected)) assert.deepEqual(commandFlags(name).sort(), [...flags].sort(), name);
 });

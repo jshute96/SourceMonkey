@@ -105,6 +105,11 @@ test('text is the rest of the line, less the flags in it', () => {
   // An unknown one is refused, not run as code; a global one is named as such.
   assert.equal(typed('eval', 'x --y').error, 'The `eval` command has no `--y` flag. It takes `--page`, `--script`, `--file`, `--out`, `--timeout-seconds`, `--frame`.');
   assert.equal(typed('eval', '1 --run D1').error, 'The `--run` flag is for the whole command line, so it goes first, before any command: `sm-dev --run ... <command>`');
+  // Any command takes --timeout-seconds, and one that waits on nothing
+  // ignores it; its value is still checked.
+  assert.deepEqual(typed('accept', 'yes --timeout-seconds 5'), { flags: {}, words: [], text: 'yes' });
+  assert.deepEqual(sent('dismiss', '--timeout-seconds=5'), { flags: {}, words: [] });
+  assert.equal(typed('accept', '--timeout-seconds x').error, 'The --timeout-seconds flag needs a number of seconds, up to 2147483');
   // Code that only looks like one somewhere stays code: quoted, inside a
   // word, or not a name after the dashes.
   for (const code of [`a = '--y'`, 'i--', '--i;', 'x -- y', 'f(--n)']) assert.equal(typed('eval', code).text, code, code);
@@ -175,6 +180,6 @@ test('a form can name what it acts on before its keyword, or leave it out', () =
   assert.deepEqual(typed('script', 'list C3'), { flags: {}, form: 'list', words: ['C3'] });
   assert.equal(typed('script', 'C3 list').form, undefined);
   // The old order says the new one.
-  assert.deepEqual(typed('script', 'enable E4'), { error: 'Name the script before the verb: script E4 enable' });
-  assert.deepEqual(typed('script', 'move E4 C2'), { error: 'Name the script before the verb: script E4 move C2' });
+  assert.deepEqual(typed('script', 'enable E4'), { error: 'Name the script before the verb: `script E4 enable`' });
+  assert.deepEqual(typed('script', 'move E4 C2'), { error: 'Name the script before the verb: `script E4 move ...`' });
 });

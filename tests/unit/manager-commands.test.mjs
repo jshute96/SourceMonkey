@@ -196,7 +196,7 @@ test('the script or collection comes before its verb, and a missing one is said'
   assert.deepEqual(out, ['[sm-dev] ERROR: The `collection show` command needs a collection: `collection <collection> show`']);
   out.length = 0;
   await managerVerb({ manager, out: (l) => out.push(plainLine(l)), json: false, guarded: true, cwd: '/' }, 'collection', 'rename', undefined, ['C3', 'New', 'name'], {});
-  assert.deepEqual(out, ['[sm-dev] ERROR: Name the collection before the verb: `collection C3 rename New name`']);
+  assert.deepEqual(out, ['[sm-dev] ERROR: Name the collection before the verb: `collection C3 rename ...`']);
   out.length = 0;
   await managerVerb({ manager, out: (l) => out.push(plainLine(l)), json: false, guarded: true, cwd: '/' }, 'script', 'enable', undefined, [], {});
   assert.deepEqual(out, ['[sm-dev] ERROR: The `script enable` command needs a script: `script <script> enable`. There is no selected script outside a run.']);

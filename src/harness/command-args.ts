@@ -21,7 +21,7 @@
 //   `help <command>` does, rather than running it.
 // - Arguments a command doesn't take are refused.
 
-import { commandSyntax, GLOBAL_FLAGS, globalFlagMistake, noSuchFlag, type ArgSyntax, type CommandSyntax } from './command-list.js';
+import { commandSyntax, GLOBAL_FLAGS, globalFlagMistake, noSuchFlag, TIMEOUT_FLAG, TIMEOUT_NEEDS_SECONDS, timeoutSecondsMs, type ArgSyntax, type CommandSyntax } from './command-list.js';
 import { TAB_ARG } from './tab-refs.js';
 import { quoted } from './output-style.js';
 
@@ -211,8 +211,7 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
   // other way round from how a subject form is written.
   const max = shape.args === 'none' ? 0 : shape.args === 'words' ? shape.max : undefined;
   if (parsed.form !== undefined && parsed.subject === undefined && syntax.subjectForms.has(parsed.form) && max !== undefined && own.length > max) {
-    const rest = own.slice(1).map((w) => ` ${w.text}`).join('');
-    return { error: `Name the ${command} before the verb: ${command} ${own[0].text} ${parsed.form}${rest}` };
+    return { error: `Name the ${command} before the verb: ${quoted(`${command} ${own[0].text} ${parsed.form}${own.length > 1 ? ' ...' : ''}`)}` };
   }
   switch (shape.args) {
     case 'none':
@@ -251,6 +250,14 @@ function takeFlag(command: string, syntax: CommandSyntax, parsed: ParsedArgs, li
   const eq = text.indexOf('=');
   const name = eq > 0 ? text.slice(0, eq) : text;
   const kind = Object.hasOwn(syntax.flags, name) ? syntax.flags[name] : undefined;
+  // Any command takes `--timeout-seconds`, unlisted where it waits for
+  // nothing (`accept`), so a timeout given out of habit isn't a mistake.
+  // Checked, then left out.
+  if (!kind && name === TIMEOUT_FLAG) {
+    const value = eq > 0 ? text.slice(eq + 1) : list[i + 1]?.text;
+    if (value === undefined || timeoutSecondsMs(value) === null) return { error: TIMEOUT_NEEDS_SECONDS, flag: name };
+    return eq > 0 ? i : i + 1;
+  }
   if (!kind && GLOBAL_FLAGS.includes(name)) return { error: globalFlagMistake(name), flag: name };
   if (!kind) return { error: noSuchFlag(command, name, Object.keys(syntax.flags)), flag: name };
   if (Object.hasOwn(parsed.flags, name)) return { error: `The ${name} flag can be given once`, flag: name };

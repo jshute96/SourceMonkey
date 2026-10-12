@@ -588,11 +588,13 @@ export async function runConsoleCommand(
     case 'validate':
       return validateCommand(ctx, args, cwd);
     case 'menu': {
+      const timeoutMs = timeoutFlagMs(flags, ctx.out);
+      if (timeoutMs === null) return false;
       // A label quoted as a whole is just that, even `all` or `T2.x`.
       const label = unquoteWhole(text);
       if (label.quoted) {
         if (blockedByDialog([tab])) return false;
-        return fireMenu(ctx, tab, label.text);
+        return fireMenu(ctx, tab, label.text, timeoutMs);
       }
       if (ctx.json && (text === 'all' || !text || /^[Tt]\d+$/.test(text))) {
         const which = text === 'all' ? ctx.tabs() : [text ? pickTab(ctx, text) : tab];
@@ -619,7 +621,7 @@ export async function runConsoleCommand(
       }
       if (blockedByDialog([ref.tab])) return false;
       // The label after `T2.` may be quoted too.
-      return fireMenu(ctx, ref.tab, unquoteWhole(ref.rest).text);
+      return fireMenu(ctx, ref.tab, unquoteWhole(ref.rest).text, timeoutMs);
     }
     case 'frames':
       return framesCommand(ctx, args, tab);
@@ -1011,7 +1013,7 @@ export async function runConsoleCommand(
       if (!dialog) {
         const elsewhere = ctx.tabs().find((t) => t.dialogs?.current);
         ctx.out(elsewhere
-          ? `[sm-dev] No dialog is open on ${tabName(target)}. ${tabName(elsewhere)} has one; use ${quoted([command, tabName(elsewhere), text].filter(Boolean).join(' '))}.`
+          ? `[sm-dev] No dialog is open on ${tabName(target)}. ${tabName(elsewhere)} has one; name its tab: ${quoted(`${command} ${tabName(elsewhere)}${text ? ' ...' : ''}`)}.`
           : '[sm-dev] No dialog is open');
         return;
       }
@@ -2540,14 +2542,15 @@ function noMenusMessage(ctx: ConsoleContext, tab: ControlledTab): string {
 // read once one has started. So for piped input, a miss while nothing
 // is registered yet may just be early, and is worth waiting out. A
 // miss while others are registered is a wrong name, and is reported at
-// once, as is any miss typed at a terminal.
+// once, as is any miss typed at a terminal. A `--timeout-seconds`
+// given waits that long for it in any case.
 const MENU_WAIT_MS = 5000;
 
 // False when nothing was fired.
-async function fireMenu(ctx: ConsoleContext, tab: ControlledTab, argument: string): Promise<boolean> {
+async function fireMenu(ctx: ConsoleContext, tab: ControlledTab, argument: string, timeoutMs?: number): Promise<boolean> {
   const all = (): MenuEntry[] => menuGroups(ctx, tab).flatMap((group) => group.commands);
   const numbered = /^[Mm](\d+)$/.exec(argument);
-  const deadline = Date.now() + MENU_WAIT_MS;
+  const deadline = Date.now() + (timeoutMs ?? MENU_WAIT_MS);
   for (;;) {
     const commands = all();
     // A label wins over a number, for a command whose label is one.
@@ -2576,7 +2579,8 @@ async function fireMenu(ctx: ConsoleContext, tab: ControlledTab, argument: strin
       return true;
     }
     // Registered on another tab is an answer too, not worth waiting past.
-    if (ctx.interactive || commands.length > 0 || Date.now() >= deadline || elsewhereFor(ctx, tab, argument).length > 0) break;
+    const early = timeoutMs === undefined && (ctx.interactive || commands.length > 0);
+    if (early || Date.now() >= deadline || elsewhereFor(ctx, tab, argument).length > 0) break;
     await new Promise((r) => setTimeout(r, 100));
   }
   const elsewhere = numbered ? [] : elsewhereFor(ctx, tab, argument);

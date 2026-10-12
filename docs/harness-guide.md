@@ -1035,9 +1035,15 @@ Some commands take several lines as a block, at the prompt or on stdin:
   <command>`.
   - That includes one anywhere in a command's text (`eval 1 --run D1`),
     unless the command takes the flag itself, or the word is quoted.
-- A command's own flag goes after it. One put before it is refused
-  with the line as it should be: `The --nowait flag goes after the
-  command: open <url> --nowait`.
+- A command's own flag goes after it. One put before it is refused:
+  `The --nowait flag goes after the command (open), not before it`.
+- Mistake messages don't repeat the whole command back, which could be
+  a long script or selector. Where they show a fix, it's only the part
+  that matters (`sm-dev --run D1 <command>`).
+- Flags where the command goes are checked left to right, so the
+  first wrong one is what's reported: `sm-dev --stdin --xx` gives
+  `There is no --xx flag`, not that a command is needed. The same
+  goes for a stdin or prompt line that starts with a flag.
 
 The options:
 
@@ -1155,9 +1161,11 @@ The shapes of every command's result, with examples:
 - Per script, `status` gives active or not, the other tabs it is
   active on, and counts of its menu commands, stored values and errors
   that are not zero.
-- `menu <label>` piped in while none is registered yet waits a moment
-  for a script that is still loading. Typed at the prompt, it answers
-  at once.
+- `menu <label>` piped in while none is registered yet waits up to 5
+  seconds for a script that is still loading. Typed at the prompt, it
+  answers at once.
+  - With `--timeout-seconds S`, it waits up to S seconds for the
+    command in any case, even while others are registered.
 - A read waits out the page's write batching first, so `menu Bump`
   followed by `values` prints what the command just stored rather than
   what was there before it.
@@ -1784,6 +1792,9 @@ Limits of the heuristic:
 - `--timeout-seconds S` works on every command that waits, and sets
   each of its waits (an element being ready, a load, settling).
   - On `cdp`, it's each call's limit (default 10 seconds).
+  - Every other command takes it too, unlisted, and ignores it, so a
+    timeout given out of habit (`accept --timeout-seconds 5`) isn't a
+    mistake.
 - An explicit `wait` that gives up fails, so a line of several commands
   (or a list in one argument, or commands piped in) stops there, and
   says the rest weren't run.

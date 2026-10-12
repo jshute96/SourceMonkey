@@ -211,7 +211,7 @@ test('show, print, enable, disable and refresh, with no run', async ({ scriptsDi
 
   const missing = await cli('script', 'show');
   expect(missing.stderr).toContain('The `script show` command needs a script: `script <script> show`. There is no selected script outside a run.');
-  expect((await cli('script', 'enable', 'E1')).stderr).toContain('Name the script before the verb: script E1 enable');
+  expect((await cli('script', 'enable', 'E1')).stderr).toContain('Name the script before the verb: `script E1 enable`');
 });
 
 test('install, uninstall and move', async ({ scriptsDir }) => {

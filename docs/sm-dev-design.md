@@ -452,6 +452,8 @@ sm-dev's up-front check runs it too.
     own (`a = '--b'`).
     - A `/regex/` starting the text is all text; flags can follow it.
   - A quoted word is never a flag.
+  - `--timeout-seconds` is taken by any command: one that waits on
+    nothing (`accept`) checks its value and ignores it, unlisted.
   - `--help` where a flag can go is a request for the command's help
     (`help` in the result). The prompt, stdin and the run show
     `help <command>`'s text for it.
@@ -461,9 +463,14 @@ sm-dev's up-front check runs it too.
     - One later on the line is refused, inside a command's text too
       (`eval 1 --run D1`), unless the command takes it itself.
     - A command's own flag put before it (`--nowait open <url>`) is
-      refused with the line as it should be. One it doesn't take is
+      refused, naming the command. One it doesn't take is
       named as unknown, checked alone, since after a command's text it
       would be text.
+    - Flags where the command goes are checked left to right
+      (`leadingFlagMistake` in `cli.ts`), so the first wrong one is
+      reported: `--stdin --xx` names `--xx`, rather than saying a
+      command is needed. A known flag before a word that is no command
+      is reported as that word not being a command.
 - Arguments, by the command's syntax:
   - `none`, or `words` (at most `max`).
   - `selector`: the rest of the line as typed, less its flags, which

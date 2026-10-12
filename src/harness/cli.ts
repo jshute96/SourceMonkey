@@ -30,11 +30,11 @@ import {
   commandWords, managerCommandOf, managerCommand, onlyInspects, readPromptCommands, runCommandHelp, runCommandMistake, runLogLabelUi, setJsonOutput, writeOutputLine,
 } from './console-commands.js';
 import { parseLang } from './browser-lang.js';
-import { parseCommandArgs } from './command-args.js';
+import { parseCommandArgs, splitWords } from './command-args.js';
 import { DEFAULT_MANAGER, MANAGERS, managerMistake, managerNamed, type ManagerName } from './managers.js';
 import type { ManagerVerb } from './manager-actions.js';
 import type { ManagerControl } from './manager-commands.js';
-import { MAX_TIMER_SECONDS, OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, TIMEOUT_NEEDS_SECONDS, GLOBAL_FLAGS, VALUE_GLOBALS, commandNamed, commandSyntax, commandsHelp, globalFlagMistake, helpText, timeoutSecondsMs, unsupportedCommand } from './command-list.js';
+import { MAX_TIMER_SECONDS, OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, TIMEOUT_FLAG, TIMEOUT_NEEDS_SECONDS, GLOBAL_FLAGS, VALUE_GLOBALS, commandNamed, commandSyntax, commandsHelp, globalFlagMistake, helpText, timeoutSecondsMs, unsupportedCommand } from './command-list.js';
 import { readJsonFile } from './input-file.js';
 import { echoLine, err as errorLine, ERROR_PREFIX, paintOutput, quoted, SM_DEV_PREFIX, streamHasColor } from './output-style.js';
 // The roles for marked-up output, as S.id(...): their names are common locals here.
@@ -122,6 +122,8 @@ interface Opts {
 // start`), and a run's, to say where one put first goes (`--find x logs`).
 const OWN_VALUE_FLAGS = new Set([...OWN_COMMANDS, ...RUN_COMMAND_NAMES].flatMap((name) => Object.entries(commandSyntax(name).flags)
   .filter(([, kind]) => kind === 'value').map(([flag]) => flag)));
+// Every command's flags.
+const COMMAND_FLAGS = new Set([...OWN_COMMANDS, ...RUN_COMMAND_NAMES].flatMap((name) => Object.keys(commandSyntax(name).flags)));
 
 // Where the command's name is in `argv`: the first word that is no
 // flag, nor a flag's value. Past the end when there is none.
@@ -1039,9 +1041,14 @@ function commandMistake(input: { line: string } | { words: string[] }): string |
     const flag = word?.split('=')[0];
     return flag !== undefined && GLOBAL_FLAGS.includes(flag) ? flag : undefined;
   };
-  const name = 'line' in input ? input.line.trim().split(/\s+/)[0] : input.words[0];
-  const first = lineFlag(name);
-  if (first) return globalFlagMistake(first);
+  const words = 'line' in input ? splitWords(input.line).map((w) => w.text) : input.words;
+  let name = words[0] ?? '';
+  if (name.startsWith('-')) {
+    const flagMistake = leadingFlagMistake(words);
+    if (flagMistake) return flagMistake;
+    // Flags some command takes, before a word that is none.
+    name = words[commandIndex(words)];
+  }
   if (!isTypedCommand(name)) return unknownRunCommand(name);
   const mistake = runCommandMistake(input);
   if (!mistake) return null;
@@ -1535,10 +1542,13 @@ const HELP_FLAGS = new Set(['--help', '-h']);
 // The `help` command's topics, or null for another command; empty for
 // the help index. `--help` is handled for the whole line (`lineHelp`).
 function helpTopics(argv: string[]): string[] | null {
-  if (argv[0] !== 'help' && argv[0] !== '?') return null;
+  // Any command takes --timeout-seconds, and help ignores it, before
+  // `help` or after.
+  const words = argv.filter((w, i) => w !== TIMEOUT_FLAG && argv[i - 1] !== TIMEOUT_FLAG && !w.startsWith(`${TIMEOUT_FLAG}=`));
+  if (words[0] !== 'help' && words[0] !== '?') return null;
   // `help --help`: help's own help, as for any command.
-  const topics = argv.slice(1).filter((w) => !HELP_FLAGS.has(w));
-  return topics.length === 0 && argv.length > 1 ? ['help'] : topics;
+  const topics = words.slice(1).filter((w) => !HELP_FLAGS.has(w));
+  return topics.length === 0 && words.length > 1 ? ['help'] : topics;
 }
 
 /**
@@ -1554,12 +1564,13 @@ function lineHelp(commands: string[][]): string | null {
   for (const words of commands) {
     const rest = words.filter((w) => !HELP_FLAGS.has(w));
     // `help status`: its topics. Otherwise the command's name, which
-    // may come after its flags (`--detach start`).
+    // may come after its flags and their values (`--find x logs`).
     // `help --help` alone: help's own.
-    if (rest[0] === 'help' || rest[0] === '?') {
-      if (rest.length === 1) names.push('help');
-      else topics.push(...rest.slice(1));
-    } else names.push(...rest.filter((w) => !w.startsWith('-')).slice(0, 1));
+    const asked = helpTopics(rest);
+    if (asked) {
+      if (asked.length === 0) names.push('help');
+      else topics.push(...asked);
+    } else if (rest[commandIndex(rest)] !== undefined) names.push(rest[commandIndex(rest)]);
   }
   return commandHelp(topics, names);
 }
@@ -1779,27 +1790,47 @@ function parseCommand(words: string[]): ParsedCommand {
   if (!OWN_COMMANDS.has(words[0]) && isTypedCommand(head)) return { kind: 'send', words };
   // One of sm-dev's own sent as one word (`'stop D1'`): split as typed.
   if (words.length === 1 && OWN_COMMANDS.has(head) && head !== words[0]) return parseCommand(commandWords(words[0]));
+  // Or a command sent as one word after a flag (`'--x eval 1'`): its
+  // words, to say what is wrong with the flag.
+  if (words.length === 1 && head.startsWith('-') && head !== words[0]) return parseCommand(commandWords(words[0]));
   const opts = parseArgs(words);
-  if (opts.command === null) throw new UsageError(`A command is needed. ${LIST_COMMANDS}`);
+  // A flag before any command is the first mistake, read left to right:
+  // `--stdin --xx` is about `--xx`, not the missing command.
+  if (opts.command === null) throw new UsageError(leadingFlagMistake(words)!);
   if (opts.help) return { kind: 'help', topics: [], commands: [opts.command] };
   if (!OWN_COMMANDS.has(opts.command)) {
+    const flagMistake = words[0].startsWith('-') ? leadingFlagMistake(words) : null;
+    if (flagMistake) throw new UsageError(flagMistake);
     // A run's ID where the command goes: the old `sm-dev D1 status`.
     const run = runIdOf(opts.command);
-    if (run) throw new UsageError(`Name the run with ${quoted('--run')}, before the command: ${quoted(`sm-dev --run ${run} ${words.slice(1).map(shellWord).join(' ')}`.trimEnd())}`);
-    // A run's command after one of its flags: only the line's own flags go first.
-    if (isTypedCommand(opts.command) && words[0].startsWith('-')) {
-      const at = commandIndex(words);
-      // One the command doesn't take either is said as such, checked
-      // alone, since after a command's text it would be text.
-      const own = commandSyntax(commandNamed(opts.command)!).flags;
-      const unknown = words.slice(0, at).find((w) => w.startsWith('-') && !Object.hasOwn(own, w.split('=')[0]));
-      if (unknown) throw new UsageError(commandMistake({ words: [opts.command, unknown] }) ?? `Unknown option: ${quoted(unknown)}`);
-      const moved = [opts.command, ...words.slice(at + 1), ...words.slice(0, at)];
-      throw new UsageError(`The ${quoted(words[0])} flag goes after the command: ${quoted(moved.map(shellWord).join(' '))}`);
-    }
+    if (run) throw new UsageError(`Name the run with ${quoted('--run')}, before the command: ${quoted(`sm-dev --run ${run} <command>`)}`);
     throw new UsageError(`Unknown command: ${quoted(opts.command)}. ${LIST_COMMANDS}`);
   }
   return { kind: 'cli', opts, words };
+}
+
+// Flags where a run's command goes, before it or with none after them:
+// the first mistake among them, read left to right. Only the line's own
+// flags go first, and those were taken already. Null when the flags are
+// all some command's and what follows is no command: that is the
+// mistake to say. With no command after them, never null.
+function leadingFlagMistake(words: string[]): string | null {
+  const at = commandIndex(words);
+  const command = words[at];
+  const own = command !== undefined && isTypedCommand(command) ? commandSyntax(commandNamed(command)!).flags : null;
+  for (const word of words.slice(0, at)) {
+    // A value, after its flag.
+    if (!word.startsWith('-')) continue;
+    const flag = word.split('=')[0];
+    // The command's own first: `--json probe x` has `probe x --json`.
+    if (own && (Object.hasOwn(own, flag) || flag === TIMEOUT_FLAG)) continue;
+    if (GLOBAL_FLAGS.includes(flag)) return globalFlagMistake(flag);
+    if (own) return commandMistake({ words: [command, word] }) ?? `Unknown option: ${quoted(word)}`;
+    if (!COMMAND_FLAGS.has(flag)) return `There is no ${quoted(flag)} flag. Use ${quoted('sm-dev help flags')} to list the flags.`;
+    if (command === undefined) return `The ${quoted(flag)} flag goes after the command it is for`;
+  }
+  if (!own) return null;
+  return `The ${quoted(words[0].split('=')[0])} flag goes after the command (${quoted(command)}), not before it`;
 }
 
 /**

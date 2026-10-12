@@ -395,7 +395,7 @@ export async function managerVerb(
   const selectable = command === 'script' && verb !== 'uninstall' && ctx.run?.selected !== undefined;
   // The old order: `collection rename C3 New name`.
   if (command === 'collection' && subject === undefined && args.length > 0) {
-    ctx.out(`${MISTAKE_PREFIX}Name the collection before the verb: ${quoted(`collection ${args[0]} ${verb}${args.slice(1).map((w) => ` ${w}`).join('')}`)}`);
+    ctx.out(`${MISTAKE_PREFIX}Name the collection before the verb: ${quoted(`collection ${args[0]} ${verb}${args.length > 1 ? ' ...' : ''}`)}`);
     return false;
   }
   if (verb !== 'install' && subject === undefined && !selectable) {

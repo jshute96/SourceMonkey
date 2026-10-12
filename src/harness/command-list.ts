@@ -115,6 +115,9 @@ export interface HelpSection {
 /** The longest a Node timer can wait, in seconds. */
 export const MAX_TIMER_SECONDS = Math.floor((2 ** 31 - 1) / 1000);
 
+/** The flag any command takes, listed where it waits on something (command-args.ts). */
+export const TIMEOUT_FLAG = '--timeout-seconds';
+
 /** A `--timeout-seconds` that isn't a number of seconds, on any command. */
 export const TIMEOUT_NEEDS_SECONDS = `The --timeout-seconds flag needs a number of seconds, up to ${MAX_TIMER_SECONDS}`;
 
@@ -649,6 +652,9 @@ export const HELP_SECTIONS: HelpSection[] = [
               { term: '<label>', about: 'Fire one, by its label.' },
             ],
           },
+        ],
+        options: [
+          { term: '--timeout-seconds S', about: 'Wait up to `S` seconds for the command to be registered.', commands: ['menu'] },
         ],
       },
       {

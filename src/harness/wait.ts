@@ -295,8 +295,7 @@ export async function waitFor(ctx: ConsoleContext, parsed: ParsedArgs): Promise<
     const selector = parsed.text ?? '';
     if (!selector) return mistake(`The ${quoted(`wait ${kind}`)} command needs a selector, e.g. ${quoted(`wait ${kind} '#results'`)}`);
     const [first, ...more] = selector.split(/\s+/);
-    const timed = timeout !== undefined ? ` --timeout-seconds ${timeout}` : '';
-    if (more.length > 0 && TAB_ARG.test(first)) return mistake(`The tab goes before the word ${kind}: ${quoted(`wait ${first} ${kind} ${more.join(' ')}${timed}`)}`);
+    if (more.length > 0 && TAB_ARG.test(first)) return mistake(`The tab goes before the word ${kind}: ${quoted(`wait ${first} ${kind} <css>`)}`);
     const frame = await pickFrame(parsed.flags['--frame'], tabs[0], (line) => ctx.out(`[sm-dev] ${line}`));
     if (frame === null) return false;
     return waitForSelector(ctx, tabs[0], selector, kind === 'selector', timeoutMs, frame);

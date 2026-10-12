@@ -415,7 +415,7 @@ test('one line starts a run, sends it commands, and stops it unless detached', a
     expect(again.slice(0, 2)).toEqual(['[sm-dev] Stopping run Dmain', '[sm-dev] Run Dmain ended']);
     expect(again.at(-2)).toMatch(/^\[sm-dev\] Run Dmain now running detached/);
     // The old way of naming a run is pointed at the new one.
-    expect(await setup.cli('Dmain', 'status')).toEqual(['ERROR: Name the run with --run, before the command: `sm-dev --run Dmain status`']);
+    expect(await setup.cli('Dmain', 'status')).toEqual(['ERROR: Name the run with --run, before the command: `sm-dev --run Dmain <command>`']);
   } finally {
     await setup.cli('stop', '--all');
     await setup.cleanup();
