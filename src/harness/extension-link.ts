@@ -232,12 +232,11 @@ export class ExtensionLink {
   }
 
   /**
-   * Whether the extension's protocol minor is at least `minor`: for
-   * output that depends on what the extension does. False for a run
-   * with no SourceMonkey link.
+   * Whether this run has a SourceMonkey link: for output that depends
+   * on what the extension does. False for a run with another manager.
    */
-  hasMinor(minor: number): boolean {
-    return (this.extensionProtocol?.minor ?? 0) >= minor;
+  get linked(): boolean {
+    return this.absent === null;
   }
 
   private constructor(
@@ -583,7 +582,7 @@ export class ExtensionLink {
   }
 
   /** The collections and installed scripts, for the `collection` and `script` commands. */
-  readonly manager: ManagerControl = managerControl((fn, arg) => this.call(fn, arg), (minor, feature) => this.requireMinor(minor, feature));
+  readonly manager: ManagerControl = managerControl((fn, arg) => this.call(fn, arg));
 
   /** Clicks a shown notification, as the person would. False when it isn't showing. */
   async clickNotification(notificationId: string): Promise<boolean> {
@@ -646,19 +645,17 @@ export function firstLine(err: unknown): string {
  */
 export async function openManagerLink(context: BrowserContext): Promise<{ manager: ManagerControl; versionNote: string | null }> {
   const worker = await findExtensionWorker(context);
-  const { protocol, note } = await checkedProtocol(worker);
+  const { note } = await checkedProtocol(worker);
   return {
     versionNote: note,
     // Playwright's argument types don't follow a generic through.
-    manager: managerControl((fn, arg) => worker.evaluate(fn as never, arg as never), (minor, feature) => requireMinorOf(protocol, minor, feature)),
+    manager: managerControl((fn, arg) => worker.evaluate(fn as never, arg as never)),
   };
 }
 
-// The manager calls, made with `invoke` (in the worker). `requireMinor`
-// throws for an extension too old for a call.
+// The manager calls, made with `invoke` (in the worker).
 function managerControl(
   invoke: <A, R>(fn: (arg: A) => R | Promise<R>, arg: A) => Promise<R>,
-  requireMinor: (minor: number, feature: string) => void,
 ): ManagerControl {
   // `self.SourceMonkey.managed`'s calls. A change it refuses fails with
   // its message alone, without the `worker.evaluate: Error: `
@@ -687,10 +684,7 @@ function managerControl(
     renameCollection: (id, name) => managed(({ i, n }) => (self as unknown as Sm).SourceMonkey.managed.renameCollection(i, n), { i: id, n: name }),
     scriptDetails: (id) => managed((i) => (self as unknown as Sm).SourceMonkey.managed.scriptDetails(i), id),
     scriptText: (id) => managed((i) => (self as unknown as Sm).SourceMonkey.managed.scriptText(i), id),
-    scriptFiles: (id) => {
-      requireMinor(3, 'Reading a script\'s @require and @resource files');
-      return managed((i) => (self as unknown as Sm).SourceMonkey.managed.scriptFiles(i), id);
-    },
+    scriptFiles: (id) => managed((i) => (self as unknown as Sm).SourceMonkey.managed.scriptFiles(i), id),
   };
 }
 

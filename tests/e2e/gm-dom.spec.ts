@@ -142,6 +142,9 @@ test.describe('GM_addStyle / GM_addElement (Phase 4)', () => {
     const entry = (await sm.getScriptLog(scriptId)).find((e) => e.source === 'gm-dom')!;
     expect(entry.level).toBe('warning');
     expect(entry.message).toMatch(/Content Security Policy blocked the style GM_addElement added/);
+    // It names the one cause it was.
+    expect(entry.message).toMatch(/can't exempt a style added inside a closed shadow root\./);
+    expect(entry.message).not.toMatch(/another frame/);
     await page.close();
   });
 

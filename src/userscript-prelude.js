@@ -637,8 +637,13 @@
 
   function runWithLoadReplay(run) {
     var w = window;
-    var queued = [];
-    var ownAdd = Object.getOwnPropertyDescriptor(w, "addEventListener");
+    /* The page may have run by now: captured built-ins only, and a
+       store with no prototype (an index setter on `Array.prototype`
+       would see a plain array's writes), so no page hook sees the
+       script's listeners. */
+    var queued = _ObjectCreate(null);
+    var nQueued = 0;
+    var ownAdd = _getOwnPropertyDescriptor(w, "addEventListener");
     var realAdd = w.addEventListener;
     var onloadBefore = w.onload;
     var patched = false;
@@ -648,10 +653,10 @@
            natively that means the global, so it counts as window. */
         var target = this == null || isSandbox(this) ? w : this;
         if (type === "load" && target === w && listener) {
-          queued.push(listener);
+          queued[nQueued++] = listener;
           return;
         }
-        return realAdd.apply(target, arguments);
+        return _ReflectApply(realAdd, target, arguments);
       };
       patched = true;
     } catch (_e) {}
@@ -662,21 +667,25 @@
       replayingLoad = false;
       if (patched) {
         try {
-          if (ownAdd) Object.defineProperty(w, "addEventListener", ownAdd);
+          if (ownAdd) _defineProperty(w, "addEventListener", ownAdd);
           else delete w.addEventListener;
         } catch (_e2) {}
       }
       try {
-        if (w.onload !== onloadBefore && typeof w.onload === "function") queued.push(w.onload);
+        if (w.onload !== onloadBefore && typeof w.onload === "function") queued[nQueued++] = w.onload;
       } catch (_e3) {}
     }
     var ev = loadEvent;
-    queued.forEach(function (listener) {
-      _setTimeout(function () {
-        if (typeof listener === "function") listener.call(w, ev);
-        else if (listener && typeof listener.handleEvent === "function") listener.handleEvent(ev);
-      }, 0);
-    });
+    for (var i = 0; i < nQueued; i++) replayLoad(queued[i], ev);
+  }
+
+  function replayLoad(listener, ev) {
+    _setTimeout(function () {
+      if (typeof listener === "function") _ReflectApply(listener, window, [ev]);
+      else if (listener && typeof listener.handleEvent === "function") {
+        _ReflectApply(listener.handleEvent, listener, [ev]);
+      }
+    }, 0);
   }
 
   /* @run-at gating. Each script's entry drives its own deferral; the
@@ -1691,7 +1700,7 @@
   function makeSandbox(exposed) {
     if (!_Proxy || !sandboxes) return window;
     /* The sandbox's own properties. */
-    var own = Object.create(null);
+    var own = _ObjectCreate(null);
     var proxy;
     var keys = _ownKeys(exposed);
     for (var i = 0; i < keys.length; i++) {
@@ -1822,7 +1831,7 @@
       /* The page's window can't be made non-extensible either. */
       preventExtensions: function () { return false; },
     });
-    var scope = new _Proxy(Object.create(null), {
+    var scope = new _Proxy(_ObjectCreate(null), {
       has: function (_t, k) {
         if (typeof k !== "string" || isOurKey(k)) return false;
         if (_hasOwn(own, k) || isWindowAlias(k)) return true;

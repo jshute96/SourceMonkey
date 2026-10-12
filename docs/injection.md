@@ -1186,7 +1186,7 @@ gets the install's key: see
     insert to the bridge in USER_SCRIPT world (see
     [GM-APIs.md](GM-APIs.md#dom-injection-gm_addstyle--gm_addelement)).
   - Where that can't happen (a closed shadow root, another frame's
-    document, a detached parent), a blocked `<style>` that's in the
+    document, a detached parent, no bridge yet), a blocked `<style>` that's in the
     document (with no `.sheet`) is reported once per script per
     document in its Log (`source: gm-dom`).
 - **The page can interfere.** It shares prototypes and globals with the
@@ -1204,6 +1204,10 @@ gets the install's key: see
   MAIN-world script where the page's own world has script turned off,
   so they run in USER_SCRIPT world there instead, a little later (see
   [CSP sandbox pages](#csp-sandbox-pages)).
+- **One extra hop per call.** Every `GM_*` SW round-trip pays the
+  bridge relay, like `sm:check-pending` already did from MAIN. The
+  request leg costs no task hop (it is a synchronous event dispatch);
+  the reply comes back as an event once the SW has answered.
 
 ##### CSP sandbox pages
 
@@ -1222,8 +1226,12 @@ world in that case, and so do we:
     then.
   - Silence also happens on ordinary pages: while a sync is
     registering a script, and where the bridge's patterns match but no
-    MAIN-world script runs (a frame where all are `@noframes`, a page
-    one `@exclude`s).
+    MAIN-world script runs (a page one `@exclude`s, a frame where all
+    are `@noframes`).
+  - In a child frame, the bridge doesn't ask at all when every
+    MAIN-world script is `@noframes`: the flag is set in its code at
+    registration. Otherwise a page full of iframes would wake the
+    worker once per frame.
   - So the SW first finds the MAIN-world scripts that match, and stops
     if there are none. Then it runs a bare `true` in the document's MAIN
     world (`pageWorldRuns`). Chrome drops it on a sandboxed page with no
@@ -1250,9 +1258,8 @@ world in that case, and so do we:
     `sandbox-fallback`) saying it runs in the isolated world, and why.
   - On a reload, each is built after the reload's refresh of it (up to
     5 seconds), so an edit runs.
-  - The SW ignores a second ask for a document while it runs. After a
-    worker restart, the prelude's own per-world check keeps a second
-    copy of a script from starting.
+  - The bridge asks once per document, and the SW ignores a second ask
+    for a document while it runs.
 - **What it costs.** Such a page runs no script of its own, so there
   are no page globals the script could have wanted. Scripts start late:
   after a bridge task, a worker wake-up and a build each, which can be
@@ -1268,10 +1275,6 @@ world in that case, and so do we:
   fallback that failed to start a script.
 - sm-dev's `eval --script` looks for a page-world script's scope in the
   isolated world too, so it reaches the fallback copy.
-- **One extra hop per call.** Every `GM_*` SW round-trip pays the
-  bridge relay, like `sm:check-pending` already did from MAIN. The
-  request leg costs no task hop (it is a synchronous event dispatch);
-  the reply comes back as an event once the SW has answered.
 
 #### MAIN-world traffic — the bridge
 
@@ -1690,8 +1693,7 @@ It is a Proxy (`makeSandbox` in `src/userscript-prelude.js`):
   - Read live instead of recorded:
     - Child frames by index (`window[0]`, `frames[i]`).
     - The window's `[Replaceable]` properties (`opener`, `innerWidth`,
-      `event`, …), whose write replaces the page's property, so
-      `window.opener = null` reads back.
+      `event`, …), which the page can replace with a plain value.
     - Names our GM runtime puts on the page's window (`onurlchange` and
       its `addEventListener` wrapper). Once one script grants
       `window.onurlchange`, every sandbox in that world reads these
@@ -1711,6 +1713,9 @@ It is a Proxy (`makeSandbox` in `src/userscript-prelude.js`):
   (`onload`, `location`, `name`, our `onurlchange`) reaches the page.
   A read-only one (`document`) refuses the write, as the real `window`
   does.
+  - Not a `[Replaceable]` property's: its setter would replace the
+    page's property, so the write stays in the sandbox like a plain one,
+    and `window.opener = null` reads back there.
 - **`window`, `self`, `globalThis`**, and `top` / `parent` / `frames`
   when they are this window, read as the sandbox. `unsafeWindow` is
   the page's.

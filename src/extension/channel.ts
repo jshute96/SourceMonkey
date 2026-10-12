@@ -20,6 +20,7 @@
 // and `toString`. See docs/injection.md#the-channel-key.
 
 import { CHANNEL_KEY_PLACEHOLDER } from '../channel-placeholder.js';
+import { assertWorkerContext } from '../run-context.js';
 
 const STORAGE_KEY = 'channelKey';
 
@@ -51,6 +52,7 @@ async function readOrMakeKey(): Promise<string> {
     key = got.key;
     return key;
   }
+  assertWorkerContext('write storage');
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   const made = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
   await chrome.storage.local.set({ [STORAGE_KEY]: { key: made, version } });

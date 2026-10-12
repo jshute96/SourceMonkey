@@ -1302,9 +1302,11 @@ page's CSP:
   frame, where the element isn't one of its own nodes.
 - **A detached parent.** The element is checked when the script later
   attaches it, from MAIN world.
+- **No bridge in the document yet**, so nothing took the event.
 
 A `<style>` blocked there (in the document, with no `.sheet`) is
-reported once per script per document as a Log warning. One under a
+reported once per script per document as a Log warning, naming which
+of these it was. One under a
 detached parent isn't, since it's checked only at insert.
 
 ### The calls

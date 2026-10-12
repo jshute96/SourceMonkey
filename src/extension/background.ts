@@ -2658,7 +2658,7 @@ const MAIN_FALLBACK_REFRESH_WAIT_MS = 5_000;
 // The Log line for a page-world script run isolated on a sandboxed
 // page, so its Log shows why it saw no page globals. Logged when the
 // copy is injected; it still asks check-pending whether to start.
-const SANDBOX_FALLBACK_MESSAGE = 'This page blocks scripts in its own page (a CSP sandbox), so this script runs in SourceMonkey\'s isolated world instead, as with @inject-into content';
+const SANDBOX_FALLBACK_MESSAGE = 'This page turns off its own scripts (it\'s in a sandbox without allow-scripts), so this script runs in SourceMonkey\'s isolated world instead, as with @inject-into content';
 
 function logSandboxFallback(scriptId: string, tabId: number, documentId: string): void {
   dlog(`[SourceMonkey] running ${getScriptLogLabel(scriptId)} isolated on sandboxed document ${documentId}`);
@@ -2840,10 +2840,15 @@ async function tryManualRun(tabId: number, scriptId: string): Promise<ManualRunR
       injections = built;
       isolated = true;
     }
-    // Under the document's own key, not the install's: see `documentKey`.
-    const key = await documentKey(counted.documentId, scriptId);
-    const rekeyed = injections.map((i) => ({ ...i, js: i.js.map((j) => ({ code: rekey(j.code, key) })) }));
-    await executeManualRun(tabId, counted.documentId, rekeyed);
+    // A page-world run goes under the document's own key, not the
+    // install's: see `documentKey`. An isolated one keeps the install's,
+    // which the page can't reach, so it shares that world's registered
+    // GM runtime and prelude rather than loading its own.
+    if (injections.some((i) => i.world === 'MAIN')) {
+      const key = await documentKey(counted.documentId, scriptId);
+      injections = injections.map((i) => ({ ...i, js: i.js.map((j) => ({ code: rekey(j.code, key) })) }));
+    }
+    await executeManualRun(tabId, counted.documentId, injections);
     if (isolated) logSandboxFallback(scriptId, tabId, counted.documentId);
     return { ok: true };
   } catch (err) {
@@ -3721,11 +3726,10 @@ async function handleCheckPending(
   if (refreshed.status !== 'ok') return { action: 'run' };
   if (refreshed.loadedAt <= wrapperLoadedAt) return { action: 'run' };
   // A refresh can move a script between worlds in either direction:
-  // adding its first real `@grant` takes it MAIN → USER_SCRIPT,
-  // dropping the last one (or adding `@inject-into page`) takes it
-  // back. The running wrapper is stuck in the world Chrome injected
-  // it into, so a swap across that line runs the new body in the
-  // wrong one — a body that expects page context silently can't see
+  // adding `@inject-into content` or `@sandbox DOM` takes it MAIN →
+  // USER_SCRIPT, dropping it takes it back. The running wrapper is
+  // stuck in the world Chrome injected it into, so a swap across that
+  // line runs the new body in the wrong one — a body that expects page context silently can't see
   // the page's globals from the isolated world, and one that expects
   // isolation gets a `window` the page can reach. The shared
   // GM runtime is registered per world too, so the new body's
@@ -3739,8 +3743,8 @@ async function handleCheckPending(
   //
   // Checked BEFORE building the swap body: the build composes the
   // requires and generates a source map (see injection-modes.md on
-  // what that costs for a require-heavy script), and a page can forge
-  // bridge requests. Nothing here needs the built body.
+  // what that costs for a require-heavy script). Nothing here needs
+  // the built body.
   const wrapperWorld = payload.__viaBridge === true ? 'MAIN' : 'USER_SCRIPT';
   if (wrapperWorld !== resolveScriptWorld(refreshed)) {
     console.log(
@@ -4940,9 +4944,15 @@ async function bridgeMayActAs(
 
 // The Log line for a style the page's CSP refused. The runtime prints
 // the same wording to the page console (`reportBlockedStyle`).
-function cspBlockedStyleMessage(api: 'GM_addStyle' | 'GM_addElement'): string {
-  return `The page's Content Security Policy blocked the style ${api} added, so its rules don't apply. ` +
-    'SourceMonkey can\'t exempt a style added inside a closed shadow root or another frame\'s document. ' +
+// `why` is the runtime's reason the bridge didn't insert it
+// (`insertViaBridge`); anything else reads as the bridge not being in.
+function cspBlockedStyleMessage(api: 'GM_addStyle' | 'GM_addElement', why: unknown): string {
+  const cause = why === 'closed-shadow-root'
+    ? 'SourceMonkey can\'t exempt a style added inside a closed shadow root.'
+    : why === 'other-document'
+      ? 'SourceMonkey can\'t exempt a style added to another frame\'s document.'
+      : 'SourceMonkey couldn\'t exempt it: its isolated-world helper wasn\'t loaded in this document yet.';
+  return `The page's Content Security Policy blocked the style ${api} added, so its rules don't apply. ${cause} ` +
     'Add @inject-into content to run the script isolated from the page, where all its styles are exempt.';
 }
 
@@ -5376,14 +5386,14 @@ function installScriptMessageListener(): void {
       // here, not on the page: the request can come over the bridge,
       // and a page-authored string in the Log would be a page-authored
       // Log line.
-      const payload = msg as { scriptId?: unknown; api?: unknown };
+      const payload = msg as { scriptId?: unknown; api?: unknown; why?: unknown };
       return guardBridgeCall(msg, payload.scriptId, ['dom'], sender, () => {
         if (typeof payload.scriptId === 'string' && typeof payload.api === 'string') {
           logScriptEvent(payload.scriptId, {
             level: 'warning',
             source: 'gm-dom',
             tabId,
-            message: cspBlockedStyleMessage(payload.api === 'GM_addElement' ? 'GM_addElement' : 'GM_addStyle'),
+            message: cspBlockedStyleMessage(payload.api === 'GM_addElement' ? 'GM_addElement' : 'GM_addStyle', payload.why),
           });
         }
       }, sendResponse);
@@ -5665,7 +5675,7 @@ async function recordScriptReport(
     // resyncs. Its `storage.init` runs in the same task as this report,
     // so a broadcast can't arrive before its cache is ready.
     if (typeof payload.gmSeq === 'number' && valuesChangedSince(id, payload.gmSeq)) {
-      const stale = { type: 'sm:gm-values-stale', smWorld: pushWorld(id), scriptId: id };
+      const stale = { type: 'sm:gm-values-stale', smWorld: pushWorld(id), smScript: id, scriptId: id };
       const target = senderDocId ? { documentId: senderDocId } : { frameId: sender.frameId ?? 0 };
       void chrome.tabs.sendMessage(tabId, stale, target).catch(() => undefined);
     }

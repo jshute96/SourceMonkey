@@ -822,8 +822,11 @@ refused. How it works and what differs:
   extension would skip it too. `match` shows why.
 - **`GM_x is not defined`**: missing `@grant GM_x`. Same in the
   extension.
-- **A page global is `undefined` in the script**: it's in the isolated
-  world (`@inject-into content` or `@sandbox DOM`). Remove that line.
+- **A page global is `undefined` in the script**: if it's read as
+  `window.x`, read it bare (`x`) or as `unsafeWindow.x`: unless the
+  script has `@grant none`, its `window` shows only the browser's
+  built-ins. Otherwise it's in the isolated world (`@inject-into
+  content` or `@sandbox DOM`); remove that line.
 - **An early `document-start` change gets overwritten by the page
   under sm-dev only**: in a tab a run tab opened, the script may run
   after the page's first inline scripts (see

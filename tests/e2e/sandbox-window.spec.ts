@@ -1,5 +1,5 @@
-// Scripts run in the page (MAIN) world by default, and a granted one
-// runs inside a sandbox `window`, as Tampermonkey and Violentmonkey
+// Scripts run in the page (MAIN) world by default, and any but a
+// `@grant none` one runs inside a sandbox `window`, as Tampermonkey and Violentmonkey
 // run theirs: reads reach the page's globals, but the script's own
 // writes (a `@require`d library's included) stay off the page's
 // `window`. A `@grant none` script gets the page's `window` itself.
@@ -276,6 +276,84 @@ test.describe('sandbox window', () => {
       'PageFormData',
       'mine',
     ].join(','));
+    await page.close();
+  });
+
+  // The sandbox is built when the script runs, which for a document-end
+  // or idle script is after the page's own code. A page that replaced
+  // `Object.create` would get the sandbox's own properties (every
+  // granted GM_* function) defined on an object it made; one hooking
+  // array and function methods would see the load listeners the body
+  // queues. The prelude uses built-ins it saved first.
+  test('a page replacing Object.create or array methods sees none of the sandbox', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    const url = `${fixtureServer.baseUrl}/hostile-sandbox.html`;
+    const HOOKS = `
+      (function () {
+        // Keeps only what names the script's functions, so a hook that
+        // runs constantly doesn't fill the page's memory.
+        var seen = window.__seen = [], calls = 0, busy = false;
+        var R = Reflect.apply, fnToString = Function.prototype.toString, test = RegExp.prototype.test;
+        var secret = /GM_getValue|onLoadSecret|ownSecret/;
+        var note = function (v) {
+          if (busy) return;
+          busy = true;
+          try {
+            calls++;
+            var t = typeof v === 'function' ? R(fnToString, v, []) : typeof v === 'string' ? v : '';
+            if (R(test, secret, [t])) seen[seen.length] = t;
+          } catch (e) {} finally { busy = false; }
+          window.__calls = calls;
+        };
+        var create = Object.create;
+        Object.create = function (proto) {
+          var o = R(create, Object, arguments);
+          if (proto !== null) return o;
+          return new Proxy(o, {
+            defineProperty: function (t, k, d) { note(k); note(d.value); return Reflect.defineProperty(t, k, d); },
+            set: function (t, k, v) { note(k); note(v); t[k] = v; return true; },
+          });
+        };
+        ['push', 'forEach'].forEach(function (n) {
+          var orig = Array.prototype[n];
+          Array.prototype[n] = function () { for (var i = 0; i < arguments.length; i++) note(arguments[i]); return R(orig, this, arguments); };
+        });
+        var call = Function.prototype.call, apply = Function.prototype.apply;
+        Function.prototype.call = function () { note(this); return R(call, this, arguments); };
+        Function.prototype.apply = function () { note(this); return R(apply, this, arguments); };
+        // The page's own use, so the test knows the hooks are live.
+        [Object.create(null)].forEach(function () {});
+      })();
+    `;
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: { name: 'Sandboxed', match: [url], grant: ['GM_getValue'] },
+      body: `
+        window.addEventListener('load', function onLoadSecret() { document.body.dataset.loaded = 'yes'; });
+        window.mine = function ownSecret() {};
+        document.body.dataset.smRan = typeof GM_getValue;
+      `,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.route(url, (route) => route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      body: `<!doctype html><html><head><script>${HOOKS}</script></head><body>hostile</body></html>`,
+    }));
+    await page.goto(url);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-ran', 'function');
+    await expect(page.locator('body')).toHaveAttribute('data-loaded', 'yes');
+    const { calls, seen } = await page.evaluate(() => {
+      const w = window as unknown as { __calls: number; __seen: string[] };
+      return { calls: w.__calls, seen: w.__seen };
+    });
+    // The hooks ran, and saw nothing of the script's.
+    expect(calls).toBeGreaterThan(0);
+    expect(seen).toEqual([]);
     await page.close();
   });
 

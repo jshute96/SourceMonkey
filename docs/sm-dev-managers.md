@@ -367,7 +367,7 @@ added to or removed.
 ### Saving a script's files
 
 `script print --file` and `script save` read the files as installed,
-through `managed.scriptFiles` (protocol 2.3). No refetch: they are what
+through `managed.scriptFiles`. No refetch: they are what
 runs now.
 
 - **Picking a file (`--file <name>`)**: a `@resource`'s name, exactly,

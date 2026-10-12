@@ -128,7 +128,7 @@ stay directly in `src/` so the extension's URLs have no folder in them.
 | `src/debug/icons.html` | Debug icons page markup: common header bar with Delete All action and cached-icons inspection table |
 | `src/glyph-sprite.svg` | The one copy of every inline SVG glyph, inlined into each page at `<!--#include glyph-sprite-->` by the build |
 | `src/styles.css` | Cross-page shared stylesheet linked by every extension page: the header bar and page column, the button surface, collection bubble + scheme chip, display-name, warning banner, modal dialog shell, install-target select, tab strip, site favicons |
-| `src/userscript-prelude.js` | Static per-world prelude (matcher, check-pending round-trip, @run-at gate, async-error listeners, focus signal, sandbox `window`); minified to WRAPPER_PRELUDE and spliced into each script's js[] as a `{code}` entry |
+| `src/userscript-prelude.js` | Per-world prelude spliced into each script: run decision, @run-at gate, error capture, sandbox `window` |
 | `src/wrapper-bridge.js` | USER_SCRIPT-world bridge for MAIN-world scripts: relays sm:* + GM_* traffic, does GM DOM inserts, spots sandboxed pages |
 | `src/wrapper-gm-runtime.js` | Shared per-world `GM_*` runtime — puts itself in the world's registry (shim cache, dual transport, storage cache + stored-value codec + batched writes) |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons (placeholder) |
@@ -475,7 +475,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/compare.spec.ts` | E2E tests for the compare page: fields table, per-file tabs and chips, view controls, swap, preview side, missing copy |
 | `tests/e2e/other-versions.spec.ts` | E2E tests for the other-versions panel: absolute-URL matching across collection kinds, per-row toggle, Refresh all, removing the copy on screen, the preview's callout / banner / install-offer section, the heading fold |
 | `tests/e2e/user-script-world-csp.spec.ts` | E2E tests for userscript-inserted `<script>` elements (inline and `src`) under the world CSP and a strict page CSP |
-| `tests/e2e/gm-dom.spec.ts` | E2E tests for `GM_addStyle` / `GM_addElement` — CSS application, tag-aware default parent (head/body), explicit-parent form, GM4 alias, permission gating, CSP exemption in both worlds, the closed-shadow-root CSP report |
+| `tests/e2e/gm-dom.spec.ts` | E2E tests for `GM_addStyle` / `GM_addElement`: parents, gating, and CSP exemption and reports |
 | `tests/e2e/gm-clipboard.spec.ts` | E2E tests for `GM_setClipboard` via `navigator.clipboard.writeText` — text round-trip, GM4 alias, permission gating |
 | `tests/e2e/gm-value-ordering.spec.ts` | E2E: two tabs churning the same GM value keys end up agreeing with the worker |
 | `tests/e2e/gm-storage-quota.spec.ts` | E2E: a GM value save refused for a full storage quota logs one error on the script |

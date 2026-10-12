@@ -1750,6 +1750,18 @@ test('buildBridgeSpec: emits a USER_SCRIPT spec on the union of the MAIN-world s
   assert.match(bridge.js[0].code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/__bridge\.js/);
 });
 
+test('buildBridgeSpec: a child frame asks about a sandboxed page only if a MAIN-world script runs there', () => {
+  // `sm:main-blocked` wakes the worker; in a child frame where every
+  // MAIN-world script is @noframes, none would run, so the bridge
+  // doesn't send it.
+  const main = (id, allFrames) => ({ id, world: 'MAIN', matches: ['https://y/*'], js: [{ code: '' }], runAt: 'document_idle', allFrames });
+  const flag = (specs) => /var SM_MAIN_IN_FRAMES = (true|false);/.exec(buildBridgeSpec(specs).js[0].code)[1];
+  assert.equal(flag([main('a', false)]), 'false');
+  assert.equal(flag([main('a', false), main('b', true)]), 'true');
+  // The isolated world's own scripts don't count.
+  assert.equal(flag([main('a', false), { ...main('b', true), world: 'USER_SCRIPT' }]), 'false');
+});
+
 // ---------- wrapPreludeEntry ----------
 
 test('wrapPreludeEntry: appends the page-wide prelude sourceURL', () => {

@@ -245,11 +245,9 @@
          MAIN:        the bridge re-sends those same messages into the
                       page as a push event; we read them here.
 
-     Why MAIN world needs this at all: `@grant unsafeWindow` forces a
-     script into MAIN (only there is `window` the page's window), and
-     such scripts routinely also @grant storage / XHR / menus. Without
-     a MAIN transport, fixing unsafeWindow would break everything else
-     they use.
+     Why MAIN world needs this at all: scripts run there by default,
+     as in TM and VM, and most grant storage / XHR / menus, none of
+     which `chrome.runtime` reaches from the page's world.
 
      Trust: in MAIN world the page shares the realm with the script and
      with this runtime, so what keeps it out is the channel key. Every
@@ -1594,6 +1592,7 @@
   var _EventTarget_dispatchEvent = null;
   var _Node_getRootNode = null;
   var _Node_parentNode = null;
+  var _Node_ownerDocument = null;
   var _ShadowRoot_host = null;
   var _ShadowRoot_mode = null;
   var _ShadowRoot = null;
@@ -1602,6 +1601,7 @@
     _EventTarget_dispatchEvent = EventTarget.prototype.dispatchEvent;
     _Node_getRootNode = Node.prototype.getRootNode;
     _Node_parentNode = _ObjectGetOwnPropertyDescriptor(Node.prototype, "parentNode").get;
+    _Node_ownerDocument = _ObjectGetOwnPropertyDescriptor(Node.prototype, "ownerDocument").get;
     _ShadowRoot_host = _ObjectGetOwnPropertyDescriptor(ShadowRoot.prototype, "host").get;
     _ShadowRoot_mode = _ObjectGetOwnPropertyDescriptor(ShadowRoot.prototype, "mode").get;
     _ShadowRoot = ShadowRoot;
@@ -1619,41 +1619,55 @@
     }
     return true;
   }
+  /* Inserts `el` through the bridge. Null when it did, else why not,
+     for the Log line if the page's CSP then blocks it
+     (`cspBlockedStyleMessage` in background.ts): "closed-shadow-root",
+     "other-document" (another frame's, whose own bridge didn't take
+     it), or "no-bridge" (not loaded in this document yet). */
   function insertViaBridge(parent, el) {
-    if (_sendMessage || !_MouseEvent || !_EventTarget_dispatchEvent || !_ShadowRoot_mode) return false;
+    if (_sendMessage || !_MouseEvent || !_EventTarget_dispatchEvent || !_ShadowRoot_mode) return "no-bridge";
     try {
-      if (inClosedShadowRoot(parent)) return false;
+      if (inClosedShadowRoot(parent)) return "closed-shadow-root";
       var init = _ObjectCreate(null);
       init.relatedTarget = el;
       init.cancelable = true;
       init.composed = true;
       var ev = new _MouseEvent(BRIDGE_INSERT_EVENT, init);
-      return _ReflectApply(_EventTarget_dispatchEvent, parent, [ev]) === false && _ReflectApply(_Node_parentNode, el, []) === parent;
+      var taken = _ReflectApply(_EventTarget_dispatchEvent, parent, [ev]) === false && _ReflectApply(_Node_parentNode, el, []) === parent;
+      if (taken) return null;
+      return (_ReflectApply(_Node_ownerDocument, parent, []) || parent) === document ? "no-bridge" : "other-document";
     } catch (_ie) {
-      return false;
+      return "no-bridge";
     }
   }
+  /* Returns why the bridge didn't insert it, as `insertViaBridge`. */
   function insertNode(parent, el) {
-    if (insertViaBridge(parent, el)) return;
+    var notRelayed = insertViaBridge(parent, el);
+    if (notRelayed === null) return null;
     if (_Node_appendChild) _ReflectApply(_Node_appendChild, parent, [el]);
     else parent.appendChild(el);
+    return notRelayed;
   }
 
   /* Once per script per document: a page with a strict CSP blocks
      every style the script adds, and one line says it. */
   var blockedStyleReported = _ObjectCreate(null);
-  function reportBlockedStyle(scriptId, api) {
+  function reportBlockedStyle(scriptId, api, why) {
     if (blockedStyleReported[scriptId]) return;
     blockedStyleReported[scriptId] = true;
     /* Same wording the SW puts in the Log (`cspBlockedStyleMessage` in
        background.ts); the SW words its own line rather than trusting
        a page-reachable string. */
+    var cause = why === "closed-shadow-root"
+      ? "SourceMonkey can't exempt a style added inside a closed shadow root."
+      : why === "other-document"
+        ? "SourceMonkey can't exempt a style added to another frame's document."
+        : "SourceMonkey couldn't exempt it: its isolated-world helper wasn't loaded in this document yet.";
     var text = "The page's Content Security Policy blocked the style " + api +
-      " added, so its rules don't apply. SourceMonkey can't exempt a style added inside a" +
-      " closed shadow root or another frame's document. Add @inject-into content to run" +
+      " added, so its rules don't apply. " + cause + " Add @inject-into content to run" +
       " the script isolated from the page, where all its styles are exempt.";
     try { console.info("[SourceMonkey:" + scriptId + "] " + text); } catch (_e) {}
-    transportSend({ type: "sm:gm-dom-blocked", scriptId: scriptId, api: api }).catch(function () {});
+    transportSend({ type: "sm:gm-dom-blocked", scriptId: scriptId, api: api, why: why }).catch(function () {});
   }
   /* A <style> that is in the document but has no sheet was refused by
      CSP: the parser builds the sheet synchronously on insertion, so a
@@ -1677,8 +1691,8 @@
       el.textContent = String(css == null ? "" : css);
       var parent = defaultParent();
       if (parent) {
-        insertNode(parent, el);
-        if (styleWasBlocked(el)) reportBlockedStyle(scriptId, "GM_addStyle");
+        var why = insertNode(parent, el);
+        if (why !== null && styleWasBlocked(el)) reportBlockedStyle(scriptId, "GM_addStyle", why);
       }
       return el;
     },
@@ -1724,9 +1738,9 @@
         }
       }
       if (parent) {
-        insertNode(parent, el);
-        if (String(tagName).toUpperCase() === "STYLE" && styleWasBlocked(el)) {
-          reportBlockedStyle(scriptId, "GM_addElement");
+        var notRelayed = insertNode(parent, el);
+        if (notRelayed !== null && String(tagName).toUpperCase() === "STYLE" && styleWasBlocked(el)) {
+          reportBlockedStyle(scriptId, "GM_addElement", notRelayed);
         }
       }
       return el;

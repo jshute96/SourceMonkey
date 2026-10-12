@@ -2169,9 +2169,8 @@ that, since the answer is a function.
 - When Chrome restarts SourceMonkey's service worker (its background
   script) during a run, what the scripts did meanwhile may be missing
   from the run's output. The run says when this happens.
-- A log line from an iframe can lack its frame prefix: an event from a
-  SourceMonkey before protocol 2.2, or a console line logged before
-  sm-dev reached the frame's process.
+- A log line from an iframe can lack its frame prefix: a console line
+  logged before sm-dev reached the frame's process.
 - `--lang` doesn't reach `GM_xmlhttpRequest` and `GM_download` in a
   connected browser (see [`start` options in detail](#start-options-in-detail)).
 - In specs, a worker's tests share the browser's context (see

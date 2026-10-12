@@ -25,7 +25,6 @@ import { launchExtensionBrowser } from './extension-launch.js';
 import { fetchManager, fetchedVersion } from './manager-fetch.js';
 import { DEFAULT_MANAGER, MANAGERS, managerFlag, type ManagerName } from './managers.js';
 import { ExtensionLink, linkRunId, type ExtensionEvent } from './extension-link.js';
-import { ISOLATES_SANDBOXED_PAGES_MINOR, PAGE_WORLD_DEFAULT_MINOR } from '../sm-dev-protocol.js';
 import { ExternalRunScripts, externalControl, externalOff, externalOthers, openExternalManager, type ExternalManager } from './external-manager.js';
 import type { ErrorReport, ManualReport, PageLink, SkipReport, StartReport } from './host.js';
 import { attachPage, targetIdOf, type AttachOptions, type PageAttachment } from './page-watch.js';
@@ -917,10 +916,6 @@ async function runInBrowser(
   try {
     link = manager === 'sourcemonkey' ? await ExtensionLink.open(session.context, linkRunId(remote.id))
       : ExtensionLink.without(session.context, linkRunId(remote.id), runUses(manager));
-    // sm-dev works out each script's world itself (`resolveScriptWorld`),
-    // so it has to agree with the extension's: before protocol 2.4,
-    // granted scripts ran isolated.
-    if (manager === 'sourcemonkey') link.requireMinor(PAGE_WORLD_DEFAULT_MINOR, 'Running scripts in the page\'s world by default');
   } catch (err) {
     opts.out(`[sm-dev] ${(err as Error).message}`);
     return 1;
@@ -960,7 +955,7 @@ async function runInBrowser(
     const tabId = await claimTab(link, page, opts.out);
     if (tabId === undefined) return 1;
     wirePageOutput(page, 1, opts.emit!, host, link.origin, () => tabs.firstTabScripts);
-    wireSandboxCheck(page, () => tabs.firstTabScripts, opts.out, link.hasMinor(ISOLATES_SANDBOXED_PAGES_MINOR));
+    wireSandboxCheck(page, () => tabs.firstTabScripts, opts.out, link.linked);
     const dialogs = await DialogTracker.attach(page, tabEvent(opts.emit!, 1, 'dialog'), {
       visible: browserVisible(opts), commandsComing, tabRef: () => (tabs.list().length > 1 ? 'T1' : undefined),
     });
@@ -1520,7 +1515,7 @@ class FollowedTabs {
     const tabScripts = (): readonly PreparedScript[] => ((tabNow?.noScript ?? noScript) ? [] : this.scripts);
     wirePageOutput(page, n, this.opts.emit!, this.host, this.link.origin, tabScripts);
     // Not for a tab with no scripts, which gets none either way.
-    wireSandboxCheck(page, tabScripts, out, this.link.hasMinor(ISOLATES_SANDBOXED_PAGES_MINOR));
+    wireSandboxCheck(page, tabScripts, out, this.link.linked);
     const dialogs = await DialogTracker.attach(page, tabEvent(this.opts.emit!, n, 'dialog'), {
       visible: browserVisible(this.opts),
       commandsComing: this.commandsComing,
@@ -1774,8 +1769,8 @@ function shortValue(value: unknown): string {
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 // `isolates`: the manager runs such a page's MAIN-world scripts
-// isolated instead (SourceMonkey from protocol 2.5), so the line is a
-// note rather than a warning.
+// isolated instead (SourceMonkey does), so the line is a note rather
+// than a warning.
 function wireSandboxCheck(page: Page, scripts: () => readonly PreparedScript[], out: (line: string) => void, isolates: boolean): void {
   page.on('response', (response) => {
     try {

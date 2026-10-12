@@ -185,6 +185,12 @@ export interface GmRuntimeScope {
   includeGlobs: Set<string>;
 }
 
+// The bridge's scope, and whether any MAIN-world script runs in child
+// frames (see `noMainInFrames`).
+interface BridgeScope extends GmRuntimeScope {
+  mainInFrames: boolean;
+}
+
 // What one pass of `collectActiveSpecs` produced.
 export interface ActiveSpecs {
   specs: RegistrationSpec[];
@@ -1239,6 +1245,7 @@ export function buildBridgeSpec(activeSpecs: RegistrationSpec[]): RegistrationSp
     patterns: patternsOf(spec),
     injectsOn: injectsOnOf(spec),
     gmRuntime: null,
+    allFrames: spec.allFrames === true,
   })));
   return scope ? bridgeSpec(scope) : null;
 }
@@ -1254,10 +1261,11 @@ const HELPER_ALL_FRAMES = true;
 // incremental sync answers that from the whole registration set rather
 // than from one sync's spec list. `scope` is never empty: a MAIN-world
 // script that reached registration had at least one pattern.
-function bridgeSpec(scope: GmRuntimeScope): RegistrationSpec {
+function bridgeSpec(scope: BridgeScope): RegistrationSpec {
+  const code = scope.mainInFrames ? withChannelKey(WRAPPER_BRIDGE) : noMainInFrames(withChannelKey(WRAPPER_BRIDGE));
   const spec: RegistrationSpec = {
     id: BRIDGE_SCRIPT_ID,
-    js: [{ code: withChannelKey(WRAPPER_BRIDGE) + `\n//# sourceURL=${BRIDGE_SOURCE_URL}\n` }],
+    js: [{ code: code + `\n//# sourceURL=${BRIDGE_SOURCE_URL}\n` }],
     runAt: 'document_start',
     world: 'USER_SCRIPT',
     // In frames too, whether or not its scripts are: see `HELPER_ALL_FRAMES`.
@@ -1265,6 +1273,17 @@ function bridgeSpec(scope: GmRuntimeScope): RegistrationSpec {
   };
   applyScope(spec, scope);
   return spec;
+}
+
+// The bridge's code for a registration set whose MAIN-world scripts are
+// all `@noframes`: in a child frame it then doesn't ask the SW about a
+// sandboxed page (`sm:main-blocked`), since no MAIN-world script would
+// run there anyway, and the ask would wake the worker for each frame.
+const MAIN_IN_FRAMES = 'var SM_MAIN_IN_FRAMES = true;';
+const NO_MAIN_IN_FRAMES = 'var SM_MAIN_IN_FRAMES = false;';
+function noMainInFrames(bridgeCode: string): string {
+  if (!bridgeCode.includes(MAIN_IN_FRAMES)) throw new Error('Internal error: The bridge has no frames flag');
+  return bridgeCode.replace(MAIN_IN_FRAMES, NO_MAIN_IN_FRAMES);
 }
 
 // Put a pattern union on a spec. Chrome refuses a registration with
@@ -1561,6 +1580,10 @@ interface Placement {
   // GM runtime; null when it doesn't. The runtime's scope is
   // the union of these. Always null for our own registrations.
   gmRuntime: GmRuntimePatterns | null;
+  // Whether Chrome injects it into child frames too (no `@noframes`).
+  // The bridge only checks for a sandboxed frame where some MAIN-world
+  // script does. Absent in a record from an older build: taken as true.
+  allFrames?: boolean;
   // A user script's registration as placed, code and settings
   // (`specHash`), so an incremental sync can leave one alone that it
   // rebuilt the same: a row change the registration doesn't show costs
@@ -1793,12 +1816,13 @@ function gmRuntimeScopeOf(placements: Iterable<Placement>): Map<InjectionWorld, 
 // script's patterns, or null when there is no MAIN-world script and so
 // no bridge. Every such script counts, whatever it grants — the reload
 // handshake and error reports ride the bridge too.
-function bridgeScopeOf(placements: Iterable<Placement>): GmRuntimeScope | null {
-  let scope: GmRuntimeScope | null = null;
+function bridgeScopeOf(placements: Iterable<Placement>): BridgeScope | null {
+  let scope: BridgeScope | null = null;
   for (const p of placements) {
     if (p.world !== 'MAIN') continue;
-    if (!scope) scope = { matches: new Set(), includeGlobs: new Set() };
+    if (!scope) scope = { matches: new Set(), includeGlobs: new Set(), mainInFrames: false };
     addToScope(scope, p.injectsOn);
+    if (p.allFrames !== false) scope.mainInFrames = true;
   }
   return scope;
 }
@@ -1843,6 +1867,7 @@ function placementsForSpecs(
     patterns: patternsOf(spec),
     injectsOn: injectsOnOf(spec),
     gmRuntime: gmRuntime.get(spec.id) ?? null,
+    allFrames: spec.allFrames === true,
   }));
 }
 
@@ -1864,13 +1889,17 @@ function specHash(spec: RegistrationSpec): string {
   return hash;
 }
 
-// A stable identity for one runtime registration's pattern union, so an
+// A stable identity for one of our registrations' pattern union, so an
 // incremental sync can tell whether the scope moved. Sorted because the
-// union is built from a Set, whose order follows insertion.
+// union is built from a Set, whose order follows insertion. The bridge's
+// frames flag (`noMainInFrames`) counts too, so a script gaining or
+// losing `@noframes` re-registers it.
 function gmRuntimeFingerprint(spec: RegistrationSpec): string {
+  const noFrames = spec.js?.some((js) => js.code?.includes(NO_MAIN_IN_FRAMES) ?? false) ?? false;
   return JSON.stringify([
     [...(spec.matches ?? [])].sort(),
     [...(spec.includeGlobs ?? [])].sort(),
+    ...(noFrames ? ['noMainInFrames'] : []),
   ]);
 }
 

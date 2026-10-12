@@ -354,8 +354,16 @@
        scripts first, then runs a bare `true` in this document's own
        world (`pageWorldRuns`), and falls back only if it doesn't run.
      - The page can send MAIN_READY too, which only keeps the fallback
-       off. */
-  if (!mainSeen) {
+       off.
+     - A child frame doesn't ask when every MAIN-world script is
+       `@noframes`, so a page full of iframes doesn't wake the SW for
+       each. */
+  /* False when every MAIN-world script is `@noframes` (swapped in at
+     registration, `noMainInFrames` in src/extension/injector.ts): in a
+     child frame none would run, so there is nothing to ask about. */
+  var SM_MAIN_IN_FRAMES = true;
+  var mainCanRun = SM_MAIN_IN_FRAMES || window === window.top;
+  if (!mainSeen && mainCanRun) {
     setTimeout(function () {
       if (mainSeen) return;
       try {
