@@ -211,7 +211,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/refresh-error.ts` | Session-storage map of collections whose last refresh was read but could not be saved, plus its shared message |
 | `src/extension/sw-teardown.ts` | Marks `No SW` rejections (chrome.* calls cut off by service-worker shutdown) handled so they stay out of the Errors panel |
 | `src/extension/script-log-id.ts` | Computes each script's "log ID" (`foo.user.js#E4`: basename and script number) used in every log line and the viewer |
-| `src/extension/managed-changes.ts` | sm-dev's changes to collections and installed scripts, and the details `script show` and `print` read |
+| `src/extension/managed-changes.ts` | sm-dev's changes to collections and installed scripts, and what `script show`, `print` and `save` read |
 | `src/extension/managed-items.ts` | The collections and installed scripts in the shapes sm-dev's `collection list` and `script list` read |
 | `src/extension/sticky-numbers.ts` | Script and collection numbers (sm-dev's `E4`, `C3`): handing them out, and holding removed ones back before reuse |
 | `src/extension/script-log.ts` | Per-script event log store: chrome.storage.session keyed by script ID, serialized appends with a fixed cap, a sibling `loglevel:` sentinel, and a page→worker write relay kept as a guard |
@@ -273,7 +273,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/run.ts` | The run process `sm-dev start` spawns: open a browser, push the scripts into SourceMonkey, follow tabs, serve clients |
 | `src/harness/extension-launch.ts` | Launches Chromium with the built extension (or a fetched manager) on a temp profile: `--temp-browser`, and the e2e suites' browser |
 | `src/harness/extension-link.ts` | A run's or fixture test's connection to the real extension: version check, worker calls, pushes, claims and lease, page markers, events; the collection and script calls, also run-less |
-| `src/harness/manager-commands.ts` | The `collection` and `script` verbs: list, show and change a manager's collections and scripts, as text or JSON |
+| `src/harness/manager-commands.ts` | The `collection` and `script` verbs: list, show, print, save and change a manager's collections and scripts |
 | `src/harness/external-manager.ts` | Violentmonkey and Tampermonkey: their `collection`/`script` calls, a run's scripts in them, and scripts on a tab |
 | `src/harness/violentmonkey.ts` | Violentmonkey, driven by the messages its own pages send, from a hidden options page |
 | `src/harness/tampermonkey.ts` | Tampermonkey, driven by the messages its dashboard sends, with local `@require`s rewritten and stack lines mapped back |

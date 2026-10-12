@@ -28,7 +28,7 @@ import { firstLine } from './extension-link.js';
 import type { ConnectPromptRecord, HarnessHost, MenuCommandRecord } from './host.js';
 import type { PageAttachment } from './page-watch.js';
 import {
-  collectionList, count, managerVerb, noSuchScript, noSuchVerb, scriptList, type ManagerControl, type ManagerRun, type RunView,
+  collectionList, count, managerVerb, noSuchScript, noSuchVerb, otherVerbsFlag, scriptList, type ManagerControl, type ManagerRun, type RunView,
 } from './manager-commands.js';
 import { parseCommandArgs, splitWords, unquoteWhole, type ParsedArgs } from './command-args.js';
 import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, SAME_COMMANDS, commandSyntax, commandsHelp, unsupportedCommand } from './command-list.js';
@@ -412,7 +412,7 @@ function managedVerb(name: string, rest: { line: string } | { words: string[] })
 }
 
 // The verbs that only look.
-const LOOKING_VERBS = new Set(['list', 'show', 'print']);
+const LOOKING_VERBS = new Set(['list', 'show', 'print', 'save']);
 
 /**
  * A command line's words, as the prompt splits them (quotes kept
@@ -960,7 +960,7 @@ export async function runConsoleCommand(
         return false;
       }
       if (page.length > 1) {
-        ctx.out(MISTAKE_PREFIX + 'The `open` command opens one page, so it takes one URL, file or script. To open several, use `newtab`.');
+        ctx.out(MISTAKE_PREFIX + 'The `open` command opens one page, so it takes one URL, file or script. To open multiple, use `newtab`.');
         return false;
       }
       const where = page[0] ?? '';
@@ -1174,7 +1174,7 @@ function pickScript(ctx: ConsoleContext, arg: string): PreparedScript | null {
     ctx.out(`[sm-dev] No loaded script matches ${quoted(arg)}. Use ${quoted('scripts')} to list them.`);
   } else {
     const numbers = hits.map((script) => ctx.scripts.indexOf(script) + 1).join(', ');
-    ctx.out(`[sm-dev] Several loaded scripts match ${quoted(arg)} (${numbers}). Name one by its number.`);
+    ctx.out(`[sm-dev] Multiple loaded scripts match ${quoted(arg)} (${numbers}). Name one by its number.`);
   }
   return null;
 }
@@ -1213,6 +1213,11 @@ export async function managerCommand(
     return false;
   }
   const kind = command === 'script' ? 'script' : 'collection';
+  const wrongFlag = form === undefined ? null : otherVerbsFlag(kind, form, flags);
+  if (wrongFlag) {
+    ctx.out(`${MISTAKE_PREFIX}${wrongFlag}`);
+    return false;
+  }
   if (form !== undefined && form !== 'list') {
     return managerVerb({
       manager: ctx.manager,
@@ -1741,7 +1746,7 @@ function framesCommand(ctx: ConsoleContext, words: string[], current: Controlled
     ];
     if (hits.length !== 1) {
       ctx.out(hits.length > 1
-        ? `[sm-dev] Several frames' ids start with ${quoted(id)} (${hits.map((h) => h.name).join(', ')}). Give more of it.`
+        ? `[sm-dev] Multiple frames have ids starting with ${quoted(id)} (${hits.map((h) => h.name).join(', ')}). Give more of it.`
         : `[sm-dev] No frame's id starts with ${quoted(id)}. Use ${quoted('frames all')} to list them.`);
       return false;
     }

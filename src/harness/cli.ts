@@ -846,7 +846,7 @@ async function targetRun(wanted: string | undefined): Promise<RunRecord> {
     return found;
   }
   if (runs.length === 0) throw new Error(NO_RUN_TO_USE);
-  if (runs.length > 1) throw new UsageError(['Several runs are active. Pick one with --run, or attach to one:', ...runTable(runs)].join('\n'));
+  if (runs.length > 1) throw new UsageError(['Multiple runs are active. Pick one with --run, or attach to one:', ...runTable(runs)].join('\n'));
   return runs[0];
 }
 
@@ -1439,9 +1439,14 @@ async function managerHere(words: string[]): Promise<number> {
       if (link.versionNote) writeErr(S.message(link.versionNote));
       manager = link.manager;
     }
-    // Its failures go to stderr, as sm-dev's own commands' do.
+    // Its failures go to stderr, as sm-dev's own commands' do, with the
+    // lines that follow one (the files it lists).
+    let failed = false;
     const said = (line: string): void => {
-      if (line.startsWith(SM_DEV_PREFIX)) writeErr(errorLine(line.slice(SM_DEV_PREFIX.length)));
+      if (line.startsWith(SM_DEV_PREFIX)) {
+        failed = true;
+        writeErr(errorLine(line.slice(SM_DEV_PREFIX.length)));
+      } else if (failed) writeErr(line);
       else out(line);
     };
     return await managerCommand({ manager, out: said, json }, name, parsed) === false ? 1 : 0;

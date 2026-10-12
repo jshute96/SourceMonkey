@@ -13,7 +13,7 @@ import { plainLine } from '../../../lib/harness/output-style.js';
 test('--log-source takes a comma list, or all', () => {
   assert.deepEqual([...parseLogSources('sm,page')], ['sm', 'page']);
   assert.deepEqual([...parseLogSources('all')], ['sm', 'event', 'script', 'page']);
-  assert.deepEqual(parseLogSources('sm,pages'), { error: 'The --log-source flag takes sm, event, script, page or all, or several separated by commas, not pages' });
+  assert.deepEqual(parseLogSources('sm,pages'), { error: 'The --log-source flag takes sm, event, script, page or all, or multiple separated by commas, not pages' });
   assert.equal('error' in parseLogSources(''), true);
   assert.deepEqual([...DEFAULT_LOG_SOURCES], ['sm', 'event', 'script']);
 });

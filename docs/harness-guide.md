@@ -1685,7 +1685,7 @@ from narrowest to broadest:
 - `page`: full Chrome console logs. (Off by default, except for
   `wait log`.)
 
-A line can be in several sources, and asking for any of them shows it:
+A line can be in multiple sources, and asking for any of them shows it:
 
 - A script's console line is `script`, and also `page`.
 - A script's throw is an `event`, and also `sm`, `script` and `page`.

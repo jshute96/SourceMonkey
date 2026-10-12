@@ -1326,13 +1326,13 @@ sm-dev knows a tab by its CDP target id; the extension knows it by its
     any that are still open and lost their claim.
   - It says how many, and the run prints that when a worker restart
     caused it.
-- **Several runs in one browser**: see below.
+- **Multiple runs in one browser**: see below.
 - **A run with no scripts** claims its tabs too, with nothing in its
   test collection yet, so a later `load` runs only its own scripts
   there. Tabs the person opens by hand aren't claimed, and run
   SourceMonkey-managed scripts as usual.
 
-#### Several runs in one browser
+#### Multiple runs in one browser
 
 Two sm-dev runs can share a browser: two shells on the shared browser,
 or a second run pointed at a `--temp-browser`'s port.

@@ -30,7 +30,7 @@ From narrowest to broadest:
 
 `all` stands for every source.
 
-### Lines in several sources
+### Lines in multiple sources
 
 Some lines belong to more than one source, so asking for any of them
 shows the line, once, under its first source's prefix:

@@ -46,7 +46,7 @@ test.describe('sm-dev typed commands', () => {
     // By exact file name, or by a piece of a name that only one has.
     expect(await run('scripts first.user.js')).toEqual([`[sm-dev] Selected First (${scriptsDir.path}/first.user.js)`]);
     expect(await run('scripts cond')).toEqual([`[sm-dev] Selected Second (${scriptsDir.path}/second.user.js)`]);
-    expect(await run('scripts user.js')).toEqual(['[sm-dev] Several loaded scripts match user.js (1, 2). Name one by its number.']);
+    expect(await run('scripts user.js')).toEqual(['[sm-dev] Multiple loaded scripts match user.js (1, 2). Name one by its number.']);
     expect(await run('scripts Nobody')).toEqual(['[sm-dev] No loaded script matches Nobody. Use `scripts` to list them.']);
     expect(await run('scripts 3')).toEqual(['[sm-dev] There is no script 3. Use `scripts` to list them.']);
 
@@ -254,7 +254,7 @@ test.describe('sm-dev typed commands', () => {
         `[sm-dev] The page commands now act on T1 (${target})`,
       ]);
       expect(await run('focus AB12CD')).toEqual([
-        '[sm-dev] Several tabs\' target ids start with AB12CD (T1, T2). Give more of it.',
+        '[sm-dev] Multiple tabs have target ids starting with AB12CD (T1, T2). Give more of it.',
       ]);
       expect(await run('reload ABCDEF')).toEqual(['[sm-dev] No open tab\'s target id starts with ABCDEF. Use `tabs` to list them.']);
       // Too short to be taken for an id, and a long number is still a slip.
@@ -481,7 +481,7 @@ test.describe('sm-dev typed commands', () => {
     expect(await run('newtab all --offline')).toEqual(['[sm-dev] ERROR: The `newtab` command takes all by itself, to open each script\'s page']);
     // A glob matching several files is more than open can load.
     expect(await run(`open ${scriptsDir.path}/*.user.js`)).toEqual([
-      '[sm-dev] ERROR: The `open` command opens one page, so it takes one URL, file or script. To open several, use `newtab`.',
+      '[sm-dev] ERROR: The `open` command opens one page, so it takes one URL, file or script. To open multiple, use `newtab`.',
     ]);
     expect(await run('newtab T1.1')).toEqual([
       '[sm-dev] ERROR: The `newtab` command opens a tab of its own, so it takes URLs, files or script numbers, not T1.1',

@@ -1210,11 +1210,43 @@ JSON:
 interface ScriptPrintData {
   script?: string;       // its id; none for another run's script
   name: string;
-  text: string;          // the installed text
+  file?: {               // with --file: the file printed
+    kind: 'require' | 'resource';
+    url: string;
+    name?: string;       // a @resource's
+  };
+  text?: string;         // the installed text; none with --out
+  out?: string;          // with --out: the file written, absolute
 }
 ```
 
-- The text form is the script's text alone.
+- The text form is the text alone, or with `--out`, `Wrote <file> (N
+  bytes)`.
+
+### `script [script] save <dir>`
+
+```ts
+interface ScriptSaveData {
+  script?: string;       // its id; none for another run's script
+  name: string;
+  dir: string;           // absolute
+  files: {
+    kind: 'script' | 'require' | 'resource';
+    url?: string;
+    name?: string;       // a @resource's
+    path: string;        // absolute
+  }[];
+  notes?: string[];      // what wasn't saved, and why
+}
+```
+
+Text:
+
+```text
+Saved E3: Dark mode to out: 2 files
+  out/dark.user.js
+  out/cdn.example.com/lib/x.js
+```
 
 ### `collection <collection> show`
 

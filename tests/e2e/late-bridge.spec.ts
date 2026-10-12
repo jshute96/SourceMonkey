@@ -51,7 +51,9 @@ async function widenHelpers(
 
 async function delayBridge(getServiceWorker: () => Promise<Worker>): Promise<void> {
   await (await getServiceWorker()).evaluate(async (id) => {
-    await chrome.userScripts.update([{ id, runAt: 'document_idle' }]);
+    // `update` merges into the registered spec, so `js` can be left
+    // out, though the types require it.
+    await chrome.userScripts.update([{ id, runAt: 'document_idle' } as chrome.userScripts.RegisteredUserScript]);
   }, BRIDGE_ID);
 }
 

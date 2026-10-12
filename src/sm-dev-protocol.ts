@@ -81,7 +81,9 @@ export const SKIP_REASON_SM_DEV = 'tab controlled by sm-dev';
 //   the command's `documentId`.
 // 2.2: `request`, `download`, `values` and a shown `notification` event
 //   carry the sending document's `documentId`, which says which frame.
-export const SM_DEV_PROTOCOL = { major: 2, minor: 2 } as const;
+// 2.3: `managed.scriptFiles`, a script's `@require` and `@resource`
+//   files as installed.
+export const SM_DEV_PROTOCOL = { major: 2, minor: 3 } as const;
 
 export interface ProtocolVersion {
   major: number;
@@ -150,6 +152,27 @@ export interface ManagedFile {
   loaded?: boolean;
   /** The local file read in its place. */
   local?: string;
+}
+
+/**
+ * A `@require` or `@resource` file's installed contents, for `script
+ * print --file` and `script save` (`managed.scriptFiles`).
+ */
+export interface ManagedFileContent {
+  kind: 'require' | 'resource';
+  /** Its URL, resolved. */
+  url: string;
+  /** `@resource`'s name. */
+  name?: string;
+  /**
+   * Where `script save` writes it, relative to the script: an http(s)
+   * URL's `<host>/<path>`, as the viewer's local copy lays it out, or a
+   * `file:` URL's file name. Absent when there is none (a `data:` URL).
+   */
+  path?: string;
+  /** Its bytes. */
+  base64: string;
+  contentType?: string;
 }
 
 /** An installed script in full, for `script show` (`managed.scriptDetails`). */

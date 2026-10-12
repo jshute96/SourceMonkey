@@ -485,7 +485,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       '3. `script`: Chrome console logs that came from the run\'s scripts.',
       '4. `page`: Full Chrome console logs.',
       '',
-      'Some lines are in several sources: a script\'s console line is also `page`, and its throw is an `event`, and also `sm`, `script` and `page`.',
+      'Some lines are in multiple sources: a script\'s console line is also `page`, and its throw is an `event`, and also `sm`, `script` and `page`.',
       '',
       'By default, sm-dev prints log lines from 1-3 as they arrive.',
       '',
@@ -509,7 +509,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         term: '--log-source SOURCE',
         about: [
-          'The log source to show: `sm`, `event`, `script`, `page`, or `all`. Several can be given, separated by commas.',
+          'The log source to show: `sm`, `event`, `script`, `page`, or `all`. Multiple can be given, separated by commas.',
           'On `start` and `attach`, what logs that sm-dev session shows.',
         ],
         commands: ['start', 'attach', 'logs', 'wait'],
@@ -801,7 +801,26 @@ export const HELP_SECTIONS: HelpSection[] = [
               about: ['A script: `E12`, its name or a part of it, or `id=<id>`. In a run, one of its own scripts by its number (`2`).', 'Without one, the selected script.'],
             }],
           },
-          { usage: 'script [script] print', syntax: NONE, about: 'Print a script\'s installed text.' },
+          {
+            usage: 'script [script] print [--file <name>] [--out <file>]',
+            syntax: NONE,
+            about: [
+              'Print a script\'s installed text, or one of its `@require` or `@resource` files.',
+              '`--file` names the file: part of one `@require` or `@resource` file\'s URL, a `@resource`\'s name, or `script`.',
+              '`--out` writes it to a file instead. A file that isn\'t text must use `--out`.',
+            ],
+          },
+          {
+            usage: 'script [script] save <dir> [--only <parts>] [--flat] [--force]',
+            syntax: { args: 'words', max: 1 },
+            about: [
+              'Save a script and its `@require` and `@resource` files into a directory, which is created if necessary.',
+              'By default, each file is saved in directories matching its URL (`cdn.example.com/lib/x.js`).',
+              '`--flat` saves all files in the target directory.',
+              '`--force` overwrites files that already exist.',
+              '`--only` takes a comma-separated list of items to save, e.g. `--only script,requires,resources`.',
+            ],
+          },
           { usage: 'script [script] enable', syntax: NONE, about: 'Turn a script on. In a run, one of its own scripts too, in the run\'s tabs.' },
           { usage: 'script [script] disable', syntax: NONE, about: 'Turn a script off. In a run, one of its own scripts too, in the run\'s tabs.' },
           {

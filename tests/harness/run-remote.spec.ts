@@ -333,7 +333,7 @@ test('start --detach returns once started, is replaced by the next unless --new,
     expect(await ids()).toEqual(['Run', 'D1', 'D2']);
     // Two going, so a command has to name one.
     const several = await setup.cli('eval', 'document.title');
-    expect(several.slice(0, 2)).toEqual(['ERROR: Several runs are active. Pick one with --run, or attach to one:', expect.stringMatching(/^Run\s+PID/)]);
+    expect(several.slice(0, 2)).toEqual(['ERROR: Multiple runs are active. Pick one with --run, or attach to one:', expect.stringMatching(/^Run\s+PID/)]);
     // Except status, which shows the browser, then each run, a blank line between.
     const statuses = execFileSync(process.execPath, [CLI, 'status'], { env: setup.env, encoding: 'utf8' }).split('\n');
     expect(statuses[0]).toBe('No current run. (Use `start` or `attach` to connect to one.)');
@@ -722,7 +722,7 @@ test('logs reads the run\'s log by source, tab, text, tail and position; streams
     expect((await setup.cli('wait', 'log', 'page says', '--log-source', 'script', '--since', '0', '--timeout-seconds', '0.2')).at(-1))
       .toMatch(/^\[sm-dev\] Searched up to \d{16} /);
     // Mistakes.
-    expect(await setup.cli('logs', '--log-source', 'pages')).toEqual(['[sm-dev] ERROR: The --log-source flag takes sm, event, script, page or all, or several separated by commas, not pages']);
+    expect(await setup.cli('logs', '--log-source', 'pages')).toEqual(['[sm-dev] ERROR: The --log-source flag takes sm, event, script, page or all, or multiple separated by commas, not pages']);
     expect(await setup.cli('logs', '--since', 'soon')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The --since flag takes a log ID, /)]);
     expect(await setup.cli('wait', '2s', '--find', 'x')).toEqual(['[sm-dev] ERROR: The --find flag only applies to wait log']);
 

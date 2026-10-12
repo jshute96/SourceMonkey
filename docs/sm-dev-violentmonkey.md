@@ -292,7 +292,7 @@ Where VM defines these (links are to v2.49.0, the version tried):
 | --- | --- |
 | `script list` | Every script, with its E-id, version, and whether it's on |
 | `script show` | Header fields, enabled, last updated, source, and in a run, the tabs it's expected on |
-| `script print` | `GetScriptCode`, without sm-dev's comment |
+| `script print`, `script save` | `GetScriptCode`, without sm-dev's comment. Not the `@require` / `@resource` files |
 | `script enable`, `disable` | `UpdateScriptInfo`. VM doesn't turn other copies off, so neither does sm-dev |
 | `script refresh` | Re-reads the source (the comment's `file`, or `lastInstallURL`) and installs it by `id` |
 | `script install <file\|url>` | `ParseScript`. Replacing one with the same name and namespace is reported as such, and needs `--force` outside a `--temp-browser`, unless an ended run left it |

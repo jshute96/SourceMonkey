@@ -225,3 +225,159 @@ test('another manager\'s scripts: one collection, C0, and a run\'s scripts by th
   const result = JSON.parse(json.slice(json.indexOf('{')));
   assert.deepEqual(result.scripts.map((s) => [s.id, s.kind, s.run, s.leftBy]), [['E3', 'installed', undefined, undefined], ['E5', 'run', 'D1', undefined], ['E6', 'installed', undefined, 'D2']]);
 });
+
+// ---------- script print --file / --out, and script save ----------
+
+const b64 = (text) => Buffer.from(text).toString('base64');
+const deps = [
+  { kind: 'require', url: 'https://cdn.example.com/npm/jquery@3/jquery.min.js', path: 'cdn.example.com/npm/jquery@3/jquery.min.js', base64: b64('jq();\n') },
+  { kind: 'require', url: 'https://other.example.com/lib/util.js', path: 'other.example.com/lib/util.js', base64: b64('util();\n') },
+  { kind: 'resource', name: 'icon', url: 'https://cdn.example.com/img/icon.png', path: 'cdn.example.com/img/icon.png', base64: Buffer.from([0x89, 0x50, 0, 1]).toString('base64'), contentType: 'image/png' },
+  { kind: 'resource', name: 'css', url: 'https://other.example.com/x/util.js', path: 'other.example.com/x/util.js', base64: b64('/* css */\n') },
+];
+const withFiles = {
+  ...manager,
+  scriptText: async () => '// ==UserScript==\n// @name Dark mode\n// ==/UserScript==\nmain();\n',
+  scriptFiles: async () => deps,
+};
+
+async function verb(name, args, flags, { json = false, cwd = '/', control = withFiles } = {}) {
+  const out = [];
+  const ok = await managerVerb({ manager: control, out: (l) => out.push(plainLine(l)), json, guarded: true, cwd }, 'script', name, 'E4', args, flags);
+  return { ok, out };
+}
+
+test('script print --file picks a file by resource name or a unique part of its URL', async () => {
+  assert.deepEqual(await verb('print', [], { '--file': 'jquery' }), { ok: true, out: ['jq();'] });
+  // An exact resource name wins over URL parts.
+  assert.deepEqual(await verb('print', [], { '--file': 'css' }), { ok: true, out: ['/* css */'] });
+  assert.deepEqual(await verb('print', [], { '--file': 'script' }), { ok: true, out: ['// ==UserScript==', '// @name Dark mode', '// ==/UserScript==', 'main();'] });
+  const several = await verb('print', [], { '--file': 'util' });
+  assert.equal(several.ok, false);
+  assert.deepEqual(several.out, [
+    '[sm-dev] The name `util` matches multiple files of E4: Dark mode. Give more of the URL, or a @resource\'s name:',
+    '  @require https://other.example.com/lib/util.js',
+    '  @resource css https://other.example.com/x/util.js',
+  ]);
+  const none = await verb('print', [], { '--file': 'nope' });
+  assert.deepEqual(none.out.slice(0, 2), ['[sm-dev] No file of E4: Dark mode matches `nope`. Its files:', '  @require https://cdn.example.com/npm/jquery@3/jquery.min.js']);
+  assert.equal(none.out.length, 5);
+  // A binary resource can only be written.
+  assert.match((await verb('print', [], { '--file': 'icon' })).out[0], /@resource icon .* is not text \(image\/png\), so it can't be printed\. Use `--out <file>` to write it to a file\.$/);
+  // Under a manager that doesn't give the files.
+  const { scriptFiles: _, ...tm } = { ...withFiles, label: 'Tampermonkey' };
+  assert.match((await verb('print', [], { '--file': 'jquery' }, { control: tm })).out[0], /Tampermonkey doesn't give sm-dev its scripts' @require and @resource files/);
+});
+
+test('script print --out writes the file', async () => {
+  const { mkdtempSync, readFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const path = await import('node:path');
+  const dir = mkdtempSync(path.join(tmpdir(), 'sm-print-'));
+  try {
+    assert.deepEqual(await verb('print', [], { '--file': 'icon', '--out': 'icon.png' }, { cwd: dir }), { ok: true, out: ['Wrote icon.png (4 bytes)'] });
+    assert.deepEqual([...readFileSync(path.join(dir, 'icon.png'))], [0x89, 0x50, 0, 1]);
+    const { out } = await verb('print', [], { '--out': 'x.user.js' }, { cwd: dir, json: true });
+    const result = JSON.parse(out[0].slice(out[0].indexOf('{')));
+    assert.deepEqual(result, { command: 'script print', script: 'E4', name: 'Dark mode', out: path.join(dir, 'x.user.js') });
+    assert.match(readFileSync(path.join(dir, 'x.user.js'), 'utf8'), /main\(\);\n$/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('script save writes the script and its files by URL, flat, or some of them, and replaces only with --force', async () => {
+  const { existsSync, mkdtempSync, readFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const path = await import('node:path');
+  const cwd = mkdtempSync(path.join(tmpdir(), 'sm-save-'));
+  try {
+    const saved = await verb('save', ['out/sub'], {}, { cwd });
+    assert.deepEqual(saved, {
+      ok: true,
+      out: [
+        'Saved E4: Dark mode to out/sub: 5 files',
+        '  out/sub/dark.user.js',
+        '  out/sub/cdn.example.com/npm/jquery@3/jquery.min.js',
+        '  out/sub/other.example.com/lib/util.js',
+        '  out/sub/cdn.example.com/img/icon.png',
+        '  out/sub/other.example.com/x/util.js',
+      ],
+    });
+    assert.equal(readFileSync(path.join(cwd, 'out/sub/other.example.com/lib/util.js'), 'utf8'), 'util();\n');
+    // Again: refused, naming what exists, until --force.
+    const again = await verb('save', ['out/sub'], { '--only': 'script,resources' }, { cwd });
+    assert.deepEqual(again, {
+      ok: false,
+      out: [
+        '[sm-dev] ERROR: These files already exist. Use --force to replace them:',
+        '  out/sub/dark.user.js',
+        '  out/sub/cdn.example.com/img/icon.png',
+        '  out/sub/other.example.com/x/util.js',
+      ],
+    });
+    assert.equal((await verb('save', ['out/sub'], { '--only': 'script,resources', '--force': true }, { cwd })).ok, true);
+    // Flat: two util.js files clash.
+    const flat = await verb('save', ['flat'], { '--flat': true }, { cwd });
+    assert.deepEqual(flat.out, ['[sm-dev] Multiple files of E4: Dark mode would be saved under the same name. Leave out --flat to save them in folders by URL:', '  flat/util.js']);
+    assert.equal(existsSync(path.join(cwd, 'flat')), false);
+    const flatRequires = await verb('save', ['flat'], { '--flat': true, '--only': 'requires' }, { cwd });
+    assert.deepEqual(flatRequires.out, ['Saved E4: Dark mode to flat: 2 files', '  flat/jquery.min.js', '  flat/util.js']);
+    assert.match((await verb('save', ['x'], { '--only': 'script,deps' }, { cwd })).out[0], /^\[sm-dev\] ERROR: The --only flag takes `script`, `requires`, `resources`, comma-separated, and not `deps`$/);
+    // Under a manager that doesn't give the files: the script alone, said.
+    const { scriptFiles: _, ...tm } = { ...withFiles, label: 'Tampermonkey' };
+    const tmSaved = await verb('save', ['tm'], {}, { cwd, control: tm });
+    assert.deepEqual(tmSaved.out, [
+      'Saved E4: Dark mode to tm: 1 file',
+      '  tm/dark.user.js',
+      '  Tampermonkey doesn\'t give sm-dev its scripts\' @require and @resource files, so only the script itself can be printed or saved',
+    ]);
+    // A file where the directory would go.
+    const blocked = await verb('save', ['out/sub/dark.user.js'], { '--only': 'script' }, { cwd });
+    assert.match(blocked.out[0], /^\[sm-dev\] Could not create the directory out\/sub\/dark\.user\.js: /);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('script save puts a local file where a relative @require finds it, and skips a data: one', async () => {
+  const { mkdtempSync, readFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const path = await import('node:path');
+  const local = { ...scripts[0], location: 'file:///home/me/a/dark.user.js' };
+  const control = {
+    ...withFiles,
+    scripts: async () => [local, scripts[1]],
+    scriptFiles: async () => [
+      { kind: 'require', url: 'file:///home/me/a/lib/util.js', path: 'util.js', base64: b64('util();\n') },
+      { kind: 'require', url: 'file:///home/me/shared/other.js', path: 'other.js', base64: b64('other();\n') },
+      { kind: 'require', url: `data:text/javascript;base64,${b64('x'.repeat(500))}`, base64: b64('x'.repeat(500)) },
+    ],
+  };
+  const cwd = mkdtempSync(path.join(tmpdir(), 'sm-save-'));
+  try {
+    assert.deepEqual((await verb('save', ['out'], {}, { cwd, control })).out, [
+      'Saved E4: Dark mode to out: 3 files',
+      '  out/dark.user.js',
+      '  out/lib/util.js',
+      '  out/other.js',
+      '  Skipped @require data:text/javascript;base64,...: It has no file name to save it as',
+    ]);
+    assert.equal(readFileSync(path.join(cwd, 'out/lib/util.js'), 'utf8'), 'util();\n');
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('a flag only another verb takes is refused', async () => {
+  const { managerCommand } = await import('../../lib/harness/console-commands.js');
+  const run = async (form, flags) => {
+    const out = [];
+    const ok = await managerCommand({ manager: withFiles, out: (l) => out.push(plainLine(l)), json: false }, 'script', { form, subject: 'E4', words: ['/tmp/x'], flags });
+    return { ok, out };
+  };
+  assert.deepEqual(await run('save', { '--file': 'xx' }), {
+    ok: false, out: ['[sm-dev] ERROR: The `script save` command has no --file flag. It takes --only, --flat, --force.'],
+  });
+  assert.deepEqual(await run('enable', { '--out': 'x' }), { ok: false, out: ['[sm-dev] ERROR: The `script enable` command has no --out flag. It takes no flags.'] });
+});
