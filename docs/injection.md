@@ -1079,6 +1079,22 @@ gets the install's key: see
   `Array.prototype` method the storage codec calls). That can show it
   values passing through, and in places let it alter them. TM's page
   mode is in the same position.
+  - Except `GM_xmlhttpRequest`, whose response can be something the
+    page could never read itself (another site's, with the user's
+    cookies). Our handling of its request and response uses
+    built-ins captured at `document_start`.
+  - Objects we build or read for it have no prototype, or their fields
+    defined outright (`setOwn`), so `Object.prototype` getters, setters
+    and `toJSON` see nothing. That includes the script's `details`,
+    read from an own-fields copy.
+  - `tests/e2e/gm-xhr-hostile-page.spec.ts` hooks `TextDecoder`,
+    `atob`, typed arrays, `Blob`, `URL`, `JSON`, `DOMParser`, the
+    stream controller, array methods and iteration, and those
+    `Object.prototype` members, and checks the page sees none of it.
+  - What the script does with it is the script's business: its own
+    code calls the page's built-ins like any page-world code, and so
+    does serializing a non-string `data` (its `toJSON`), or reading a
+    field the response object lacks.
 - The listeners for the bridge's keyed events only read them, and
   handle what they carry in a microtask once the dispatch is over:
   while one runs, `window.event` is the event, whose type carries the

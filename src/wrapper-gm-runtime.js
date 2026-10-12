@@ -61,6 +61,8 @@
   var _Promise = Promise;
   var _Error = Error;
   var _now = Date.now.bind(Date);
+  var _numToString = Number.prototype.toString;
+  var _random = Math.random;
   var _JSONStringify = JSON.stringify;
   var _ObjectKeys = Object.keys;
   var _isArray = Array.isArray;
@@ -369,7 +371,11 @@
     }
     var detail;
     try {
-      detail = _JSONStringify({ requestId: requestId, payload: payload });
+      /* No prototype: see `setOwn` (GM_xmlhttpRequest). */
+      var wire = _ObjectCreate(null);
+      wire.requestId = requestId;
+      wire.payload = payload;
+      detail = _JSONStringify(wire);
     } catch (_jE) {
       /* Circular structures, BigInt, a getter that throws. The raw V8
          text ("Converting circular structure to JSON --> ...") ends up
@@ -392,7 +398,7 @@
     if (!_bridgePending) {
       return _Promise.reject(new _Error("[SourceMonkey] GM bridge unavailable"));
     }
-    var requestId = "gm-" + (_bridgeSeq++) + "-" + Math.random().toString(36).slice(2, 10);
+    var requestId = "gm-" + (_bridgeSeq++) + "-" + randomPart();
     return new _Promise(function (resolve, reject) {
       var timer = _setTimeout(function () {
         delete _bridgePending[requestId];
@@ -434,9 +440,26 @@
      them. */
   var _PromiseThen = _Promise.prototype.then;
   function guarded(p) {
-    p.then = guardedThen;
-    p["catch"] = guardedCatch;
+    /* Defined outright, so no accessor a page put on
+       `Promise.prototype` sees the promise. And an own `constructor` of
+       undefined, so `then` makes its next promise with the real
+       `Promise` rather than asking `Promise.prototype.constructor` (or
+       its `Symbol.species`), which a page could replace to see what
+       resolves it. */
+    setOwnBare(p, "then", guardedThen);
+    setOwnBare(p, "catch", guardedCatch);
+    setOwnBare(p, "constructor", undefined);
     return p;
+  }
+  /* `setOwn` (GM_xmlhttpRequest), here for the transport, which loads
+     ahead of it. */
+  function setOwnBare(o, k, v) {
+    var d = _ObjectCreate(null);
+    d.value = v;
+    d.writable = true;
+    d.enumerable = false;
+    d.configurable = true;
+    _ObjectDefineProperty(o, k, d);
   }
   function guardedThen(onOk, onErr) { return guarded(_ReflectApply(_PromiseThen, this, [onOk, onErr])); }
   function guardedCatch(onErr) { return guarded(_ReflectApply(_PromiseThen, this, [undefined, onErr])); }
@@ -1691,12 +1714,101 @@
   var activeRequests = _ObjectCreate(null);
   var _xhrNextId = 1;
 
+  /* What a request and its response pass through, captured now, at
+     document_start, and called with the captured Reflect.apply. In the
+     page's world a page could otherwise replace one (`TextDecoder.
+     prototype.decode`, `Array.prototype.push`, an `Object.prototype`
+     setter or `toJSON`) and see a cross-origin response the script
+     fetched, or the request's headers and body, or alter them. The
+     objects we build for it have no prototype, or own fields defined
+     outright (`setOwn`), for the same reason. See docs/injection.md,
+     "What it doesn't stop". */
+  var _TextDecoder = (typeof TextDecoder === "function") ? TextDecoder : null;
+  var _tdDecode = _TextDecoder ? _TextDecoder.prototype.decode : null;
+  var _fromBase64 = (_Uint8Array && typeof _Uint8Array.fromBase64 === "function") ? _Uint8Array.fromBase64 : null;
+  var _charCodeAt = String.prototype.charCodeAt;
+  var _strIndexOf = String.prototype.indexOf;
+  var _symIterator = Symbol.iterator;
+  var _DOMParser = (typeof DOMParser === "function") ? DOMParser : null;
+  var _parseFromString = _DOMParser ? _DOMParser.prototype.parseFromString : null;
+  var _URLCtor = (typeof URL === "function") ? URL : null;
+  var _taSet = null;
+  var _taBufferGet = null;
+  var _taByteLengthGet = null;
+  var _urlHrefGet = null;
+  var _baseURIGet = null;
+  var _rsEnqueue = null;
+  var _rsClose = null;
+  var _rsError = null;
+  (function () {
+    function getter(obj, name) {
+      var d = _ObjectGetOwnPropertyDescriptor(obj, name);
+      return (d && typeof d.get === "function") ? d.get : null;
+    }
+    try {
+      var ta = _ObjectGetPrototypeOf(_Uint8Array.prototype);
+      _taSet = ta.set;
+      _taBufferGet = getter(ta, "buffer");
+      _taByteLengthGet = getter(ta, "byteLength");
+    } catch (_taE) {}
+    try { _urlHrefGet = getter(_URLCtor.prototype, "href"); } catch (_uE) {}
+    try { _baseURIGet = getter(Node.prototype, "baseURI"); } catch (_bE) {}
+    try {
+      var rc = ReadableStreamDefaultController.prototype;
+      _rsEnqueue = rc.enqueue;
+      _rsClose = rc.close;
+      _rsError = rc.error;
+    } catch (_rE) {}
+  })();
+
+  /* Define `o[k]` as an own data property, so no setter on a prototype
+     (a page's `Object.prototype` one) sees the value. The descriptor has
+     no prototype either, as `defineProperty` reads `get` / `set` off it. */
+  function setOwn(o, k, v) {
+    var d = _ObjectCreate(null);
+    d.value = v;
+    d.writable = true;
+    d.enumerable = true;
+    d.configurable = true;
+    _ObjectDefineProperty(o, k, d);
+  }
+
+  /* A plain object (the script gets it, and may call its methods) with
+     `src`'s own fields defined outright. */
+  function plainCopy(src) {
+    var out = {};
+    var ks = _ObjectKeys(src);
+    for (var i = 0; i < ks.length; i++) setOwn(out, ks[i], src[ks[i]]);
+    return out;
+  }
+
+  /* `arr` with an iterator of its own, so `new Blob(arr)` doesn't walk
+     it with `Array.prototype[Symbol.iterator]`, which a page could
+     replace. */
+  function ownIterable(arr) {
+    setOwn(arr, _symIterator, function () {
+      var i = 0;
+      return {
+        next: function () {
+          return i < arr.length ? { value: arr[i++], done: false } : { value: undefined, done: true };
+        },
+      };
+    });
+    return arr;
+  }
+
+  /* The part of a request id that keeps two runtimes' ids apart. */
+  function randomPart() {
+    return _ReflectApply(_numToString, (_random() * 4294967296) >>> 0, [36]);
+  }
+
   /* Decode one base64 piece of the body into raw bytes. */
   function decodeBase64(b64) {
-    var binary = atob(b64);
+    if (_fromBase64) return _ReflectApply(_fromBase64, _Uint8Array, [b64]);
+    var binary = _atob(b64);
     var len = binary.length;
-    var bytes = new Uint8Array(len);
-    for (var i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+    var bytes = new _Uint8Array(len);
+    for (var i = 0; i < len; i++) bytes[i] = _ReflectApply(_charCodeAt, binary, [i]);
     return bytes;
   }
 
@@ -1715,15 +1827,18 @@
      Cancelling the stream gives up on the request, as cancelling a
      fetch body does: the worker stops, and the request ends as aborted. */
   function xhrBodyStream(id, entry) {
-    return new _ReadableStream({
-      start: function (controller) { entry.streamController = controller; },
-      cancel: function () {
-        entry.streamController = null;
-        if (activeRequests[id] !== entry) return;
-        stopXhrInWorker(id);
-        dispatchXhrEvent(id, { kind: "abort" });
-      },
-    });
+    /* No prototype: the stream reads `pull` and `type` off it, and a
+       page's `Object.prototype` getter could hand it a `pull` that gets
+       the controller. */
+    var source = _ObjectCreate(null);
+    source.start = function (controller) { entry.streamController = controller; };
+    source.cancel = function () {
+      entry.streamController = null;
+      if (activeRequests[id] !== entry) return;
+      stopXhrInWorker(id);
+      dispatchXhrEvent(id, bare({ kind: "abort" }));
+    };
+    return new _ReadableStream(source);
   }
 
   /* What a callback gets while the request is under way: the state so
@@ -1776,11 +1891,11 @@
     }
     var bytes = decodeBase64(event.data);
     try {
-      if (entry.decoder) entry.text += entry.decoder.decode(bytes, { stream: true });
+      if (entry.decoder) entry.text += _ReflectApply(_tdDecode, entry.decoder, [bytes, { stream: true }]);
       else if (entry.stream) {
         /* No controller: the script cancelled, which ended the request. */
-        if (entry.streamController) entry.streamController.enqueue(bytes);
-      } else entry.pieces.push(bytes);
+        if (entry.streamController) _ReflectApply(_rsEnqueue, entry.streamController, [bytes]);
+      } else setOwn(entry.pieces, entry.pieces.length, bytes);
     } catch (e) {
       /* Past what the page can hold (a string's length limit, say). */
       failXhrBody(id, e);
@@ -1790,9 +1905,9 @@
     if (entry.readyState < 3) setReadyState(entry, 3);
     if (!live()) return;
     var progress = xhrState(entry);
-    progress.lengthComputable = entry.total !== null;
-    progress.loaded = entry.loaded;
-    progress.total = entry.total !== null ? entry.total : 0;
+    setOwn(progress, "lengthComputable", entry.total !== null);
+    setOwn(progress, "loaded", entry.loaded);
+    setOwn(progress, "total", entry.total !== null ? entry.total : 0);
     callXhrCallback(entry.onprogress, progress);
   }
 
@@ -1817,45 +1932,52 @@
     var rt = entry.responseType;
     var mime = response.responseMimeType || "";
     if (entry.stream) {
-      response.responseText = "";
-      response.response = entry.stream;
+      setOwn(response, "responseText", "");
+      setOwn(response, "response", entry.stream);
       if (entry.streamController) {
-        try { entry.streamController.close(); } catch (_ce) {}
+        try { _ReflectApply(_rsClose, entry.streamController, []); } catch (_ce) {}
       }
       return;
     }
     if (!entry.decoder) {
-      response.responseText = "";
+      setOwn(response, "responseText", "");
       if (rt === "blob") {
-        response.response = new Blob(entry.pieces, { type: mime });
+        var opts = _ObjectCreate(null);
+        opts.type = mime;
+        setOwn(response, "response", new _Blob(ownIterable(entry.pieces), opts));
       } else {
         var size = 0;
-        for (var i = 0; i < entry.pieces.length; i++) size += entry.pieces[i].byteLength;
-        var all = new Uint8Array(size);
+        for (var i = 0; i < entry.pieces.length; i++) size += _ReflectApply(_taByteLengthGet, entry.pieces[i], []);
+        var all = new _Uint8Array(size);
         var at = 0;
-        for (var j = 0; j < entry.pieces.length; j++) { all.set(entry.pieces[j], at); at += entry.pieces[j].byteLength; }
-        response.response = all.buffer;
+        for (var j = 0; j < entry.pieces.length; j++) {
+          _ReflectApply(_taSet, all, [entry.pieces[j], at]);
+          at += _ReflectApply(_taByteLengthGet, entry.pieces[j], []);
+        }
+        setOwn(response, "response", _ReflectApply(_taBufferGet, all, []));
       }
       entry.pieces = [];
       return;
     }
     /* TextDecoder's default, like Response.text(): UTF-8 whatever the
        charset says, a leading BOM dropped. */
-    var text = entry.text + entry.decoder.decode();
-    response.responseText = text;
+    var text = entry.text + _ReflectApply(_tdDecode, entry.decoder, []);
+    setOwn(response, "responseText", text);
+    var body;
     if (rt === "json") {
       /* A malformed body gives null; `responseText` still has it. */
-      try { response.response = JSON.parse(text); } catch (_je) { response.response = null; }
+      try { body = _JSONParse(text); } catch (_je) { body = null; }
     } else if (rt === "document") {
-      var parseType = mime.indexOf("xml") !== -1 ? "application/xml" : "text/html";
+      var parseType = _ReflectApply(_strIndexOf, mime, ["xml"]) !== -1 ? "application/xml" : "text/html";
       try {
-        response.response = new DOMParser().parseFromString(text, parseType);
+        body = _ReflectApply(_parseFromString, new _DOMParser(), [text, parseType]);
       } catch (_pe) {
-        response.response = null;
+        body = null;
       }
     } else {
-      response.response = text;
+      body = text;
     }
+    setOwn(response, "response", body);
   }
 
   function dispatchXhrEvent(id, event) {
@@ -1882,31 +2004,33 @@
     var kind = event.kind;
     if (kind === "load" && event.response && typeof event.response === "object") {
       try {
-        finishXhrBody(entry, event.response);
-        payload = event.response;
-        payload.readyState = 4;
+        /* Read from a copy with no prototype, into an object of our
+           own: see `setOwn`. */
+        payload = plainCopy(bare(event.response));
+        finishXhrBody(entry, payload);
+        setOwn(payload, "readyState", 4);
       } catch (e) {
         /* Too big to build: an error instead, as nothing else will
            settle the request now. */
         kind = "error";
         payload = emptyXhrResponse(entry);
-        payload.error = tooLargeMessage(e);
+        setOwn(payload, "error", tooLargeMessage(e));
       }
     } else {
       payload = emptyXhrResponse(entry);
-      if (kind === "error") payload.error = event.message;
+      if (kind === "error") setOwn(payload, "error", event.message);
       if (entry.stream) {
         /* A stream the script is reading fails with the request, as a
            fetch body's does: the error's message, or an AbortError /
            TimeoutError. It stays the response, errored. */
-        payload.response = entry.stream;
+        setOwn(payload, "response", entry.stream);
         if (entry.streamController) {
           var streamErr = kind === "error"
             ? new _Error(event.message || "[SourceMonkey] GM_xmlhttpRequest: The request failed")
             : new _DOMException(
               kind === "timeout" ? "[SourceMonkey] GM_xmlhttpRequest: The request timed out" : "[SourceMonkey] GM_xmlhttpRequest: The request was aborted",
               kind === "timeout" ? "TimeoutError" : "AbortError");
-          try { entry.streamController.error(streamErr); } catch (_se) {}
+          try { _ReflectApply(_rsError, entry.streamController, [streamErr]); } catch (_se) {}
           entry.streamController = null;
         }
       }
@@ -1970,9 +2094,12 @@
   }
   onPush(function (msg) {
     if (msg.type !== "sm:gm-xhr-event") return;
-    if (typeof msg.id !== "string" || !msg.event) return;
-    if (msg.event.kind === "headers" || msg.event.kind === "progress") streamXhrEvent(msg.id, msg.event);
-    else dispatchXhrEvent(msg.id, msg.event);
+    if (typeof msg.id !== "string" || !msg.event || typeof msg.event !== "object") return;
+    /* No prototype, so reading a field the event lacks (`total`) can't
+       hand it to a page's `Object.prototype` getter. */
+    var ev = bare(msg.event);
+    if (ev.kind === "headers" || ev.kind === "progress") streamXhrEvent(msg.id, ev);
+    else dispatchXhrEvent(msg.id, ev);
   });
 
   /* A URL argument as a string. Scripts pass `URL` objects too (and
@@ -1981,7 +2108,11 @@
      own: that's GM_download's details object. Anything else is left
      as it is, for the caller's "url required" check. */
   function urlArg(v) {
-    return v !== null && typeof v === "object" && typeof v.href === "string" && !("url" in v) ? v.href : v;
+    if (v === null || typeof v !== "object") return v;
+    /* A real URL: its href through the captured getter (see `setOwn`),
+       which refuses anything else. */
+    try { return _ReflectApply(_urlHrefGet, v, []); } catch (_ue) {}
+    return typeof v.href === "string" && !("url" in v) ? v.href : v;
   }
 
   var xhr = {
@@ -1994,12 +2125,16 @@
       if (!details || typeof details !== "object") {
         throw new _Error("[SourceMonkey] GM_xmlhttpRequest: details object required");
       }
+      /* Its own fields, in an object with no prototype: reading one the
+         script left out (`method`, `ontimeout`) would otherwise reach a
+         page getter on `Object.prototype`, handing it `details`. */
+      details = bare(details);
       var url = urlArg(details.url);
       if (typeof url !== "string" || !url) {
         throw new _Error("[SourceMonkey] GM_xmlhttpRequest: url required");
       }
       url = resolvePageUrl(url);
-      var id = "xhr-" + (_xhrNextId++) + "-" + Math.random().toString(36).slice(2, 10);
+      var id = "xhr-" + (_xhrNextId++) + "-" + randomPart();
       var responseType = typeof details.responseType === "string" ? details.responseType : "";
       var entry = {
         onloadstart: details.onloadstart,
@@ -2020,7 +2155,7 @@
         loaded: 0,
         /* The body so far: text through a streaming decoder, or byte
            pieces for blob/arraybuffer. */
-        decoder: isTextResponseType(responseType) ? new TextDecoder() : null,
+        decoder: isTextResponseType(responseType) ? new _TextDecoder() : null,
         text: "",
         pieces: [],
         stream: null,
@@ -2034,25 +2169,26 @@
       armXhrTtl(id, entry);
       /* Build the serializable request payload — strip callbacks
          and other non-cloneable fields. */
-      var request = {
-        method: typeof details.method === "string" ? details.method : "GET",
-        url: url,
-        headers: (details.headers && typeof details.headers === "object") ? details.headers : undefined,
-        data: details.data,
-        timeout: typeof details.timeout === "number" ? details.timeout : undefined,
-        responseType: typeof details.responseType === "string" ? details.responseType : undefined,
-        /* Truthy, not `=== true`: TM/VM both treat `anonymous` as a
-           truthy flag, and a privacy opt-out has to fail toward
-           omitting credentials — reading `anonymous: 1` as "send my
-           cookies anyway" is the wrong direction to get it wrong. */
-        anonymous: details.anonymous ? true : undefined,
-      };
-      api.sendAsync({
-        type: "sm:gm-xhr-start",
-        id: id,
-        scriptId: scriptId,
-        request: request,
-      }).then(function (reply) {
+      /* With no prototype, nor the headers' copy, so serializing them
+         doesn't look up a `toJSON` a page put on `Object.prototype`. */
+      var request = _ObjectCreate(null);
+      request.method = typeof details.method === "string" ? details.method : "GET";
+      request.url = url;
+      request.headers = plainHeaders(details.headers);
+      request.data = details.data;
+      request.timeout = typeof details.timeout === "number" ? details.timeout : undefined;
+      request.responseType = typeof details.responseType === "string" ? details.responseType : undefined;
+      /* Truthy, not `=== true`: TM/VM both treat `anonymous` as a
+         truthy flag, and a privacy opt-out has to fail toward
+         omitting credentials — reading `anonymous: 1` as "send my
+         cookies anyway" is the wrong direction to get it wrong. */
+      request.anonymous = details.anonymous ? true : undefined;
+      var startMsg = _ObjectCreate(null);
+      startMsg.type = "sm:gm-xhr-start";
+      startMsg.id = id;
+      startMsg.scriptId = scriptId;
+      startMsg.request = request;
+      api.sendAsync(startMsg).then(function (reply) {
         /* Anything but an explicit ack is a refusal — the SW's bridge
            gate replies `{ok:false, error}`, and the bridge's own
            fallback when the SW is unreachable carries no `ok` at all.
@@ -2427,7 +2563,11 @@
      that won't parse is left for the worker to refuse by name. */
   function resolvePageUrl(url) {
     try {
-      return new URL(url, document.baseURI || location.href).href;
+      /* The captured constructor and getters: see `setOwn`. `location`
+         and its `href` are the window's own, which a page can't
+         replace. */
+      var base = (_baseURIGet && _ReflectApply(_baseURIGet, document, [])) || location.href;
+      return _ReflectApply(_urlHrefGet, new _URLCtor(url, base), []);
     } catch (_re) {
       return url;
     }
@@ -2444,9 +2584,24 @@
     var keys = _ObjectKeys(headers);
     for (var i = 0; i < keys.length; i++) {
       var v = headers[keys[i]];
-      if (typeof v === "function" || (v !== null && typeof v === "object")) continue;
-      if (!out) out = {};
-      out[keys[i]] = String(v);
+      /* As fetch would have taken them: `undefined` leaves the header
+         out, an array is its items joined with commas, and other
+         objects are dropped (they'd only send "[object Object]").
+         Joined by hand and with `+ ""`, not the page's `String` or
+         `Array.prototype.join`, so it reaches no page code. */
+      if (_isArray(v)) {
+        var joined = "";
+        for (var j = 0; j < v.length; j++) {
+          var item = v[j];
+          if (item !== null && (typeof item === "object" || typeof item === "function" || typeof item === "symbol")) { joined = null; break; }
+          joined += (j ? "," : "") + (item === undefined || item === null ? "" : item);
+        }
+        if (joined === null) continue;
+        v = joined;
+      }
+      if (v === undefined || typeof v === "function" || typeof v === "symbol" || (v !== null && typeof v === "object")) continue;
+      if (!out) out = _ObjectCreate(null);
+      out[keys[i]] = "" + v;
     }
     return out || undefined;
   }

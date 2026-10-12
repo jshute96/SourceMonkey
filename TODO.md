@@ -356,8 +356,18 @@ wasn't checked.
     built-ins we haven't captured, and methods on a script's own values
     (a `toJSON`, an `Array.prototype` method the storage codec calls),
     and see values passing through (docs/injection.md, "What it doesn't
-    stop"). Closing that means VM-style safe built-ins throughout the
-    MAIN-world runtime and prelude (docs/GM-API-strategy.md, section 3).
+    stop").
+    - `GM_xmlhttpRequest`'s request and response are covered (the one
+      path where the page could see what it couldn't read itself).
+    - The rest: storage values through the codec, `GM_addElement`'s
+      DOM calls, the transport's other messages (their payloads still
+      inherit `Object.prototype`, so its `toJSON` sees them), menu and
+      notification plumbing.
+    - Closing it fully means VM-style safe built-ins throughout the
+      MAIN-world runtime and prelude (docs/GM-API-strategy.md, section
+      3). Low priority: a page that does this can as easily hook the
+      built-ins a script's own code calls on the same values, which
+      scripts don't guard against either.
   - Any installed userscript reaches the registry (`__smReg` is in its
     scope), so a page-world script can call the runtime as a sibling
     script on the same page. Per-script keys would stop that.
