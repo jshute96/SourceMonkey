@@ -8,7 +8,9 @@
 //   page code) fails even on pages with no CSP.
 // - The same rule means a strict page CSP doesn't stop them either,
 //   which matches Tampermonkey.
-// - MAIN-world scripts insert as the page, so the page CSP applies.
+// - MAIN-world scripts insert as the page, so the page CSP applies to
+//   their own inserts. GM_addElement hands its insert to the bridge in
+//   USER_SCRIPT world, so it is exempt there too.
 // - Inline event handlers stay under the page CSP in either world.
 
 import { test, expect } from '../fixtures/extension';
@@ -64,7 +66,7 @@ test.describe('<script> insertion and CSP', () => {
       await page.close();
     });
 
-    test(`${world} world: a page script-src without 'unsafe-inline' ${world === 'MAIN' ? 'blocks' : 'does not block'} them`, async ({
+    test(`${world} world: a page script-src without 'unsafe-inline' ${world === 'MAIN' ? 'blocks only the script\'s own' : 'does not block them'}`, async ({
       extensionContext, fixtureServer, sm,
     }) => {
       scriptsDir.write({
@@ -77,12 +79,11 @@ test.describe('<script> insertion and CSP', () => {
 
       const page = await extensionContext.newPage();
       await page.goto(`${fixtureServer.baseUrl}/strict-script-csp.html`);
-      const ran = world === 'MAIN' ? null : 1;
-      expect(await pageGlobals(page)).toEqual({ create: ran, addElement: ran });
+      expect(await pageGlobals(page)).toEqual({ create: world === 'MAIN' ? null : 1, addElement: 1 });
       await page.close();
     });
 
-    test(`${world} world: a cross-origin <script src> on a strict page ${world === 'MAIN' ? 'is blocked' : 'runs'}`, async ({
+    test(`${world} world: a cross-origin GM_addElement <script src> on a strict page runs`, async ({
       extensionContext, fixtureServer, sm,
     }) => {
       // Same server under another host name, so the page's 'self'
@@ -103,8 +104,8 @@ test.describe('<script> insertion and CSP', () => {
 
       const page = await extensionContext.newPage();
       await page.goto(`${fixtureServer.baseUrl}/strict-script-csp.html`);
-      await expect(page.locator('body')).toHaveAttribute('data-sm-src', world === 'MAIN' ? 'error' : 'load');
-      expect(await page.evaluate(() => (window as any).smExternalSrc ?? null)).toBe(world === 'MAIN' ? null : 1);
+      await expect(page.locator('body')).toHaveAttribute('data-sm-src', 'load');
+      expect(await page.evaluate(() => (window as any).smExternalSrc ?? null)).toBe(1);
       await page.close();
     });
   }

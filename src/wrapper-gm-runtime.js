@@ -126,6 +126,7 @@
   /* Captured for the window.onurlchange surface, which defines an
      accessor on the world's own `window`. */
   var _ObjectDefineProperty = Object.defineProperty;
+  var _ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
   var _hasOwn = Object.prototype.hasOwnProperty;
   /* DOM-shim cache. Captured at runtime-init time so a sibling
      userscript that later reassigns `document.createElement` (or any
@@ -222,6 +223,9 @@
   var BRIDGE_REPLY_MARKER = "sourcemonkey-bridge-reply";
   var BRIDGE_PUSH_MARKER = "sourcemonkey-bridge-push";
   var BRIDGE_SYNC_MARKER = "sourcemonkey-bridge-sync";
+  /* GM_addStyle / GM_addElement's insert, done by the bridge; see
+     `insertNode`. wrapper-bridge.js names it too. */
+  var BRIDGE_INSERT_MARKER = "sourcemonkey-bridge-insert";
   /* How long a MAIN-world request waits for the bridge before we give
      up and reject. The bridge always replies (even when the SW call
      fails), so hitting this means the bridge never registered — a
@@ -1263,13 +1267,20 @@
      github.com / google.com can still inject styles and scripts that
      the page itself couldn't.
 
-     In MAIN world there is no exemption: the page's CSP applies to
-     what the script inserts, so a strict `style-src` accepts the
-     <style> element and silently ignores its rules. TM and VM have
-     the same limitation in page context. We can't work around it
-     here, but we can say so: a <style> whose `.sheet` is still null
-     after it's in the document was blocked, and that is reported
-     once per script as a warning in its Log (see `reportBlockedStyle`).
+     In MAIN world, what the script inserts itself is the page's, under
+     the page's CSP: a strict `style-src` accepts the <style> element
+     and silently ignores its rules. So these two hand their insert to
+     the bridge in USER_SCRIPT world (`insertNode`), which gets the same
+     exemption, as Tampermonkey's GM_addElement does. Where that can't
+     happen we insert here, under the page's CSP:
+       - a parent in a closed shadow root (see `inClosedShadowRoot`),
+       - a parent in another frame's document,
+       - a detached parent: the element is checked when the script
+         later attaches it, from this world.
+     When the element is in the document after that, we can at least
+     say so: a <style> whose `.sheet` is still null was blocked, and
+     that is reported once per script as a warning in its Log (see
+     `reportBlockedStyle`). A detached parent gets no report.
 
      Both helpers return the created element so userscripts can hold a
      reference and tweak it later. */
@@ -1320,6 +1331,59 @@
     }
   }
 
+  /* Hand `el` to the bridge to append to `parent` from USER_SCRIPT
+     world, in MAIN world. The event is dispatched on `parent`, and the
+     element rides in a MouseEvent's `relatedTarget`, the event field
+     that can carry a second node across worlds. The bridge's listener
+     runs inside the dispatch and cancels the event to say it did the
+     insert, so this is synchronous and the caller's element is in the
+     document when we return. Natives captured at document_start, like
+     the rest of the transport. Returns whether the bridge did it. */
+  var _MouseEvent = null;
+  var _EventTarget_dispatchEvent = null;
+  var _Node_getRootNode = null;
+  var _Node_parentNode = null;
+  var _ShadowRoot_host = null;
+  var _ShadowRoot_mode = null;
+  var _ShadowRoot = null;
+  try {
+    _MouseEvent = MouseEvent;
+    _EventTarget_dispatchEvent = EventTarget.prototype.dispatchEvent;
+    _Node_getRootNode = Node.prototype.getRootNode;
+    _Node_parentNode = _ObjectGetOwnPropertyDescriptor(Node.prototype, "parentNode").get;
+    _ShadowRoot_host = _ObjectGetOwnPropertyDescriptor(ShadowRoot.prototype, "host").get;
+    _ShadowRoot_mode = _ObjectGetOwnPropertyDescriptor(ShadowRoot.prototype, "mode").get;
+    _ShadowRoot = ShadowRoot;
+  } catch (_meE) {}
+  /* Whether `node` is in a closed shadow root, at any depth. The
+     bridge's listener sees such a node's host as the event's parent
+     (a closed tree is left out of `composedPath()` outside it), so it
+     would insert in the wrong place. */
+  function inClosedShadowRoot(node) {
+    for (var i = 0; i < 64; i++) {
+      var root = _Node_getRootNode.call(node);
+      if (!(root instanceof _ShadowRoot)) return false;
+      if (_ShadowRoot_mode.call(root) === "closed") return true;
+      node = _ShadowRoot_host.call(root);
+    }
+    return true;
+  }
+  function insertViaBridge(parent, el) {
+    if (_sendMessage || !_MouseEvent || !_EventTarget_dispatchEvent || !_ShadowRoot_mode) return false;
+    try {
+      if (inClosedShadowRoot(parent)) return false;
+      var ev = new _MouseEvent(BRIDGE_INSERT_MARKER, { relatedTarget: el, cancelable: true, composed: true });
+      return _EventTarget_dispatchEvent.call(parent, ev) === false && _Node_parentNode.call(el) === parent;
+    } catch (_ie) {
+      return false;
+    }
+  }
+  function insertNode(parent, el) {
+    if (insertViaBridge(parent, el)) return;
+    if (_Node_appendChild) _Node_appendChild.call(parent, el);
+    else parent.appendChild(el);
+  }
+
   /* Once per script per document: a page with a strict CSP blocks
      every style the script adds, and one line says it. */
   var blockedStyleReported = {};
@@ -1330,8 +1394,9 @@
        background.ts); the SW words its own line rather than trusting
        a page-reachable string. */
     var text = "The page's Content Security Policy blocked the style " + api +
-      " added, so its rules don't apply. Only a script running isolated from the page is" +
-      " exempt. Add @inject-into content to run it that way.";
+      " added, so its rules don't apply. SourceMonkey can't exempt a style added inside a" +
+      " closed shadow root or another frame's document. Add @inject-into content to run" +
+      " the script isolated from the page, where all its styles are exempt.";
     try { console.info("[SourceMonkey:" + scriptId + "] " + text); } catch (_e) {}
     transportSend({ type: "sm:gm-dom-blocked", scriptId: scriptId, api: api }).catch(function () {});
   }
@@ -1357,8 +1422,7 @@
       el.textContent = String(css == null ? "" : css);
       var parent = defaultParent();
       if (parent) {
-        if (_Node_appendChild) _Node_appendChild.call(parent, el);
-        else parent.appendChild(el);
+        insertNode(parent, el);
         if (styleWasBlocked(el)) reportBlockedStyle(scriptId, "GM_addStyle");
       }
       return el;
@@ -1405,8 +1469,7 @@
         }
       }
       if (parent) {
-        if (_Node_appendChild) _Node_appendChild.call(parent, el);
-        else parent.appendChild(el);
+        insertNode(parent, el);
         if (String(tagName).toUpperCase() === "STYLE" && styleWasBlocked(el)) {
           reportBlockedStyle(scriptId, "GM_addElement");
         }

@@ -2,7 +2,8 @@
 //
 // The page's CSP doesn't apply to USER_SCRIPT-world DOM mutations, so
 // a script using these APIs on a strict-CSP page can still inject
-// styles and elements that the page itself couldn't. Inserted scripts
+// styles and elements that the page itself couldn't. A MAIN-world
+// script's calls hand the insert to the bridge in USER_SCRIPT world. Inserted scripts
 // are covered in user-script-world-csp.spec.ts.
 
 import { test, expect } from '../fixtures/extension';
@@ -51,24 +52,78 @@ test.describe('GM_addStyle / GM_addElement (Phase 4)', () => {
     await page.close();
   });
 
-  test('a MAIN-world GM_addStyle blocked by page CSP is reported once in the Log', async ({
+  test('a MAIN-world GM_addStyle / GM_addElement is exempt from page CSP too', async ({
     extensionContext, fixtureServer, sm,
   }) => {
-    // In MAIN world there is no CSP exemption, so a strict style-src
-    // accepts the <style> element and ignores its rules. We can't
-    // work around that; we say so — once per script per document,
-    // as a warning in the script's Log, not an error (the script ran).
+    // The runtime hands the insert to the bridge in USER_SCRIPT world,
+    // so a strict style-src doesn't drop the rules, and nothing is
+    // reported. A parent in a shadow root goes the same way.
     scriptsDir.write({
       relativePath: 'a.user.js',
       meta: {
         name: 'CspStyle',
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
-        grant: ['unsafeWindow', 'GM_addStyle'],
+        grant: ['GM_addStyle', 'GM_addElement', 'GM_log'],
+        injectInto: 'page',
       },
       body: `
-        GM_addStyle('#target { color: rgb(1, 2, 3); }');
-        GM_addStyle('#target { font-weight: bold; }');
+        const style = GM_addStyle('#target { color: rgb(1, 2, 3); }');
+        GM_addElement('style', { textContent: '#target { font-weight: 700; }' });
+        const host = document.body.appendChild(document.createElement('div'));
+        const root = host.attachShadow({ mode: 'open' });
+        const inner = root.appendChild(document.createElement('span'));
+        inner.id = 'inner';
+        GM_addElement(root, 'style', { textContent: '#inner { color: rgb(4, 5, 6); }' });
+        document.body.dataset.smInDoc = String(style.isConnected);
+        document.body.dataset.smDone = '1';
+        GM_log('inserts done');
+      `,
+    });
+    const added = await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+    const scriptId = (await sm.getCollectionWithScripts(added!.id))!.scripts[0].id;
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/strict-csp.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-done', '1');
+    // In the document by the time GM_addStyle returned.
+    await expect(page.locator('body')).toHaveAttribute('data-sm-in-doc', 'true');
+    await expect(page.locator('#target')).toHaveCSS('color', 'rgb(1, 2, 3)');
+    await expect(page.locator('#target')).toHaveCSS('font-weight', '700');
+    await expect(page.locator('#inner')).toHaveCSS('color', 'rgb(4, 5, 6)');
+    // A block would be reported ahead of the GM_log line sent after it.
+    await expect.poll(async () => (await sm.getScriptLog(scriptId)).some((e) => e.source === 'gm-log')).toBe(true);
+    expect((await sm.getScriptLog(scriptId)).filter((e) => e.source === 'gm-dom')).toHaveLength(0);
+    await page.close();
+  });
+
+  test('a MAIN-world style in a closed shadow root is under page CSP, and is reported once', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // The bridge can't name a parent in a closed shadow root (it sees
+    // the host), so the runtime inserts it itself: in the right place,
+    // under the page's CSP. One warning per script per document.
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'CspClosedRoot',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_addElement'],
+        injectInto: 'page',
+      },
+      body: `
+        const host = document.body.appendChild(document.createElement('div'));
+        host.id = 'host';
+        const root = host.attachShadow({ mode: 'closed' });
+        const inner = root.appendChild(document.createElement('span'));
+        inner.textContent = 'x';
+        const a = GM_addElement(root, 'style', { textContent: 'span { color: rgb(1, 2, 3); }' });
+        GM_addElement(root, 'style', { textContent: 'span { font-weight: 700; }' });
+        document.body.dataset.smInRoot = String(a.parentNode === root);
+        document.body.dataset.smHostKids = String(host.childNodes.length);
+        document.body.dataset.smColor = getComputedStyle(inner).color;
         document.body.dataset.smDone = '1';
       `,
     });
@@ -79,13 +134,14 @@ test.describe('GM_addStyle / GM_addElement (Phase 4)', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/strict-csp.html`);
     await expect(page.locator('body')).toHaveAttribute('data-sm-done', '1');
-    // The style really was ignored by the page.
-    expect(await page.locator('#target').evaluate((el) => getComputedStyle(el).color)).not.toBe('rgb(1, 2, 3)');
+    await expect(page.locator('body')).toHaveAttribute('data-sm-in-root', 'true');
+    await expect(page.locator('body')).toHaveAttribute('data-sm-host-kids', '0');
+    await expect(page.locator('body')).not.toHaveAttribute('data-sm-color', 'rgb(1, 2, 3)');
 
     await expect.poll(async () => (await sm.getScriptLog(scriptId)).filter((e) => e.source === 'gm-dom').length).toBe(1);
     const entry = (await sm.getScriptLog(scriptId)).find((e) => e.source === 'gm-dom')!;
     expect(entry.level).toBe('warning');
-    expect(entry.message).toMatch(/Content Security Policy blocked the style GM_addStyle added/);
+    expect(entry.message).toMatch(/Content Security Policy blocked the style GM_addElement added/);
     await page.close();
   });
 

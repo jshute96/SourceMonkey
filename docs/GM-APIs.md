@@ -1253,9 +1253,9 @@ too.
   `window.focus` has no such guard in either: it focuses the tab.
 ## DOM injection (`GM_addStyle` / `GM_addElement`)
 
-Both run entirely in USER_SCRIPT world — no SW round-trip, no per-
-script state. The page's CSP (Content Security Policy) doesn't apply
-to what they insert from that world:
+Both run without an SW round-trip or per-script state. The page's CSP
+(Content Security Policy) doesn't apply to what they insert from
+USER_SCRIPT world:
 
 - `<style>` rules apply even where the page's `style-src` omits
   `'unsafe-inline'`.
@@ -1266,6 +1266,45 @@ to what they insert from that world:
   world config.
 - The same holds for elements a script inserts itself
   (`document.createElement('script')`), not just via the GM API.
+
+### In MAIN world
+
+What a script inserts itself is the page's and under the page's CSP.
+The two GM calls get the exemption anyway, as TM's `GM_addElement`
+does:
+
+- The runtime builds the element in MAIN world, then hands the insert
+  to the bridge (`insertNode` in `wrapper-gm-runtime.js`): a
+  `MouseEvent` dispatched on the parent, carrying the element in
+  `relatedTarget`, the event field that can carry a second node across
+  worlds. `composed`, so a parent in an open shadow root works too.
+- The bridge's listener (on `window`, capturing, added at
+  `document_start` ahead of any page listener) appends it from
+  USER_SCRIPT world and cancels the event to say so. It runs inside
+  the dispatch, so the element is in the document when the call
+  returns, and it is the same element the script holds.
+- Changes the script makes to the element afterwards (a new
+  `textContent`) are its own, under the page's CSP again.
+- The page can send the bridge's event too, for an element of its
+  own, and so get the same exemption: inline code and `<script src>` /
+  stylesheet loads from any host. See the bridge's Trust model in
+  [injection.md](injection.md#main-world-traffic--the-bridge).
+
+Where the bridge can't do the insert, the runtime does it, under the
+page's CSP:
+
+- **A parent in a closed shadow root.** Outside the tree, the event's
+  path stops at the host, so the bridge would insert there instead.
+- **A parent in another frame's document.** The event goes to that
+  frame, where the element isn't one of its own nodes.
+- **A detached parent.** The element is checked when the script later
+  attaches it, from MAIN world.
+
+A `<style>` blocked there (in the document, with no `.sheet`) is
+reported once per script per document as a Log warning. One under a
+detached parent isn't, since it's checked only at insert.
+
+### The calls
 
 - `GM_addStyle(css)` — creates a `<style>`, sets `textContent`,
   appends to `document.head || document.documentElement`. Returns

@@ -113,6 +113,12 @@
        page-supplied copy. USER_SCRIPT-world scripts talk to the SW over
        their own direct chrome.runtime path (never this bridge), so they
        carry no `__viaBridge` and are never gated.
+     - send a `sourcemonkey-bridge-insert` event for an element of its
+       own, which we append from this world, exempt from its CSP:
+       inline code, and script and stylesheet loads from any host. The
+       page needs to be running script already, but CSP is also what
+       limits injected code (an XSS payload) on many sites. Keying the
+       channel would close this (TODO.md).
      - forge a `sourcemonkey-bridge-push` into MAIN world, faking an
        XHR load / menu fire / value update for a MAIN-world script.
        Same footing: the page shares the realm with that script and can
@@ -130,6 +136,9 @@
   /* Fired once our listener is in, for a wrapper that asked too early
      (see Timing, above). userscript-prelude.js names it too. */
   var READY_MARKER = "sourcemonkey-bridge-ready";
+  /* GM_addStyle / GM_addElement's insert from MAIN world (`insertNode`
+     in wrapper-gm-runtime.js). */
+  var INSERT_MARKER = "sourcemonkey-bridge-insert";
   /* Payload types we relay page -> SW. Telemetry + the reload
      fast-path handshake, plus the SW-backed half of the GM_* surface
      that the MAIN-world runtime needs. Anything not listed is dropped,
@@ -237,6 +246,33 @@
       var env = JSON.parse(ev.detail);
       if (!env || typeof env !== "object") return;
       relay(env.payload, env.requestId);
+    } catch (_e) {}
+  }, true);
+
+  /* GM_addStyle / GM_addElement's insert, for a MAIN-world script.
+     Appended from this world, the element is checked against this
+     world's CSP instead of the page's, so a strict page CSP doesn't
+     drop the style, as in TM. The event's target is the parent and its
+     `relatedTarget` the new element; cancelling it tells the runtime
+     we did the insert. This world's `appendChild` is out of the page's
+     reach. The page can send this event too, which gets it the same
+     exemption for an element of its own: see the Trust model above.
+
+     On `window`, capturing: the first stop of any dispatch in the
+     document. Added at document_start, ahead of any page script's
+     listener there, so the page can't stop the event before us. */
+  var appendChild = null;
+  try { appendChild = Node.prototype.appendChild; } catch (_ne) {}
+  if (appendChild) window.addEventListener(INSERT_MARKER, function (ev) {
+    try {
+      var el = ev.relatedTarget;
+      /* Composed, so a parent in a shadow root reaches us too; the
+         path's first entry is it, where `target` is its host. */
+      var parent = ev.composedPath()[0];
+      if (!(el instanceof Element) || !(parent instanceof Node)) return;
+      appendChild.call(parent, el);
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
     } catch (_e) {}
   }, true);
 

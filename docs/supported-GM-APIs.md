@@ -267,16 +267,11 @@ elements, so these work even on pages with strict
   USER_SCRIPT world CSP instead, which allows both, as Tampermonkey's
   does.
 
-**Not so in MAIN world.** A script that granted `unsafeWindow` (or
-declared `@inject-into page`) runs in the page's realm, where its
-`<style>` / `<script>` elements are the page's own and the page's CSP
-applies. On a site with a `style-src` that omits `'unsafe-inline'`,
-`GM_addStyle` will insert the element and the rules simply won't take
-effect. TM/VM have the same limitation for page-context scripts. The
-runtime detects the block (`el.sheet === null` once connected) and
-reports it once per script per document as a warning in the script's
-Log; see [TODO.md](../TODO.md) for the fall-back idea (an isolated-world
-copy inserted over the bridge).
+A script running in the page's world gets the same exemption for
+these two calls, as Tampermonkey's `GM_addElement` does: SourceMonkey
+does the insert from its isolated world. A `<style>` or `<script>` the
+script appends itself (`document.head.appendChild(…)`) is the page's,
+and the page's CSP applies to it.
 
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|

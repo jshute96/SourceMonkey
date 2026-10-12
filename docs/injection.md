@@ -1027,14 +1027,16 @@ in the isolated one.
 
 ##### Costs of running in MAIN
 
-- **Page CSP applies to DOM injection.** `GM_addStyle` /
-  `GM_addElement` escape the page's CSP in USER_SCRIPT world but not
-  in MAIN.
-  A page whose `style-src` omits `'unsafe-inline'` will drop an
-  injected `<style>`'s rules on the floor. The runtime detects that
-  (a connected `<style>` with no `.sheet`) and files one warning per
-  script per document in its Log (`source: gm-dom`), so the failure
-  is visible even though it can't be fixed from the page.
+- **Page CSP applies to what the script inserts itself.** A `<style>`
+  or `<script>` it appends is the page's, so a strict `style-src` or
+  `script-src` blocks it.
+  - `GM_addStyle` / `GM_addElement` are exempt: the runtime hands their
+    insert to the bridge in USER_SCRIPT world (see
+    [GM-APIs.md](GM-APIs.md#dom-injection-gm_addstyle--gm_addelement)).
+  - Where that can't happen (a closed shadow root, another frame's
+    document, a detached parent), a blocked `<style>` that's in the
+    document (with no `.sheet`) is reported once per script per
+    document in its Log (`source: gm-dom`).
 - **The page can interfere.** It shares prototypes and globals with the
   script. The runtime's shim cache is captured at `document_start`,
   before any page script, so its own natives are pristine — but user
@@ -1078,6 +1080,11 @@ What crosses it:
   Those arrive on `chrome.runtime.onMessage`, which only USER_SCRIPT
   world can listen on, so the bridge re-posts them into the page as
   `sourcemonkey-bridge-push`.
+- **DOM inserts** for `GM_addStyle` / `GM_addElement`, which the bridge
+  appends from USER_SCRIPT world so the page's CSP doesn't apply
+  (`sourcemonkey-bridge-insert`; see
+  [GM-APIs.md](GM-APIs.md#dom-injection-gm_addstyle--gm_addelement)).
+  This one never reaches the SW.
 
 Mechanics:
 
@@ -1165,6 +1172,11 @@ Trust model:
   on its own window and learn the stored script `id` and any `sm:error`
   `message` text, then dispatch fakes with whatever ids it just saw —
   the request event is as available to the page as a postMessage was.
+- The page can send the insert event for an element of its own, and
+  get the CSP exemption for it: inline code, and script and stylesheet
+  loads from any host. It has to be running script already, but CSP is
+  also what limits injected code (an XSS payload) on many sites.
+  Keying the channel would close this (TODO.md).
 - A forged `sm:start` flips a script's badge entry from MISSING to OK
   on that document; a forged `sm:error` writes an attacker-controlled
   string into the SW console and per-tab session record. Neither

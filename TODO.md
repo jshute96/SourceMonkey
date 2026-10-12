@@ -380,12 +380,19 @@ wasn't checked.
     Before, only `unsafeWindow` / `@grant none` scripts were exposed.
     TM reaches its page-world scripts through a keyed channel instead;
     worth comparing, and deciding whether to key ours per script.
+  - The page can send the bridge's `sourcemonkey-bridge-insert` event
+    for an element of its own and get the CSP exemption meant for
+    `GM_addStyle` / `GM_addElement`: inline code and script loads from
+    any host, a way around CSP for injected code (an XSS payload). The
+    bridge is on every page a MAIN-world script matches. Keying the
+    channel closes it; scoping the listener to pages where a script
+    grants either API would narrow it.
+  - No CSP exemption for a MAIN-world `GM_addStyle` / `GM_addElement`
+    into a closed shadow root, another frame's document or a detached
+    parent; the runtime inserts those itself (docs/GM-APIs.md).
   - Pages with a CSP `sandbox` header (opaque origin) get no MAIN-world
     scripts at all. VM falls back to the isolated world there; we could
     register an isolated copy for such frames.
-  - Under a strict page CSP, `GM_addStyle` / `GM_addElement` styles are
-    dropped in MAIN world (we log a warning). Many styling scripts now
-    run there. Route their DOM insertion through the isolated world?
   - `window.__SM_GM__` is on many more pages now, and page code can
     tamper with the built-ins a script uses (docs/GM-API-strategy.md,
     section 3, decided against VM's safe-builtins when granted scripts
@@ -665,17 +672,6 @@ Adding any of these is a catalog entry + a body — nothing structural.
   for the same reason and now has that e2e
   (`reload-fast-path.spec.ts`), so these are the eager calls whose
   swap behaviour is unasserted.
-- **CSP-exempt DOM injection for MAIN-world scripts.** `GM_addStyle` /
-  `GM_addElement` bypass page CSP from USER_SCRIPT world but not from
-  MAIN, so a `@grant unsafeWindow` script on a site with a strict
-  `style-src` inserts a `<style>` whose rules never apply. The block
-  is detected (`el.sheet === null` once connected) and reported as a
-  Log warning; the fallback would be an async bridge request asking
-  the USER_SCRIPT-world runtime to insert a CSP-exempt copy, at the
-  cost of the returned element no longer being the live one, and of
-  registering that runtime on pages that otherwise don't need it.
-  TM/VM have the same limitation today. Build it when a real site
-  shows up where the style matters.
 - **Send the remaining GM pushes to the requesting frame.** Scripts run
   in frames now, but `sm:gm-tab-closed` and `sm:gm-notification-event`
   still go to the whole tab (`chrome.tabs.sendMessage` with no frame;
