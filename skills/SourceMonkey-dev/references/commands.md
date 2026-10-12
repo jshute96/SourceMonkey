@@ -48,6 +48,12 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 - Quotes: in `--stdin` lines, most commands take off one level of
   quotes around an argument. `eval` and `cdp` don't: their quotes are
   JavaScript's and JSON's. A quoted word is never a flag.
+- Flags can go anywhere, also after or inside `eval`'s JavaScript or
+  `wait log`'s text (`eval 'await x()' --timeout-seconds 45`). A word
+  there shaped like a flag (`--name`) is taken as one, and an unknown
+  one is an error. To keep one as text, quote the text as a whole
+  (`type #q 'a --b'`), or in JavaScript write it so the `--` isn't a
+  word of its own (`a = '--b'`, `(--n)`).
 
 ## Names
 
@@ -232,7 +238,7 @@ own: change them only when asked to.
 | `wait selector <css>`, `wait selector-gone <css>` | An element to appear / disappear |
 | `wait log <text>`, `wait log /regex/` | A log line since the previous command began (or `--since`). `--find <text>` works too |
 | `wait 500ms`, `wait 2s` | Time (last resort) |
-| `--timeout-seconds S` | Give up after S seconds (default 5). On `wait log`, put it after the text. On a delay, it may be given if not shorter |
+| `--timeout-seconds S` | Give up after S seconds (default 5). On a delay, it may be given if not shorter |
 
 - A tab goes before the form: `wait T2 selector '.x'`.
 - `wait log` sees every log source, the site's own lines too, unless

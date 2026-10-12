@@ -444,6 +444,13 @@ sm-dev's up-front check runs it too.
   - `--name`, or `--name value` / `--name=value` for one that takes a
     value. Unknown flags, missing or empty values, values on flags that
     take none, and repeats are refused.
+  - They can go anywhere, a command's free text included (eval's
+    JavaScript, `wait log`'s text). There, a word of its own shaped like
+    one (`--name`, `--name=...`) is a flag, so an unknown one is refused
+    rather than run as code. To keep one as text, quote the text as a
+    whole, or in JavaScript write it so the `--` isn't a word of its
+    own (`a = '--b'`).
+    - A `/regex/` starting the text is all text; flags can follow it.
   - A quoted word is never a flag.
   - `--help` where a flag can go is a request for the command's help
     (`help` in the result). The prompt, stdin and the run show
@@ -451,7 +458,7 @@ sm-dev's up-front check runs it too.
   - The global options (`--run`, `--root`, `--local`, which can repeat,
     ...) go before any command, and `takeGlobalFlags` in `cli.ts` reads
     them.
-    - One later on the line is refused, ending a command's text too
+    - One later on the line is refused, inside a command's text too
       (`eval 1 --run D1`), unless the command takes it itself.
     - A command's own flag put before it (`--nowait open <url>`) is
       refused with the line as it should be. One it doesn't take is
@@ -461,12 +468,9 @@ sm-dev's up-front check runs it too.
   - `none`, or `words` (at most `max`).
   - `selector`: the rest of the line as typed, less its flags, which
     can go anywhere (a selector never starts with `--`).
-  - `text`: some words, then the rest of the line as typed. Flags go
-    before it; its `--words` are its own. Unquoted as a whole unless
-    it's JavaScript or JSON.
-- Also declared: a leading tab (`tab`), a `{{` block (`block`), and
-  flags that may end unquoted text, with a near miss there refused
-  (`trailingFlags`: `wait log`, `type`, `update`, `cdp`, `menu`, ...).
+  - `text`: some words, then the rest of the line as typed, less the
+    flags in it. Unquoted as a whole unless it's JavaScript or JSON.
+- Also declared: a leading tab (`tab`) and a `{{` block (`block`).
 - A form named by a keyword has its own syntax (`wait log <text>`).
 - Every command carries sm-dev's directory, for relative paths.
 
@@ -1575,7 +1579,7 @@ Terms used below:
       page is still listed, as `Not on this page`.
   - `set` on one needs `--force` outside a `--temp-browser`, since it
     changes the person's real data: `set key --force <json>`. Like
-    `set`'s other flags, it can also go after the JSON.
+    any flag, it can also go after the JSON.
   - `menu` and `logs` don't take them: they never run in the run's
     tabs. `load`, `update` and `--watch` don't apply either: the run
     didn't push them.

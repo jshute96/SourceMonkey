@@ -1010,8 +1010,15 @@ Some commands take several lines as a block, at the prompt or on stdin:
   - `--help` on any command shows its help, as `help <command>` does,
     rather than running it.
   - A quoted word is never a flag: `probe '--x'` looks for `--x`.
-  - In free text (`eval`'s JavaScript, `type`'s text, a menu label), a
-    `--word` is the text's own. Flags go before it.
+  - Flags can go anywhere, in free text too (`eval`'s JavaScript,
+    `type`'s text, a menu label). There, a word of its own shaped like
+    a flag (`--name`, `--name=...`) is taken as one, and an unknown one
+    is refused rather than run as code.
+    - To keep such a word as text, quote the text as a whole
+      (`type #q 'a --b'`), or in JavaScript write it so the `--` isn't
+      a word of its own (`a = '--b'`, `(--n)`).
+    - A `/regex/` starting the text is all text, and flags can follow
+      it (`wait log /a --b/ --timeout-seconds 9`).
 - Arguments a command doesn't take are refused: `status now`, `focus T1
   T2 T3`, `stop D1 D2` (with its usage).
 - An invalid command prints `ERROR:` and its message, not the help,
@@ -1026,9 +1033,8 @@ Some commands take several lines as a block, at the prompt or on stdin:
 - Later on the line they are refused: `The --run flag is for the whole
   command line, so it goes first, before any command: sm-dev --run ...
   <command>`.
-  - That includes one ending a command's text (`eval 1 --run D1`),
-    unless the command takes the flag itself, or the text is quoted
-    as a whole.
+  - That includes one anywhere in a command's text (`eval 1 --run D1`),
+    unless the command takes the flag itself, or the word is quoted.
 - A command's own flag goes after it. One put before it is refused
   with the line as it should be: `The --nowait flag goes after the
   command: open <url> --nowait`.
@@ -1803,9 +1809,9 @@ Limits of the heuristic:
 - It ends with the line it matched, then where:
   `[sm-dev] Found at 1759512345678901 (14:05:12.678)`. One that gives up
   says where it searched to: `[sm-dev] Searched up to ...`.
-- A near miss of `--timeout-seconds` ending unquoted text (`--timeout
-  40`) is refused, rather than looked for as text. Other `--words` in
-  the text are text.
+- A `--word` in unquoted text is a flag, so a near miss of
+  `--timeout-seconds` (`--timeout 40`) is refused, rather than looked
+  for as text. Quote text that has one: `wait log 'Running --dry-run'`.
 
 ## Background runs and logs
 

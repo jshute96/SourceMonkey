@@ -12,12 +12,16 @@
 //   takes a value. One whose value is optional (`--script[=<script>]`)
 //   takes it only as `--name=value`. An unknown flag, a value on one
 //   that takes none, and a flag given twice are refused.
+// - Flags can go anywhere, a command's free text (eval's JavaScript)
+//   included: there, a word of its own shaped like one (`--name`,
+//   `--name=...`) is a flag, and an unknown or global one is refused
+//   rather than run as code. A `/regex/` starting the text is all text.
 // - A quoted word is never a flag, so `'--x'` is an argument.
 // - `--help`, where a flag can go, asks for the command's help, as
 //   `help <command>` does, rather than running it.
 // - Arguments a command doesn't take are refused.
 
-import { commandSyntax, noSuchFlag, type ArgSyntax, type CommandSyntax } from './command-list.js';
+import { commandSyntax, GLOBAL_FLAGS, globalFlagMistake, noSuchFlag, type ArgSyntax, type CommandSyntax } from './command-list.js';
 import { TAB_ARG } from './tab-refs.js';
 import { quoted } from './output-style.js';
 
@@ -142,7 +146,7 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
     parsed.block = block;
   }
 
-  // Flags anywhere before the text starts; the rest are arguments.
+  // Flags anywhere; the rest are arguments.
   let shape: ArgSyntax = syntax.base;
   const args: Word[] = [];
   // The arguments so far that are the command's own, past a tab, a
@@ -150,11 +154,16 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
   const ownCount = (): number => args.length - (parsed.tab !== undefined ? 1 : 0) - (parsed.form !== undefined ? 1 : 0)
     - (parsed.subject !== undefined ? 1 : 0);
   // Once the text has started (its first word after the ones before
-  // it), the words are its own, `--words` included.
+  // it), only a word shaped like a flag is one, and none in a `/regex/`
+  // that starts it: up to word `regexEnd`.
   let inText = false;
+  let regexEnd = -1;
   for (let i = 0; i < list.length; i++) {
     const word = list[i];
-    if (!word.quoted && /^--./.test(word.text) && !inText) {
+    // In a command that takes text, only a flag-shaped word (the text's
+    // first word could be code); elsewhere any `--` word.
+    const flagShaped = shape.args === 'text' ? i > regexEnd && FLAG_WORD.test(word.text) : /^--./.test(word.text);
+    if (!word.quoted && flagShaped) {
       if (word.text === '--help') {
         parsed.help = true;
         continue;
@@ -180,7 +189,20 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
       args.push(word);
       continue;
     }
-    if (shape.args === 'text' && ownCount() >= (shape.before ?? 0)) inText = true;
+    if (shape.args === 'text' && ownCount() >= (shape.before ?? 0) && !inText) {
+      inText = true;
+      // Text starting with a regex (`wait log /a --b/`): its words are
+      // its own, to the first word that closes it. Flags can follow it.
+      if (!word.quoted && word.text.startsWith('/')) {
+        for (let j = i; j < list.length; j++) {
+          const span = typed ? head.slice(word.start, list[j].end) : list.slice(i, j + 1).map((w) => w.text).join(' ');
+          if (REGEX_TEXT.test(span)) {
+            regexEnd = j;
+            break;
+          }
+        }
+      }
+    }
     args.push(word);
   }
   const own = args.slice((parsed.tab !== undefined ? 1 : 0) + (parsed.form !== undefined ? 1 : 0) + (parsed.subject !== undefined ? 1 : 0));
@@ -214,14 +236,6 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
       parsed.words = own.slice(0, before).map((w) => w.text);
       const rest = own.slice(before);
       let text = typed ? rawOf(head, rest, list) : rest.map((w) => w.text).join(' ');
-      // Flags that end text not quoted as a whole (`wait log ready
-      // --timeout-seconds 9`): known ones taken, a near miss of one
-      // refused. Then the text before them is unquoted.
-      if (shape.trailingFlags && !(typed && unquoteWhole(text).quoted) && !/^\/.+\/[a-z]*$/.test(text)) {
-        const trailing = trailingFlags(command, syntax, parsed, typed ? splitWords(text) : rest);
-        if ('error' in trailing) return trailing;
-        text = typed ? text.slice(0, trailing.cut).trimEnd() : rest.slice(0, trailing.cut).map((w) => w.text).join(' ');
-      }
       if (typed && shape.unquote !== 'none') text = unquoteWhole(text, shape.unquote).text;
       parsed.text = text;
       break;
@@ -237,6 +251,7 @@ function takeFlag(command: string, syntax: CommandSyntax, parsed: ParsedArgs, li
   const eq = text.indexOf('=');
   const name = eq > 0 ? text.slice(0, eq) : text;
   const kind = Object.hasOwn(syntax.flags, name) ? syntax.flags[name] : undefined;
+  if (!kind && GLOBAL_FLAGS.includes(name)) return { error: globalFlagMistake(name), flag: name };
   if (!kind) return { error: noSuchFlag(command, name, Object.keys(syntax.flags)), flag: name };
   if (Object.hasOwn(parsed.flags, name)) return { error: `The ${name} flag can be given once`, flag: name };
   if (kind === 'bool' || (kind === 'optional' && eq < 0)) {
@@ -262,38 +277,6 @@ function takeFlag(command: string, syntax: CommandSyntax, parsed: ParsedArgs, li
   return i + 1;
 }
 
-// The known flags ending `words`, taken into `parsed`, and where the
-// text before them ends (in characters when typed, else in words). A
-// near miss of one (`--timeout` for `--timeout-seconds`) is refused:
-// otherwise it would be looked for as text. Other `--words` are text.
-function trailingFlags(command: string, syntax: CommandSyntax, parsed: ParsedArgs, words: Word[]): { cut: number } | { error: string } {
-  const typed = words.some((w) => w.start >= 0);
-  const known = Object.keys(syntax.flags);
-  const flagIn = (w: Word | undefined): string | undefined => (w && !w.quoted && /^--./.test(w.text) ? w.text.split('=')[0] : undefined);
-  // Not a flag, but one's start (`--timeout`), or with more after it.
-  const nearMiss = (flag: string): boolean => !Object.hasOwn(syntax.flags, flag)
-    && known.some((k) => flag.startsWith(k.split('-').slice(0, 3).join('-')) || k.startsWith(flag));
-  let end = words.length;
-  for (;;) {
-    const last = flagIn(words[end - 1]);
-    const before = flagIn(words[end - 2]);
-    // `--flag`, `--flag=value`, or `--flag value`, ending the text.
-    let at: number;
-    const kind = (flag: string | undefined): string | undefined => (flag !== undefined && Object.hasOwn(syntax.flags, flag) ? syntax.flags[flag] : undefined);
-    if (kind(last) === 'bool' || kind(last) === 'optional' || (kind(last) === 'value' && words[end - 1].text.includes('='))) at = end - 1;
-    else if (kind(before) === 'value' && !words[end - 2].text.includes('=')) at = end - 2;
-    else {
-      const miss = [last, before].find((flag) => flag !== undefined && nearMiss(flag));
-      if (miss) return { error: noSuchFlag(command, miss, known) };
-      break;
-    }
-    const taken = takeFlag(command, syntax, parsed, words.slice(0, end), at);
-    if (typeof taken === 'object') return taken;
-    end = at;
-  }
-  return { cut: typed ? (end === 0 ? 0 : words[end - 1].end) : end };
-}
-
 // The typed line from the first of `words` to the last, as typed: its
 // quotes and spaces kept, the flags among them taken out.
 function rawOf(head: string, words: Word[], all: Word[]): string {
@@ -304,12 +287,20 @@ function rawOf(head: string, words: Word[], all: Word[]): string {
   let at = from;
   for (const word of all) {
     if (word.start < from || word.end > to || words.includes(word)) continue;
-    // A flag (or its value) inside the span: left out.
-    text += head.slice(at, word.start);
+    // A flag (or its value) inside the span: left out, with the space
+    // before it, so `a --flag b` leaves `a b`.
+    text += head.slice(at, word.start).trimEnd();
     at = word.end;
   }
   return (text + head.slice(at, to)).trim();
 }
+
+// A word in a command's text that is a flag: `--name`, `--name=...`.
+// Code rarely has one (`--i` alone, say); quoting it keeps it text.
+const FLAG_WORD = /^--[A-Za-z][\w-]*(?:=[\s\S]*)?$/;
+
+// A regex, `/.../flags`.
+const REGEX_TEXT = /^\/.+\/[a-z]*$/;
 
 // How a message says a small count.
 const COUNTS = ['no', 'one', 'two', 'three'];

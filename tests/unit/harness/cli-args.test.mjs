@@ -392,9 +392,12 @@ test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
   // The flags it does take, for a near miss.
   assert.deepEqual(cli('wait', '--timeout', '9'), { code: 2, out: 'ERROR: The `wait` command has no --timeout flag. It takes --timeout-seconds, --log-source, --find, --since, --frame.' });
   assert.deepEqual(cli('snapshot --out f --bad'), { code: 2, out: 'ERROR: The `snapshot` command has no --bad flag. It takes --visible, --out, --find, --up, --context, --limit, --timeout-seconds, --frame.' });
-  // In free text, -- is content: eval's JavaScript here.
+  // In free text too: a --name word is a flag, so an unknown one is
+  // refused rather than run as eval's JavaScript.
   assert.deepEqual(cli('eval', 'T2', '--x'), { code: 2, out: 'ERROR: The `eval` command has no --x flag. It takes --page, --script, --file, --out, --timeout-seconds, --frame.' });
-  assert.deepEqual(cli('eval', 'x', '--y'), { code: 1, out: 'No sm-dev runs are active. Start one with `sm-dev start`.' });
+  assert.deepEqual(cli('eval', 'x', '--y'), { code: 2, out: 'ERROR: The `eval` command has no --y flag. It takes --page, --script, --file, --out, --timeout-seconds, --frame.' });
+  assert.deepEqual(cli('eval', 'x', '--timeout-seconds', '45'), { code: 1, out: 'No sm-dev runs are active. Start one with `sm-dev start`.' });
+  assert.deepEqual(cli('eval', 'x --y'), { code: 1, out: 'No sm-dev runs are active. Start one with `sm-dev start`.' });
   // -h anywhere is help, even among a run's command's words.
   assert.deepEqual(cli('type', 'input', '-h'), { code: 0, out: 'Usage: sm-dev type [tab] <selector> <text> [options]' });
 });

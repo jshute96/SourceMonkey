@@ -30,11 +30,11 @@ import {
   commandWords, managerCommandOf, managerCommand, onlyInspects, readPromptCommands, runCommandHelp, runCommandMistake, runLogLabelUi, setJsonOutput, writeOutputLine,
 } from './console-commands.js';
 import { parseLang } from './browser-lang.js';
-import { parseCommandArgs, splitWords } from './command-args.js';
+import { parseCommandArgs } from './command-args.js';
 import { DEFAULT_MANAGER, MANAGERS, managerMistake, managerNamed, type ManagerName } from './managers.js';
 import type { ManagerVerb } from './manager-actions.js';
 import type { ManagerControl } from './manager-commands.js';
-import { MAX_TIMER_SECONDS, OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, TIMEOUT_NEEDS_SECONDS, commandNamed, commandSyntax, commandsHelp, helpText, timeoutSecondsMs, unsupportedCommand } from './command-list.js';
+import { MAX_TIMER_SECONDS, OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, TIMEOUT_NEEDS_SECONDS, GLOBAL_FLAGS, VALUE_GLOBALS, commandNamed, commandSyntax, commandsHelp, globalFlagMistake, helpText, timeoutSecondsMs, unsupportedCommand } from './command-list.js';
 import { readJsonFile } from './input-file.js';
 import { echoLine, err as errorLine, ERROR_PREFIX, paintOutput, quoted, SM_DEV_PREFIX, streamHasColor } from './output-style.js';
 // The roles for marked-up output, as S.id(...): their names are common locals here.
@@ -1044,28 +1044,9 @@ function commandMistake(input: { line: string } | { words: string[] }): string |
   if (first) return globalFlagMistake(first);
   if (!isTypedCommand(name)) return unknownRunCommand(name);
   const mistake = runCommandMistake(input);
-  if (!mistake) return trailingGlobalFlag(input, commandNamed(name)!);
+  if (!mistake) return null;
   const flag = lineFlag(mistake.flag);
   return flag ? globalFlagMistake(flag) : mistake.error;
-}
-
-// A global flag ending a command whose text would otherwise take it
-// (`eval 1 --run D1`): said, not run as part of the JS. One the command
-// takes itself (`logs --json`) was taken already. A word quoted, or
-// inside a quoted argument, is text.
-function trailingGlobalFlag(input: { line: string } | { words: string[] }, command: string): string | null {
-  const own = commandSyntax(command).flags;
-  const words = 'line' in input ? splitWords(input.line) : input.words.map((text) => ({ text, quoted: false }));
-  const flagAt = (i: number): string | undefined => {
-    const word = words.at(i);
-    const flag = word && !word.quoted ? word.text.split('=')[0] : undefined;
-    return flag !== undefined && GLOBAL_FLAGS.includes(flag) && !Object.hasOwn(own, flag) ? flag : undefined;
-  };
-  const last = flagAt(-1);
-  if (last) return globalFlagMistake(last);
-  const before = flagAt(-2);
-  if (before && VALUE_GLOBALS.has(before)) return globalFlagMistake(before);
-  return null;
 }
 
 // The list in one argument of several lines, checked; null for a
@@ -1649,15 +1630,6 @@ let lineJson = false;
 // SourceMonkey, or a run's own when sending to one.
 let lineManager: ManagerName | undefined;
 
-
-// The flags for the whole line, which go before any command.
-const GLOBAL_FLAGS = ['--run', '--root', '--local', '--stdin', '--interactive', '--browser', '--manager', '--open-browser', '--profile', '--temp-browser', '--headed', '--mute', '--nomute', '--json'];
-
-function globalFlagMistake(flag: string): string {
-  return `The ${quoted(flag)} flag is for the whole command line, so it goes first, before any command: ${quoted(`sm-dev ${flag}${VALUE_GLOBALS.has(flag) ? ' ...' : ''} <command>`)}`;
-}
-
-const VALUE_GLOBALS = new Set(['--run', '--root', '--local', '--browser', '--manager', '--profile']);
 
 interface GlobalFlags {
   stdin: boolean;

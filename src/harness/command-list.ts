@@ -44,8 +44,9 @@ export interface HelpItem {
  * - `words`: separate words, quotes grouping one; `max` of them.
  * - `selector`: the rest of the line as typed, less the flags, which can
  *   be anywhere (a selector never starts with --).
- * - `text`: `before` words, then the rest of the line as typed. Flags
- *   come before it; a `--word` in it is its own.
+ * - `text`: `before` words, then the rest of the line as typed, less
+ *   the flags in it: a word of its own shaped like one (`--name`,
+ *   `--name=...`) is a flag anywhere, unless the text is one `/regex/`.
  */
 export interface ArgSyntax {
   args: 'none' | 'words' | 'selector' | 'text';
@@ -59,8 +60,6 @@ export interface ArgSyntax {
   bracesInText?: boolean;
   /** Text quoted as a whole is unquoted: `any` quotes (default), `single` (JSON), or `none` (JavaScript). */
   unquote?: 'any' | 'single' | 'none';
-  /** Its flags can also end unquoted text, and a near miss of one there is refused (wait log). */
-  trailingFlags?: boolean;
 }
 
 export interface HelpCommand {
@@ -128,15 +127,16 @@ export function timeoutSecondsMs(value: string | true): number | null {
 // The common syntaxes.
 const NONE: ArgSyntax = { args: 'none' };
 const WORDS: ArgSyntax = { args: 'words' };
-// Text that `--json` or `--nojson` can end (`values 2 --json`).
-const JSON_TEXT: ArgSyntax = { args: 'text', trailingFlags: true };
+// The rest of the line as one argument (a script, a key), so it can
+// hold spaces.
+const TEXT: ArgSyntax = { args: 'text' };
 const TAB_LOADS = ['newtab', 'open', 'reload'];
 const SETTLING = ['start', ...TAB_LOADS, 'click', 'hover', 'type', 'key'];
 // The commands that wait on the page, so take --timeout-seconds. Those
 // whose help lists it themselves (its default differs) aren't here.
 const TIMED = ['start', 'click', 'hover', 'type', 'key', 'eval', 'snapshot', 'probe', 'screenshot', 'closetab', 'load', 'update'];
 // wait log, listed under both Logs and Waiting.
-const WAIT_LOG: HelpCommand = { usage: 'wait log [--find=]<text>', syntax: { args: 'text', trailingFlags: true }, about: [] };
+const WAIT_LOG: HelpCommand = { usage: 'wait log [--find=]<text>', syntax: { args: 'text' }, about: [] };
 const WAIT_LOG_ABOUT = ['Wait for a log line with the text, or matching `/regex/`, logged since the previous command began.'];
 // The page commands that act in an iframe with `--frame`.
 const IN_FRAME = ['eval', 'click', 'hover', 'type', 'snapshot', 'screenshot', 'probe', 'wait', 'cdp'];
@@ -299,10 +299,10 @@ export const HELP_SECTIONS: HelpSection[] = [
     name: 'scripts',
     summary: 'Work with scripts',
     commands: [
-      { usage: 'scripts', syntax: JSON_TEXT, about: 'List the loaded scripts, and the manager\'s other scripts on the current tab.' },
+      { usage: 'scripts', syntax: TEXT, about: 'List the loaded scripts, and the manager\'s other scripts on the current tab.' },
       { usage: 'script <script>', about: 'Select the active script by ID. With `T2.3`, pick tab `T2` too.' },
       { usage: 'load <script>...', syntax: WORDS, about: 'Load more scripts from disk: files, directories, or globs. See `help files`.' },
-      { usage: 'update [script]', syntax: { args: 'text', trailingFlags: true }, about: 'Re-read one (or all) scripts from disk, and reload all affected tabs.' },
+      { usage: 'update [script]', syntax: { args: 'text' }, about: 'Re-read one (or all) scripts from disk, and reload all affected tabs.' },
     ],
     subsections: [
       {
@@ -547,7 +547,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       },
       {
         usage: 'type [tab] <selector> <text>',
-        syntax: { args: 'text', before: 1, tab: true, block: true, bracesInText: true, trailingFlags: true },
+        syntax: { args: 'text', before: 1, tab: true, block: true, bracesInText: true },
         about: ['Type text into an element. (Text box, etc.)', '`type <selector> {{` starts multi-line text, ended by `}}`.'],
         options: [
           { term: '--file <path>', about: 'Type a file\'s text, in place of `<text>`.' },
@@ -622,7 +622,7 @@ export const HELP_SECTIONS: HelpSection[] = [
           {
             usage: 'cdp [tab] <Method> [params]',
             summary: 'Send raw CDP calls to the page.',
-            syntax: { args: 'text', tab: true, block: true, unquote: 'none', trailingFlags: true },
+            syntax: { args: 'text', tab: true, block: true, unquote: 'none' },
             about: ['Make one `Method` call, and print the result as JSON.', 'e.g. `cdp Input.insertText \'{"text": "hello"}\'`'],
           },
           { usage: 'cdp [tab] {{', about: 'Make multiple `Method` calls, one per line, ended by `}}`.', gap: true },
@@ -640,7 +640,7 @@ export const HELP_SECTIONS: HelpSection[] = [
           {
             managers: SM,
             usage: 'menu [what]',
-            syntax: { args: 'text', unquote: 'none', trailingFlags: true },
+            syntax: { args: 'text', unquote: 'none' },
             about: 'List the tab\'s menu commands, or fire one.',
             args: [
               { term: 'T2', about: 'List a tab\'s.' },
@@ -659,7 +659,7 @@ export const HELP_SECTIONS: HelpSection[] = [
           {
             managers: SM,
             usage: 'values [what]',
-            syntax: JSON_TEXT,
+            syntax: TEXT,
             about: 'Print values scripts have stored in GM Storage.',
             args: [
               { term: '<script>', about: 'One script.' },
@@ -667,12 +667,11 @@ export const HELP_SECTIONS: HelpSection[] = [
               { term: 'T2', about: 'Scripts running on a tab.' },
             ],
           },
-          { managers: SM, usage: 'get <key>', syntax: JSON_TEXT, about: 'Print one value for the selected script.', gap: true },
+          { managers: SM, usage: 'get <key>', syntax: TEXT, about: 'Print one value for the selected script.', gap: true },
           {
             managers: SM,
             usage: 'set <key> <json>',
-            // JSON can't end with a `--flag`, so one there is a flag.
-            syntax: { args: 'text', before: 1, block: true, unquote: 'single', trailingFlags: true },
+            syntax: { args: 'text', before: 1, block: true, unquote: 'single' },
             about: ['Store a value for the selected script.', '`set <key> {{` starts a multi-line block of JSON, ended by `}}`.'],
             options: [
               { term: '--file <path>', about: 'Read the JSON from a file, in place of `<json>`.' },
@@ -1369,6 +1368,17 @@ export function commandSyntax(name: string): CommandSyntax {
     }
   }
   return syntax;
+}
+
+// The flags for the whole line, which go before any command.
+export const GLOBAL_FLAGS = ['--run', '--root', '--local', '--stdin', '--interactive', '--browser', '--manager', '--open-browser', '--profile', '--temp-browser', '--headed', '--mute', '--nomute', '--json'];
+
+// Those of them that take a value.
+export const VALUE_GLOBALS = new Set(['--run', '--root', '--local', '--browser', '--manager', '--profile']);
+
+// A global flag given where a command's own go.
+export function globalFlagMistake(flag: string): string {
+  return `The ${quoted(flag)} flag is for the whole command line, so it goes first, before any command: ${quoted(`sm-dev ${flag}${VALUE_GLOBALS.has(flag) ? ' ...' : ''} <command>`)}`;
 }
 
 /**
