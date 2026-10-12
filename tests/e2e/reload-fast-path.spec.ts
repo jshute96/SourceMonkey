@@ -389,7 +389,7 @@ test.describe('reload fast-path', () => {
       runAt: 'document-end' as const,
       injectInto: 'content' as const,
     };
-    // A sibling that always grants storage, so the shared `__SM_GM__`
+    // A sibling that always grants storage, so the shared GM
     // runtime stays registered in USER_SCRIPT world for every version
     // below. The runtime follows the scripts that need it, and the SW
     // defers a swap whose body would land on a document without it —
@@ -530,7 +530,7 @@ test.describe('reload fast-path', () => {
   test('a refresh that first needs the GM runtime defers to the next reload', async ({
     extensionContext, fixtureServer, sm,
   }) => {
-    // The shared `__SM_GM__` runtime is registered only in worlds that
+    // The shared GM runtime is registered only in worlds that
     // have a script granting a runtime-backed API, so a page whose
     // only script grants nothing carries no runtime. Adding the first
     // such grant produces a body whose GM_* bindings would resolve to
@@ -566,7 +566,7 @@ test.describe('reload fast-path', () => {
     });
     await page.reload();
     // Deferred: the baked-in body ran again. A swap here would have
-    // thrown on `window.__SM_GM__` being undefined.
+    // thrown on the GM runtime being missing.
     await expect(page).toHaveTitle('v1-no-runtime');
 
     // That reload's refresh landed the new row; syncNow flushes the

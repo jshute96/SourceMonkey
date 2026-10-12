@@ -92,6 +92,7 @@ and `lib/`.
 | `src/script-world.ts` | Picks the injection world (page or isolated) and whether a page-world script is sandboxed, from its header |
 | `src/eval-hook.ts` | The statement sm-dev's scripts get so `eval` runs in their scope (and their IIFE's), after any `"use strict"` |
 | `src/composed-source.ts` | Concatenates `@require` bodies ahead of the script body; owns the injected entry's line layout and the parse check's source, for stack and error mapping |
+| `src/channel-placeholder.ts` | The stand-in for the channel key in the static wrapper files, shared with the harness |
 | `src/sandboxed-page.ts` | Detects a CSP `sandbox` that blocks page-world scripts; the wording the Log warning and sm-dev's note share |
 | `src/debug-log.ts` | Debug-logging gate for verbose lifecycle messages; off by default, toggled via `chrome.storage.local.smDebugLogging` |
 | `src/phase-timing.ts` | Debug-gated timers behind the refresh / registration / enable paths: per-sequence phases plus cumulative fan-out totals |
@@ -129,7 +130,7 @@ stay directly in `src/` so the extension's URLs have no folder in them.
 | `src/styles.css` | Cross-page shared stylesheet linked by every extension page: the header bar and page column, the button surface, collection bubble + scheme chip, display-name, warning banner, modal dialog shell, install-target select, tab strip, site favicons |
 | `src/userscript-prelude.js` | Static per-world prelude (matcher, check-pending round-trip, @run-at gate, async-error listeners, focus signal, sandbox `window`); minified to WRAPPER_PRELUDE and spliced into each script's js[] as a `{code}` entry |
 | `src/wrapper-bridge.js` | USER_SCRIPT-world bridge for MAIN-world scripts: relays sm:* + GM_* traffic, does GM DOM inserts, spots sandboxed pages |
-| `src/wrapper-gm-runtime.js` | Shared per-world `GM_*` runtime — installs `window.__SM_GM__` (shim cache, dual transport, storage cache + stored-value codec + batched writes) |
+| `src/wrapper-gm-runtime.js` | Shared per-world `GM_*` runtime — puts itself in the world's registry (shim cache, dual transport, storage cache + stored-value codec + batched writes) |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons (placeholder) |
 
 ### Extension modules (`src/extension/`)
@@ -195,6 +196,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/script-sites.ts` | Rewrites a script's URL into the hosting site's listing page (Greasy Fork, Sleazy Fork, OpenUserJS, gists) and decides the viewer's row |
 | `src/extension/script-url-hash.ts` | Pure `parseHash` / `buildHash` for the viewer's `#<filename>[:<line>[:<col>]]` / `#Log` URL fragment |
 | `src/extension/match-index.ts` | In-memory cache of scripts' matching info, world and local-ness, synced with storage; invalid ones only for the popup |
+| `src/extension/channel.ts` | The per-install channel key: made and stored, swapped into wrappers, the registry gate expression, a document's key |
 | `src/extension/injector.ts` | Incrementally syncs the enabled script set into `chrome.userScripts`, re-checking unverified rows first, and wraps each body with an activation/error shim |
 | `src/extension/tab-status.ts` | Pure helpers for per-tab script status (expected ∪ actual, runs in frames), badge colors, and per-tab document LRU |
 | `src/extension/toolbar-summary.ts` | Pure: the toolbar badge's count and color and its tooltip's status lines, from the popup's view |
@@ -310,6 +312,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/fixtures/viewer-selectors.ts` | Userscript-viewer selectors shared by several specs, where the right element isn't the obvious one |
 | `tests/fixtures/extension-id.ts` | Computes Chrome's deterministic unpacked-extension ID from an absolute path |
 | `tests/fixtures/bad-script-cases.mjs` | Expected status / message / error line for every `tests/bad-examples/` file, shared by the e2e spec and the CLI test |
+| `tests/fixtures/bridge-forge.ts` | Sends the bridge's events as a page holding the channel key would, for tests of the SW-side gate |
 | `tests/fixtures/scripts-dir.ts` | Tmp-dir helper that writes real `*.user.js` files on disk for the production scan/fetch pipeline to ingest |
 | `tests/fixtures/userscript-server.ts` | Per-test HTTP server with mutable userscript / manifest routes, conditional-GET handling, and a request-arrival wait |
 | `tests/fixtures/sw-api.ts` | Typed wrapper over the `self.SourceMonkey` SW test surface plus the shared `waitFor` / tab-id / badge-colour / all-scripts helpers |
@@ -443,6 +446,8 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/stack-lines.spec.ts` | The service worker's stack layout, which `sm-dev` maps with, sends a logged throw to the `@require` and script lines |
 | `tests/e2e/sticky-numbers.spec.ts` | Collection numbers: the service worker keeps them as collections come and go, and holds a dropped one's back |
 | `tests/e2e/log-export.spec.ts` | Log tab's Save / Copy buttons: save dialog, cancel + write-failure reporting, download fallback, clipboard text, empty-log disable |
+| `tests/unit/channel.test.mjs` | Unit tests for the channel key's registry gate, its document keys, and that our pieces meet only there |
+| `tests/unit/channel-helpers.mjs` | Test helpers for the channel key: the registry, event names, a gate over a test's stub |
 | `tests/unit/injector.test.mjs` | Unit tests for the injector: spec build, active-spec collection, refusal logging, retry limits, sync serialization and scoping |
 | `tests/unit/generated-wrappers.test.mjs` | Guard test: each minified wrapper (`WRAPPER_*`) is a single line of valid JS with load-bearing tokens intact |
 | `tests/unit/source-layout.test.mjs` | Checks the `src/` split: what `lib/` and `dist/` compile, and that shared modules are shared |
@@ -472,7 +477,8 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/gm-storage-types.spec.ts` | E2E: `Date`/`Map`/`Set`/`NaN`/binary/`Error` survive a reload, plain values stay untagged, pre-codec rows still read |
 | `tests/e2e/gm-storage-freshness.spec.ts` | E2E: fresh documents see the latest `GM_setValue` (same-tab nav, fresh tab, write-then-navigate race) |
 | `tests/e2e/gm-storage-teardown-main.spec.ts` | E2E: a MAIN-world `GM_setValue` right before a script-driven navigation or a tab close still reaches the next document |
-| `tests/e2e/gm-storage-read-leak.spec.ts` | E2E: a page-forged bridge `sm:check-pending` can't read another script's `GM_setValue` snapshot (`__viaBridge` gate) |
+| `tests/e2e/channel-key.spec.ts` | E2E: a page that hooks the usual built-ins never sees the channel key, on a load and a reload swap |
+| `tests/e2e/gm-storage-read-leak.spec.ts` | E2E: a page without the channel key reaches neither bridge nor runtime; with it, the `__viaBridge` gate still refuses another script's values |
 | `tests/e2e/gm-main-world-surface.spec.ts` | E2E: the GM_* surfaces that only ran isolated before — `window.onurlchange`, `window.close`/`focus`, value-change listeners, menu fires, `GM_openInTab` onclose — working from MAIN world |
 | `tests/e2e/gm-unsafe-window.spec.ts` | E2E: `@grant unsafeWindow` reaches real page globals, GM_* works over the MAIN-world bridge (also for `@inject-into page`), and forged bridge calls are refused per world and per grant |
 | `tests/e2e/wrapper-scope.spec.ts` | E2E: the user program runs in a scope nested in the wrap, so redeclaring `window`, `unsafeWindow` or `GM_*` shadows ours |

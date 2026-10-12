@@ -64,9 +64,10 @@ the script sees a `ReferenceError` at call time, and the SW logs a
   (`@inject-into content` or `@sandbox DOM`), as in Tampermonkey and
   Violentmonkey. So `unsafeWindow` reaches the page with or without a
   grant line.
-- The script's `@grant`s work there too. The shared `__SM_GM__`
-  runtime is registered in MAIN as well, and routes its
-  service-worker traffic over the bridge.
+- The script's `@grant`s work there too. The shared GM runtime is
+  registered in MAIN as well, and routes its service-worker traffic
+  over the bridge. A secret key keeps the page from reaching either
+  ([injection.md](injection.md#the-channel-key)).
 - `@inject-into content` / `@sandbox DOM` are explicit requests for
   isolation. The binding stays (matching VM's content mode) but every
   page global reads as `undefined`, so SourceMonkey emits a

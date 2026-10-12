@@ -6,25 +6,27 @@
  * `{code: WRAPPER_PRELUDE}`). NOT loaded via `{file}` — chrome.userScripts
  * resolves `{file}` entries asynchronously in MAIN world (likely
  * via <script src=> under the hood), so subsequent entries would see
- * `self.__smRun` undefined. See docs/injection-modes.md.
+ * `reg.run` undefined. See docs/injection-modes.md.
  *
  * Per-script layout:
  *
  *   js[0]  — config call {code}. Calls
- *            `(self.__smPrelude||(self.__smCfgQueue=self.__smCfgQueue||[]).push)(cfg)`
+ *            `(reg.prelude||(reg.cfgQueue=reg.cfgQueue||[]).push)(cfg)`
  *            (effectively) to either init the script now, or queue the
- *            config for whenever the prelude runs next.
+ *            config for whenever the prelude runs next. `reg` is the
+ *            world's registry (see `registry` below).
  *   js[1]  — THIS source, inlined as {code}. On its FIRST execution
  *            per world it installs helpers and drains the queue;
  *            subsequent executions (the prelude {code} entry appears
  *            in every script's js[]) short-circuit because the
  *            helpers are already in place — but they still see and
  *            pick up any config that the preceding js[0] just pushed
- *            onto the queue, because the queue lives on globalThis.
+ *            onto the queue, because the queue lives on the registry.
  *   js[2]  — the whole user program: every @require concatenated ahead
  *                of the script's own body, all wrapped in
- *                `__smRun("id",function(__smE){<gm bindings>return(()=>{
- *                 <user source>\n})();})`, so it runs only after the
+ *                `reg.run("id",function(__smE){<gm bindings>const __smU=()=>{
+ *                 <user source>\n};return reg.prelude.callAs(__smU);})`,
+ *                `reg` passed in from around it, so it runs only after the
  *                matcher + check-pending + @run-at gates resolve.
  *                Concatenation is what gives requires and the body one
  *                shared scope, nested inside the bindings' scope so
@@ -34,17 +36,19 @@
  *                `//# sourceURL=sourcemonkey://<id>/<name>.user.js`,
  *                plus an inline source map when requires are present so
  *                devtools still splits them into separate files.
- *   js[3]  — parse-failure sentinel: `self.__smSealed("<id>")`. Its own
+ *   js[3]  — parse-failure sentinel: `reg.sealed("<id>")`. Its own
  *                script, so it parses and runs even when js[2] didn't.
  *                Everything the user wrote is one script now, so a
  *                syntax error anywhere in it would otherwise be
- *                completely silent — __smRun is never reached.
+ *                completely silent — reg.run is never reached.
  *
  * Cross-entry coordination. Every js[] entry runs in the same
- * execution world and shares `self` / `globalThis`. Helpers live on
- * `self.__smPrelude`; per-script state lives under
- * `self.__smPrelude.scripts[scriptId]`. Pending configs live on
- * `self.__smCfgQueue` until the prelude drains them.
+ * execution world, but shares nothing the page can reach: they meet in
+ * the world's registry, which `document.__smGate` hands out only for the
+ * channel key baked into our code (see `registry` below and
+ * src/extension/channel.ts). Helpers live on `reg.prelude`; per-script
+ * state lives under `reg.prelude.scripts[scriptId]`. Pending configs
+ * live on `reg.cfgQueue` until the prelude drains them.
  *
  * Build rules. Same as the other wrapper-* files:
  *   - Only block comments. No `//` sequences in strings.
@@ -54,11 +58,80 @@
  *
  * No per-script values are baked into this file. The whole point of
  * the split is that this file is byte-identical for every script
- * registered.
+ * registered. The one value baked in, the channel key in place of
+ * "__SM_KEY__", is the same for all of them.
  */
 (function () {
   "use strict";
   if (typeof self === "undefined") return;
+
+  /* The channel key (src/extension/channel.ts), swapped in when we
+     register this file. Only in this strict IIFE, never in a function
+     the page could reach and `toString`. */
+  var SM_KEY = "__SM_KEY__";
+  /* The world's registry: what our entries share, out of the page's
+     reach. The first of them to run (at document_start, before any page
+     script) defines `document.__smGate`, non-writable and
+     non-configurable. It keeps one registry per key, so only a caller
+     with ours gets ours; any other string gets an empty one of its own.
+     Same code as `registryExpr` in channel.ts, which generated entries
+     use, and see there for why it is written this way. */
+  var reg = (function (k) {
+    var g = document.__smGate;
+    if (typeof g !== "function") {
+      var m = Object.create(null), c = Object.create, f = Object.freeze, a = Reflect.apply, p = Promise;
+      var i = console.info.bind(console);
+      var rs = function (v) { return new p(function (y) { y(v); }); };
+      var rj = function (e) { return new p(function (y, n) { n(e); }); };
+      g = function (x) {
+        if (typeof x !== "string") return void 0;
+        var r = m[x];
+        if (!r) { r = c(null); r.freeze = f; r.apply = a; r.resolve = rs; r.reject = rj; r.info = i; m[x] = r; }
+        return r;
+      };
+      var d = c(null);
+      d.value = g;
+      Object.defineProperty(document, "__smGate", d);
+    }
+    return g(k);
+  })(SM_KEY);
+  /* The bridge's events (wrapper-bridge.js). Named with the key, so
+     the page can neither send nor hear them. */
+  var SYNC_EVENT = "sourcemonkey-sync-" + SM_KEY;
+  var REPLY_EVENT = "sourcemonkey-reply-" + SM_KEY;
+  /* Built-ins as they are now, at document_start, before any page
+     script. Later code calls these rather than the page's globals or
+     `fn.call(...)` (a lookup the page could replace to see what passes,
+     the channel key or a script's values). */
+  var _ReflectApply = Reflect.apply;
+  var _hasOwn = Object.hasOwn;
+  var _ObjectCreate = Object.create;
+  /* Timers and microtasks, likewise: a page function we called while
+     handling one of the bridge's events could read `window.event`,
+     whose type carries the channel key. */
+  var _setTimeout = setTimeout;
+  var _clearTimeout = clearTimeout;
+  var _queueMicrotask = queueMicrotask;
+  /* A copy of `o` with no prototype, so reading a field it lacks can't
+     hand it to a getter the page put on `Object.prototype`. Shallow:
+     for the envelopes we read (a decision), not the script's values. */
+  function bare(o) {
+    if (!o || typeof o !== "object") return o;
+    var b = _ObjectCreate(null);
+    var ks = _ownKeys(o);
+    for (var j = 0; j < ks.length; j++) b[ks[j]] = o[ks[j]];
+    return b;
+  }
+  /* A data property descriptor with no prototype, for the same reason:
+     `defineProperty` reads `get` / `set` off it, inherited ones too. */
+  function dataDesc(value, writable, enumerable, configurable) {
+    var d = _ObjectCreate(null);
+    d.value = value;
+    d.writable = writable;
+    d.enumerable = enumerable;
+    d.configurable = configurable;
+    return d;
+  }
 
   /* Drain any pending config(s) through `init` — used both at the end
      of first-load setup and from the idempotency short-circuit below.
@@ -66,9 +139,9 @@
      state lands in the table that init closes over (the FIRST
      prelude's scripts{}), not a new local table. */
   function drainQueue(init) {
-    var q = self.__smCfgQueue;
+    var q = reg.cfgQueue;
     if (!q) return;
-    self.__smCfgQueue = null;
+    reg.cfgQueue = null;
     for (var i = 0; i < q.length; i++) {
       try { init(q[i]); } catch (e) {
         try { console.info("[SourceMonkey] prelude init threw for", q[i] && q[i].id, e); } catch (_e) {}
@@ -82,12 +155,14 @@
      config blob may have pushed a new config onto the queue. Drain
      through the already-installed init so per-script state continues
      to live in the original scripts table, then exit. */
-  if (self.__smPrelude && self.__smPrelude.scripts) {
-    drainQueue(self.__smPrelude.init);
+  if (reg.prelude && reg.prelude.scripts) {
+    drainQueue(reg.prelude.init);
     return;
   }
 
-  var scripts = {};
+  /* No prototype: a lookup that misses can't reach a getter the page
+     put on `Object.prototype`. */
+  var scripts = _ObjectCreate(null);
 
   /* ---------- per-script runtime state ----------
    *
@@ -103,10 +178,10 @@
    *   runAtFired   : true once the @run-at lifecycle event happened.
    *   replayLoad   : an idle gate opened before `load` was over, so a
    *                  body held past `load` gets it replayed.
-   *   pendingRun   : the main-body fn passed to __smRun, queued until
+   *   pendingRun   : the main-body fn passed to reg.run, queued until
    *                  (matched && decision !== 'skip' && runAtFired).
    *   runRegistered: did the combined user-program entry parse and
-   *                  call __smRun at all? The trailing sentinel entry
+   *                  call reg.run at all? The trailing sentinel entry
    *                  reports a syntax error when it didn't.
    *   loadedAtRun  : loadedAt to attribute sm:start / sm:error to;
    *                  bumps when decision === 'run-new'.
@@ -122,6 +197,8 @@
       runRegistered: false,
       loadedAtRun: cfg.loadedAt,
       asyncListenersInstalled: false,
+      /* For the generated GM prelude's reports (`__smSend`). */
+      send: send,
     };
   }
 
@@ -144,6 +221,11 @@
         typeof chrome.runtime.sendMessage === "function";
     } catch (_e) { return false; }
   }
+  /* Decided once, at load: in MAIN world `chrome` is the page's to
+     replace, and a page that made it look like ours would be sent our
+     reports and requests. */
+  var OWN_CHANNEL = hasOwnRuntimeChannel();
+  var _runtimeSend = OWN_CHANNEL ? chrome.runtime.sendMessage.bind(chrome.runtime) : null;
   /* MAIN world's leg of the transport: a CustomEvent on `document`
      carrying {requestId, payload} as JSON in `detail`. All three
      primitives are captured at init — this file runs at
@@ -156,15 +238,22 @@
      chrome.runtime.sendMessage happens before this returns, which a
      postMessage (delivered on a later task) could not promise a
      document that is tearing down. Replies come back the other way, as
-     a `sourcemonkey-bridge-reply` postMessage keyed on requestId.
+     a REPLY_EVENT keyed on requestId (`onReply`). The events' names
+     carry the channel key, so the page can't send or hear them, and
+     the options object has no prototype, so a page getter on
+     `Object.prototype` can't read the detail as the event is built.
      Returns false if the dispatch could not happen at all; a dropped
      payload (no bridge listening, unallowlisted type) looks the same
      as a delivered one from here. */
+  var _indirectEval = eval;
   var _CustomEvent = null;
   var _dispatchEvent = null;
   var _stringify = null;
+  var _parse = null;
+  var _detailOf = null;
   try { _CustomEvent = CustomEvent; } catch (_ceE) {}
-  try { _stringify = JSON.stringify; } catch (_jsE) {}
+  try { _stringify = JSON.stringify; _parse = JSON.parse; } catch (_jsE) {}
+  try { _detailOf = Object.getOwnPropertyDescriptor(CustomEvent.prototype, "detail").get; } catch (_dtE) {}
   try {
     if (document && typeof document.dispatchEvent === "function") {
       _dispatchEvent = document.dispatchEvent.bind(document);
@@ -173,11 +262,37 @@
   function bridgeDispatch(payload, requestId) {
     try {
       if (!_CustomEvent || !_dispatchEvent || !_stringify) return false;
-      _dispatchEvent(new _CustomEvent("sourcemonkey-bridge-sync", {
-        detail: _stringify({ requestId: requestId == null ? undefined : requestId, payload: payload }),
-      }));
+      var init = _ObjectCreate(null);
+      init.detail = _stringify({ requestId: requestId == null ? undefined : requestId, payload: payload });
+      _dispatchEvent(new _CustomEvent(SYNC_EVENT, init));
       return true;
     } catch (_e) { return false; }
+  }
+  /* The bridge's replies, in MAIN world: one listener for all of them,
+     each handed to the waiter for its requestId. The detail is read
+     through the getter captured above, called with Reflect.apply, so a
+     page that patched either can't see it. */
+  var replyWaiters = Object.create(null);
+  function onReply(requestId, cb) { replyWaiters[requestId] = cb; }
+  function offReply(requestId) { delete replyWaiters[requestId]; }
+  if (!OWN_CHANNEL) {
+    try {
+      document.addEventListener(REPLY_EVENT, function (ev) {
+        try {
+          var d = bare(_parse(_ReflectApply(_detailOf, ev, [])));
+          if (!d || typeof d.requestId !== "string") return;
+          /* Handled once the dispatch is over: while it runs,
+             `window.event` is this event, whose type carries the key,
+             and the reply can start the script. */
+          _queueMicrotask(function () {
+            var cb = replyWaiters[d.requestId];
+            if (!cb) return;
+            delete replyWaiters[d.requestId];
+            cb(d.reply);
+          });
+        } catch (_e) {}
+      }, true);
+    } catch (_rlE) {}
   }
   /* Whether this document has an opaque origin, carried on every report
      so the SW can explain a script that never started here: on an
@@ -189,8 +304,8 @@
   function send(payload) {
     try { payload.opaqueOrigin = OPAQUE_ORIGIN; } catch (_pE) {}
     try {
-      if (hasOwnRuntimeChannel()) {
-        var p = chrome.runtime.sendMessage(payload);
+      if (OWN_CHANNEL) {
+        var p = _runtimeSend(payload);
         if (p && typeof p.catch === "function") p.catch(function () {});
         return;
       }
@@ -203,14 +318,14 @@
      the SW's reply) can run: the runtime is registered only where some
      active script grants a runtime-backed API, so a refresh that ADDS
      the first such grant produces a body whose GM_* bindings have no
-     `window.__SM_GM__` to dereference until the next reload
+     `reg.gm` to dereference until the next reload
      re-registers it. Asked at the moment the body is about to run (see
      runMain), not at wrapper start: the runtime is its own
      document_start registration and may sit after this wrapper in
      Chrome's order — an updated registration moves to the end — but by
      run time every document_start registration has executed. */
   function hasGmRuntime() {
-    try { return !!window.__SM_GM__; } catch (_e) { return false; }
+    return !!reg.gm;
   }
 
   /* How long a wrapper waits for the SW's decision before giving up.
@@ -240,6 +355,7 @@
     /* Only a decision the SW makes counts; anything else (the bridge's
        `bridgeError`, a reply with no action) is no decision. */
     var decided = function (reply) {
+      reply = bare(reply);
       if (reply && typeof reply === "object" && (reply.action === "run" || reply.action === "run-new" || reply.action === "skip")) return reply;
       if (reply && typeof reply === "object" && typeof reply.bridgeError === "string") return noDecision(reply.bridgeError);
       return noDecision("SourceMonkey's answer whether to run it was unreadable");
@@ -252,15 +368,15 @@
       try { cb(decision); } catch (_e) {}
     };
     var cleanup = function () {};
-    var safetyTimer = setTimeout(function () { seal(fallback); }, DECISION_TIMEOUT_MS);
+    var safetyTimer = _setTimeout(function () { seal(fallback); }, DECISION_TIMEOUT_MS);
     var seal = function (decision) {
-      try { clearTimeout(safetyTimer); } catch (_e) {}
+      try { _clearTimeout(safetyTimer); } catch (_e) {}
       try { cleanup(); } catch (_e2) {}
       finish(decision);
     };
     try {
-      if (hasOwnRuntimeChannel()) {
-        var p = chrome.runtime.sendMessage({
+      if (OWN_CHANNEL) {
+        var p = _runtimeSend({
           type: "sm:check-pending",
           id: cfg.id,
           name: cfg.name,
@@ -284,15 +400,6 @@
          listener goes on before the dispatch, because the bridge's
          sendMessage runs inside it. */
       var requestId = "sm-" + Math.random().toString(36).slice(2) + "-" + Date.now();
-      var listener = function (ev) {
-        try {
-          if (!ev || ev.source !== window) return;
-          var d = ev.data;
-          if (!d || d.__sm !== "sourcemonkey-bridge-reply") return;
-          if (d.requestId !== requestId) return;
-          seal(decided(d.reply));
-        } catch (_e) {}
-      };
       var request = {
         type: "sm:check-pending",
         id: cfg.id,
@@ -314,11 +421,11 @@
         resent = true;
         bridgeDispatch(request, requestId);
       };
-      window.addEventListener("message", listener, true);
+      onReply(requestId, function (reply) { seal(decided(reply)); });
       /* READY_MARKER in wrapper-bridge.js. */
       window.addEventListener("sourcemonkey-bridge-ready", onReady, true);
       cleanup = function () {
-        try { window.removeEventListener("message", listener, true); } catch (_e) {}
+        offReply(requestId);
         try { window.removeEventListener("sourcemonkey-bridge-ready", onReady, true); } catch (_e2) {}
       };
       var dispatched = bridgeDispatch(request, requestId);
@@ -514,7 +621,7 @@
     }
     var ev = loadEvent;
     queued.forEach(function (listener) {
-      setTimeout(function () {
+      _setTimeout(function () {
         if (typeof listener === "function") listener.call(w, ev);
         else if (listener && typeof listener.handleEvent === "function") listener.handleEvent(ev);
       }, 0);
@@ -575,7 +682,7 @@
     var runIdle = function () {
       if (idleDone) return;
       idleDone = true;
-      if (idleTimer !== null) clearTimeout(idleTimer);
+      if (idleTimer !== null) _clearTimeout(idleTimer);
       window.removeEventListener("load", runIdle);
       document.removeEventListener("readystatechange", onReadyState);
       document.removeEventListener("DOMContentLoaded", onContentLoaded);
@@ -585,7 +692,7 @@
       if (document.readyState === "complete") runIdle();
     };
     var onContentLoaded = function () {
-      if (idleTimer === null) idleTimer = setTimeout(runIdle, IDLE_AFTER_DCL_MS);
+      if (idleTimer === null) idleTimer = _setTimeout(runIdle, IDLE_AFTER_DCL_MS);
     };
     window.addEventListener("load", runIdle);
     document.addEventListener("readystatechange", onReadyState);
@@ -812,14 +919,14 @@
     var entry = makeEntry(cfg);
     scripts[cfg.id] = entry;
     /* Matcher check first — if we don't match, mark inactive so the
-       combined entry's __smRun call is a no-op. Async listeners
+       combined entry's reg.run call is a no-op. Async listeners
        aren't installed either: this URL isn't ours. */
     if (cfg.matching) {
       entry.matched = matchScript(location.href, cfg.matching);
       if (!entry.matched) return entry;
     }
     /* Async listeners up early, before any of the script's code (its
-       @requires and body, which run together in the deferred `__smRun`
+       @requires and body, which run together in the deferred `reg.run`
        callback) can schedule work whose errors they attribute. */
     installAsyncListeners(entry);
     /* Past the matcher, so only a document we actually run on reports
@@ -863,7 +970,7 @@
     if (canSkipDecision(cfg)) {
       /* Nothing the SW could answer here is anything but `run`, so
          don't wait for it: see canSkipDecision. */
-      entry.decision = { action: "run" };
+      entry.decision = bare({ action: "run" });
       return entry;
     }
     awaitDecision(entry, function (decision) {
@@ -910,7 +1017,7 @@
      The worker sends the GM values snapshot along in the config. */
   function startManualRun(entry, cfg) {
     entry.runAtFired = true;
-    entry.decision = { action: "run" };
+    entry.decision = bare({ action: "run" });
     if (cfg.manualRun.gmValues) entry.decision.gmValues = cfg.manualRun.gmValues;
   }
 
@@ -924,9 +1031,7 @@
      it did to the page directly (timers, listeners, DOM) stays. */
   function rerunManual(entry, cfg) {
     try {
-      if (window.__SM_GM__ && typeof window.__SM_GM__.retireRun === "function") {
-        window.__SM_GM__.retireRun(cfg.id);
-      }
+      if (reg.gm && typeof reg.gm.retireRun === "function") reg.gm.retireRun(cfg.id);
     } catch (_e) {}
     entry.cfg = cfg;
     entry.matched = cfg.matching ? matchScript(location.href, cfg.matching) : true;
@@ -1064,7 +1169,7 @@
         var swapSnap = decision.gmValues;
         if (swapSnap && typeof swapSnap === "object") {
           try {
-            window.__SM_GM__.storage.init(cfg.id, swapSnap);
+            reg.gm.storage.init(cfg.id, swapSnap);
             swapReady = true;
           } catch (_smSI) {}
         }
@@ -1076,7 +1181,10 @@
       }
       if (swapReady) {
         try {
-          (0, eval)(decision.body + "\n//# sourceURL=" + cfg.sourceUrl);
+          /* The `eval` captured at load, so a page that replaced the
+             global one can't read the body, which carries the channel
+             key. Called by another name, so still an indirect eval. */
+          _indirectEval(decision.body + "\n//# sourceURL=" + cfg.sourceUrl);
         } catch (ex) {
           evalErr = ex;
           var exMsg = (ex && ex.message) ? String(ex.message) : String(ex);
@@ -1156,19 +1264,19 @@
   /* ---------- public helpers (called by per-script entries) ----------
    *
    * Each helper is keyed by scriptId so multiple scripts in the same
-   * world coexist. They live on `self` so per-script entries (which
-   * run as their own scripts) can find them. */
+   * world coexist. They live on the world's registry so per-script
+   * entries (which run as their own scripts) can find them. */
 
   /* Queue the main body for execution. Called once per script by the
      combined user-program {code} entry. The body is wrapped in a
      function so the prelude can defer it until decision + @run-at
      resolve. */
-  self.__smRun = function (scriptId, fn) {
+  reg.run = function (scriptId, fn) {
     var entry = scripts[scriptId];
     if (!entry) return;
     /* Set BEFORE the matched check: the flag records "the entry
        parsed and ran", which is true regardless of whether this URL
-       matched. __smSealed reads it. */
+       matched. reg.sealed reads it. */
     entry.runRegistered = true;
     if (!entry.matched) return;
     entry.pendingRun = fn;
@@ -1181,17 +1289,17 @@
      Everything the user wrote — every @require plus the body — is one
      V8 script now, so an unterminated string / comment / template
      anywhere in any require makes the whole entry fail to parse. That
-     failure is invisible: __smRun is never reached, so without this
+     failure is invisible: reg.run is never reached, so without this
      the script would simply never run, with no error, no log entry
      and no badge. (Under the old separate-entries arrangement the
      broken require died alone and the body still ran.)
 
      This entry is its own script, so it parses and runs even when the
      one before it didn't. */
-  self.__smSealed = function (scriptId) {
+  reg.sealed = function (scriptId) {
     var entry = scripts[scriptId];
     if (!entry || entry.runRegistered) return;
-    /* `matched` matters HERE but deliberately not in __smRun. There,
+    /* `matched` matters HERE but deliberately not in reg.run. There,
        the flag records "the entry parsed and called us", which is
        true regardless of the URL. Here we're inferring the opposite
        from its absence — and initScript stores the entry BEFORE
@@ -1237,7 +1345,7 @@
          `unsafeWindow`) are on it, so `this.unsafeWindow` and
          `window.GM_setValue` work as they do in TM and VM.
        - Our own `__sm*` globals bypass it, both ways: the eval hook's
-         map and `__SM_GM__` must stay on the real window.
+         map and `__smGate` must stay on the real window.
      The `with` object is a second, thin Proxy over it (the scope). Its
      `has` claims only the sandbox's own names and `window` / `self` /
      `globalThis`, so any other bare name resolves as it would without
@@ -1247,7 +1355,6 @@
      See docs/injection.md, "The sandbox window". */
   var _Proxy = typeof Proxy === "function" ? Proxy : null;
   var _WeakMap = typeof WeakMap === "function" ? WeakMap : null;
-  var _ReflectApply = Reflect.apply;
   var _ReflectConstruct = Reflect.construct;
   var _ReflectDefineProperty = Reflect.defineProperty;
   var _ReflectDeleteProperty = Reflect.deleteProperty;
@@ -1259,7 +1366,6 @@
   var _ownKeys = Reflect.ownKeys;
   var _fnToString = Function.prototype.toString;
   var _bind = Function.prototype.bind;
-  var _hasOwnProp = Object.prototype.hasOwnProperty;
   var _ObjectProto = Object.prototype;
   var _unscopables = Symbol.unscopables;
   var NATIVE_CODE = /\{\s*\[native code\]\s*\}\s*$/;
@@ -1305,8 +1411,8 @@
   function isWindowMethod(k, fn) {
     if (typeof fn !== "function") return false;
     if (typeof k === "string" && WINDOW_METHODS[k]) return true;
-    if (_hasOwnProp.call(fn, "prototype")) return false;
-    if (_hasOwnProp.call(_ObjectProto, k) && _ObjectProto[k] === fn) return false;
+    if (_hasOwn(fn, "prototype")) return false;
+    if (_hasOwn(_ObjectProto, k) && _ObjectProto[k] === fn) return false;
     return isNative(fn);
   }
 
@@ -1338,7 +1444,7 @@
      allocating. */
   function isOurKey(k) {
     return typeof k === "string" && k.charCodeAt(0) === 95
-      && (k.lastIndexOf("__sm", 0) === 0 || k === "__SM_GM__");
+      && k.lastIndexOf("__sm", 0) === 0;
   }
 
   /* The page window's descriptor for `k`, own or inherited. */
@@ -1365,7 +1471,7 @@
          so the page's shows through: a frame's `window.close`, which
          keeps the page's own. */
       if (exposed[keys[i]] === undefined) continue;
-      _defineProperty(own, keys[i], { value: exposed[keys[i]], writable: true, enumerable: false, configurable: true });
+      _defineProperty(own, keys[i], dataDesc(exposed[keys[i]], true, false, true));
     }
     /* The page's value for `k`, as the script should see it. */
     function pageValue(k) {
@@ -1381,7 +1487,7 @@
       },
       get: function (t, k) {
         if (isOurKey(k)) return window[k];
-        if (_hasOwnProp.call(t, k)) {
+        if (_hasOwn(t, k)) {
           var v = _ReflectGet(t, k, proxy);
           /* A script's own replacement of a window method, which
              likely ends in the native one. */
@@ -1391,14 +1497,14 @@
       },
       set: function (t, k, v) {
         if (isOurKey(k)) { window[k] = v; return true; }
-        if (_hasOwnProp.call(t, k)) return _ReflectSet(t, k, v, proxy);
+        if (_hasOwn(t, k)) return _ReflectSet(t, k, v, proxy);
         /* A setter goes through to the page; a read-only property
            (`document`, `undefined`) refuses the write, as the real
            window does. Anything else becomes the sandbox's own. */
         var w = windowDescriptor(k);
         if (w && w.set) { _ReflectApply(w.set, window, [v]); return true; }
         if (w && (w.get || !w.writable)) return false;
-        return _ReflectDefineProperty(t, k, { value: v, writable: true, enumerable: true, configurable: true });
+        return _ReflectDefineProperty(t, k, dataDesc(v, true, true, true));
       },
       defineProperty: function (t, k, desc) {
         if (isOurKey(k)) return _ReflectDefineProperty(window, k, desc);
@@ -1409,7 +1515,7 @@
         return _ReflectDeleteProperty(t, k);
       },
       getOwnPropertyDescriptor: function (t, k) {
-        if (!isOurKey(k) && _hasOwnProp.call(t, k)) return _getOwnPropertyDescriptor(t, k);
+        if (!isOurKey(k) && _hasOwn(t, k)) return _getOwnPropertyDescriptor(t, k);
         var w = _getOwnPropertyDescriptor(window, k);
         if (!w) return undefined;
         /* Reported configurable: the target lacks it, and a Proxy can
@@ -1439,7 +1545,7 @@
     var scope = new _Proxy(Object.create(null), {
       has: function (_t, k) {
         if (typeof k !== "string" || isOurKey(k)) return false;
-        return _hasOwnProp.call(own, k) || isWindowAlias(k);
+        return _hasOwn(own, k) || isWindowAlias(k);
       },
       get: function (_t, k) {
         if (k === _unscopables) return undefined;
@@ -1461,8 +1567,7 @@
   /* Run the user program with the sandbox as `this`, through the
      `Reflect.apply` captured at document_start, so a page that patched
      `Function.prototype.call` (as some do, for their own reasons)
-     doesn't sit in the way. Not a security boundary: a MAIN-world page
-     can replace `__smPrelude` itself. */
+     doesn't sit in the way. */
   function callAs(fn, thisArg) {
     return _ReflectApply(fn, thisArg, []);
   }
@@ -1471,7 +1576,7 @@
      runs AFTER the prelude is already loaded (i.e. the 2nd+ script in
      the same world) initialize directly without going through the
      queue. */
-  self.__smPrelude = {
+  reg.prelude = {
     scripts: scripts,
     init: initScript,
     /* For tests that run the decision's timer themselves. */
@@ -1488,7 +1593,7 @@
      injects nothing in MAIN, so the bridge hears neither and asks the
      SW to run this document's MAIN-world scripts in USER_SCRIPT world
      instead (MAIN_READY in wrapper-bridge.js). */
-  if (!hasOwnRuntimeChannel()) {
+  if (!OWN_CHANNEL) {
     var announce = function () {
       try { if (_CustomEvent && _dispatchEvent) _dispatchEvent(new _CustomEvent("sourcemonkey-main-ready")); } catch (_ae) {}
     };

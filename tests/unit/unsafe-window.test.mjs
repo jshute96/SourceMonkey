@@ -142,7 +142,7 @@ test('extractStartupLogs: warns when @grant none overrides other grants', () => 
 // ---------- needsGmRuntime ----------
 
 test('needsGmRuntime: false when nothing but GM_info / unsafeWindow is granted', () => {
-  // Both are satisfied without `window.__SM_GM__` — GM_info is a baked
+  // Both are satisfied without the GM runtime — GM_info is a baked
   // literal, unsafeWindow is a plain `window` alias. Keeping the
   // runtime off these pages is what stops `@grant none` MAIN-world
   // scripts from putting extension machinery on the page.
@@ -213,9 +213,9 @@ test('buildRegistrationSpec: MAIN-world scripts get REAL GM_* bindings, not just
   assert.match(combined, /const unsafeWindow = window;/);
   // The bodies delegate to the shared runtime, which is registered in
   // MAIN too — so these resolve rather than ReferenceError.
-  assert.match(combined, /const GM_setValue = function[^]*__SM_GM__\.storage\.set/);
-  assert.match(combined, /const GM_getValue = function[^]*__SM_GM__\.storage\.get/);
-  assert.match(combined, /const GM_info = Object\.freeze/);
+  assert.match(combined, /const GM_setValue = function[^]*__smReg\.gm\.storage\.set/);
+  assert.match(combined, /const GM_getValue = function[^]*__smReg\.gm\.storage\.get/);
+  assert.match(combined, /const GM_info = __smReg\.freeze/);
 });
 
 test('buildRegistrationSpec: a storage-granting MAIN script still asks for its snapshot', async () => {
@@ -231,9 +231,9 @@ test('buildRegistrationSpec: @grant none MAIN scripts are unchanged (GM_info onl
   const spec = await buildRegistrationSpec(makeScript({ header: grantHeader('none') }));
   assert.equal(spec.world, 'MAIN');
   const combined = spec.js[2].code;
-  assert.match(combined, /const GM_info = Object\.freeze/);
+  assert.match(combined, /const GM_info = __smReg\.freeze/);
   assert.doesNotMatch(combined, /const unsafeWindow/);
-  assert.doesNotMatch(combined, /__SM_GM__/);
+  assert.doesNotMatch(combined, /__smReg\.gm/);
 });
 
 // ---------- runtime registration ----------
@@ -510,7 +510,9 @@ test('extractStartupLogs: the isolated dead end is one message, grant or not', (
 // postMessages coming back.
 
 test('generated wrappers: runtime and bridge agree on the wire markers', () => {
-  for (const marker of ['sourcemonkey-bridge-sync', 'sourcemonkey-bridge-reply', 'sourcemonkey-bridge-push']) {
+  // Each is followed by `-" + SM_KEY` in the source: the key is added
+  // at run time.
+  for (const marker of ['sourcemonkey-sync-', 'sourcemonkey-reply-', 'sourcemonkey-push-', 'sourcemonkey-insert-']) {
     assert.ok(WRAPPER_GM_RUNTIME.includes(marker), `runtime is missing ${marker}`);
     assert.ok(WRAPPER_BRIDGE.includes(marker), `bridge is missing ${marker}`);
   }

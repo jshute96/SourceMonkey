@@ -8,6 +8,7 @@ import type { BrowserContext, Page } from '@playwright/test';
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
+import { bridgeRequest } from '../fixtures/bridge-forge';
 import { activeTabId, allScripts, hasBadgeColor, waitForTabState, type SmApi } from '../fixtures/sw-api';
 import {
   MANUAL_RUN_COLLECTION_OFF, MANUAL_RUN_NOT_HERE, MANUAL_RUN_NOT_MANUAL, MANUAL_RUN_SCRIPT_OFF, MANUAL_RUN_SM_DEV,
@@ -125,6 +126,44 @@ test.describe('manual scripts (@run-at context-menu)', () => {
     await page.close();
   });
 
+  test('page-world manual runs: a GM call goes through, and two scripts in one document each work', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    // Each run's bridge relays only its script's traffic (docs/manual-scripts.md):
+    // an XHR request names the script as `scriptId` (its `id` is the
+    // request's own), and a second script's runs get a bridge of their own.
+    scriptsDir.write({
+      relativePath: 'fetcher.user.js',
+      meta: {
+        name: 'Fetcher', match: [`${fixtureServer.baseUrl}/*`], runAt: 'context-menu',
+        grant: ['GM_xmlhttpRequest'], extra: ['// @connect 127.0.0.1'],
+      },
+      body: `GM_xmlhttpRequest({ url: location.href, onload: (r) => { document.body.dataset.fetched = String(r.status); } });`,
+    });
+    scriptsDir.write({
+      relativePath: 'storer.user.js',
+      meta: { name: 'Storer', match: [`${fixtureServer.baseUrl}/*`], runAt: 'context-menu', grant: ['GM_setValue', 'GM_getValue'] },
+      body: `GM_setValue('n', GM_getValue('n', 0) + 1); document.body.dataset.stored = String(GM_getValue('n'));`,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+    const fetcher = await idOf(sm, 'fetcher.user.js');
+    const storer = await idOf(sm, 'storer.user.js');
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    const tabId = await activeTabId(getServiceWorker);
+    expect(await sm.runManualScript(tabId, fetcher)).toEqual({ ok: true });
+    await expect(page.locator('body')).toHaveAttribute('data-fetched', '200');
+    expect(await sm.runManualScript(tabId, storer)).toEqual({ ok: true });
+    await expect(page.locator('body')).toHaveAttribute('data-stored', '1');
+    await expect.poll(async () => (await sm.getGmValues(storer)).n).toBe(1);
+    // A second run of the same script picks up where the first left off.
+    expect(await sm.runManualScript(tabId, storer)).toEqual({ ok: true });
+    await expect(page.locator('body')).toHaveAttribute('data-stored', '2');
+    await page.close();
+  });
+
   test('says why it can\'t run: not manual, not this page, turned off', async ({
     extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {
@@ -216,20 +255,9 @@ test.describe('manual scripts (@run-at context-menu)', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/`);
     await expect.poll(async () => (await sm.getPopupView(await activeTabId(getServiceWorker))).enabled[0]?.rows[0]?.status).toBe('OK');
-    const forge = (): Promise<unknown> => page.evaluate((scriptId) => new Promise<unknown>((resolve) => {
-      const rid = 'forge-' + Math.random().toString(36).slice(2);
-      const onMsg = (ev: MessageEvent): void => {
-        const d = ev.data as { __sm?: string; requestId?: string; reply?: unknown };
-        if (ev.source !== window || !d || d.__sm !== 'sourcemonkey-bridge-reply' || d.requestId !== rid) return;
-        window.removeEventListener('message', onMsg, true);
-        resolve(d.reply ?? null);
-      };
-      window.addEventListener('message', onMsg, true);
-      document.dispatchEvent(new CustomEvent('sourcemonkey-bridge-sync', {
-        detail: JSON.stringify({ requestId: rid, payload: { type: 'sm:gm-resync', scriptId } }),
-      }));
-      setTimeout(() => { window.removeEventListener('message', onMsg, true); resolve(null); }, 2500);
-    }), id);
+    // As a page with the channel key could: the SW-side gate behind it.
+    const key = await sm.channelKey();
+    const forge = (): Promise<unknown> => bridgeRequest(page, key, { type: 'sm:gm-resync', scriptId: id });
 
     // Not run in this document: refused.
     const refused = await forge();

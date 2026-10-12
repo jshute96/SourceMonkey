@@ -3,7 +3,7 @@
 // The injector calls `emitGmBindings` once per script at wrapper-build
 // time. The result is `{ js, prelude, granted }`:
 //   - `js` holds the `const GM_X = ...` declarations plus the eager
-//     calls that need nothing but `window.__SM_GM__` and baked
+//     calls that need nothing but `__smReg.gm` and baked
 //     literals (`urlchange.enable`, `windowControl.enable` / `.make`,
 //     `resource.init`). It is used
 //     TWICE: `wrapCombinedEntry` splices it into the main-body wrap
@@ -22,11 +22,14 @@
 // `emitGmBindings` returns `{ js: '', prelude: '', granted: [] }`.
 //
 // Topology recap:
-//   - SYNC API bodies delegate to `window.__SM_GM__.<method>(...)`,
+//   - `js` reaches everything through `__smReg`, the world's registry,
+//     which only code holding the channel key can get (channel.ts);
+//     the injector puts it in scope. The runtime is `__smReg.gm`.
+//   - SYNC API bodies delegate to `__smReg.gm.<method>(...)`,
 //     defined by src/wrapper-gm-runtime.js (a separately-registered
 //     USER_SCRIPT-world script). The runtime is shared across all
 //     userscripts in the document.
-//   - ASYNC API bodies route through `window.__SM_GM__.sendAsync(...)`
+//   - ASYNC API bodies route through `__smReg.gm.sendAsync(...)`
 //     which wraps chrome.runtime.sendMessage so a sibling userscript
 //     reassigning chrome.runtime can't break us.
 //   - GM_info is purely compile-time — the script's metadata is
@@ -34,9 +37,9 @@
 //   - The `GM` object (GM4 alias namespace) is built up alongside.
 //
 // Compile-in shape contract: the set of bindings emitted and the
-// call-site shape (`__SM_GM__.<method>(...)` sync, `sendAsync` async)
+// call-site shape (`__smReg.gm.<method>(...)` sync, `sendAsync` async)
 // is stable across phases. Bodies for unimplemented APIs throw "not
-// implemented yet" via `__SM_GM__.notImplemented(...)`; phases swap
+// implemented yet" via `__smReg.gm.notImplemented(...)`; phases swap
 // in real handlers without changing the call-site shape, so e2e
 // tests written against earlier phases keep passing.
 
@@ -110,7 +113,7 @@ export interface UserAgentDataSnapshot {
 //
 //   - `js`       — the lazy const declarations + GM4 alias object,
 //                  spliced ahead of the user body. Every dereference
-//                  of `window.__SM_GM__` in the declarations lives
+//                  of `__smReg.gm` in the declarations lives
 //                  inside a function body, so it doesn't fire until
 //                  the script body calls a GM_* API. The exceptions
 //                  are the trailing eager calls —
@@ -215,16 +218,16 @@ function emitGmInfo(info: GmInfoInput): string {
     scriptWillUpdate: true,
     userAgentData: info.userAgentData,
   };
-  return `const GM_info = Object.freeze(${jsLit(gmInfo)});`;
+  return `const GM_info = __smReg.freeze(${jsLit(gmInfo)});`;
 }
 
 // Build a single GM_x binding statement.
 //
-// SYNC bodies delegate to __SM_GM__.<subsystem>.<verb>(scriptId, ...args).
-// Unimplemented sync APIs delegate to __SM_GM__.notImplemented(name).
+// SYNC bodies delegate to __smReg.gm.<subsystem>.<verb>(scriptId, ...args).
+// Unimplemented sync APIs delegate to __smReg.gm.notImplemented(name).
 //
 // ASYNC bodies build a message envelope and route it through
-// __SM_GM__.sendAsync. The call-site shape is stable across phases —
+// __smReg.gm.sendAsync. The call-site shape is stable across phases —
 // landing a new API only changes the SW-side dispatch.
 function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   // unsafeWindow is a passthrough binding, not a function — the same
@@ -263,18 +266,18 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
     return '';
   }
   // Storage subsystem: route to the page-side cache + batched-write
-  // helpers on `__SM_GM__.storage`. The scriptId literal is closed
+  // helpers on `__smReg.gm.storage`. The scriptId literal is closed
   // over so the runtime can key per-script state.
   if (spec.subsystem === 'storage') {
     switch (spec.name) {
       case 'GM_getValue':
-        return `const GM_getValue = function (key, defaultValue) { return window.__SM_GM__.storage.get(${jsLit(scriptId)}, key, defaultValue); };`;
+        return `const GM_getValue = function (key, defaultValue) { return __smReg.gm.storage.get(${jsLit(scriptId)}, key, defaultValue); };`;
       case 'GM_setValue':
-        return `const GM_setValue = function (key, value) { return window.__SM_GM__.storage.set(${jsLit(scriptId)}, key, value); };`;
+        return `const GM_setValue = function (key, value) { return __smReg.gm.storage.set(${jsLit(scriptId)}, key, value); };`;
       case 'GM_deleteValue':
-        return `const GM_deleteValue = function (key) { return window.__SM_GM__.storage.del(${jsLit(scriptId)}, key); };`;
+        return `const GM_deleteValue = function (key) { return __smReg.gm.storage.del(${jsLit(scriptId)}, key); };`;
       case 'GM_listValues':
-        return `const GM_listValues = function () { return window.__SM_GM__.storage.list(${jsLit(scriptId)}); };`;
+        return `const GM_listValues = function () { return __smReg.gm.storage.list(${jsLit(scriptId)}); };`;
     }
   }
   // Storage-listener subsystem: addValueChangeListener / removeValueChangeListener
@@ -283,9 +286,9 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   if (spec.subsystem === 'storage-listener') {
     switch (spec.name) {
       case 'GM_addValueChangeListener':
-        return `const GM_addValueChangeListener = function (key, callback) { return window.__SM_GM__.storage.addValueChangeListener(${jsLit(scriptId)}, key, callback); };`;
+        return `const GM_addValueChangeListener = function (key, callback) { return __smReg.gm.storage.addValueChangeListener(${jsLit(scriptId)}, key, callback); };`;
       case 'GM_removeValueChangeListener':
-        return `const GM_removeValueChangeListener = function (listenerId) { return window.__SM_GM__.storage.removeValueChangeListener(${jsLit(scriptId)}, listenerId); };`;
+        return `const GM_removeValueChangeListener = function (listenerId) { return __smReg.gm.storage.removeValueChangeListener(${jsLit(scriptId)}, listenerId); };`;
     }
   }
   // DOM subsystem: in-page DOM mutations, no per-script state needed
@@ -295,9 +298,9 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   if (spec.subsystem === 'dom') {
     switch (spec.name) {
       case 'GM_addStyle':
-        return `const GM_addStyle = function (css) { return window.__SM_GM__.dom.addStyle(${jsLit(scriptId)}, css); };`;
+        return `const GM_addStyle = function (css) { return __smReg.gm.dom.addStyle(${jsLit(scriptId)}, css); };`;
       case 'GM_addElement':
-        return `const GM_addElement = function (parentOrTag, tagOrAttrs, attrs) { return window.__SM_GM__.dom.addElement(${jsLit(scriptId)}, parentOrTag, tagOrAttrs, attrs); };`;
+        return `const GM_addElement = function (parentOrTag, tagOrAttrs, attrs) { return __smReg.gm.dom.addElement(${jsLit(scriptId)}, parentOrTag, tagOrAttrs, attrs); };`;
     }
   }
   // Clipboard subsystem: navigator.clipboard.writeText via the
@@ -307,7 +310,7 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   if (spec.subsystem === 'clipboard') {
     switch (spec.name) {
       case 'GM_setClipboard':
-        return `const GM_setClipboard = function (text, type) { return window.__SM_GM__.clipboard.write(text, type); };`;
+        return `const GM_setClipboard = function (text, type) { return __smReg.gm.clipboard.write(text, type); };`;
     }
   }
   // XHR subsystem: GM_xmlhttpRequest returns a `{abort}` control
@@ -319,7 +322,7 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   if (spec.subsystem === 'xhr') {
     switch (spec.name) {
       case 'GM_xmlhttpRequest':
-        return `const GM_xmlhttpRequest = function (details) { return window.__SM_GM__.xhr.start(${jsLit(scriptId)}, details); };`;
+        return `const GM_xmlhttpRequest = function (details) { return __smReg.gm.xhr.start(${jsLit(scriptId)}, details); };`;
     }
   }
   // Log subsystem: GM_log writes to the page console with a per-script
@@ -329,7 +332,7 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   if (spec.subsystem === 'log') {
     switch (spec.name) {
       case 'GM_log':
-        return `const GM_log = function () { return window.__SM_GM__.log.write(${jsLit(scriptId)}, arguments); };`;
+        return `const GM_log = function () { return __smReg.gm.log.write(${jsLit(scriptId)}, arguments); };`;
     }
   }
   // Tab subsystem: GM_openInTab. Returns a `{close, closed, onclose}`
@@ -338,7 +341,7 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   if (spec.subsystem === 'tab') {
     switch (spec.name) {
       case 'GM_openInTab':
-        return `const GM_openInTab = function (url, options) { return window.__SM_GM__.tab.open(${jsLit(scriptId)}, url, options); };`;
+        return `const GM_openInTab = function (url, options) { return __smReg.gm.tab.open(${jsLit(scriptId)}, url, options); };`;
     }
   }
   // Notification subsystem: GM_notification. Returns the SW round-trip
@@ -349,7 +352,7 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   if (spec.subsystem === 'notification') {
     switch (spec.name) {
       case 'GM_notification':
-        return `const GM_notification = function () { return window.__SM_GM__.notification.show(${jsLit(scriptId)}, arguments); };`;
+        return `const GM_notification = function () { return __smReg.gm.notification.show(${jsLit(scriptId)}, arguments); };`;
     }
   }
   // Download subsystem: GM_download returns a `{abort}` control object
@@ -360,7 +363,7 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   if (spec.subsystem === 'download') {
     switch (spec.name) {
       case 'GM_download':
-        return `const GM_download = function (detailsOrUrl, name) { return window.__SM_GM__.download.start(${jsLit(scriptId)}, detailsOrUrl, name); };`;
+        return `const GM_download = function (detailsOrUrl, name) { return __smReg.gm.download.start(${jsLit(scriptId)}, detailsOrUrl, name); };`;
     }
   }
   // Menu subsystem: register/unregister context-menu commands. The
@@ -371,9 +374,9 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   if (spec.subsystem === 'menu') {
     switch (spec.name) {
       case 'GM_registerMenuCommand':
-        return `const GM_registerMenuCommand = function (name, callback, accessKeyOrOpts) { return window.__SM_GM__.menu.register(${jsLit(scriptId)}, name, callback, accessKeyOrOpts); };`;
+        return `const GM_registerMenuCommand = function (name, callback, accessKeyOrOpts) { return __smReg.gm.menu.register(${jsLit(scriptId)}, name, callback, accessKeyOrOpts); };`;
       case 'GM_unregisterMenuCommand':
-        return `const GM_unregisterMenuCommand = function (commandId) { return window.__SM_GM__.menu.unregister(${jsLit(scriptId)}, commandId); };`;
+        return `const GM_unregisterMenuCommand = function (commandId) { return __smReg.gm.menu.unregister(${jsLit(scriptId)}, commandId); };`;
     }
   }
   // Resource subsystem: GM_getResourceText decodes the stored bytes
@@ -383,16 +386,16 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   if (spec.subsystem === 'resource') {
     switch (spec.name) {
       case 'GM_getResourceText':
-        return `const GM_getResourceText = function (name) { return window.__SM_GM__.resource.getText(${jsLit(scriptId)}, name); };`;
+        return `const GM_getResourceText = function (name) { return __smReg.gm.resource.getText(${jsLit(scriptId)}, name); };`;
       case 'GM_getResourceURL':
-        return `const GM_getResourceURL = function (name) { return window.__SM_GM__.resource.getUrl(${jsLit(scriptId)}, name); };`;
+        return `const GM_getResourceURL = function (name) { return __smReg.gm.resource.getUrl(${jsLit(scriptId)}, name); };`;
     }
   }
   if (spec.kind === 'sync') {
     // Fall-through for sync APIs whose body hasn't been wired up yet.
     // Closure captures the literal API name so error messages
     // identify it.
-    return `const ${spec.name} = function () { return window.__SM_GM__.notImplemented(${jsLit(spec.name)}); };`;
+    return `const ${spec.name} = function () { return __smReg.gm.notImplemented(${jsLit(spec.name)}); };`;
   }
   // ASYNC body. Build the message envelope at call time so the args
   // travel as a structured array; the SW handler in later phases
@@ -406,7 +409,7 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   return [
     `const ${spec.name} = function () {`,
     `  var args = Array.prototype.slice.call(arguments);`,
-    `  return window.__SM_GM__.sendAsync({`,
+    `  return __smReg.gm.sendAsync({`,
     `    type: "sm:gm-call",`,
     `    api: ${jsLit(spec.name)},`,
     `    scriptId: ${jsLit(scriptId)},`,
@@ -422,8 +425,11 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
 
 // Build the GM4 namespace object — `const GM = Object.freeze({ ... })`.
 // For each granted API with a `gmDotName`, expose a property on `GM`.
-// When `gmDotPromised` is true, wrap the GM_x return value in
-// Promise.resolve so the GM4 caller can `await` it uniformly.
+// When `gmDotPromised` is true, wrap the GM_x return value in a promise
+// so the GM4 caller can `await` it uniformly. Both go through the
+// registry's copies (`apply`, `resolve`, `reject`): a page that replaced
+// `Function.prototype.apply` or `Promise.resolve` would otherwise be
+// handed the GM function itself.
 function emitGmObject(grantedSpecs: readonly GmApiSpec[]): string {
   const props: string[] = [];
   for (const spec of grantedSpecs) {
@@ -438,15 +444,15 @@ function emitGmObject(grantedSpecs: readonly GmApiSpec[]): string {
       // throw (sync stub). Wrap in a Promise so the GM4 alias
       // matches its documented signature unconditionally.
       props.push(
-        `${spec.gmDotName}: function () { try { return Promise.resolve(${spec.name}.apply(null, arguments)); } catch (e) { return Promise.reject(e); } }`,
+        `${spec.gmDotName}: function () { try { return __smReg.resolve(__smReg.apply(${spec.name}, null, arguments)); } catch (e) { return __smReg.reject(e); } }`,
       );
     } else {
       // Pass-through: same call shape, same return.
-      props.push(`${spec.gmDotName}: function () { return ${spec.name}.apply(null, arguments); }`);
+      props.push(`${spec.gmDotName}: function () { return __smReg.apply(${spec.name}, null, arguments); }`);
     }
   }
   if (props.length === 0) return '';
-  return `const GM = Object.freeze({ ${props.join(', ')} });`;
+  return `const GM = __smReg.freeze({ ${props.join(', ')} });`;
 }
 
 // Public entry point. Build the binding source string for one script.
@@ -480,6 +486,19 @@ export function emitGmBindings(
   // GM_info is always emitted, even with an empty grant set. TM/VM
   // both treat it as implicit so a script can introspect its own
   // metadata without declaring a single grant.
+  // Everything here reaches the runtime through `__smReg`, the world's
+  // registry, which the injector puts in scope: the wrap function's
+  // parameter, or a `const` ahead of the swap eval's body.
+  //
+  // This code's top level runs in the wrap function, which is sloppy
+  // mode (the user program inside it may be), so a page function it
+  // called directly could reach it through `.caller`, and its
+  // `arguments` hold the script's entry (its stored values among them).
+  // So the top level calls nothing the page could have replaced:
+  // `Object.freeze` and `console.info` are the registry's copies, taken
+  // at document_start (`freeze`, `info`). Calls from inside a GM
+  // function don't lead back here: the runtime is strict, and the user
+  // program runs through the prelude's strict `callAs`.
   const parts: string[] = [emitGmInfo(info)];
   const declared: string[] = ['GM_info'];
   for (const spec of specs) {
@@ -507,7 +526,7 @@ export function emitGmBindings(
   //   - Ordering safety is identical. Both strings are spliced into
   //     the SAME main-body wrap function (`wrapCombinedEntry`), which
   //     only runs after the prelude's awaitDecision + waitForRunAt
-  //     gates — so `window.__SM_GM__` is installed either way.
+  //     gates — so `__smReg.gm` is installed either way.
   //   - `js` is ALSO what `buildSwapEvalBody` prepends for the
   //     reload-fast-path swap, and `prelude` is not. Emitting here is
   //     what makes a hot-swapped script still get its `urlchange`
@@ -526,9 +545,9 @@ export function emitGmBindings(
   if (specs.some((s) => s.subsystem === 'url-change')) {
     parts.push(
       // Both halves matter: a runtime registered before this feature
-      // shipped has `__SM_GM__` but no `urlchange`, and a page can hold
+      // shipped has `__smReg.gm` but no `urlchange`, and a page can hold
       // a stale registration across an extension update.
-      `if (window.__SM_GM__ && window.__SM_GM__.urlchange) window.__SM_GM__.urlchange.enable(${jsLit(info.scriptId)});`,
+      `if (__smReg.gm && __smReg.gm.urlchange) __smReg.gm.urlchange.enable(${jsLit(info.scriptId)});`,
     );
   }
   // `@grant window.close` / `@grant window.focus` — same eager-call
@@ -556,11 +575,11 @@ export function emitGmBindings(
     if (sandboxed) {
       windowMethods.push(method);
       parts.push(
-        `const ${windowMethodBinding(method)} = window.__SM_GM__ && window.__SM_GM__.windowControl && window.__SM_GM__.windowControl.make ? window.__SM_GM__.windowControl.make(${args}) : undefined;`,
+        `const ${windowMethodBinding(method)} = __smReg.gm && __smReg.gm.windowControl && __smReg.gm.windowControl.make ? __smReg.gm.windowControl.make(${args}) : undefined;`,
       );
     } else {
       parts.push(
-        `if (window.__SM_GM__ && window.__SM_GM__.windowControl) window.__SM_GM__.windowControl.enable(${args});`,
+        `if (__smReg.gm && __smReg.gm.windowControl) __smReg.gm.windowControl.enable(${args});`,
       );
     }
   }
@@ -577,7 +596,7 @@ export function emitGmBindings(
   // It lives at the END of `js` rather than in `prelude` for the same
   // reason `urlchange.enable` does: `js` is what `buildSwapEvalBody`
   // prepends for the reload-fast-path swap, and `prelude` is not.
-  // The statement references only `window.__SM_GM__` and baked
+  // The statement references only `__smReg.gm` and baked
   // literals, so it works identically in the wrap function and in the
   // swap eval's global scope.
   //
@@ -593,14 +612,14 @@ export function emitGmBindings(
   const hasResourceGrant = specs.some((s) => s.subsystem === 'resource');
   if (hasResourceGrant) {
     parts.push(
-      `window.__SM_GM__.resource.init(${jsLit(info.scriptId)}, ${jsLit(info.resources)});`,
+      `__smReg.gm.resource.init(${jsLit(info.scriptId)}, ${jsLit(info.resources)});`,
     );
   }
-  // Eager calls into __SM_GM__ at compile time go in the prelude when
+  // Eager calls into the runtime at compile time go in the prelude when
   // they need identifiers only the wrap function has. Splicing them in
   // the IIFE top would race with the runtime's own document_start
   // registration in some Chrome builds; the injector splices `prelude`
-  // inside the main-body wrap function passed to self.__smRun, which
+  // inside the main-body wrap function passed to the registry's run, which
   // only fires after both the GM runtime spec has registered AND the
   // @run-at lifecycle event resolves. See wrapCombinedEntry in
   // src/extension/injector.ts.
@@ -644,11 +663,11 @@ export function emitGmBindings(
     preludeLines.push(
       `var __smGmSnap = (typeof __smDecision === "object" && __smDecision && __smDecision.gmValues);`,
       `if (!__smGmSnap) {`,
-      `  try { console.info("[SourceMonkey] " + __smName + ": " + ${jsLit(gmValuesFailure)}); } catch (_smSE0) {}`,
+      `  try { __smReg.info("[SourceMonkey] " + __smName + ": " + ${jsLit(gmValuesFailure)}); } catch (_smSE0) {}`,
       `  __smSend({ type: "sm:error", id: __smId, name: __smName, loadedAt: __smLoadedAt, url: location.href, message: ${jsLit(gmValuesFailure)} });`,
       `  return;`,
       `}`,
-      `window.__SM_GM__.storage.init(${jsLit(info.scriptId)}, __smGmSnap);`,
+      `__smReg.gm.storage.init(${jsLit(info.scriptId)}, __smGmSnap);`,
     );
   }
   const prelude = preludeLines.join(' ');

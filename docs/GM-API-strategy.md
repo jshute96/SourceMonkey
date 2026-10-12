@@ -631,7 +631,7 @@ Not a commitment, just shape. Driven by the design decisions above.
    `GM_xmlhttpRequest`). All later phases reference this catalog.
 2. **Compile-in surface.** Extend the wrap emitter so that for each
    granted name on a script, an inline `const GM_X = function(...) {...}`
-   is spliced into the main-body wrap function's locals. SYNC names delegate to a shared `__SM_GM__` global (set up
+   is spliced into the main-body wrap function's locals. SYNC names delegate to a shared runtime (`reg.gm` now, set up
    by a USER_SCRIPT-world helper registered alongside); ASYNC names
    `chrome.runtime.sendMessage` to the SW. Start with all bodies
    stubbed to throw "not implemented yet".

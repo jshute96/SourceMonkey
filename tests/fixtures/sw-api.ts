@@ -137,6 +137,8 @@ export interface SmApi {
   // overlay. The wrapper's write is batched, so this is what a test
   // waits on instead of pausing.
   getGmValues(scriptId: string): Promise<Record<string, unknown>>;
+  // The channel key, for a test playing a page that has it.
+  channelKey(): Promise<string>;
   // Write values (wire form) as another tab of the script would.
   writeGmValues(scriptId: string, writes: { key: string; value?: unknown; deleted?: boolean }[]): Promise<void>;
   // Seeds an entry directly. For tests that need a specific message,

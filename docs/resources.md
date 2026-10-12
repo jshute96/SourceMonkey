@@ -74,7 +74,7 @@ For scripts that `@grant` `GM_getResourceText` or `GM_getResourceURL`
 the injector emits:
 
 ```js
-window.__SM_GM__.resource.init("<scriptId>", {
+__smReg.gm.resource.init("<scriptId>", {
   "<name>": { b64: "<base64>", ct: "<contentType>" },
   …
 });

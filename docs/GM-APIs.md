@@ -20,7 +20,7 @@ SourceMonkey actually does today.
   each granted legacy name; emits a `const GM = Object.freeze({...})`
   GM4 namespace covering the granted APIs with `gmDotName` plus
   `GM.info`.
-- **`src/wrapper-gm-runtime.js`** — shared runtime (`window.__SM_GM__`),
+- **`src/wrapper-gm-runtime.js`** — shared runtime (`reg.gm`, in the world's registry; see [injection.md](injection.md#the-channel-key)),
   registered once per page **per execution world** at `document_start`.
   The same source runs in USER_SCRIPT and in MAIN; it picks its
   transport at init (direct `chrome.runtime` vs. the DOM-event
@@ -31,11 +31,11 @@ SourceMonkey actually does today.
   - `sendAsync(payload)` — SW round-trip helper. In USER_SCRIPT world
     it routes through a captured `bind`-ed
     `chrome.runtime.sendMessage`; in MAIN world it dispatches a
-    `sourcemonkey-bridge-sync` event that `wrapper-bridge.js` forwards,
+    `sourcemonkey-sync-<key>` event that `wrapper-bridge.js` forwards,
     keyed on a per-call `requestId`.
   - `onPush(handler)` — SW-originated events (XHR settling, value
     broadcasts, menu fires). `chrome.runtime.onMessage` in USER_SCRIPT
-    world; `sourcemonkey-bridge-push` postMessages in MAIN.
+    world; `sourcemonkey-push-<key>` events in MAIN.
   - `notImplemented(name)` — Phase 2 placeholder; later phases
     replace per-subsystem methods.
 - **`src/extension/injector.ts`** — wires the emitter and runtime into the
@@ -62,7 +62,7 @@ names shadows ours (see
 [injection.md](injection.md#the-user-program-scope)):
 
 - `js` — lazy `const GM_X = ...` declarations plus the GM4 alias
-  object. Each declaration only dereferences `window.__SM_GM__`
+  object. Each declaration only dereferences `reg.gm`
   from inside its own function body, so emitting them this early
   is safe even when the runtime spec hasn't run yet — the
   dereference doesn't fire until the user body actually calls a
@@ -71,7 +71,7 @@ names shadows ours (see
   `resource.init` —
   because they need nothing but the runtime and baked literals, which
   makes them safe in the swap eval that also gets this string.
-- `prelude` — eager `__SM_GM__.*` calls that need identifiers only
+- `prelude` — eager `reg.gm.*` calls that need identifiers only
   the wrap function has — today just
   `storage.init(scriptId, __smDecision.gmValues)` for scripts
   with a storage grant. The snapshot is attached to the
@@ -132,10 +132,10 @@ output ships whether the script lands in USER_SCRIPT or MAIN.
     `@grant` line for it (`StoredScript.usesUnsafeWindow`).
 - Everything else — including the `window.onurlchange` event surface
   and the `window.close` / `window.focus` overrides — delegates to
-  `window.__SM_GM__`, which is registered in whichever worlds have a
+  `reg.gm`, which is registered in whichever worlds have a
   script granting a runtime-backed API (`buildGmRuntimeSpecs`). A
   `@grant none` MAIN-world script needs none of it, so its page stays
-  free of `__SM_GM__`.
+  free of the runtime.
 - MAIN-world SW traffic rides `wrapper-bridge.js` in both directions,
   and script-scoped requests are gated SW-side by `bridgeMayActAs`.
   See [`GM_*` in MAIN world](injection.md#gm_-in-main-world).
@@ -155,12 +155,12 @@ output ships whether the script lands in USER_SCRIPT or MAIN.
 ## API kinds
 
 - **Sync** APIs (`GM_setValue`/`GM_getValue`/`GM_addStyle`/...) resolve
-  in-page via the `__SM_GM__` runtime — no SW round-trip. The Phase-2
-  stub calls `__SM_GM__.notImplemented(name)` which throws an
+  in-page via the GM runtime — no SW round-trip. The Phase-2
+  stub calls `reg.gm.notImplemented(name)` which throws an
   explanatory error.
 - **Async** APIs (`GM_xmlhttpRequest`/`GM_setClipboard`/...) build a
   message envelope (`{type: 'sm:gm-call', api, scriptId, args}`) and
-  route through `__SM_GM__.sendAsync(...)` to the SW. Phase 2 has no
+  route through `reg.gm.sendAsync(...)` to the SW. Phase 2 has no
   SW-side handler yet — the call ultimately rejects.
 
 ## Caveats and Phase-2 limitations
@@ -184,7 +184,7 @@ output ships whether the script lands in USER_SCRIPT or MAIN.
   `chrome.userScripts`'s document_start registration order doesn't
   have to be a guarantee.
   - The declarations are additionally lazy (they read
-    `window.__SM_GM__` only from inside their own bodies), which is
+    `reg.gm` only from inside their own bodies), which is
     belt-and-braces rather than the load-bearing argument.
   - The eager forms differ deliberately on failure: a missing runtime
     makes `urlchange.enable` / `windowControl.enable` / `.make` a no-op
@@ -195,10 +195,10 @@ output ships whether the script lands in USER_SCRIPT or MAIN.
 - **Prelude throws bypass the body's try/catch.** The GM prelude
   is spliced into the same main-body wrap function as the body,
   AHEAD of the body — a `storage.init` throw (only possible if
-  `__SM_GM__` is somehow *still* undefined after `waitForRunAt`)
-  is caught by the prelude's `try { fn() } catch` in `runMain` and
-  surfaces as a normal `sm:error`. In normal operation `__SM_GM__`
-  is guaranteed installed by then, so this is mostly theoretical.
+  `reg.gm` is somehow *still* undefined after `waitForRunAt`) is
+  caught by the prelude's `try { fn() } catch` in `runMain` and
+  surfaces as a normal `sm:error`. In normal operation the runtime is
+  guaranteed installed by then, so this is mostly theoretical.
 
 - **Cross-tab `applyRemoteUpdate` ignores writes before init.** The
   remote-update handler early-returns when the per-script store
@@ -257,7 +257,7 @@ output ships whether the script lands in USER_SCRIPT or MAIN.
   the cause.
 - **Async-envelope `scriptId` is wrapper-supplied.** Sibling
   userscripts in the same USER_SCRIPT world can in principle call
-  `window.__SM_GM__.sendAsync({api, scriptId: 'other-id', args})` to
+  `reg.gm.sendAsync({api, scriptId: 'other-id', args})` to
   impersonate each other's `@connect` allowlist. Same-extension
   scripts are inside the trust boundary, so this is a "userscript A
   borrows userscript B's permissions" situation, not a privilege
@@ -565,7 +565,7 @@ its own dispatch doesn't corrupt iteration.
   - Why it has no cheap fix: every USER_SCRIPT-world script shares
     ONE world per frame (one `configureWorld`, no per-script
     `worldId`) and can read sibling ids straight from
-    `self.__smPrelude.scripts`. A sibling doesn't *forge* anything —
+    `reg.prelude.scripts`. A sibling doesn't *forge* anything —
     it just calls with an id it can see, and the SW can't tell the
     co-world senders apart.
   - Note this is **not** the same as the page-reachable read leak,
@@ -585,8 +585,10 @@ its own dispatch doesn't corrupt iteration.
   A request with `needsValues:true` and another script's id would
   otherwise get that script's full `GM_setValue` snapshot back in the
   reply (`gmValues`, attached by `loadSnapshotForCheckPending`). Unlike
-  the write path, this one is reachable from a hostile **page**, because
-  the MAIN-world bridge forwards `sm:check-pending`.
+  the write path, this one would be reachable from a hostile **page**
+  that got onto the MAIN-world bridge, which forwards `sm:check-pending`.
+  The channel key keeps the page off the bridge
+  ([injection.md](injection.md#the-channel-key)); behind it:
   - The bridge (`wrapper-bridge.js`) now stamps `__viaBridge:true` on
     every message it relays. The page can't strip the marker (it's
     added in USER_SCRIPT world) and can't reach the SW any other way
@@ -595,18 +597,16 @@ its own dispatch doesn't corrupt iteration.
   - The check-pending handler runs every `__viaBridge` request through
     `bridgeMayActAs` before attaching `gmValues`: only a script that
     actually runs in MAIN world on the sending page, with a storage
-    grant, gets its snapshot.
-    That set is exactly the scripts whose values the page can already
-    read out of the MAIN-world `__SM_GM__`, so the gate concedes
-    nothing — and a USER_SCRIPT-world script is never in it.
+    grant, gets its snapshot. A USER_SCRIPT-world script is never in
+    that set.
   - USER_SCRIPT-world scripts request values over their own direct
     `chrome.runtime` path (no marker) and skip the gate entirely, so
     nothing legitimate is withheld.
   - The push direction is gated symmetrically: `wrapper-bridge.js`
-    re-posts an SW push into MAIN world only when the SW stamped it
-    `smWorld: 'MAIN'`, so a page running any MAIN-world script can't
-    read an isolated script's `sm:gm-value-update` writes or
-    `sm:gm-xhr-event` response bodies off its own window.
+    re-sends an SW push into MAIN world only when the SW stamped it
+    `smWorld: 'MAIN'`, so an isolated script's `sm:gm-value-update`
+    writes and `sm:gm-xhr-event` response bodies never go into the
+    page's world.
   - Regression coverage: `tests/e2e/gm-storage-read-leak.spec.ts`, plus
     the forged-GM-call and broadcast-relay cases in
     `tests/e2e/gm-unsafe-window.spec.ts`.
@@ -639,7 +639,7 @@ Known limitations:
 Page-side wrapper around `console.log` with an SW-side fan-out so
 the call also lands on the script's Log tab in the collections-page
 viewer. The binding emitter routes `GM_log(...)` to
-`window.__SM_GM__.log.write(scriptId, arguments)`.
+`reg.gm.log.write(scriptId, arguments)`.
 
 Two channels per call:
 
@@ -651,7 +651,7 @@ Two channels per call:
   object expansion stay intact because we pass through the original
   argument list.
 - **Script Log tab.** A fire-and-forget `sm:gm-log` message is sent
-  to the SW (via `__SM_GM__.sendAsync`). The SW handler appends an
+  to the SW (via `reg.gm.sendAsync`). The SW handler appends an
   info-level entry with `source: 'gm-log'` and the originating tab
   id. Args are stringified at the page boundary (primitives via
   `String()`, objects via `JSON.stringify`, Errors flattened to
@@ -971,7 +971,7 @@ user-facing contract.
 
 - No `const` binding — `window.onurlchange` isn't a legal identifier.
 - The binding emitter appends one eager statement to `js`:
-  `window.__SM_GM__.urlchange.enable(scriptId)`.
+  `reg.gm.urlchange.enable(scriptId)`.
 - It lives in `js` rather than `prelude` on purpose: both strings are
   spliced into the same main-body wrap function (so the runtime is
   equally guaranteed to be installed), but only `js` is also
@@ -1173,17 +1173,17 @@ too.
 - One eager statement appended to `js` per granted name. Which one
   depends on the world:
   - **The page's world** (a sandboxed script):
-    `const __smWin_close = window.__SM_GM__.windowControl.make(scriptId, "close")`.
+    `const __smWin_close = reg.gm.windowControl.make(scriptId, "close")`.
     The sandbox `window` holds it as its own `close`, so that script's
     `window.close()`, `self.close()` and bare `close()` reach it. The
     page's `window` and other scripts keep the native method, and so
     do the script's own `top.close()`, `unsafeWindow.close()` and
     `this.close()` in an event handler, which name the page's window.
-    The worker's check (`bridgeMayActAs`) is what actually limits who
-    can close the tab: the page can still reach `__SM_GM__` and the
-    bridge.
+    The channel key keeps the page from the runtime and the bridge,
+    and the worker's check (`bridgeMayActAs`) is the backstop behind
+    it.
   - **The isolated world:**
-    `window.__SM_GM__.windowControl.enable(scriptId, "close" | "focus")`,
+    `reg.gm.windowControl.enable(scriptId, "close" | "focus")`,
     which replaces the method on that world's `window`. The page's own
     `window.close` / `window.focus` are untouched, since the two worlds
     have separate global objects.

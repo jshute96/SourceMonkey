@@ -402,7 +402,7 @@ export function isScriptEnabled(script: ScriptMeta): boolean {
 // `chrome://extensions/?errors` — nothing can catch it in-page, and it
 // reads as SourceMonkey being broken rather than the script being
 // broken. Not registering it is the only way to keep it out of there;
-// the seal entry (`__smSealed`) stays as the backstop for whatever
+// the seal entry (the registry's `sealed`) stays as the backstop for whatever
 // still gets through.
 //
 // Caller passes the rows it is about to register — checking a

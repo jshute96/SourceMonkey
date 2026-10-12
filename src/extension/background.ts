@@ -96,6 +96,7 @@ import {
   unregisterAllRegistrations,
   type SyncScope,
 } from './injector.js';
+import { documentKey, loadChannelKey, rekey } from './channel.js';
 import { type AllNumbers, assignNumbers, numberMap, readNumbers } from './sticky-numbers.js';
 import {
   SM_ABANDONED_MSG,
@@ -582,6 +583,9 @@ interface SourceMonkeyApi {
   // rather than pausing — the batch fires 150ms after the last write and
   // its timing moves with machine load.
   getGmValues: (scriptId: string) => Promise<Record<string, unknown>>;
+  // The channel key (channel.ts), for tests that play a page which has
+  // it, to reach the SW-side gate behind it.
+  channelKey: () => Promise<string>;
   // Write GM values (wire form, as a page sends them) as another tab of
   // the script would: stored, and pushed to every tab running it, so
   // its value-change listeners fire. sm-dev's `set`.
@@ -806,6 +810,7 @@ const api: SourceMonkeyApi = {
   },
   clearScriptLog,
   getGmValues: loadAllValues,
+  channelKey: loadChannelKey,
   writeGmValues: async (scriptId, writes) => {
     // No sender tab, so every tab running the script hears it.
     await handleBatchWrite({ scriptId, writes }, {});
@@ -2558,7 +2563,7 @@ async function dispatchMenuCommand(
     // name a command in more than one of them.
     await chrome.tabs.sendMessage(tabId, {
       type: 'sm:gm-menu-fire',
-      smWorld: pushWorld(scriptId),
+      smWorld: pushWorld(scriptId), smScript: scriptId,
       scriptId,
       commandId,
     }, entry.documentId ? { documentId: entry.documentId } : {});
@@ -2774,7 +2779,10 @@ async function tryManualRun(tabId: number, scriptId: string): Promise<ManualRunR
   // mustn't hold up the tab's other bookkeeping. Aimed at the document
   // checked above, so Chrome refuses rather than run it on another page.
   try {
-    await executeManualRun(tabId, counted.documentId, injections);
+    // Under the document's own key, not the install's: see `documentKey`.
+    const key = await documentKey(counted.documentId, scriptId);
+    const rekeyed = injections.map((i) => ({ ...i, js: i.js.map((j) => ({ code: rekey(j.code, key) })) }));
+    await executeManualRun(tabId, counted.documentId, rekeyed);
     return { ok: true };
   } catch (err) {
     // The page replaced since it was counted: an expected race, not
@@ -2972,7 +2980,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     emitSmDevEvent({ kind: 'tab-closed', scriptId: taken.scriptId, requestId: taken.requestId });
     void chrome.tabs.sendMessage(taken.originatorTabId, {
       type: 'sm:gm-tab-closed',
-      smWorld: pushWorld(taken.scriptId),
+      smWorld: pushWorld(taken.scriptId), smScript: taken.scriptId,
       requestId: taken.requestId,
     }).catch(() => undefined);
   }
@@ -3509,7 +3517,7 @@ interface CheckPendingPayload {
 // snapshot (the refresh added the grant).
 //
 // `needsRuntime` says the swapped body grants some runtime-backed API,
-// so it can only run where `window.__SM_GM__` exists. The shared
+// so it can only run where the GM runtime exists. The shared
 // runtime is registered only where some active script grants one, so a
 // refresh that adds the first such grant on a page produces a body
 // with nothing to dereference until the next reload registers it. The
@@ -3657,7 +3665,7 @@ async function handleCheckPending(
   // wrong one — a body that expects page context silently can't see
   // the page's globals from the isolated world, and one that expects
   // isolation gets a `window` the page can reach. The shared
-  // `__SM_GM__` runtime is registered per world too, so the new body's
+  // GM runtime is registered per world too, so the new body's
   // GM_* calls may also land in a world that doesn't have it.
   // Defer to the next reload, which re-registers into the right one.
   //
@@ -3698,7 +3706,7 @@ async function handleCheckPending(
     // immediately on every call but the first.
     await scriptLogLabel(refreshed.id),
   );
-  // Storage-granting bodies need `__SM_GM__.storage.init` to have run
+  // Storage-granting bodies need the runtime's `storage.init` to have run
   // before their first GM_getValue, and the emitted call for that is
   // in the gm `prelude`, which the swap path never runs (it evals the
   // body instead of calling the main-body wrap function). The wrapper
@@ -4026,7 +4034,7 @@ async function handleXhrStart(
   // the frame that asked needs it.
   const deliver = (event: GmXhrEvent | GmXhrStreamEvent): Promise<unknown> => chrome.tabs.sendMessage(tabId, {
     type: 'sm:gm-xhr-event',
-    smWorld: pushWorld(payload.scriptId),
+    smWorld: pushWorld(payload.scriptId), smScript: payload.scriptId,
     id: payload.id,
     event,
   }, senderFrameOptions(sender));
@@ -4061,7 +4069,7 @@ async function sendXhrError(
   try {
     await chrome.tabs.sendMessage(tabId, {
       type: 'sm:gm-xhr-event',
-      smWorld: pushWorld(scriptId),
+      smWorld: pushWorld(scriptId), smScript: scriptId,
       id,
       event: { kind: 'error', message },
     }, senderFrameOptions(sender));
@@ -4242,7 +4250,7 @@ function deliverNotificationEvent(chromeId: string, event: 'clicked' | 'closed')
   emitSmDevEvent({ kind: 'notification', op: event, scriptId: taken.scriptId, tabId: taken.originatorTabId, requestId: taken.requestId });
   void chrome.tabs.sendMessage(taken.originatorTabId, {
     type: 'sm:gm-notification-event',
-    smWorld: pushWorld(taken.scriptId),
+    smWorld: pushWorld(taken.scriptId), smScript: taken.scriptId,
     requestId: taken.requestId,
     event,
   }).catch(() => undefined);
@@ -4350,7 +4358,7 @@ function sendDownloadEvent(
   }
   void chrome.tabs.sendMessage(tabId, {
     type: 'sm:gm-download-event',
-    smWorld: pushWorld(scriptId),
+    smWorld: pushWorld(scriptId), smScript: scriptId,
     requestId,
     event,
   }).catch(() => undefined);
@@ -4749,7 +4757,7 @@ async function broadcastValueUpdate(
   if (__debugSuppressGmBroadcast) return;
   await hydrateGmOpeners();
   const targets = gmOpeners.get(scriptId);
-  const message = { type: 'sm:gm-value-update', smWorld: pushWorld(scriptId), scriptId, writes };
+  const message = { type: 'sm:gm-value-update', smWorld: pushWorld(scriptId), smScript: scriptId, scriptId, writes };
   let sent = 0;
   // The writer's own tab: the other documents of it running the script
   // (its page and frames), each addressed by document, so one that
@@ -4874,19 +4882,14 @@ async function nudgeGmResyncAfterWorkerStart(): Promise<void> {
 //
 // `wrapper-bridge.js` stamps `__viaBridge: true` on everything it
 // relays for a MAIN-world wrapper. MAIN world shares its realm with the
-// page, so any such message MAY have been forged by the page: it can
-// read the replies and pushes we post into its window, learn script
-// ids, and dispatch its own requests.
+// page. The channel key keeps the page off the bridge (channel.ts), and
+// this gate is the backstop should the key leak: a page that hooks the
+// built-ins our MAIN-world code uses could see some traffic, and a
+// manual run's document key is exposed by design (`documentKey`).
 //
 // The gate: a bridge-relayed, script-scoped request is honored only
 // when that script actually runs in MAIN world on the sending frame's
-// URL. That is exactly the set of scripts whose GM surface the page can
-// already drive directly — their `window.__SM_GM__` is a global in the
-// page's own realm, and no secret can be hidden from MAIN world (a
-// token baked into the registered source is readable via
-// `Function.prototype.toString` once the page steals a reference to the
-// wrap function). So the gate concedes nothing new, and it still
-// refuses:
+// URL, the scripts whose realm the page shares. It refuses:
 //
 //   - every USER_SCRIPT-world script (isolated; page can't touch it),
 //   - every MAIN-world script that doesn't match this page (a script
@@ -4935,11 +4938,13 @@ function cspBlockedStyleMessage(api: 'GM_addStyle' | 'GM_addElement'): string {
 }
 
 // Which world an SW->page push is addressed to. Every `chrome.tabs
-// .sendMessage` we aim at a userscript carries this as `smWorld`.
+// .sendMessage` we aim at a userscript carries this as `smWorld`, and
+// the script's id as `smScript` (a manual run's bridge relays only its
+// own script's; see `documentKey` in channel.ts).
 //
-// It exists for `wrapper-bridge.js`, which re-posts pushes into MAIN
+// It exists for `wrapper-bridge.js`, which re-sends pushes into MAIN
 // world so the MAIN copy of the GM runtime can hear them. That relay
-// makes the payload readable by the page, so it must fire only for
+// puts the payload in the page's world, so it must fire only for
 // pushes addressed to a MAIN-world script — a page could otherwise read
 // an isolated script's stored values off a `sm:gm-value-update`, or its
 // cross-origin response body off a `sm:gm-xhr-event`, just by also
@@ -5123,8 +5128,7 @@ function installScriptMessageListener(): void {
       // page forging another script's id to read its values back
       // through the reply, so it goes through the gate: values are
       // handed over only for a MAIN-world script that runs on this
-      // page, whose values that page can already read out of its own
-      // `window.__SM_GM__`. See `bridgeMayActAs`.
+      // page. See `bridgeMayActAs`.
       const valueReadAllowed: Promise<boolean> = payload.needsValues
         ? (payload.__viaBridge === true
             ? bridgeMayActAs(payload.id, sender, STORAGE_SUBSYSTEMS)

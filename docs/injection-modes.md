@@ -36,25 +36,27 @@ The shape of `js[]` for one script registration:
 
 ```
 js: [
-  { code: <config blob> },   // pushes onto self.__smCfgQueue, or
-                             // calls self.__smPrelude.init directly
+  { code: <config blob> },   // pushes onto reg.cfgQueue, or
+                             // calls reg.prelude.init directly
   { code: <prelude>     },   // WRAPPER_PRELUDE + page-wide sourceURL
-  { code: <combined>    },   // requires + body, in one __smRun wrap
+  { code: <combined>    },   // requires + body, in one reg.run wrap
   { code: <seal>        },   // parse-failure sentinel; own script
 ]
 ```
 
-The combined entry:
+`reg` is the world's registry, which our entries get from
+`document.__smGate` with the channel key (see
+[injection.md](injection.md#the-channel-key)). The combined entry:
 
 ```
-self.__smRun("<id>",function(__smE){<preamble><GM bindings><GM prelude>return(()=>{
+(function(__smReg){__smReg.run("<id>",function(__smE){<preamble><GM bindings><GM prelude>const __smU=()=>{
 // @require https://cdn.example.com/lib.js
 <lib.js line 1>
 ...
 ;
 <body line 1>
 ...
-})();});
+};return __smReg.prelude.callAs(__smU);})})(<registry>);
 //# sourceURL=sourcemonkey://SourceMonkey/<folder>/<name>.user.js
 //# sourceMappingURL=data:application/json;charset=utf-8;base64,…
 ```
@@ -149,7 +151,7 @@ A granted page-world script's user scope opens and closes differently
 - **A throwing require aborts the whole script.** Mode B's per-require
   `try`/`catch` let the body run anyway. TM/VM abort; so do we now.
 - **A *malformed* require takes the whole entry down at parse time**,
-  before `__smRun` is ever reached. That would be completely silent,
+  before `reg.run` is ever reached. That would be completely silent,
   so a trailing sentinel entry (`wrapSealEntry`, js[3]) — its own
   script, so it still parses — reports the failure to the Log tab and
   the badge.
@@ -165,17 +167,17 @@ registration be cleaner? It would, but it doesn't work:
 
 - Within ONE `chrome.userScripts.register` entry's `js[]`, Chrome
   runs the entries in array order. The prelude (`js[1]`) is
-  guaranteed to install `self.__smRun` / `__smSealed` before the
+  guaranteed to install `reg.run` / `reg.sealed` before the
   combined entry (`js[2]`) and the sentinel (`js[3]`) call them.
 - BETWEEN separate `register` calls, the userScripts API gives no
   ordering guarantee. A separately-registered prelude could run
   AFTER a per-script's combined entry, which would synchronously
-  throw `TypeError: self.__smRun is not a function` and prevent the
+  throw `TypeError: reg.run is not a function` and prevent the
   body from running. We hit this in testing.
 - The config blob has a queue-or-init pattern that DOES tolerate
   the prelude running later. The combined entry doesn't — it calls
   the helper immediately. Wrapping that in a defensive
-  `if (self.__smRun) {...}` would silently skip the body on a race
+  `if (reg.run) {...}` would silently skip the body on a race
   instead of throwing, which is arguably worse.
 
 So we inline, accept the ~12KB × N duplication, and use the page-

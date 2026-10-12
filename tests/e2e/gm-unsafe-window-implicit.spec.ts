@@ -77,10 +77,10 @@ test.describe('unsafeWindow without a grant', () => {
   });
 
   test('a script with no @grant lines at all gets the binding and no runtime', async ({
-    extensionContext, fixtureServer, sm,
+    extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {
     // Already MAIN world, so nothing moves — the binding was the only
-    // thing missing. `unsafeWindow` needs no `__SM_GM__`, so the page
+    // thing missing. `unsafeWindow` needs no GM runtime, so the page
     // must stay as clean as it is for any other grant-free script.
     scriptsDir.write({
       relativePath: 'a.user.js',
@@ -99,9 +99,9 @@ test.describe('unsafeWindow without a grant', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/${PAGE}`);
     await expect(page.locator('body')).toHaveAttribute('data-sm-app-name', 'page-app');
-    expect(await page.evaluate(
-      () => typeof (window as unknown as { __SM_GM__?: unknown }).__SM_GM__,
-    )).toBe('undefined');
+    const sw = await getServiceWorker();
+    const ids = await sw.evaluate(async () => (await chrome.userScripts.getScripts()).map((r) => r.id));
+    expect(ids).not.toContain('sourcemonkey-gm-runtime-main');
     await page.close();
 
     // Nothing to report: the script did not change worlds.

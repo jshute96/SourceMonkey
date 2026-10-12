@@ -7,11 +7,12 @@
 
    Per-script wrappers compile in `const GM_X = function(...) { ... }`
    for every API the script @grants. Two delegation modes:
-     - SYNC API bodies call into methods on `window.__SM_GM__` defined
+     - SYNC API bodies call into methods on `reg.gm` (this runtime,
+       in the world's registry; see `reg` below) defined
        here. The runtime is shared across all userscripts in this
        document and world (each world is one realm per document), so
        per-script state lives in keyed sub-objects.
-     - ASYNC API bodies route through `__SM_GM__.sendAsync`, which
+     - ASYNC API bodies route through `reg.gm.sendAsync`, which
        reaches the SW directly in USER_SCRIPT world and via
        wrapper-bridge.js in MAIN.
 
@@ -26,13 +27,36 @@
    USER_SCRIPT world that is the whole threat, since the page can't
    reach in. In MAIN world the page CAN — but this runs at
    document_start, before any page script, so the captures are still
-   pristine natives. What the cache does not (and cannot) buy in MAIN
-   is protection from a page that calls `window.__SM_GM__` itself; see
-   the transport section's trust note. */
+   pristine natives. The runtime itself isn't a page global: it lives
+   in the world's registry, which only code holding the channel key
+   can get. See the transport section's trust note. */
 (function () {
   "use strict";
   if (typeof window === "undefined") return;
-  if (window.__SM_GM__) return;
+
+  /* The channel key and the world's registry: the same code as in
+     userscript-prelude.js (see there, and src/extension/channel.ts). */
+  var SM_KEY = "__SM_KEY__";
+  var reg = (function (k) {
+    var g = document.__smGate;
+    if (typeof g !== "function") {
+      var m = Object.create(null), c = Object.create, f = Object.freeze, a = Reflect.apply, p = Promise;
+      var i = console.info.bind(console);
+      var rs = function (v) { return new p(function (y) { y(v); }); };
+      var rj = function (e) { return new p(function (y, n) { n(e); }); };
+      g = function (x) {
+        if (typeof x !== "string") return void 0;
+        var r = m[x];
+        if (!r) { r = c(null); r.freeze = f; r.apply = a; r.resolve = rs; r.reject = rj; r.info = i; m[x] = r; }
+        return r;
+      };
+      var d = c(null);
+      d.value = g;
+      Object.defineProperty(document, "__smGate", d);
+    }
+    return g(k);
+  })(SM_KEY);
+  if (reg.gm) return;
 
   var _Promise = Promise;
   var _Error = Error;
@@ -126,6 +150,17 @@
   /* Captured for the window.onurlchange surface, which defines an
      accessor on the world's own `window`. */
   var _ObjectDefineProperty = Object.defineProperty;
+  /* Captured functions are called through this, not `fn.call(...)`:
+     `Function.prototype.call` is the page's to replace in MAIN world,
+     and would be handed what we pass (a script's value cache, the
+     channel-keyed insert event). */
+  var _ReflectApply = Reflect.apply;
+  /* Timers and microtasks, likewise: a page function we called while
+     handling one of the bridge's events could read `window.event`,
+     whose type carries the channel key. */
+  var _setTimeout = setTimeout;
+  var _clearTimeout = clearTimeout;
+  var _queueMicrotask = queueMicrotask;
   var _ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
   var _hasOwn = Object.prototype.hasOwnProperty;
   /* DOM-shim cache. Captured at runtime-init time so a sibling
@@ -193,7 +228,7 @@
                       wrapper-bridge.js (USER_SCRIPT world, same
                       document) hears and forwards, keyed on a per-call
                       requestId nonce so concurrent calls don't cross
-                      replies. The reply comes back as a postMessage.
+                      replies. The reply comes back as an event too.
                       An event, not a postMessage, because every
                       world's listeners run in the DISPATCHING task:
                       the bridge's sendMessage happens before we
@@ -205,8 +240,8 @@
                           notification / menu callbacks).
          USER_SCRIPT: chrome.runtime.onMessage, filtered to messages
                       from our own SW.
-         MAIN:        the bridge re-posts those same messages into the
-                      page with a push marker; we read them here.
+         MAIN:        the bridge re-sends those same messages into the
+                      page as a push event; we read them here.
 
      Why MAIN world needs this at all: `@grant unsafeWindow` forces a
      script into MAIN (only there is `window` the page's window), and
@@ -214,18 +249,23 @@
      a MAIN transport, fixing unsafeWindow would break everything else
      they use.
 
-     Trust: in MAIN world the page can both READ our messages and
-     FORGE both directions. That is inherent — the page shares the realm
-     with the script and with this runtime. The SW-side gate is what
-     bounds the damage: it honors bridge-relayed, script-scoped requests
-     only for scripts that actually run in MAIN world on the sending
-     page. See docs/injection.md#gm_-in-main-world. */
-  var BRIDGE_REPLY_MARKER = "sourcemonkey-bridge-reply";
-  var BRIDGE_PUSH_MARKER = "sourcemonkey-bridge-push";
-  var BRIDGE_SYNC_MARKER = "sourcemonkey-bridge-sync";
+     Trust: in MAIN world the page shares the realm with the script and
+     with this runtime, so what keeps it out is the channel key. Every
+     event in either direction is named with it, so the page can neither
+     send one nor hear one, and this runtime is reachable only through
+     the registry. What the page can still do is hook the built-ins our
+     code touches after document_start (an `Object.prototype` getter, a
+     `toJSON`), which a page that targets us specifically could use to
+     see some of what passes. The SW-side gate stays as a backstop: it
+     honors bridge-relayed, script-scoped requests only for scripts that
+     actually run in MAIN world on the sending page. See
+     docs/injection.md#the-channel-key. */
+  var BRIDGE_REPLY_EVENT = "sourcemonkey-reply-" + SM_KEY;
+  var BRIDGE_PUSH_EVENT = "sourcemonkey-push-" + SM_KEY;
+  var BRIDGE_SYNC_EVENT = "sourcemonkey-sync-" + SM_KEY;
   /* GM_addStyle / GM_addElement's insert, done by the bridge; see
      `insertNode`. wrapper-bridge.js names it too. */
-  var BRIDGE_INSERT_MARKER = "sourcemonkey-bridge-insert";
+  var BRIDGE_INSERT_EVENT = "sourcemonkey-insert-" + SM_KEY;
   /* How long a MAIN-world request waits for the bridge before we give
      up and reject. The bridge always replies (even when the SW call
      fails), so hitting this means the bridge never registered — a
@@ -241,29 +281,55 @@
     }
   }
 
-  /* One window listener serves both the reply and push paths in MAIN
-     world, so a page with many in-flight GM calls doesn't accumulate
-     listeners. Installed only in MAIN — in USER_SCRIPT world we have
-     the real chrome.runtime channels. */
+  /* One listener each for replies and pushes in MAIN world, so a page
+     with many in-flight GM calls doesn't accumulate listeners.
+     Installed only in MAIN — in USER_SCRIPT world we have the real
+     chrome.runtime channels. The bridge sends both as JSON in a
+     CustomEvent's detail, read through the getter captured here, called
+     with the captured Reflect.apply, so a page that patched either
+     can't see it. */
+  var _JSONParse = JSON.parse;
+  var _detailOf = null;
+  try { _detailOf = Object.getOwnPropertyDescriptor(CustomEvent.prototype, "detail").get; } catch (_dtE) {}
+  /* With no prototype at the top, so reading a field the message lacks
+     can't hand it to a getter the page put on `Object.prototype`.
+     Shallow: what's inside (a script's values, a response) is the
+     script's to read. */
+  function bare(o) {
+    if (!o || typeof o !== "object") return o;
+    var b = _ObjectCreate(null);
+    var ks = _ObjectKeys(o);
+    for (var j = 0; j < ks.length; j++) b[ks[j]] = o[ks[j]];
+    return b;
+  }
+  function detailOf(ev) {
+    return bare(_JSONParse(_ReflectApply(_detailOf, ev, [])));
+  }
   function installBridgeListener() {
     var pending = _ObjectCreate(null);
     try {
-      window.addEventListener("message", function (ev) {
+      /* Each listener only reads the event; what it carries is handled
+         in a microtask, once the dispatch is over. While it runs,
+         `window.event` is the event, whose type carries the channel
+         key, and handling it calls into the script's callbacks (and
+         they, into the page). */
+      document.addEventListener(BRIDGE_PUSH_EVENT, function (ev) {
         try {
-          if (!ev || ev.source !== window) return;
-          var d = ev.data;
-          if (!d) return;
-          if (d.__sm === BRIDGE_PUSH_MARKER) {
-            if (d.payload && typeof d.payload === "object") dispatchPush(d.payload);
-            return;
-          }
-          if (d.__sm !== BRIDGE_REPLY_MARKER) return;
-          if (typeof d.requestId !== "string") return;
-          var entry = pending[d.requestId];
-          if (!entry) return;
-          delete pending[d.requestId];
-          try { clearTimeout(entry.timer); } catch (_tE) {}
-          entry.resolve(d.reply);
+          var d = detailOf(ev);
+          if (d && typeof d === "object") _queueMicrotask(function () { dispatchPush(d); });
+        } catch (_e) {}
+      }, true);
+      document.addEventListener(BRIDGE_REPLY_EVENT, function (ev) {
+        try {
+          var d = detailOf(ev);
+          if (!d || typeof d.requestId !== "string") return;
+          _queueMicrotask(function () {
+            var entry = pending[d.requestId];
+            if (!entry) return;
+            delete pending[d.requestId];
+            try { _clearTimeout(entry.timer); } catch (_tE) {}
+            entry.resolve(bare(d.reply));
+          });
         } catch (_e) {}
       }, true);
     } catch (_lE) {
@@ -315,7 +381,11 @@
       throw new _Error("[SourceMonkey] This call carries a value SourceMonkey cannot send. "
         + "Pass data that survives JSON: no circular references, functions, or BigInt");
     }
-    _dispatchEvent(new _CustomEvent(BRIDGE_SYNC_MARKER, { detail: detail }));
+    /* No prototype, so a page getter on `Object.prototype` can't read
+       the detail while the event reads its options. */
+    var init = _ObjectCreate(null);
+    init.detail = detail;
+    _dispatchEvent(new _CustomEvent(BRIDGE_SYNC_EVENT, init));
   }
 
   function bridgeSend(payload) {
@@ -324,7 +394,7 @@
     }
     var requestId = "gm-" + (_bridgeSeq++) + "-" + Math.random().toString(36).slice(2, 10);
     return new _Promise(function (resolve, reject) {
-      var timer = setTimeout(function () {
+      var timer = _setTimeout(function () {
         delete _bridgePending[requestId];
         reject(new _Error("[SourceMonkey] GM bridge timed out after " + BRIDGE_TIMEOUT_MS + "ms"));
       }, BRIDGE_TIMEOUT_MS);
@@ -336,7 +406,7 @@
         bridgeDispatch(payload, requestId);
       } catch (e) {
         delete _bridgePending[requestId];
-        try { clearTimeout(timer); } catch (_tE2) {}
+        try { _clearTimeout(timer); } catch (_tE2) {}
         reject(e);
       }
     });
@@ -357,6 +427,20 @@
   }
 
   /* The single send primitive every subsystem uses. */
+  /* `p` with its own `then` and `catch`, the ones of document_start,
+     and the same for every promise they return. Our chains start at
+     transportSend, so they never reach `Promise.prototype.then`, which
+     a page could replace to see replies (a script's values) or forge
+     them. */
+  var _PromiseThen = _Promise.prototype.then;
+  function guarded(p) {
+    p.then = guardedThen;
+    p["catch"] = guardedCatch;
+    return p;
+  }
+  function guardedThen(onOk, onErr) { return guarded(_ReflectApply(_PromiseThen, this, [onOk, onErr])); }
+  function guardedCatch(onErr) { return guarded(_ReflectApply(_PromiseThen, this, [undefined, onErr])); }
+
   function transportSend(payload) {
     if (_sendMessage) {
       try {
@@ -367,7 +451,7 @@
         return _Promise.reject(e);
       }
     }
-    return bridgeSend(payload);
+    return guarded(bridgeSend(payload));
   }
 
   /* Register a handler for SW-originated pushes. */
@@ -411,7 +495,9 @@
      Per-script: one cache object, one debounce timer, one pending
      writes queue. The runtime is shared across scripts in the same
      document, so we key by scriptId. */
-  var stores = {};  /* scriptId -> { cache, pending, debounceTimer, hardTimer, ready, listeners, nextListenerId } */
+  /* No prototype, like the other tables keyed by script id: a lookup
+     that misses can't reach a getter the page put on `Object.prototype`. */
+  var stores = _ObjectCreate(null);  /* scriptId -> { cache, pending, debounceTimer, hardTimer, ready, listeners, nextListenerId } */
   var DEBOUNCE_MS = 150;
   var HARD_DEADLINE_MS = 1000;
   /* Deletion sentinel — paired with the SW-side gm-values.ts
@@ -484,7 +570,7 @@
   function bytesToBase64(bytes) {
     var parts = [];
     for (var i = 0; i < bytes.length; i += B64_CHUNK) {
-      parts.push(_fromCharCode.apply(null, bytes.subarray(i, i + B64_CHUNK)));
+      parts.push(_ReflectApply(_fromCharCode, null, bytes.subarray(i, i + B64_CHUNK)));
     }
     return _btoa(parts.join(""));
   }
@@ -510,18 +596,18 @@
      throw here as "not actually that type" — see the call site.
      Sets `state.plain` on a hit; the caller undoes that on a miss. */
   function encodeBranded(value, seen, state) {
-    var brand = _objToString.call(value);
+    var brand = _ReflectApply(_objToString, value, []);
     if (brand === "[object Date]") {
       state.plain = false;
-      var ms = _DateGetTime.call(value);
+      var ms = _ReflectApply(_DateGetTime, value, []);
       /* An Invalid Date's time is NaN, which JSON can't carry —
          send the marker string and rebuild it on the way back. */
       return ["d", ms === ms ? ms : "nan"];
     }
     if (brand === "[object RegExp]" && _RegExpSourceGet && _RegExpFlagsGet) {
       /* These throw for anything that only claims to be a RegExp. */
-      var reSource = _RegExpSourceGet.call(value);
-      var reFlags = _RegExpFlagsGet.call(value);
+      var reSource = _ReflectApply(_RegExpSourceGet, value, []);
+      var reFlags = _ReflectApply(_RegExpFlagsGet, value, []);
       state.plain = false;
       return ["re", String(reSource), String(reFlags)];
     }
@@ -529,12 +615,12 @@
       /* `new Uint8Array(notABuffer)` quietly yields an EMPTY array
          rather than throwing, so the impostor has to be rejected
          before we read any bytes. */
-      _ArrayBufferByteLengthGet.call(value);
+      _ReflectApply(_ArrayBufferByteLengthGet, value, []);
       state.plain = false;
       return ["ab", bytesToBase64(new _Uint8Array(value))];
     }
     if (canEncodeBinary && brand === "[object DataView]") {
-      _DataViewByteLengthGet.call(value);
+      _ReflectApply(_DataViewByteLengthGet, value, []);
       state.plain = false;
       return ["dv", bytesToBase64(new _Uint8Array(value.buffer, value.byteOffset, value.byteLength))];
     }
@@ -543,8 +629,8 @@
          wearing that tag fails on `.buffer` and the caller falls
          through to the object walk. */
       var taName = brand.slice(8, brand.length - 1);
-      if (_hasOwn.call(TYPED_ARRAYS, taName)) {
-        _TypedArrayLengthGet.call(value);
+      if (_ReflectApply(_hasOwn, TYPED_ARRAYS, [taName])) {
+        _ReflectApply(_TypedArrayLengthGet, value, []);
         state.plain = false;
         return ["ta", taName, bytesToBase64(new _Uint8Array(value.buffer, value.byteOffset, value.byteLength))];
       }
@@ -577,22 +663,22 @@
     if (_Map && brand === "[object Map]") {
       state.plain = false;
       var mEntries = [];
-      _MapForEach.call(value, function (mv, mk) {
+      _ReflectApply(_MapForEach, value, [function (mv, mk) {
         var kn = encodeNode(mk, seen, state);
         var vn = encodeNode(mv, seen, state);
         /* A Map key or value JSON would drop still has to occupy
            its slot — dropping the entry would change the size. */
         mEntries.push([kn === OMIT ? ["u"] : kn, vn === OMIT ? ["u"] : vn]);
-      });
+      }]);
       return ["m", mEntries];
     }
     if (_Set && brand === "[object Set]") {
       state.plain = false;
       var sItems = [];
-      _SetForEach.call(value, function (sv) {
+      _ReflectApply(_SetForEach, value, [function (sv) {
         var sn = encodeNode(sv, seen, state);
         sItems.push(sn === OMIT ? ["u"] : sn);
-      });
+      }]);
       return ["s", sItems];
     }
 
@@ -731,11 +817,11 @@
         /* An unknown constructor name means this row was written by a
            build (or browser) that had a typed array this one doesn't.
            Hand back the raw bytes rather than nothing. */
-        if (!_hasOwn.call(TYPED_ARRAYS, n[1])) return bytes;
+        if (!_ReflectApply(_hasOwn, TYPED_ARRAYS, [n[1]])) return bytes;
         return new TYPED_ARRAYS[n[1]](bytes.buffer);
       }
       case "err": {
-        var Ctor = _hasOwn.call(ERROR_TYPES, n[1]) ? ERROR_TYPES[n[1]] : _Error;
+        var Ctor = _ReflectApply(_hasOwn, ERROR_TYPES, [n[1]]) ? ERROR_TYPES[n[1]] : _Error;
         var err = new Ctor(n[2]);
         /* A subclass name (or AggregateError) has no constructor in
            the table; preserve the name on a plain Error instead. */
@@ -781,7 +867,7 @@
      than throw inside its GM_getValue. */
   function decodeValue(value) {
     if (!value || typeof value !== "object" || _isArray(value)) return value;
-    if (!_hasOwn.call(value, VALUE_ENVELOPE)) return value;
+    if (!_ReflectApply(_hasOwn, value, [VALUE_ENVELOPE])) return value;
     if (value[VALUE_ENVELOPE] !== VALUE_FORMAT) return value;
     try {
       return decodeNode(value.v);
@@ -848,10 +934,10 @@
   function scheduleFlush(scriptId) {
     var s = stores[scriptId];
     if (!s) return;
-    if (s.debounceTimer != null) clearTimeout(s.debounceTimer);
-    s.debounceTimer = setTimeout(function () { flushStore(scriptId, "debounce"); }, DEBOUNCE_MS);
+    if (s.debounceTimer != null) _clearTimeout(s.debounceTimer);
+    s.debounceTimer = _setTimeout(function () { flushStore(scriptId, "debounce"); }, DEBOUNCE_MS);
     if (s.hardTimer == null) {
-      s.hardTimer = setTimeout(function () { flushStore(scriptId, "hard"); }, HARD_DEADLINE_MS);
+      s.hardTimer = _setTimeout(function () { flushStore(scriptId, "hard"); }, HARD_DEADLINE_MS);
     }
   }
 
@@ -863,15 +949,15 @@
     var s = stores[scriptId];
     if (!s || s.pending.length === 0) {
       if (s) {
-        if (s.debounceTimer != null) { clearTimeout(s.debounceTimer); s.debounceTimer = null; }
-        if (s.hardTimer != null) { clearTimeout(s.hardTimer); s.hardTimer = null; }
+        if (s.debounceTimer != null) { _clearTimeout(s.debounceTimer); s.debounceTimer = null; }
+        if (s.hardTimer != null) { _clearTimeout(s.hardTimer); s.hardTimer = null; }
       }
       return;
     }
     var batch = s.pending;
     s.pending = [];
-    if (s.debounceTimer != null) { clearTimeout(s.debounceTimer); s.debounceTimer = null; }
-    if (s.hardTimer != null) { clearTimeout(s.hardTimer); s.hardTimer = null; }
+    if (s.debounceTimer != null) { _clearTimeout(s.debounceTimer); s.debounceTimer = null; }
+    if (s.hardTimer != null) { _clearTimeout(s.hardTimer); s.hardTimer = null; }
     /* Wire format: each entry is {key, value}. value === DELETED_SENTINEL
        (compared by reference on this side) marks a delete. We encode
        deletes as {key, deleted: true} for the SW because the wire is
@@ -963,7 +1049,7 @@
     if (!writes || !writes.length) return;
     for (var i = 0; i < writes.length; i++) {
       var w = writes[i];
-      var oldValue = _hasOwn.call(s.cache, w.key) ? s.cache[w.key] : undefined;
+      var oldValue = _ReflectApply(_hasOwn, s.cache, [w.key]) ? s.cache[w.key] : undefined;
       /* Counted like a local write: a resync reply that predates
          this broadcast must not roll it back. */
       s.writeSeqByKey[w.key] = ++s.writeSeq;
@@ -1048,7 +1134,7 @@
     for (var p = 0; p < s.pending.length; p++) pendingKeys[s.pending[p].key] = true;
     var written = s.writeSeqByKey;
     var stale = function (key) {
-      return !!pendingKeys[key] || (_hasOwn.call(written, key) && written[key] > writeSeqAt);
+      return !!pendingKeys[key] || (_ReflectApply(_hasOwn, written, [key]) && written[key] > writeSeqAt);
     };
     var inSnapshot = _ObjectCreate(null);
     var keys = _ObjectKeys(values);
@@ -1056,7 +1142,7 @@
       var k = keys[i];
       inSnapshot[k] = true;
       if (stale(k)) continue;
-      var had = _hasOwn.call(s.cache, k);
+      var had = _ReflectApply(_hasOwn, s.cache, [k]);
       var oldValue = had ? s.cache[k] : undefined;
       /* `values[k]` is already wire form; encode the cached side to
          match rather than decoding the snapshot for every key.
@@ -1169,7 +1255,7 @@
         for (var j = 0; j < changed.length; j++) {
           var key = changed[j];
           if (s.writeSeqByKey[key] <= s.initSeq) continue;
-          if (_hasOwn.call(s.cache, key)) copy[key] = s.cache[key];
+          if (_ReflectApply(_hasOwn, s.cache, [key])) copy[key] = s.cache[key];
           else delete copy[key];
         }
       }
@@ -1183,7 +1269,7 @@
       /* Use the captured _hasOwn so a sibling userscript that
          reassigned Object.prototype.hasOwnProperty can't make every
          get return the default. */
-      if (_hasOwn.call(s.cache, key)) return s.cache[key];
+      if (_ReflectApply(_hasOwn, s.cache, [key])) return s.cache[key];
       return defaultValue;
     },
     /* Sync API: returns undefined, queues the write. Fires
@@ -1203,7 +1289,7 @@
          — see sameStoredValue — and which of the two behaviours you
          get now depends on the value's type. */
       var encoded = encodeValue(value);
-      var oldValue = _hasOwn.call(s.cache, key) ? s.cache[key] : undefined;
+      var oldValue = _ReflectApply(_hasOwn, s.cache, [key]) ? s.cache[key] : undefined;
       s.cache[key] = value;
       s.writeSeqByKey[key] = ++s.writeSeq;
       s.pending.push({ key: key, value: encoded });
@@ -1212,7 +1298,7 @@
     },
     del: function (scriptId, key) {
       var s = ensureStore(scriptId);
-      var oldValue = _hasOwn.call(s.cache, key) ? s.cache[key] : undefined;
+      var oldValue = _ReflectApply(_hasOwn, s.cache, [key]) ? s.cache[key] : undefined;
       delete s.cache[key];
       s.writeSeqByKey[key] = ++s.writeSeq;
       s.pending.push({ key: key, value: DELETED_SENTINEL });
@@ -1254,7 +1340,7 @@
       var s = stores[scriptId];
       if (!s || !s.listeners) return;
       var key = String(listenerId);
-      if (_hasOwn.call(s.listeners, key)) delete s.listeners[key];
+      if (_ReflectApply(_hasOwn, s.listeners, [key])) delete s.listeners[key];
     },
   };
 
@@ -1325,7 +1411,7 @@
     if (value === false) return; /* boolean-attr: omit */
     var stringValue = (value === true) ? "" : String(value);
     if (_Element_setAttribute) {
-      _Element_setAttribute.call(el, name, stringValue);
+      _ReflectApply(_Element_setAttribute, el, [name, stringValue]);
     } else {
       el.setAttribute(name, stringValue);
     }
@@ -1361,10 +1447,10 @@
      would insert in the wrong place. */
   function inClosedShadowRoot(node) {
     for (var i = 0; i < 64; i++) {
-      var root = _Node_getRootNode.call(node);
+      var root = _ReflectApply(_Node_getRootNode, node, []);
       if (!(root instanceof _ShadowRoot)) return false;
-      if (_ShadowRoot_mode.call(root) === "closed") return true;
-      node = _ShadowRoot_host.call(root);
+      if (_ReflectApply(_ShadowRoot_mode, root, []) === "closed") return true;
+      node = _ReflectApply(_ShadowRoot_host, root, []);
     }
     return true;
   }
@@ -1372,21 +1458,25 @@
     if (_sendMessage || !_MouseEvent || !_EventTarget_dispatchEvent || !_ShadowRoot_mode) return false;
     try {
       if (inClosedShadowRoot(parent)) return false;
-      var ev = new _MouseEvent(BRIDGE_INSERT_MARKER, { relatedTarget: el, cancelable: true, composed: true });
-      return _EventTarget_dispatchEvent.call(parent, ev) === false && _Node_parentNode.call(el) === parent;
+      var init = _ObjectCreate(null);
+      init.relatedTarget = el;
+      init.cancelable = true;
+      init.composed = true;
+      var ev = new _MouseEvent(BRIDGE_INSERT_EVENT, init);
+      return _ReflectApply(_EventTarget_dispatchEvent, parent, [ev]) === false && _ReflectApply(_Node_parentNode, el, []) === parent;
     } catch (_ie) {
       return false;
     }
   }
   function insertNode(parent, el) {
     if (insertViaBridge(parent, el)) return;
-    if (_Node_appendChild) _Node_appendChild.call(parent, el);
+    if (_Node_appendChild) _ReflectApply(_Node_appendChild, parent, [el]);
     else parent.appendChild(el);
   }
 
   /* Once per script per document: a page with a strict CSP blocks
      every style the script adds, and one line says it. */
-  var blockedStyleReported = {};
+  var blockedStyleReported = _ObjectCreate(null);
   function reportBlockedStyle(scriptId, api) {
     if (blockedStyleReported[scriptId]) return;
     blockedStyleReported[scriptId] = true;
@@ -1492,7 +1582,7 @@
      The blob: URL is alive for the document's lifetime; we don't
      URL.revokeObjectURL on bfcache since the wrapper runtime itself
      stays around. */
-  var resourceBoxes = {};  /* scriptId -> { byName, textCache, urlCache } */
+  var resourceBoxes = _ObjectCreate(null);  /* scriptId -> { byName, textCache, urlCache } */
   function ensureResourceBox(scriptId) {
     var b = resourceBoxes[scriptId];
     if (b) return b;
@@ -1547,8 +1637,8 @@
       var b = resourceBoxes[scriptId];
       if (!b) return undefined;
       var key = String(name);
-      if (_hasOwn.call(b.textCache, key)) return b.textCache[key];
-      if (!_hasOwn.call(b.byName, key)) return undefined;
+      if (_ReflectApply(_hasOwn, b.textCache, [key])) return b.textCache[key];
+      if (!_ReflectApply(_hasOwn, b.byName, [key])) return undefined;
       var bytes = _resDecodeBase64(b.byName[key].b64);
       var text;
       try {
@@ -1568,8 +1658,8 @@
       var b = resourceBoxes[scriptId];
       if (!b) return undefined;
       var key = String(name);
-      if (_hasOwn.call(b.urlCache, key)) return b.urlCache[key];
-      if (!_hasOwn.call(b.byName, key)) return undefined;
+      if (_ReflectApply(_hasOwn, b.urlCache, [key])) return b.urlCache[key];
+      if (!_ReflectApply(_hasOwn, b.byName, [key])) return undefined;
       if (!_Blob || !_URL_createObjectURL) return undefined;
       var entry = b.byName[key];
       var bytes = _resDecodeBase64(entry.b64);
@@ -1777,7 +1867,7 @@
        request and free the slot here. */
     delete activeRequests[id];
     if (entry.ttlTimer) {
-      try { clearTimeout(entry.ttlTimer); } catch (_te) {}
+      try { _clearTimeout(entry.ttlTimer); } catch (_te) {}
     }
     entry.readyState = 4;
     /* Every terminal event leaves the request DONE, so the object each
@@ -1864,9 +1954,9 @@
   var XHR_PAGE_SIDE_TTL_MS = 5 * 60 * 1000; /* 5 minutes */
   function armXhrTtl(id, entry) {
     if (entry.ttlTimer) {
-      try { clearTimeout(entry.ttlTimer); } catch (_te) {}
+      try { _clearTimeout(entry.ttlTimer); } catch (_te) {}
     }
-    entry.ttlTimer = setTimeout(function () {
+    entry.ttlTimer = _setTimeout(function () {
       /* Minutes, not the raw millisecond count — a six-digit number
          is not something a reader can weigh. The worker is told to
          stop too, if it's still there: the body could be long. */
@@ -2056,18 +2146,16 @@
       if (_consoleLog) {
         var arr = ["[SourceMonkey:" + scriptId + "]"];
         for (var i = 0; i < args.length; i++) arr.push(args[i]);
-        try { _consoleLog.apply(null, arr); } catch (_e) {}
+        try { _ReflectApply(_consoleLog, null, arr); } catch (_e) {}
       }
-      /* SW fan-out (text-only). __SM_GM__.sendAsync is the
+      /* SW fan-out (text-only). transportSend is the
          chrome.runtime.sendMessage / bridge-event helper the
          async APIs use; here we fire-and-forget so the script's GM_log
          call stays sync. */
       try {
         var text = _renderArgs(args);
-        if (window.__SM_GM__ && typeof window.__SM_GM__.sendAsync === "function") {
-          var p = window.__SM_GM__.sendAsync({ type: "sm:gm-log", scriptId: scriptId, message: text });
-          if (p && typeof p.catch === "function") p.catch(function () {});
-        }
+        var p = transportSend({ type: "sm:gm-log", scriptId: scriptId, message: text });
+        if (p && typeof p.catch === "function") p.catch(function () {});
       } catch (_eS) {}
     },
   };
@@ -2387,7 +2475,7 @@
       a.style.display = "none";
       var parent = document.body || document.documentElement;
       if (!parent) return "no document to append the download anchor to";
-      if (_Node_appendChild) _Node_appendChild.call(parent, a);
+      if (_Node_appendChild) _ReflectApply(_Node_appendChild, parent, [a]);
       else parent.appendChild(a);
       try { a.click(); } finally {
         try { parent.removeChild(a); } catch (_re2) {}
@@ -2420,7 +2508,7 @@
              caller has the control object, breaking the common
              `var ctl = GM_download({onerror: function () { ctl.abort(); }})`
              shape. Every other path here settles asynchronously. */
-          setTimeout(function () {
+          _setTimeout(function () {
             dispatchDownloadEvent(requestId, {
               kind: "error",
               error: "not_succeeded",
@@ -2428,7 +2516,7 @@
             });
           }, 0);
         } else {
-          setTimeout(function () {
+          _setTimeout(function () {
             /* The anchor path has no completion signal — the browser
                owns the transfer from the click on. We report `load`
                once the click has been handed off. Documented
@@ -2541,7 +2629,7 @@
 
   /* ---------- GM_registerMenuCommand / GM_unregisterMenuCommand ----------
 
-     `__SM_GM__` is a singleton per document — every userscript on the
+     This runtime is a singleton per document — every userscript on the
      page shares this runtime. So the callback table MUST be keyed by
      (scriptId, commandId), not commandId alone: two scripts using the
      same explicit `{id: 'foo'}` (the documented TM/VM update-in-place
@@ -2589,7 +2677,7 @@
     unregister: function (scriptId, commandId) {
       var key = String(commandId);
       var bucket = menuCommandsByScript[scriptId];
-      if (bucket && _hasOwn.call(bucket, key)) delete bucket[key];
+      if (bucket && _ReflectApply(_hasOwn, bucket, [key])) delete bucket[key];
       api.sendAsync({
         type: "sm:gm-menu-unregister",
         scriptId: scriptId,
@@ -2756,7 +2844,7 @@
      script to grant the API should restore it rather than leaving the
      feature test lying for the rest of the document. */
   function ensureUrlChangeProperty() {
-    if (_hasOwn.call(window, "onurlchange")) return;
+    if (_ReflectApply(_hasOwn, window, ["onurlchange"])) return;
     try {
       _ObjectDefineProperty(window, "onurlchange", {
         get: function () { return urlChangeOnProp; },
@@ -2813,14 +2901,14 @@
           addUrlChangeHandler(listener);
           return undefined;
         }
-        return _origAddEventListener.apply(this == null ? window : this, arguments);
+        return _ReflectApply(_origAddEventListener, this == null ? window : this, arguments);
       };
       window.removeEventListener = function (type, listener) {
         if (isUrlChangeType(type)) {
           removeUrlChangeHandler(listener);
           return undefined;
         }
-        return _origRemoveEventListener.apply(this == null ? window : this, arguments);
+        return _ReflectApply(_origRemoveEventListener, this == null ? window : this, arguments);
       };
       _origAddEventListener = origAdd;
       _origRemoveEventListener = origRemove;
@@ -3058,25 +3146,12 @@
     },
   };
 
-  /* Object.defineProperty with writable:false + configurable:false so
-     neither a sibling userscript nor (in MAIN world) the page can
-     replace the runtime out from under other scripts after init.
-     We don't try to HIDE the global: in USER_SCRIPT world the page
-     can't see it anyway, and in MAIN world there is nowhere to hide it
-     — separate chrome.userScripts registrations can only hand each
-     other references through a shared global, and any secret baked
-     into MAIN-world source is readable by the page. Bounding what a
-     page can do with it is the SW-side gate's job instead. */
+  /* Into the world's registry, where only code holding the channel key
+     finds it. Non-writable, so a script that got the registry can't
+     swap the runtime out from under the others. */
   try {
-    Object.defineProperty(window, "__SM_GM__", {
-      value: api,
-      writable: false,
-      configurable: false,
-      enumerable: false,
-    });
+    Object.defineProperty(reg, "gm", { value: api, enumerable: true });
   } catch (_e2) {
-    /* If something already pinned the slot, fall back to a plain
-       assignment so we still expose the API. */
-    window.__SM_GM__ = api;
+    reg.gm = api;
   }
 })();

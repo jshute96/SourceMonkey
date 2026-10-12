@@ -93,13 +93,21 @@ partway becomes an `Internal error:` result.
   run in the sender's document (`manualRanIn`).
   - Checked in memory first (`manualRunDocs`), then in the tab's state,
     after a worker restart.
-- A page-world run is injected long after the page's own code, so a
-  hostile page can plant a fake `__SM_GM__` / `__smPrelude` first and
-  receive the run's config, values snapshot included.
-  - Not withheld: the gate opens for that document at the same moment,
-    so the page could ask for the values through the bridge anyway.
-  - That's the trust a page-world script has everywhere: the page
-    shares its world.
+- A page-world run is injected long after the page's own code, so the
+  built-ins its code captures may be the page's replacements, and the
+  registry gate it finds may be the page's own. Either could hand the
+  page what the code carries, the run's config and values snapshot
+  included.
+  - So a run's code carries its document's own key
+    (`documentKey` in `src/extension/channel.ts`), not the install's
+    channel key, and injects its own bridge on it. That bridge relays
+    only the run's script's requests and pushes (pushes are stamped
+    with their script, `smScript`), so a page that got the key reaches
+    only that script, in that document, and only once it ran there.
+  - The key is per document and script: the same in every run of the
+    script there, so a run finds the last one's state and replaces it,
+    and another script's runs get a bridge of their own.
+  - See [injection.md](injection.md#the-channel-key).
 
 ## In the page
 

@@ -9,7 +9,7 @@
 //      least `GM.info` whenever GM_info is in scope.
 //   5. `@grant none` lands the script in MAIN world. Today that
 //      means only GM_info and the GM alias are reachable (the
-//      USER_SCRIPT-world `__SM_GM__` runtime isn't visible from
+//      USER_SCRIPT-world GM runtime isn't visible from
 //      MAIN); the other GM_x names are undefined.
 //
 // Phase 2 doesn't implement any actual API behavior — calling any
@@ -124,7 +124,7 @@ test.describe('GM_* @grant gating (Phase 2)', () => {
     fixtureServer,
     sm,
   }) => {
-    // @grant none makes the script MAIN-world, so __SM_GM__ isn't
+    // @grant none makes the script MAIN-world, so the GM runtime isn't
     // reachable — but GM_info is implicit (matches TM/VM) and is
     // emitted as a baked literal with no runtime dependency. The
     // GM4 alias `GM` is also emitted with at least `GM.info`.

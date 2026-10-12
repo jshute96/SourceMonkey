@@ -7,6 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { evalWithGate, eventName, gated, KEY, registryOf, stubGate } from './channel-helpers.mjs';
 
 // chrome.storage stub — buildGmBindingsForScript reads chrome.storage.local
 // at register time for storage-granting scripts to bake in the initial
@@ -142,8 +143,10 @@ test('buildConfigBlob: emits a queue-or-init call with the cfg object', () => {
   });
   // Both transport branches are present — direct init() when prelude
   // is already loaded, queue-push otherwise.
-  assert.match(blob, /self\.__smPrelude\.init/);
-  assert.match(blob, /self\.__smCfgQueue=self\.__smCfgQueue\|\|\[\]/);
+  assert.match(blob, /r\.prelude\.init/);
+  assert.match(blob, /r\.cfgQueue=r\.cfgQueue\|\|\[\]/);
+  // The registry comes from the gate, for the channel key.
+  assert.ok(blob.includes(`document.__smGate`) && blob.includes(JSON.stringify(KEY)));
   // The cfg literal carries the script identity.
   assert.match(blob, /"id":"abc"/);
   assert.match(blob, /"name":"Foo"/);
@@ -231,24 +234,27 @@ test('wrapCombinedEntry: no requires → head on line 1, body lines preserved, n
     script: scriptWith({ bodyText: 'LINE1\nLINE2\nLINE3' }),
   });
   const lines = wrapped.split('\n');
-  assert.match(lines[0], /^self\.__smRun\("abc",function\(__smE\)\{.*LINE1$/);
+  assert.match(lines[0], /^\(function\(__smReg\)\{__smReg\.run\("abc",function\(__smE\)\{.*LINE1$/);
   assert.equal(lines[1], 'LINE2');
   assert.equal(lines[2], 'LINE3');
   assert.doesNotMatch(wrapped, /sourceMappingURL/);
   assert.match(wrapped, /\/\/# sourceURL=sourcemonkey:\/\/SourceMonkey\/x\/Foo\.user\.js/);
 });
 
-test('wrapCombinedEntry: defers execution via self.__smRun and exposes per-script vars', () => {
+test('wrapCombinedEntry: defers execution via the registry\'s run and exposes per-script vars', () => {
   const wrapped = wrapCombinedEntry({
     ...COMBINED_ARGS,
     script: scriptWith({ bodyText: 'BODY' }),
   });
-  assert.match(wrapped, /^self\.__smRun\("abc",function\(__smE\)\{/);
+  assert.match(wrapped, /^\(function\(__smReg\)\{__smReg\.run\("abc",function\(__smE\)\{/);
+  // The registry (and the channel key in its expression) comes in at the
+  // end, outside the wrap function's source.
+  assert.match(wrapped, /\}\)\}\)\(\(function\(k\)\{.*\}\)\("__SM_KEY__"\)\);\n\/\/# sourceURL=/);
   assert.match(wrapped, /var __smDecision=__smE\.decision;/);
   assert.match(wrapped, /var __smName=__smE\.cfg\.name;/);
   assert.match(wrapped, /var __smId=__smE\.cfg\.id;/);
   assert.match(wrapped, /var __smLoadedAt=__smE\.cfg\.loadedAt;/);
-  assert.match(wrapped, /var __smSend=self\.__smPrelude\.send;/);
+  assert.match(wrapped, /var __smSend=__smE\.send;/);
 });
 
 test('wrapCombinedEntry: splices gmBindings + gmPrelude before the user source', () => {
@@ -280,7 +286,7 @@ test('wrapCombinedEntry: requires and body land in ONE shared scope', () => {
     __smPrelude: { send: () => {} },
     __smRun: (_id, fn) => { got = fn({ decision: {}, cfg: { name: 'n', id: 'abc', loadedAt: 0 } }); },
   };
-  new Function('self', wrapped)(stub);
+  new Function('self', 'window', 'document', wrapped)(stub, stub, gated(stub));
   assert.equal(got, 'from-require:ok');
 });
 
@@ -310,7 +316,7 @@ test('wrapCombinedEntry: the user program shadows our bindings instead of clashi
     __smPrelude: { send: () => {} },
     __smRun: (_id, fn) => { got = fn({ decision: {}, cfg: { name: 'n', id: 'abc', loadedAt: 0 } }); },
   };
-  new Function('self', 'window', wrapped)(stub, { app: 'page' });
+  new Function('self', 'window', 'document', wrapped)(stub, { app: 'page' }, { __smGate: stubGate(stub) });
   assert.equal(got, 'page,mine,2,3,own,lib-self');
 });
 
@@ -327,7 +333,7 @@ test('wrapCombinedEntry: a leading "use strict" applies, as in TM and VM', () =>
     __smPrelude: { send: () => {} },
     __smRun: (_id, fn) => { got = fn({ decision: {}, cfg: { name: 'n', id: 'abc', loadedAt: 0 } }); },
   };
-  new Function('self', wrapped)(stub);
+  new Function('self', 'window', 'document', wrapped)(stub, stub, gated(stub));
   assert.equal(got, true);
 });
 
@@ -351,7 +357,7 @@ test('wrapCombinedEntry: the eval hook sees the program\'s scope, keeps "use str
     __smPrelude: { send: () => {} },
     __smRun: (_id, fn) => { got = fn({ decision: {}, cfg: { name: 'n', id: 'abc', loadedAt: 0 } }); },
   };
-  new Function('self', wrapped)(stub);
+  new Function('self', 'window', 'document', wrapped)(stub, stub, gated(stub));
   assert.equal(got, true);
   const hook = globalThis[key][COMBINED_ARGS.scriptId];
   assert.equal(hook('[GM_info, lib, secret].join()'), 'ours,L,42');
@@ -386,7 +392,7 @@ test('wrapCombinedEntry: the eval hook goes into the script\'s own IIFE, not a l
     __smPrelude: { send: () => {} },
     __smRun: (_id, fn) => { fn({ decision: {}, cfg: { name: 'n', id: 'abc', loadedAt: 0 } }); },
   };
-  new Function('self', wrapped)(stub);
+  new Function('self', 'window', 'document', wrapped)(stub, stub, gated(stub));
   const hook = globalThis[key][COMBINED_ARGS.scriptId];
   assert.equal(hook('mine'), 'script');
   assert.equal(hook('typeof libLocal'), 'undefined');
@@ -417,7 +423,7 @@ test('wrapCombinedEntry: the nested scope adds no lines', () => {
   const lines = wrapped.split('\n');
   assert.match(lines[0], /L1$/);
   assert.equal(lines[1], 'L2');
-  assert.equal(lines[2], '})();});');
+  assert.match(lines[2], /^\};return __smReg\.prelude\.callAs\(__smU\);\}\)\}\)\(\(function\(k\)/);
   assert.match(lines[3], /^\/\/# sourceURL=/);
 });
 
@@ -433,7 +439,7 @@ test('buildSwapEvalBody: the swapped body shadows our bindings too', async () =>
   const { body } = await buildSwapEvalBody(script, '0.0.0', 'a.user.js');
   assert.match(body, /const GM_info = /);
   assert.match(body, /const GM_setValue = /);
-  assert.equal((0, eval)(body), 'mine,2');
+  assert.equal(evalWithGate(body), 'mine,2');
 });
 
 test('wrapCombinedEntry: a `;` separator defeats ASI hazards at the seam', () => {
@@ -748,7 +754,7 @@ test('buildSwapEvalBody: prepends resource.init so a swapped body sees its @reso
     resources: [{ name: 'r', bytesBase64: 'YQ==', contentType: 'text/plain', url: 'https://cdn/r', ref: 'r', size: 1, contentHash: '', loadedAt: 0 }],
   });
   const { body } = await buildSwapEvalBody(script, '0.0.0');
-  assert.match(body, /__SM_GM__\.resource\.init\(/);
+  assert.match(body, /__smReg\.gm\.resource\.init\(/);
   assert.match(body, /"r":\{"b64":"YQ=="/);
 });
 
@@ -766,7 +772,7 @@ test('buildSwapEvalBody: a swapped body with @requires shares their scope', asyn
   const { body } = await buildSwapEvalBody(script, '0.0.0', 'a.user.js');
   // The swap eval is a single (0,eval) of this string, exactly what the
   // prelude does. Its completion value is the nested scope's result.
-  assert.equal((0, eval)(body), 'from-require:ok');
+  assert.equal(evalWithGate(body), 'from-require:ok');
   // It carries the same inline source map a fresh registration emits,
   // so devtools splits a hot-swapped script back into its original
   // files instead of showing concatenated line numbers.
@@ -822,8 +828,8 @@ test('buildSwapEvalBody: MAIN-world script still gets GM_info prepended', async 
   });
   const { body } = await buildSwapEvalBody(script, '0.0.0');
   assert.match(body, /const GM_info = /);
-  // No __SM_GM__ in MAIN, so non-info bindings aren't included.
-  assert.doesNotMatch(body, /__SM_GM__/);
+  // No GM runtime in MAIN, so non-info bindings aren't included.
+  assert.doesNotMatch(body, /__smReg\.gm/);
 });
 
 test('buildSwapEvalBody: passes through plain body when no header (defensive)', async () => {
@@ -834,7 +840,7 @@ test('buildSwapEvalBody: passes through plain body when no header (defensive)', 
   // scope — same shape the registered path emits after its wrap head.
   const script = { ...makeScript(), header: null };
   const { body } = await buildSwapEvalBody(script, '0.0.0');
-  assert.equal(body, '(()=>{console.log("hi");\n})();');
+  assert.match(body, /^const __smReg=\(function\(k\)\{.*\}\)\("__SM_KEY__"\); const __smU=\(\)=>\{console\.log\("hi"\);\n\};__smReg\.prelude\.callAs\(__smU\);$/);
 });
 
 // ---------- buildRegistrationSpec ----------
@@ -1112,7 +1118,7 @@ test('buildRegistrationSpec: js[] shape is [config, prelude, combined, seal]', a
   // gives them back their devtools identity.
   // The prelude stays inline (not a separate singleton registration):
   // cross-registration order isn't guaranteed by chrome.userScripts,
-  // and the combined entry's self.__smRun() call has no safety net.
+  // and the combined entry's run() call has no safety net.
   assert.equal(spec.js.length, 4);
   assert.ok('code' in spec.js[0]);
   // Config blob carries a per-script `__config.js` sourceURL.
@@ -1134,7 +1140,7 @@ test('buildRegistrationSpec: js[] shape is [config, prelude, combined, seal]', a
   // Trailing sentinel: its own script, so it still runs when the
   // combined entry fails to parse.
   assert.ok('code' in spec.js[3]);
-  assert.match(spec.js[3].code, /^self\.__smSealed\("script-1"\);/);
+  assert.match(spec.js[3].code, /\("__SM_KEY__"\)\.sealed\("script-1"\);/);
 });
 
 test('buildRegistrationSpec: js[] shape with no requires is [config, prelude, combined, seal]', async () => {
@@ -1237,7 +1243,7 @@ test('buildRegistrationSpec: ONE GM binding block serves the requires and the bo
   // Emitted ahead of the first require, so library top-level code
   // sees it too.
   assert.ok(combined.indexOf('const GM_setValue') < combined.indexOf('A();'));
-  assert.match(combined, /__SM_GM__\.storage\.set\("script-1"/);
+  assert.match(combined, /__smReg\.gm\.storage\.set\("script-1"/);
 });
 
 test('buildRegistrationSpec: @require entries get GM_info even without any other @grant', async () => {
@@ -1250,7 +1256,7 @@ test('buildRegistrationSpec: @require entries get GM_info even without any other
   }));
   const combined = spec.js[2];
   assert.ok('code' in combined);
-  assert.match(combined.code, /const GM_info = Object\.freeze/);
+  assert.match(combined.code, /const GM_info = __smReg\.freeze/);
   assert.ok(combined.code.indexOf('const GM_info') < combined.code.indexOf('P();'));
 });
 
@@ -1296,7 +1302,8 @@ function runCombined(spec, extraSelf = {}) {
   stub.window = stub.window ?? stub;
   // The GM bindings reference `window` as a bare identifier, so it has
   // to be a real binding in the evaluated scope, not just `self.window`.
-  new Function('self', 'window', spec.js[2].code)(stub, stub.window);
+  // The registry's gate is on `document`.
+  new Function('self', 'window', 'document', spec.js[2].code)(stub, stub.window, { __smGate: stubGate(stub) });
   return out;
 }
 
@@ -1453,8 +1460,8 @@ test('buildRegistrationSpec: two scripts sharing an @require URL bake their OWN 
   const requireB = specB.js[2];
   assert.ok('code' in requireA);
   assert.ok('code' in requireB);
-  assert.match(requireA.code, /__SM_GM__\.storage\.set\("script-A"/);
-  assert.match(requireB.code, /__SM_GM__\.storage\.set\("script-B"/);
+  assert.match(requireA.code, /__smReg\.gm\.storage\.set\("script-A"/);
+  assert.match(requireB.code, /__smReg\.gm\.storage\.set\("script-B"/);
   // Sanity: each only references its own id.
   assert.doesNotMatch(requireA.code, /"script-B"/);
   assert.doesNotMatch(requireB.code, /"script-A"/);
@@ -1462,7 +1469,7 @@ test('buildRegistrationSpec: two scripts sharing an @require URL bake their OWN 
 
 test('buildRegistrationSpec: MAIN-world script gets GM_info only (no other bindings)', async () => {
   // @grant none + no grants both land in MAIN world (resolveWorld);
-  // we don't have a USER_SCRIPT-world __SM_GM__ runtime there, so
+  // we don't have a USER_SCRIPT-world GM runtime there, so
   // only GM_info — which is a baked literal with no runtime
   // dependency — is exposed. Other GM_* would ReferenceError, which
   // is the documented limitation.
@@ -1473,8 +1480,8 @@ test('buildRegistrationSpec: MAIN-world script gets GM_info only (no other bindi
   // Shape: [config, prelude, combined, seal]
   const mainEntry = spec.js[2];
   assert.ok('code' in mainEntry);
-  assert.match(mainEntry.code, /const GM_info = Object\.freeze/);
-  assert.doesNotMatch(mainEntry.code, /__SM_GM__/);
+  assert.match(mainEntry.code, /const GM_info = __smReg\.freeze/);
+  assert.doesNotMatch(mainEntry.code, /__smReg\.gm/);
 });
 
 test('buildRegistrationSpec: passes script.startupLogs through to the config blob', async () => {
@@ -1735,7 +1742,7 @@ test('buildBridgeSpec: emits a USER_SCRIPT spec on the union of the MAIN-world s
   assert.deepEqual(bridge.matches, ['https://y/*', 'https://z/*']);
   assert.deepEqual(bridge.includeGlobs, ['*://g/*']);
   assert.equal(bridge.runAt, 'document_start');
-  assert.match(bridge.js[0].code, /sourcemonkey-bridge-sync/);
+  assert.match(bridge.js[0].code, /sourcemonkey-sync-/);
   // Tagged with a page-wide sourceURL so devtools shows it under a
   // friendly name rather than a UUID.
   assert.match(bridge.js[0].code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/__bridge\.js/);
@@ -1760,8 +1767,9 @@ test('wrapPreludeEntry: appends the page-wide prelude sourceURL', () => {
 // us drive synthetic events through it and observe what reaches the SW
 // and what it posts back.
 //
-// Page -> SW is a `sourcemonkey-bridge-sync` CustomEvent on
-// `document`; SW -> page (replies, pushes) is window.postMessage.
+// Page -> SW is a `sourcemonkey-sync-<key>` CustomEvent on `document`;
+// SW -> page (replies, pushes) is one too, which `posted` records as
+// `{type, ...detail}`.
 function setupBridgeHarness(opts = {}) {
   const sent = [];
   const posted = [];
@@ -1784,8 +1792,9 @@ function setupBridgeHarness(opts = {}) {
   };
   const fakeDocument = {
     addEventListener(type, fn, _capture) {
-      if (type === 'sourcemonkey-bridge-sync') syncListener = fn;
+      if (type === eventName('sync')) syncListener = fn;
     },
+    dispatchEvent(ev) { posted.push({ type: ev.type, ...JSON.parse(ev.detail) }); return true; },
   };
   // eslint-disable-next-line no-new-func
   new Function('window', 'document', 'chrome', WRAPPER_BRIDGE)(fakeWindow, fakeDocument, fakeChrome);
@@ -1857,7 +1866,7 @@ test('wrapper-bridge: a requestId selects request/reply and posts the SW answer 
   assert.equal(sent[0].__viaBridge, true);
   await Promise.resolve();
   assert.equal(posted.length, 1);
-  assert.equal(posted[0].__sm, 'sourcemonkey-bridge-reply');
+  assert.equal(posted[0].type, eventName('reply'));
   assert.equal(posted[0].requestId, 'req-7');
   assert.deepEqual(posted[0].reply, { action: 'run-new', body: 'x' });
 });
@@ -1925,7 +1934,7 @@ test('wrapper-bridge: fire-and-forget swallows a rejected sendMessage', async ()
 test('wrapper-bridge: silently no-ops when chrome.runtime is unavailable', () => {
   let syncListener = null;
   const fakeDocument = {
-    addEventListener(type, fn) { if (type === 'sourcemonkey-bridge-sync') syncListener = fn; },
+    addEventListener(type, fn) { if (type === eventName('sync')) syncListener = fn; },
   };
   // eslint-disable-next-line no-new-func
   new Function('window', 'document', 'chrome', WRAPPER_BRIDGE)({ addEventListener() {} }, fakeDocument, {});
@@ -2694,7 +2703,7 @@ test('syncRegistrations: a scoped sync re-offers the MAIN runtime and the bridge
   // The MAIN runtime is registered under its own id, and every piece of
   // own-spec bookkeeping has to know it — a predicate that only knew
   // the USER_SCRIPT id once left this script with `GM_setValue` bound
-  // to a `window.__SM_GM__` that never reached its page.
+  // to a runtime that never reached its page.
   t.after(resetUserScriptStubs);
   sessionStore.clear();
   localStore.clear();
@@ -3531,7 +3540,7 @@ test('wrapCombinedEntry: a sandboxed script runs `with` its scope, `this` the sa
   assert.equal(spec.world, 'MAIN');
   const code = spec.js[2].code;
   assert.match(code, /with\(__smW\)return __smC\(function\(\)\{void 1;\n/);
-  assert.match(code, /\n\},__smS\);\}\);\n/);
+  assert.match(code, /\n\},__smS\);\}\)\}\)\(/);
   const stub = sandboxStub();
   const out = runCombined(spec, { __smPrelude: stub.prelude });
   assert.deepEqual(out, ['sandbox', 'scope', 'function']);
@@ -3562,7 +3571,10 @@ test('wrapCombinedEntry: an ungranted page-world script keeps the arrow scope', 
   const spec = await buildRegistrationSpec(makeScript({
     header: { tags: [{ tag: 'name', value: 'Foo' }, { tag: 'grant', value: 'none' }] },
   }));
-  assert.match(spec.js[2].code, /return\(\(\)=>\{/);
+  // Called through the prelude's strict `callAs`, so a stack walk stops
+  // there.
+  assert.match(spec.js[2].code, /const __smU=\(\)=>\{/);
+  assert.match(spec.js[2].code, /\n\};return __smReg\.prelude\.callAs\(__smU\);/);
   assert.doesNotMatch(spec.js[2].code, /with\(/);
 });
 
@@ -3575,7 +3587,8 @@ test('buildSwapEvalBody: a sandboxed script gets the same scope, without `return
   assert.match(body, /with\(__smW\)__smC\(function\(\)\{void 1;\n/);
   // Global code, as the indirect eval runs it: sloppy, so `with` parses.
   const stub = sandboxStub();
-  const run = new Function('self', 'window', `return eval(${JSON.stringify(body.replace('[this.mine', 'return [this.mine'))});`);
-  const out = run({ __smPrelude: stub.prelude, __SM_GM__: {} }, {});
+  const run = new Function('self', 'window', 'document', `return eval(${JSON.stringify(body.replace('[this.mine', 'return [this.mine'))});`);
+  const self = { __smPrelude: stub.prelude, __SM_GM__: {} };
+  const out = run(self, {}, { __smGate: stubGate(self) });
   assert.deepEqual(out, ['sandbox', 'scope']);
 });

@@ -13,12 +13,14 @@
 //
 // The runtime is a plain injected script rather than a module, so we
 // evaluate the built wrapper against a minimal window stub and read
-// the codec off `window.__SM_GM__.storage`.
+// the codec off the runtime's `storage`, in the registry it puts itself
+// in.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { WRAPPER_GM_RUNTIME } from '../../dist/generated-wrappers.js';
+import { registryOf } from './channel-helpers.mjs';
 
 function loadRuntime() {
   // Every DOM / chrome touch in the runtime's init is inside a
@@ -30,7 +32,7 @@ function loadRuntime() {
   window.addEventListener = () => {};
   const document = { visibilityState: 'visible' };
   new Function('window', 'document', WRAPPER_GM_RUNTIME)(window, document);
-  return window.__SM_GM__.storage;
+  return registryOf(document).gm.storage;
 }
 
 const { encodeValue, decodeValue } = loadRuntime();

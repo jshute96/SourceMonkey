@@ -948,44 +948,158 @@ in the isolated one.
   accordingly. One implementation, two transports; no second copy to
   drift.
 - Page → SW requests go out over `wrapper-bridge.js` as
-  `sourcemonkey-bridge-sync` DOM events with a `requestId`, the same
+  `sourcemonkey-sync-<key>` DOM events with a `requestId`, the same
   request/reply shape `sm:check-pending` already used.
 - SW → page pushes (XHR events, cross-tab value updates, menu fires)
   arrive at the bridge on `chrome.runtime.onMessage`, which MAIN world
-  can't listen on; the bridge re-posts them as
-  `sourcemonkey-bridge-push`.
+  can't listen on; the bridge re-sends them as
+  `sourcemonkey-push-<key>` events.
+- `<key>` is the channel key, which keeps the page out of all of it
+  (see [The channel key](#the-channel-key)).
 - Registration is **per world, per need, and per pattern**:
   - A world only gets the runtime when some active script there grants
     an API that needs it. `GM_info` (a baked literal) and
     `unsafeWindow` (a `window` alias) don't, so an ordinary
-    `@grant none` MAIN-world script leaves no `window.__SM_GM__` on the
-    page.
+    `@grant none` MAIN-world script brings no runtime onto the page.
   - Its `matches` / `includeGlobs` are the union of those scripts' own,
-    not `<all_urls>`. In MAIN world the runtime is a page-visible
-    global — a fingerprint and an attack surface — so installing one
-    such script must not put it on every page the user visits.
+    not `<all_urls>`, so installing one such script doesn't put it on
+    every page the user visits.
+
+##### The channel key
+
+Our MAIN-world pieces share the page's realm, so what keeps the page
+out of them is a secret: the channel key, a random value per install
+(`src/extension/channel.ts`).
+
+###### Where it lives
+
+- Made once and kept in `chrome.storage.local`, and made again for
+  each new extension version, so a key that leaked stops working at the
+  next update (which places every registration again anyway).
+- Baked into the code we register: the static wrapper files are
+  written with a `"__SM_KEY__"` stand-in that `withChannelKey` swaps
+  for it (and throws if it's missing), and generated code gets it from
+  `registryExpr`.
+- A registration record made under another key isn't restored, so a
+  new key means every registration is placed again.
+
+###### The registry
+
+- Our entries are separate scripts (each script's config, prelude,
+  program and seal, plus the GM runtime), so they meet through the
+  document. Each asks `document.__smGate(key)` for the world's one
+  registry object, which holds the prelude (`prelude`, `run`, `sealed`,
+  `cfgQueue`) and the runtime (`gm`).
+- The first of our entries to run (at `document_start`, before any page
+  script) defines the gate, non-writable and non-configurable, so the
+  page can't replace it to catch the key.
+  - On `document`, not `window`: a frame's initial `about:blank` keeps
+    its Window when it navigates to a same-origin page, so a parent
+    could plant a gate there first. Each navigation gets a new
+    Document.
+- The gate keeps one registry per key, so only our key gets ours; any
+  other string gets an empty one of its own. Its own source doesn't
+  contain the key.
+- The registries, the gate's table of them and the runtime's tables
+  keyed by script id have no prototype, so a lookup that misses can't
+  reach a getter the page put on `Object.prototype`.
+- Three copies of the gate's code (`registryExpr`, the prelude, the
+  runtime) are checked against each other by
+  `tests/unit/channel.test.mjs`.
+- None of our pieces is a page global: `__smGate` on `document` is the
+  only name we put on the page's objects.
+
+###### The bridge's events
+
+- Every event in either direction is named with the key
+  (`sourcemonkey-sync-<key>`, `-reply-`, `-push-`, `-insert-`), so the
+  page can neither send one nor hear one. Replies and pushes are events
+  too, not postMessages the page could read.
+- The two bare announcements stay public: the bridge's ready event
+  (which makes a waiting wrapper send its check-pending again) and
+  `sourcemonkey-main-ready` (which only keeps the sandboxed-page
+  fallback off).
+
+###### Keeping the key from the page
+
+It is only in code Chrome injects, which the page can't read, and only
+where the page can't get hold of it later:
+
+- The static files keep it in their strict IIFEs, which run before any
+  page script.
+- Generated code has it only in the registry expression, at the end of
+  each script's entry, as the argument of an outer function that runs
+  at `document_start`. The wrap function gets the registry as a
+  parameter, so its own source has no key.
+- The wrap function is sloppy mode, and its `arguments` hold the
+  script's entry (its stored values among them). Two ways a page could
+  reach it, both closed:
+  - `.caller`, from a page function the wrap's top level calls
+    directly. So that top level (the GM bindings) calls nothing the
+    page could have replaced: `Object.freeze`, `console.info`,
+    `Reflect.apply` and promise-making are the registry's copies
+    (`freeze`, `info`, `apply`, `resolve` / `reject`), taken when the
+    gate was made.
+  - V8's stack-trace API (`Error.prepareStackTrace` with
+    `CallSite.getFunction`), which hands a page every sloppy function
+    on the stack down to the first strict one. So the user program
+    (and the `GM.*` aliases' calls) run through strict frames: the
+    prelude's `callAs` for the program, the runtime for every GM call.
+- The reload swap evals a body carrying the key, through the `eval`
+  the prelude captured at load.
+- Our MAIN-world code calls captured functions through the captured
+  `Reflect.apply`, never `fn.call(...)` (the page's to replace, and
+  handed what we pass: a script's value cache, the keyed insert
+  event). It reads events' `detail` through the getter captured at
+  load, builds events and property descriptors from objects with no
+  prototype, and copies replies and pushes into objects with none
+  before reading them.
+- It decides once, at load, whether it has its own `chrome.runtime`
+  channel: in MAIN world `chrome` is the page's to replace, and a page
+  that made it look like ours would be sent our reports.
+
+###### Manual runs
+
+A manual run's page-world code is injected long after the page's own,
+so the built-ins it captures may be the page's replacements. It never
+gets the install's key: see
+[manual-scripts.md](manual-scripts.md#the-bridge-gate).
+
+###### What it doesn't stop
+
+- **A page that targets SourceMonkey** can still hook built-ins our
+  MAIN-world code uses after `document_start` that we haven't
+  captured, and the methods on the script's own values (a `toJSON`, an
+  `Array.prototype` method the storage codec calls). That can show it
+  values passing through, and in places let it alter them. TM's page
+  mode is in the same position.
+- The listeners for the bridge's keyed events only read them, and
+  handle what they carry in a microtask once the dispatch is over:
+  while one runs, `window.event` is the event, whose type carries the
+  key, and handling it can call into page code (the script's
+  callbacks, our timers). Our promise chains use their own `then` and
+  `catch`, the ones of `document_start`.
+- **Any installed userscript** reaches the registry: `__smReg` is in its
+  scope. So a page-world script can call the runtime as a sibling
+  script on the same page (TODO.md, per-script keying).
+- **sm-dev's eval hook** (test collections only) reaches the registry
+  too; see `src/eval-hook.ts`.
 
 ##### Trust model
 
-- In MAIN world `window.__SM_GM__` is a global in the page's own realm.
-  The page can call it, and can forge messages in both bridge
-  directions. That is inherent, not a leak we can plug: separate
-  `chrome.userScripts` registrations can only hand each other
-  references through a shared global, and any secret baked into
-  MAIN-world source is readable once the page steals the wrap function
-  (`self.__smRun` is a page-realm global too).
-- What we do bound is the **service worker** side.
-  `bridgeMayActAs` in `src/extension/background.ts` honors a bridge-relayed,
-  script-scoped request only when the named script actually runs in
-  MAIN world on the sending frame's URL **and** granted the API the
-  request exercises (in catalog-subsystem terms: `tab` for
-  `sm:gm-tab-open`, `storage` for a value read or write, …) — i.e.
-  only through GM surface the page could already reach directly. A
-  `@grant none` script matching the page is not a handle for opening
+- The channel key keeps the page off the bridge (above). Behind it,
+  as a backstop should the key ever leak, the **service worker** bounds
+  what a bridge-relayed request can do.
+- `bridgeMayActAs` in `src/extension/background.ts` honors a
+  bridge-relayed, script-scoped request only when the named script
+  actually runs in MAIN world on the sending frame's URL **and**
+  granted the API the request exercises (in catalog-subsystem terms:
+  `tab` for `sm:gm-tab-open`, `storage` for a value read or write, …).
+  A `@grant none` script matching the page is not a handle for opening
   tabs or starting downloads. It fails closed on an unknown id, a
   non-matching URL, a missing sender URL, or an ungranted API.
 - The **return** direction needs the same discipline. A push the bridge
-  re-posts becomes readable by the page, and pushes carry real payloads
+  re-sends goes into the page's world, and pushes carry real payloads
   — a script's stored values on `sm:gm-value-update`, a cross-origin
   response body on `sm:gm-xhr-event`. So the SW stamps every push with
   the destination script's world (`pushWorld`, backed by
@@ -1012,9 +1126,8 @@ in the isolated one.
   MAIN-world script could need them; now one can, and the gate is a
   tighter statement of the same rule. `window.close` is the sharpest
   case: the override sits on the granting script's sandbox `window`,
-  not the page's, but the page can still forge the request it sends
-  (or reach the runtime's `windowControl`). That is bounded to closing
-  its own tab.
+  not the page's, and with the key, a forged request is bounded to
+  closing the page's own tab.
 - **Failing closed has a cost.** The gate decides "does this script
   match this URL?" with our own matcher (`url-match.ts`), while Chrome
   decided whether to inject with its. Where the two disagree, a
@@ -1041,12 +1154,13 @@ in the isolated one.
   script. The runtime's shim cache is captured at `document_start`,
   before any page script, so its own natives are pristine — but user
   code in MAIN is on its own.
-- **The page can reach a granted script's GM surface.** Through the
-  bridge, a page a granted MAIN-world script matches can read and write
-  that script's GM storage, drive its `GM_xmlhttpRequest` to its
-  `@connect` hosts, and read its responses and value broadcasts (see
-  [Trust model](#trust-model)). This is the main thing the isolated
-  world protects; a script that needs it says `@inject-into content`.
+- **A determined page can still look in.** The channel key keeps the
+  page off the bridge and away from our runtime, but a page that
+  targets SourceMonkey can hook the built-ins our MAIN-world code uses
+  and see some of a granted script's traffic (see
+  [The channel key](#the-channel-key)). The isolated world is out of
+  its reach entirely; a script that needs that says
+  `@inject-into content`.
 - **A CSP `sandbox` page runs them isolated.** Chrome injects no
   MAIN-world script where the page's own world has script turned off,
   so they run in USER_SCRIPT world there instead, a little later (see
@@ -1106,7 +1220,7 @@ world in that case, and so do we:
 - **One extra hop per call.** Every `GM_*` SW round-trip pays the
   bridge relay, like `sm:check-pending` already did from MAIN. The
   request leg costs no task hop (it is a synchronous event dispatch);
-  the reply comes back as a postMessage.
+  the reply comes back as an event once the SW has answered.
 
 #### MAIN-world traffic — the bridge
 
@@ -1129,15 +1243,16 @@ What crosses it:
   `sm:gm-tab-closed`, `sm:gm-notification-event`, `sm:gm-menu-fire`,
   `sm:gm-download-event` (the bridge's `PUSHED` list is authoritative).
   Those arrive on `chrome.runtime.onMessage`, which only USER_SCRIPT
-  world can listen on, so the bridge re-posts them into the page as
-  `sourcemonkey-bridge-push`.
+  world can listen on, so the bridge re-sends them into the page as
+  `sourcemonkey-push-<key>` events.
 - **DOM inserts** for `GM_addStyle` / `GM_addElement`, which the bridge
   appends from USER_SCRIPT world so the page's CSP doesn't apply
-  (`sourcemonkey-bridge-insert`; see
+  (`sourcemonkey-insert-<key>`; see
   [GM-APIs.md](GM-APIs.md#dom-injection-gm_addstyle--gm_addelement)).
   This one never reaches the SW.
 
-Mechanics:
+Mechanics (`<key>` is the channel key; see
+[The channel key](#the-channel-key)):
 
 - `send` in `userscript-prelude.js` asks whether `chrome.runtime.id`
   is a string — true only in a real extension context. In USER_SCRIPT
@@ -1149,7 +1264,7 @@ Mechanics:
   for talking to that extension, and calling it without an extension
   id throws.
 - **Page → SW is a DOM event**, not a postMessage: a `CustomEvent`
-  named `sourcemonkey-bridge-sync` dispatched on `document`, carrying
+  named `sourcemonkey-sync-<key>` dispatched on `document`, carrying
   `{requestId, payload}` as a JSON string in `detail` (objects don't
   cross realms).
   - Event dispatch runs *every* world's listeners in the **dispatching
@@ -1171,18 +1286,16 @@ Mechanics:
     have received.
   - `requestId` is omitted for fire-and-forget sends, and that absence
     is what selects the bridge's reply-less path.
-- **SW → page stays postMessage** — replies and pushes both. There is
-  no durability concern (the document just asked), and the bridge
-  originates them in USER_SCRIPT world, where postMessage is the only
-  channel into MAIN.
+- **SW → page is a DOM event too** — `sourcemonkey-reply-<key>` for
+  replies, `sourcemonkey-push-<key>` for pushes, JSON in `detail`. Not
+  a postMessage, which the page could read.
 - The bridge checks the payload type against an allowlist per
   direction and forwards. An unallowlisted request gets no reply at
   all, so the bridge can't be used as an "is this type relayed?"
   oracle. Cross-frame relay is not a concern on the request side: a DOM
   event on `document` only reaches listeners in that same document, so
   a frame can only reach the bridge instance injected into it, already
-  scoped to that frame's URL. The MAIN-world receivers of our replies
-  and pushes still check `event.source === window`.
+  scoped to that frame's URL.
 - `buildBridgeSpec` (in `src/extension/injector.ts`) emits the bridge
   registration when at least one active script resolves to MAIN. It
   runs at `document_start`, ahead of the wrapper specs, because the
@@ -1218,20 +1331,14 @@ Trust model:
 
 - Cross-origin frames can't reach a bridge instance that isn't theirs:
   the request is a DOM event, which stays inside its own document.
-- It does **not** stop the host page from forging traffic. Once any
-  MAIN-world wrapper runs, the page can observe our replies and pushes
-  on its own window and learn the stored script `id` and any `sm:error`
-  `message` text, then dispatch fakes with whatever ids it just saw —
-  the request event is as available to the page as a postMessage was.
-- The page can send the insert event for an element of its own, and
-  get the CSP exemption for it: inline code, and script and stylesheet
-  loads from any host. It has to be running script already, but CSP is
-  also what limits injected code (an XSS payload) on many sites.
-  Keying the channel would close this (TODO.md).
-- A forged `sm:start` flips a script's badge entry from MISSING to OK
-  on that document; a forged `sm:error` writes an attacker-controlled
-  string into the SW console and per-tab session record. Neither
-  grants script execution or SW privilege.
+- The host page can't use the bridge: every event's name carries the
+  channel key, so it can neither send a request (or the insert event,
+  for the CSP exemption) nor hear a reply or push. What follows is the
+  backstop, should the key ever leak.
+- A forged `sm:start` would flip a script's badge entry from MISSING to
+  OK on that document; a forged `sm:error` would write an
+  attacker-controlled string into the SW console and per-tab session
+  record. Neither grants script execution or SW privilege.
 - Script-scoped requests — a `sm:check-pending` asking for `gmValues`,
   or any `sm:gm-*` call — are gated. The bridge stamps
   `__viaBridge:true` on every message it relays (set last, so the page
@@ -1328,7 +1435,7 @@ into `dist/`). The pieces:
 
 - `src/userscript-prelude.js` → `WRAPPER_PRELUDE` — static, byte-
   identical across every script. Contains the IIFE, helpers
-  (`__smRun`, `__smSealed`), the check-pending round-trip,
+  (`reg.run`, `reg.sealed`, in the world's registry), the check-pending round-trip,
   the matcher recheck, the async-error listeners, and the
   `@run-at` gate. Per-script identity comes via a tiny config
   blob `{code}` entry that the injector emits ahead of this in the
@@ -1363,12 +1470,13 @@ The per-script config blob carries every value that varies between
 scripts — `id`, `name`, `sourceUrl`, `runAt`, `loadedAt`,
 `needsGmValues`, the optional matcher block, and the optional startup
 logs. The prelude reads it once and stashes a
-per-script entry on `self.__smPrelude.scripts[id]`.
+per-script entry on `reg.prelude.scripts[id]`, in the world's registry
+(see [The channel key](#the-channel-key)).
 
 The combined user-program entry is wrapped (in `wrapCombinedEntry`) to:
 
 - Defer execution until the prelude's matcher + check-pending +
-  `@run-at` gates resolve (via `self.__smRun(id, fn)`).
+  `@run-at` gates resolve (via the registry's `run(id, fn)`).
 - Splice the GM bindings (`const GM_info = ...`, `const GM_setValue
   = ...`, etc.) and the GM prelude (`storage.init`) into the
   function so they're locals visible to the body — and, because the
@@ -1396,7 +1504,7 @@ When the body fires (inside the prelude's `runMain`), the prelude:
   USER_SCRIPT world it uses `chrome.runtime.sendMessage` (silencing
   the returned Promise so an unreachable SW doesn't surface as
   `Uncaught (in promise)`). In MAIN world (where `chrome.runtime`
-  is undefined) it falls back to a `sourcemonkey-bridge-sync` DOM
+  is undefined) it falls back to a `sourcemonkey-sync-<key>` DOM
   event the bridge picks up — see [MAIN-world traffic — the
   bridge](#main-world-traffic--the-bridge).
 
@@ -1405,14 +1513,16 @@ When the body fires (inside the prelude's `runMain`), the prelude:
 The entry has two scopes, one inside the other:
 
 ```
-self.__smRun(id,function(__smE){<__sm* vars><GM bindings><GM prelude>return(()=>{
+(function(__smReg){__smReg.run(id,function(__smE){<__sm* vars><GM bindings><GM prelude>const __smU=()=>{
 <requires, then the script's own source>
-})();});
+};return __smReg.prelude.callAs(__smU);})})(<registry>);
 ```
 
 - **Outer** (the wrap function): our own declarations — the `__sm*`
   preamble, `const GM_info`, granted `GM_*`, `const unsafeWindow =
-  window;`.
+  window;`. The registry (`__smReg`) comes from the function around
+  it, whose argument holds the channel key (see
+  [The channel key](#the-channel-key)).
 - **Inner** (an arrow function; a sandboxed script gets a `with` and a
   function instead, see [The sandbox window](#the-sandbox-window)): the
   user program. Its top-level
@@ -1431,6 +1541,10 @@ Why an arrow function rather than a block:
   function declaration would still clash in the outer scope.
 - An arrow keeps the wrap function's `this`, so top-level `this` is
   unchanged, with no page-overridable `.call(this)`.
+- It's called through the prelude's `callAs`, a strict function, so a
+  page walking the stack (V8's stack-trace API) stops there instead of
+  reaching the wrap function. Called on the closing line, so its call
+  frame stays past the end of the script's own lines.
 - Top-level `return` still works. Top-level `await` stays a
   SyntaxError.
 
@@ -1473,7 +1587,7 @@ scripts get the page's `window` itself, as under both
 The user scope then has this shape instead of the arrow:
 
 ```
-const __smP=self.__smPrelude,__smS=__smP.sandbox({GM_info:GM_info,…}),__smW=__smP.scopeOf(__smS),__smC=__smP.callAs;with(__smW)return __smC(function(){
+const __smP=__smReg.prelude,__smS=__smP.sandbox({GM_info:GM_info,…}),__smW=__smP.scopeOf(__smS),__smC=__smP.callAs;with(__smW)return __smC(function(){
 <requires, then the script's own source>
 },__smS);
 ```
@@ -1536,7 +1650,7 @@ It is a Proxy (`makeSandbox` in `src/userscript-prelude.js`):
   assigning to a granted name (`GM_xmlhttpRequest = …`) replaces it
   rather than hitting our `const`.
 - **`__sm*` names bypass it** both ways: the eval hook's map and
-  `__SM_GM__` stay on the real window.
+  `__smGate` stay on the real window.
 
 #### Limits
 
@@ -2213,11 +2327,10 @@ and the decision timeout remains the hard ceiling for every `@run-at`.
 
 - **MAIN-world scripts** can't call `chrome.runtime.sendMessage`
   directly, so they round-trip `sm:check-pending` via
-  `wrapper-bridge.js`: the request as a `sourcemonkey-bridge-sync`
-  event, the answer as a `sourcemonkey-bridge-reply` postMessage keyed
-  on a per-request nonce. The page can observe and forge both — the
-  threat model is unchanged from the existing bridge (the page already
-  runs arbitrary code in MAIN world). Where
+  `wrapper-bridge.js`: the request as a `sourcemonkey-sync-<key>`
+  event, the answer as a `sourcemonkey-reply-<key>` event keyed on a
+  per-request nonce. The channel key keeps the page from sending or
+  hearing either (see [The channel key](#the-channel-key)). Where
   the page's CSP forbids `unsafe-eval`, the swap eval throws; the
   prelude detects the CSP marker in the error message and falls
   through to running the baked-in main body, matching pre-fast-path
@@ -2238,13 +2351,13 @@ and the decision timeout remains the hard ceiling for every `@run-at`.
   MAIN wrapper, so that plus a USER_SCRIPT new row means "defer to
   the next reload", and vice versa.
 - **A newly-needed GM runtime defers the swap — decided by the
-  wrapper, at run time.** The shared `__SM_GM__` runtime is registered
+  wrapper, at run time.** The shared GM runtime is registered
   only in worlds that have a script granting a runtime-backed API (see
   [`GM_*` in MAIN world](#gm_-in-main-world)), so a page whose scripts
   grant nothing carries none. A refresh that adds the first such grant
   would ship a body whose GM_* bindings resolve to nothing. The SW
   marks such a reply `needsRuntime`; the wrapper checks
-  `window.__SM_GM__` at the moment the body is about to run and falls
+  for the runtime (`reg.gm`) at the moment the body is about to run and falls
   back to the baked-in body if it's absent. At run time, not at
   wrapper start: the runtime is its own `document_start` registration
   and may sit after the wrapper in Chrome's order (an updated

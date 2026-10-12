@@ -626,7 +626,7 @@ tracked in `TODO.md`.
   - Raw frames never carry that require URL; see **Stack refs are
     source-mapped first** below.
   - Line 1 IS linkable, but its column-accent bar is suppressed —
-    the wrap prefix (the `self.__smRun(id, function(__smE){…`
+    the wrap prefix (the registry's `run(id, function(__smE){…`
     + GM bindings + declaration preamble emitted by `wrapCombinedEntry`)
     shares that physical line, so the reported column points into
     the wrap, not user code.

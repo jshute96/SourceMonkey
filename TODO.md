@@ -374,19 +374,16 @@ wasn't checked.
     (docs/injection.md, "Execution world").
 - **Follow-ups from the page-world default** (docs/injection.md, "Costs
   of running in MAIN"):
-  - A page a granted script matches can now reach its GM surface over
-    the bridge: read and write its storage, drive its
-    `GM_xmlhttpRequest`, read its responses and value broadcasts.
-    Before, only `unsafeWindow` / `@grant none` scripts were exposed.
-    TM reaches its page-world scripts through a keyed channel instead;
-    worth comparing, and deciding whether to key ours per script.
-  - The page can send the bridge's `sourcemonkey-bridge-insert` event
-    for an element of its own and get the CSP exemption meant for
-    `GM_addStyle` / `GM_addElement`: inline code and script loads from
-    any host, a way around CSP for injected code (an XSS payload). The
-    bridge is on every page a MAIN-world script matches. Keying the
-    channel closes it; scoping the listener to pages where a script
-    grants either API would narrow it.
+  - The channel key keeps the page off the bridge and away from our
+    runtime, but a page that targets SourceMonkey can still hook
+    built-ins we haven't captured, and methods on a script's own values
+    (a `toJSON`, an `Array.prototype` method the storage codec calls),
+    and see values passing through (docs/injection.md, "What it doesn't
+    stop"). Closing that means VM-style safe built-ins throughout the
+    MAIN-world runtime and prelude (docs/GM-API-strategy.md, section 3).
+  - Any installed userscript reaches the registry (`__smReg` is in its
+    scope), so a page-world script can call the runtime as a sibling
+    script on the same page. Per-script keys would stop that.
   - The sandboxed-page fallback misses `sandbox allow-same-origin`
     without `allow-scripts` (a CSP header, or the common
     `<iframe sandbox="allow-same-origin">` for untrusted HTML): it keeps
@@ -401,10 +398,9 @@ wasn't checked.
   - No CSP exemption for a MAIN-world `GM_addStyle` / `GM_addElement`
     into a closed shadow root, another frame's document or a detached
     parent; the runtime inserts those itself (docs/GM-APIs.md).
-  - `window.__SM_GM__` is on many more pages now, and page code can
-    tamper with the built-ins a script uses (docs/GM-API-strategy.md,
-    section 3, decided against VM's safe-builtins when granted scripts
-    ran isolated).
+  - Page code can tamper with the built-ins a granted page-world
+    script uses itself (docs/GM-API-strategy.md, section 3, decided
+    against VM's safe-builtins when granted scripts ran isolated).
 - **`GM_cookie`** (463802) is the whole failure for a Reddit script.
   See "GM_* APIs not yet in the catalog".
 
@@ -1218,8 +1214,7 @@ Set aside while moving every write into the service worker
     `https://a.com/*`) still changes the set.
   - Options: per-origin patterns, so a second script on a covered site
     changes nothing; or `<all_urls>`, which `buildGmRuntimeSpecs`
-    argues against (a page-visible `window.__SM_GM__` on every site is a
-    fingerprint and an attack surface).
+    argues against (the runtime's load on every site).
 - **Minify the injected helpers properly.** The build only strips
   comments and whitespace (`minifyForInjection`): the GM runtime goes
   from 131 KB to 55 KB. A real minifier (esbuild or terser) might reach

@@ -16,6 +16,7 @@ import { EventEmitter } from 'node:events';
 import type { Frame } from '@playwright/test';
 
 import { WRAPPER_GM_RUNTIME } from '../generated-wrappers.js';
+import { CHANNEL_KEY_PLACEHOLDER } from '../channel-placeholder.js';
 import type { GmXhrEvent, GmXhrRequestPayload } from '../gm-xhr-types.js';
 import type { PreparedScript } from './prepare.js';
 import { NO_RULE_COVERS_URL, explainMatch, preparedNoframes, preparedScriptName } from './prepare.js';
@@ -209,7 +210,10 @@ export function valueCodec(): NonNullable<typeof codec> {
   window.addEventListener = () => {};
   const document = { visibilityState: 'visible' };
   new Function('window', 'document', WRAPPER_GM_RUNTIME)(window, document);
-  codec = (window.__SM_GM__ as { storage: NonNullable<typeof codec> }).storage;
+  // The runtime puts itself in the registry its gate hands out; loaded
+  // as is, its key is the placeholder.
+  const gate = (document as Record<string, unknown>).__smGate as (key: string) => { gm: { storage: NonNullable<typeof codec> } };
+  codec = gate(CHANNEL_KEY_PLACEHOLDER).gm.storage;
   return codec;
 }
 

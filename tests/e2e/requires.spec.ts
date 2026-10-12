@@ -421,7 +421,7 @@ test.describe('@require', () => {
   }) => {
     // Everything the user wrote is ONE V8 script now, so an
     // unterminated block comment in a require makes the whole entry
-    // fail to parse and `__smRun` is never reached. Without the
+    // fail to parse and the registry's `run` is never reached. Without the
     // trailing sentinel entry that failure is completely invisible —
     // no error, no log, no badge, script just does nothing forever.
     // (Under separate entries the broken require died alone and the
@@ -484,9 +484,9 @@ test.describe('@require', () => {
     // install-time check that would otherwise stop this script from
     // registering.
     await sm.setParseCheckEnabled(false);
-    // The sentinel infers "js[2] failed to parse" from __smRun never
+    // The sentinel infers "js[2] failed to parse" from `run` never
     // being called. But the prelude registers a script's entry BEFORE
-    // running the in-page matcher, so on a non-matching page __smRun
+    // running the in-page matcher, so on a non-matching page `run`
     // is legitimately never called either. Without a `matched` check
     // the sentinel can't tell those apart.
     //

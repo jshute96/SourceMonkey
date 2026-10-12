@@ -52,7 +52,7 @@ prelude initScript
   ├─ AWAIT sm:check-pending  (reload fast-path machinery; injection.md)
   ├─ AWAIT waitForRunAt      (gate on @run-at lifecycle event)
   └─ runMain → fn(entry)     ← main-body wrap function fires here
-      ├─ __SM_GM__.storage.init(scriptId, snapshot)   ← GM prelude
+      ├─ reg.gm.storage.init(scriptId, snapshot)   ← GM prelude
       └─ user body runs
 ```
 
@@ -149,20 +149,20 @@ grants work there too. Same cache, same batching, same snapshot
 contract; only the transport differs, and that has consequences.
 
 - **The snapshot is gated.** MAIN world has no `chrome.runtime`, so
-  the `sm:check-pending` request rides `wrapper-bridge.js`, where a
-  hostile page could forge it. The SW hands `gmValues` back only for a
-  script that actually runs in MAIN world on the sending page and
-  granted a storage API — the set whose values that page can already
-  read out of the MAIN-world `window.__SM_GM__`. A refusal is a missing snapshot, i.e. the hard
-  abort above.
-- **The page can read and write the cache.** `window.__SM_GM__` is a
-  global in the page's realm. This is inherent to running a granted
-  script in the page; it is also why the gate can concede the snapshot
-  without conceding anything new. A script whose values the page must
-  not see asks for isolation (`@inject-into content`).
+  the `sm:check-pending` request rides `wrapper-bridge.js`. The channel
+  key keeps the page from forging it
+  ([injection.md](injection.md#the-channel-key)), and behind that the
+  SW hands `gmValues` back only for a script that actually runs in
+  MAIN world on the sending page and granted a storage API. A refusal
+  is a missing snapshot, i.e. the hard abort above.
+- **The cache is in the page's realm.** The runtime isn't a page
+  global (it's in the registry only the key opens), but a page that
+  targets SourceMonkey can hook the built-ins it uses. A script whose
+  values must stay out of the page's reach entirely asks for isolation
+  (`@inject-into content`).
 - **Teardown flushes survive because the bridge path is synchronous.**
   - Every page→SW request is a DOM `CustomEvent`
-    (`sourcemonkey-bridge-sync`, JSON in `detail`), whose listeners all
+    (`sourcemonkey-sync-<key>`, JSON in `detail`), whose listeners all
     run in the dispatching task — so the bridge's
     `chrome.runtime.sendMessage` is as durable as a USER_SCRIPT
     script's own.
@@ -243,8 +243,8 @@ Delivery is best-effort, so the runtime also has a way back:
   the cache, firing value-change listeners for what moved.
 - The request re-registers the sender as an opener, which also
   repairs the table for a document the worker had lost.
-- Bridge-relayed requests are refused, same as the check-pending
-  value read — a MAIN-world page can forge the `scriptId`.
+- Bridge-relayed requests go through the same gate as the
+  check-pending value read (`bridgeMayActAs`).
 
 A reply is only authoritative for keys that haven't moved since
 the request went out. Skipped:

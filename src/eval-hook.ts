@@ -11,7 +11,9 @@
 // - Only scripts in an sm-dev run's test collection get it, never the
 //   person's installed scripts: the handle reaches everything the
 //   script can, `GM_*` included, and a MAIN-world script's is on the
-//   page's `window`.
+//   page's `window`. Its scope includes `__smReg`, the world's registry
+//   (src/extension/channel.ts), so it reaches every page-world script's
+//   GM runtime there, not just its own.
 // - The key names the run and the map isn't enumerable, so it stays out
 //   of a page's casual view. A page that looks for it can still find it.
 // - It needs the script not to shadow `globalThis`, `Object` or `eval`

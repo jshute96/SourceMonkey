@@ -128,7 +128,7 @@ test('installUrlChangeWatch subscribes to BOTH same-document nav events', () => 
 });
 
 test('notifyUrlChange swallows the "no receiving end" rejection', async () => {
-  // Pages with no active SourceMonkey script have no __SM_GM__ runtime
+  // Pages with no active SourceMonkey script have no GM runtime
   // registered, so the send legitimately rejects. It must not surface
   // as an unhandled rejection in the service worker.
   sent.length = 0;

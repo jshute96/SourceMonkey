@@ -195,7 +195,9 @@ details live in the topic-specific docs linked below.
   catalog additions whose bodies haven't landed yet.
 - **GM_* page-side runtime** (`src/wrapper-gm-runtime.js`) —
   helper registered once per page **per execution world** that needs
-  it. Installs `window.__SM_GM__` with per-subsystem helpers: storage
+  it. Puts itself in the world's registry (`reg.gm`, reached with the
+  channel key; see [injection.md](injection.md#the-channel-key)) with
+  per-subsystem helpers: storage
   cache + batched writes, DOM injection, clipboard, XHR start/abort
   with terminal-event dispatch, value-change listener registry.
   Captures a small shim cache of native references at init time so

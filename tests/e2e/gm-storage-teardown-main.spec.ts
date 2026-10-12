@@ -4,7 +4,7 @@
 // In USER_SCRIPT world a flush leaves over `chrome.runtime.sendMessage`,
 // which is handed to the browser synchronously and survives teardown.
 // MAIN world has to reach the bridge first, and the only way that
-// survives is a DOM event (`sourcemonkey-bridge-sync`): its listeners
+// survives is a DOM event (`sourcemonkey-sync-<key>`): its listeners
 // run in the DISPATCHING task, so the bridge's own sendMessage happens
 // before the caller returns. Both shapes below lost the write every
 // time when that hop was a `window.postMessage`, which the bridge sees

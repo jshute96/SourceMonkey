@@ -15,6 +15,7 @@ import vm from 'node:vm';
 
 import { WRAPPER_PRELUDE } from '../../dist/generated-wrappers.js';
 import { SM_DEV_MARKERS } from '../../dist/sm-dev-protocol.js';
+import { registryOf } from './channel-helpers.mjs';
 
 const SCRIPT_ID = 'script-1';
 const SOURCE_URL = 'sourcemonkey://SourceMonkey/Demo/demo.user.js';
@@ -44,7 +45,8 @@ function makeEnv({ readyState = 'loading', firstLoad = false, markers = [] } = {
 
   const sandbox = {
     setTimeout: (fn, ms) => {
-      if (ms !== sandbox.__smPrelude?.decisionTimeoutMs) return setTimeout(fn, ms);
+      const reg = sandbox.document.__smGate ? registryOf(sandbox.document) : {};
+      if (ms !== reg.prelude?.decisionTimeoutMs) return setTimeout(fn, ms);
       decisionTimeout = fn;
       return -1;
     },
@@ -52,6 +54,7 @@ function makeEnv({ readyState = 'loading', firstLoad = false, markers = [] } = {
       if (id === -1) decisionTimeout = null;
       else clearTimeout(id);
     },
+    queueMicrotask,
     console: { log() {}, info(...args) { infos.push(args.join(' ')); } },
     location: { href: 'https://example.com/page' },
     document: {
@@ -148,8 +151,9 @@ function makeCfg(runAt, extra) {
 // `ran` box the test asserts on.
 function install(env, runAt, extra = {}) {
   const ran = { count: 0 };
-  env.sandbox.__smPrelude.init(makeCfg(runAt, extra));
-  env.sandbox.__smRun(SCRIPT_ID, () => { ran.count += 1; });
+  const reg = registryOf(env.sandbox.document);
+  reg.prelude.init(makeCfg(runAt, extra));
+  reg.run(SCRIPT_ID, () => { ran.count += 1; });
   return ran;
 }
 
