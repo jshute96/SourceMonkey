@@ -1102,7 +1102,7 @@ What crosses it:
   replies, even on failure, so the caller's awaiter settles instead of
   running out its timeout.
 - **SW-originated pushes** — `sm:gm-xhr-event`, `sm:gm-value-update`,
-  `sm:gm-tab-closed`, `sm:gm-notification-event`, `sm:gm-menu-fire`,
+  `sm:gm-values-stale`, `sm:gm-tab-closed`, `sm:gm-notification-event`, `sm:gm-menu-fire`,
   `sm:gm-download-event` (the bridge's `PUSHED` list is authoritative).
   Those arrive on `chrome.runtime.onMessage`, which only USER_SCRIPT
   world can listen on, so the bridge re-posts them into the page as
@@ -1941,8 +1941,9 @@ script's initial GM_setValue cache contents:
   `sm:check-pending` payload iff it @grants a storage API
   (computed at register time).
 - **SW side.** For `needsValues: true` payloads, attaches a
-  `gmValues` field carrying the script's current snapshot
-  (`chrome.storage.local` rows merged with the in-flight overlay).
+  `gmValues` field carrying the script's current snapshot, from the
+  worker's value store (writes not yet on disk included), and `gmSeq`,
+  the sequence number it's current to.
 - **No fallback.** This is the **only** way the wrapper learns
   its initial storage state — there's no baked literal.
 - **On missing snapshot.** Prelude logs a console error, sends

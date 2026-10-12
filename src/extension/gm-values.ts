@@ -59,9 +59,8 @@ export function parseValueKey(rowKey: string, scriptId: string): string | null {
   return rowKey.slice(prefix.length);
 }
 
-// Load every stored value for a script as a plain object. Used by the
-// injector to bake the initial cache into the wrapper at registration
-// time, and by the check-pending handler to seed a reload swap.
+// Load every stored value for a script as a plain object. The value
+// store calls it the first time it needs a script's values.
 //
 // There is no prefix query, so the shape has to be "narrow the key set,
 // then read only those rows". `getKeys()` (Chrome 130+) returns names
@@ -95,6 +94,14 @@ export async function loadAllValues(scriptId: string): Promise<Record<string, un
     if (k.startsWith(prefix)) out[k.slice(prefix.length)] = v;
   }
   return out;
+}
+
+// How many values a script has stored, read without the values.
+export async function countStoredValues(scriptId: string): Promise<number> {
+  const prefix = valueKeyPrefix(scriptId);
+  const keys = await listValueKeys(prefix)
+    ?? Object.keys(await scanAllStorage('gm value count')).filter((k) => k.startsWith(prefix));
+  return keys.length;
 }
 
 // Every stored key starting with `prefix`, or null when the browser has
@@ -175,17 +182,8 @@ export async function applyBatchValues(
   };
 }
 
-// Sweep every `gmval:<scriptId>:*` row when a script is removed. Not
-// wired up yet — leaving stale storage rows lets users restore a
-// deleted script with its prior values, which TM/VM both do.
-// Exported so a future "wipe all data for this script" UI action can
-// call it.
-//
-// When this is wired up, the caller must also drop the script's
-// entry from the SW's `gmValueOverlay` (in `background.ts`).
-// Otherwise an in-flight write that lands during the wipe leaves
-// an orphan overlay entry that would seed a freshly-loaded
-// document with bogus pre-wipe state.
+// Sweep every `gmval:<scriptId>:*` row. Called only through the value
+// store's `wipeValues`, which also drops the store's own copy.
 export async function wipeScriptValues(scriptId: string): Promise<number> {
   const prefix = valueKeyPrefix(scriptId);
   const keys = await listValueKeys(prefix)

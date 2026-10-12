@@ -2988,11 +2988,11 @@ export class DialogTracker {
   }
 }
 
-// A script's `GM_setValue` is batched in the page and flushed 150ms
-// after the last write, so a read issued straight after firing a menu
-// command would print what was there before it. Waiting out that window
-// is the difference between "fire, then read" telling the truth and
-// telling yesterday's truth.
+// A script's `GM_setValue` reaches the worker a message after the page
+// makes it, and a menu command's own work may take a moment to get
+// there, so a read issued straight after firing one would print what was
+// there before it. A short wait is the difference between "fire, then
+// read" telling the truth and telling yesterday's truth.
 const WRITE_FLUSH_MS = 250;
 
 function settleWrites(): Promise<void> {

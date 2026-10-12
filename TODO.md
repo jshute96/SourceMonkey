@@ -194,9 +194,9 @@ and the dominant costs are gone: the slowest per-script check is 181 ms
 of a 500 ms budget, the decision lands at ~243 ms. What remains:
 
 - **`getKeys()` itself costs ~40 ms** on a 266-row namespace, paid
-  inside the window by every storage-granting script. A per-script
-  in-memory value cache in the SW (invalidated by `gmval:` writes)
-  would remove it — see the GM storage note below.
+  inside the window by a storage-granting script's first load after a
+  worker start. Later loads come from the value store's memory
+  (`src/extension/value-store.ts`).
 - **The script-row scans are gone from the worker**: the match index,
   registration sync, log labels and sticky numbers read the row cache,
   loaded once per worker start (77–93 ms for 344 rows).
@@ -529,25 +529,6 @@ The next items came from sweeping the last untested valid corpus
 scripts, checked against Tampermonkey 5.5.1 with `sm-dev --manager tm`
 (2026-10-10).
 
-- **A tab's GM value cache drifts from storage** (seen on 459137).
-  - Tab A deletes a key; an older write of the same key from tab B
-    then arrives by broadcast and re-adds it to A's cache. The SW
-    (service worker) never sends A's own delete back to A, so the
-    cache keeps the key for good.
-  - On 459137, which writes and deletes a packet per ping, the
-    lichess tab's `GM_listValues()` grew to 657 keys while storage
-    held 8.
-  - Fix idea: order writes per key (a sequence number from the SW) so
-    a tab ignores a broadcast older than its own last write.
-- **Cross-tab value changes take 155-240 ms** (`value-sync-latency`:
-  459137).
-  - The 150 ms write batching (docs/GM-APIs-storage.md, "Backing store
-    and write batching") is paid once in each direction.
-  - A.C.A.S passes packets between tabs through GM values and gives
-    up on a reply after 250 ms, so it never connects. Under TM it
-    connected within seconds.
-  - Fix ideas: a much shorter debounce, or flush at once when another
-    tab has a value-change listener on the key.
 - **`GM.xmlHttpRequest` returns `{abort}`, not a Promise**
   (`gm-xhr-promise`: 494467).
   - `emitGmObject` in `src/extension/gm-bindings.ts` passes the
@@ -696,6 +677,33 @@ Adding any of these is a catalog entry + a body — nothing structural.
   existing per-key APIs, which already batch writes.
 
 ### GM_* implementation follow-ups
+
+- **Value sequence numbers after a backward clock step.** The value
+  store starts its counter from `Date.now()` (`src/extension/value-store.ts`).
+  If the clock steps back by more than an earlier worker's lifetime,
+  open documents hold numbers above the new worker's and drop its
+  updates for those keys until they navigate (resync can't repair
+  it either). Fix: keep a high-water mark in `chrome.storage.session`
+  and start from the larger of the two.
+- **Cap incoming value sequence numbers in MAIN world.** A page can
+  post a forged `sm:gm-value-update` with a huge `seq`, after which
+  every real broadcast for that key looks old. Low impact (the page
+  can already write the MAIN-world store), but capping `seq` near
+  `Date.now() * 1000` in `applyRemoteUpdate` would be cheap.
+- **A value write can race a wipe.** `wipeValues` lists a script's
+  rows, then removes them; a write landing in between saves a key that
+  the removal then deletes from disk, while the store's map keeps it.
+  The only caller removes an sm-dev run's collection, so it's low
+  impact. Fix: hold new saves for the script until the wipe finishes.
+- **sm-dev runs never use the back/forward cache.** Playwright turns
+  it off in every browser it launches, sm-dev's included, so a page a
+  script runs on is never restored from it, as it often is in Chrome.
+  `launchExtensionBrowser` takes `backForwardCache` to keep it; sm-dev
+  could do so by default, after checking how its tab tracking copes
+  (Playwright's own `goBack` loses a restored page).
+- **Coalesce value writes per task** if a script floods the worker:
+  writes spread across `await`s or animation frames are a message
+  and a broadcast each (docs/GM-APIs-storage.md, "Sending writes").
 
 - **Menu commands vanish on a bfcache restore.** `src/extension/gm-menu.ts`
   holds ONE document's commands per tab, so leaving a page drops its
@@ -953,12 +961,6 @@ Adding any of these is a catalog entry + a body — nothing structural.
   - Copy only if storage reads ever show up in a profile, and note
     the win is smaller for us — `chrome.storage.local` deserializes
     the row either way.
-- **Cache the gmValues snapshot in SW memory.** Every storage-
-  granting script's `sm:check-pending` reply triggers a
-  `chrome.storage.local.get(null)` on the document-start critical
-  path. A per-script in-SW cache invalidated by `handleBatchWrite`
-  would skip it on cache hit. See
-  [docs/GM-APIs-storage.md](docs/GM-APIs-storage.md#cost-on-the-document-start-critical-path).
 - **Shim cache audit.** The page-side runtime captures `Promise`,
   `Error`, `Object.keys`, `Object.create`, `Object.prototype.
   hasOwnProperty`, `document.createElement`, `Node.appendChild`,
@@ -1143,6 +1145,10 @@ See [docs/harness-design.md](docs/harness-design.md).
 
 ## sm-dev runs: follow-ups
 
+- `settleWrites` waits 250 ms after firing a menu command, sized for
+  the old 150 ms value-write debounce
+  (`src/harness/console-commands.ts`). Writes now reach the worker a
+  message later, so it could probably be much shorter.
 - After SourceMonkey's worker restarts mid-run, the events from while it
   was stopped are lost (the run says so). The scripts' Log entries are
   read back; the rest (starts, menu commands, values) could be caught

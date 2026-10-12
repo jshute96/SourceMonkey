@@ -219,7 +219,8 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/script-rejection.ts` | Session-storage record of registrations `chrome.userScripts` refused, plus the one sentence every surface reports it with |
 | `src/extension/site-icon.ts` | Site-favicon discovery, `@icon`-header override (incl. local file stand-ins), fetch-and-cache (in the worker, a few at a time), and the one-icon-per-site slot renderer |
 | `src/extension/gm-bindings.ts` | Per-script `GM_*` / `GM.*` binding emitter — generates compile-in `const GM_X = ...` source spliced into the wrapper |
-| `src/extension/gm-values.ts` | SW-side persistent storage for `GM_*` values — `gmval:<scriptId>:<key>` rows in `chrome.storage.local`, batched writes |
+| `src/extension/gm-values.ts` | Row layer for `GM_*` values: `gmval:<scriptId>:<key>` rows in `chrome.storage.local`, used only by the value store |
+| `src/extension/value-store.ts` | The worker's one store for `GM_*` values: in-memory maps, numbered writes, saving to disk behind them |
 | `src/extension/gm-xhr.ts` | SW-side `GM_xmlhttpRequest` runner — fetch + AbortController, the body streamed to the page in pieces, cookies, timeout |
 | `src/extension/gm-xhr-headers.ts` | Forbidden-request-header surgery for `GM_xmlhttpRequest` — classify, tag the URL, compile to a DNR session rule, stale-rule sweep |
 | `src/extension/gm-tab.ts` | SW-side `GM_openInTab` dispatcher (`chrome.tabs.create` + per-request mapping for close-event routing) |
@@ -297,7 +298,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 
 | File | Description |
 |------|-------------|
-| `tests/fixtures/extension.ts` | Playwright fixture: launches Chromium with the extension, exposes SW handle, HTTP fixture server, and the `sm` SW-api proxy; `testWithBrowserDownloads` variant leaves downloads to Chrome |
+| `tests/fixtures/extension.ts` | Playwright fixture: launches Chromium with the extension, exposes SW handle, HTTP fixture server, and the `sm` SW-api proxy; `testWithBrowserDownloads` variant leaves downloads to Chrome, `testWithBackForwardCache` keeps the back/forward cache |
 | `tests/fixtures/harness.ts` | Fixtures for the `sm-dev` project: the package fixture plus fixture server, scripts dir, `loadScript`, `watchPage` |
 | `tests/fixtures/debug-browser.ts` | A headless Chromium with SourceMonkey, a CDP debugging port and a temp profile, stopped with its helper processes |
 | `tests/fixtures/manager.ts` | Manager-agnostic Playwright fixture for the examples suite: SM (unpacked build) or TM/VM (persistent CWS profile) per project metadata |
@@ -457,6 +458,8 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/unsafe-window-use.test.mjs` | Unit tests for the ungranted-`unsafeWindow` source scan: comments, strings, templates, declarations, limits |
 | `tests/unit/gm-value-codec.test.mjs` | Unit tests for the page-side stored-value codec — type fidelity, raw storage of JSON-clean values, legacy-row decoding |
 | `tests/unit/gm-runtime-transport.test.mjs` | Unit tests for the runtime's transport choice — direct channel only with `chrome.runtime.id`, bridge on an `externally_connectable` page |
+| `tests/unit/gm-runtime-values.test.mjs` | Unit tests for the runtime's ordering of GM value updates — held broadcasts, answers, resyncs, sequence numbers |
+| `tests/unit/value-store.test.mjs` | Unit tests for the worker's value store — reads before disk, sequence numbers, combined saves, wipe, no other row-layer users |
 | `tests/unit/gm-values.test.mjs` | Unit tests for the SW-side `gmval:` storage helpers — key composition, batch apply with last-write-wins, sentinel deletes, namespace isolation |
 | `tests/unit/line-diff.test.mjs` | Unit tests for the line diff: round-trip, shortest script, hunk boundaries, the large-edit fallback |
 | `tests/unit/script-identity.test.mjs` | Unit tests for the related-versions lookup — identity key rules, absolute-URL matching, list disjointness, install / move target cases |
@@ -468,6 +471,9 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/user-script-world-csp.spec.ts` | E2E tests for userscript-inserted `<script>` elements (inline and `src`) under the world CSP and a strict page CSP |
 | `tests/e2e/gm-dom.spec.ts` | E2E tests for `GM_addStyle` / `GM_addElement` — CSS application, tag-aware default parent (head/body), explicit-parent form, GM4 alias, permission gating, the MAIN-world CSP-blocked report |
 | `tests/e2e/gm-clipboard.spec.ts` | E2E tests for `GM_setClipboard` via `navigator.clipboard.writeText` — text round-trip, GM4 alias, permission gating |
+| `tests/e2e/gm-value-ordering.spec.ts` | E2E: two tabs churning the same GM value keys end up agreeing with the worker |
+| `tests/e2e/gm-storage-quota.spec.ts` | E2E: a GM value save refused for a full storage quota logs one error on the script |
+| `tests/e2e/gm-storage-bfcache.spec.ts` | E2E: a page restored from the back/forward cache reads GM values written while it was cached |
 | `tests/e2e/gm-broadcast.spec.ts` | E2E tests for cross-tab `GM_setValue` broadcast — tab B sees tab A's write, survives an SW restart, re-syncs after a missed write or delete |
 | `tests/e2e/gm-storage-types.spec.ts` | E2E: `Date`/`Map`/`Set`/`NaN`/binary/`Error` survive a reload, plain values stay untagged, pre-codec rows still read |
 | `tests/e2e/gm-storage-freshness.spec.ts` | E2E: fresh documents see the latest `GM_setValue` (same-tab nav, fresh tab, write-then-navigate race) |

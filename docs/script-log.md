@@ -153,6 +153,13 @@ Registration:
 | --- | --- | --- |
 | `chrome-injector` | `registerWithFallback` | Chrome refused the script's spec, so it silently never runs. |
 
+Stored values (service-worker side, no `tabId`, since a save serves
+every tab):
+
+| Source | Emitted by | Means |
+| --- | --- | --- |
+| `gm-storage` | `reportValueSaveFailure` in `background.ts` | The script's `GM_setValue` values could not be saved (or loaded to take a write), naming storage use when it's nearly full. An error, once until a save works again ([GM-APIs-storage.md](GM-APIs-storage.md#the-workers-value-store)). |
+
 Runtime — always carries a `tabId`, so these render as `tab 17 · …`:
 
 | Source | Emitted by | Means |

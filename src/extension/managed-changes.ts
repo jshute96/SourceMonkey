@@ -20,7 +20,7 @@ import {
 import { getValue, getValues, joinFullSource } from '../userscript-header.js';
 import { containerKindForSingleFileInput, isScratchUrl, isSmDevCollection, scratchSourceKey, type ScratchSource } from './directories.js';
 import { manifestToProbe, pendingOnDisk, probeFiles, scriptFileTag } from './file-changes.js';
-import { loadAllValues } from './gm-values.js';
+import { countValues } from './value-store.js';
 import { turnOffOtherCopies } from './script-identity.js';
 import { setCollectionEnabledExclusive } from './script-enablement.js';
 import { managedCollection, managedScript } from './managed-items.js';
@@ -237,7 +237,7 @@ export function managedChanges(numbers: () => Promise<Numbers>) {
         grants: all('grant'),
         requires,
         resources,
-        valueCount: Object.keys(await loadAllValues(id)).length,
+        valueCount: await countValues(id),
       };
     },
 

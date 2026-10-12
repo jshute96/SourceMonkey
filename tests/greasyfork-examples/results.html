@@ -255,7 +255,7 @@ const HELP = {
     'missed-dcl': 'Does all its setup in a DOMContentLoaded listener while running at the default @run-at, after that event, so it never sets up in any manager',
     'manager-gated': 'Refuses to run unless GM_info names a specific manager or version',
     'grant-none-override': 'Declares @grant none alongside other @grant lines, so in every manager it gets no GM APIs and throws on its first GM_* call',
-    'value-sync-latency': 'Passes messages between tabs through GM values with a short reply timeout, which SourceMonkey\'s 150 ms write batching (paid in each direction) makes it miss',
+    'value-sync-latency': 'Passes messages between tabs through GM values with a short reply timeout, which SourceMonkey once missed by batching writes for 150 ms in each direction',
     'mutation-loop': 'Changes the DOM from its own MutationObserver callback each time, so the observer fires forever and the page hangs, in every manager',
   },
 };

@@ -117,7 +117,7 @@ import {
 } from './script-blobs.js';
 import { sameScript } from './script-keys.js';
 import { compareInCollection, preferredCopy } from './copy-preference.js';
-import { wipeScriptValues } from './gm-values.js';
+import { wipeValues } from './value-store.js';
 import { connectGrantsKey } from './connect-grants.js';
 import { sourceUsesUnsafeWindow } from '../unsafe-window-use.js';
 import type { VersionProbe } from '../version-probe.js';
@@ -1749,7 +1749,7 @@ export async function writeRunScript(args: RunScriptArgs): Promise<WriteRunScrip
 export async function removeSmDevCollection(run: string): Promise<{ scriptIds: string[]; collectionId: string | null }> {
   const container = (await getCollections()).find((c) => smDevRunOfContainer(c.path) === run);
   if (!container) return { scriptIds: [], collectionId: null };
-  for (const sid of container.scriptIds) await wipeScriptValues(sid);
+  for (const sid of container.scriptIds) await wipeValues(sid);
   await removeCollection(container.id);
   return { scriptIds: container.scriptIds, collectionId: container.id };
 }

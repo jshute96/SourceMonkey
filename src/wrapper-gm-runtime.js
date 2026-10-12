@@ -37,6 +37,7 @@
   var _Promise = Promise;
   var _Error = Error;
   var _now = Date.now.bind(Date);
+  var _queueMicrotask = (typeof queueMicrotask === "function") ? queueMicrotask.bind(window) : null;
   var _JSONStringify = JSON.stringify;
   var _ObjectKeys = Object.keys;
   var _isArray = Array.isArray;
@@ -391,25 +392,25 @@
 
   /* ---------- Storage subsystem ----------
 
-     Per-script in-page cache + batched async writes. Reads go to the
-     cache (sync); writes update the cache locally and queue a batched
-     `sm:gm-batch-write` message to the SW. The cache is seeded by
-     the wrapper's prelude calling `storage.init(scriptId, snapshot)`,
-     where `snapshot` came in on the sm:check-pending reply from the
-     SW. See docs/GM-APIs-storage.md.
+     Per-script in-page cache. Reads go to the cache (sync); writes
+     update the cache and are sent to the SW as one
+     `sm:gm-batch-write` per run of script code: everything written
+     before the code returns, sent from a microtask. `pagehide` sends
+     anything left. The cache is seeded by the wrapper's prelude
+     calling `storage.init(scriptId, snapshot, seq)`, where both came
+     in on the sm:check-pending reply. See docs/GM-APIs-storage.md.
 
-     Batched write shape:
-       - Debounce 150ms after each write.
-       - Force-flush at 1s of debounce.
-       - Force-flush on `pagehide` so bfcache eviction doesn't lose
-         in-flight writes.
+     Ordering. The SW numbers every write it takes (one counter, so
+     numbers compare across tabs), and each document remembers, per
+     key, the newest number it has seen. A write's number comes back
+     on the reply to its batch; other tabs' writes arrive as broadcasts
+     carrying theirs; a snapshot carries the number it is current to.
+     A broadcast for a key with a write of ours still unanswered waits
+     for the answer: until then we can't tell which the SW took last.
 
-     Per-script: one cache object, one debounce timer, one pending
-     writes queue. The runtime is shared across scripts in the same
-     document, so we key by scriptId. */
-  var stores = {};  /* scriptId -> { cache, pending, debounceTimer, hardTimer, ready, listeners, nextListenerId } */
-  var DEBOUNCE_MS = 150;
-  var HARD_DEADLINE_MS = 1000;
+     The runtime is shared across scripts in the same document, so
+     stores are keyed by scriptId. */
+  var stores = {};
   /* Deletion sentinel — paired with the SW-side gm-values.ts
      DELETED_SENTINEL. Compared by reference. */
   var DELETED_SENTINEL = {};
@@ -796,24 +797,54 @@
     if (s) return s;
     s = {
       cache: {},
-      pending: [],     /* array of {key, value} or {key, value: DELETED_SENTINEL} */
-      initSeq: 0,      /* `writeSeq` as of the last `init` */
-      debounceTimer: null,
-      hardTimer: null,
+      pending: [],     /* unsent: {key, value} or {key, value: DELETED_SENTINEL} */
+      sendQueued: false,
       ready: false,
       listeners: null,        /* lazily { listenerId: {key, callback} } */
       nextListenerId: 1,
       resyncInFlight: false,  /* one outstanding sm:gm-resync at a time */
+      resyncAgain: false,     /* a forced resync asked while one was out */
       lastResyncAt: 0,
-      /* Monotonic change counter + the counter value at each key's
-         last change, local write or applied broadcast alike. Lets a
-         resync reply tell "this key has moved since I asked" from
-         "this key is unchanged" — see applyResyncSnapshot. */
-      writeSeq: 0,
-      writeSeqByKey: _ObjectCreate(null),
+      /* Sequence numbers (see the ordering note above): the newest
+         known per key, and the snapshot's for keys with none. */
+      seqByKey: _ObjectCreate(null),
+      snapSeq: 0,
+      /* Per key, how many of our writes the SW hasn't answered yet,
+         unsent ones included; and the newest broadcast held back
+         while that is above zero. */
+      unanswered: _ObjectCreate(null),
+      held: _ObjectCreate(null),
     };
     stores[scriptId] = s;
     return s;
+  }
+
+  function knownSeq(s, key) {
+    return _hasOwn.call(s.seqByKey, key) ? s.seqByKey[key] : s.snapSeq;
+  }
+
+  /* Before a snapshot raises `snapSeq`: a key it skipped keeps the
+     number it had, since the document didn't take the snapshot's
+     value for it. */
+  function pinKnownSeq(s, key) {
+    if (!_hasOwn.call(s.seqByKey, key)) s.seqByKey[key] = s.snapSeq;
+  }
+
+  /* After a snapshot current to `seq`: every key it spoke for now has
+     the snapshot's value, so drops its own older number and reads as
+     known at the snapshot's. Left alone, an own number below `seq`
+     would let a late broadcast between the two undo the snapshot. */
+  function adoptSnapshotSeq(s, seq) {
+    var keys = _ObjectKeys(s.seqByKey);
+    for (var i = 0; i < keys.length; i++) {
+      var k = keys[i];
+      if (!hasUnanswered(s, k) && s.seqByKey[k] <= seq) delete s.seqByKey[k];
+    }
+    if (seq > s.snapSeq) s.snapSeq = seq;
+  }
+
+  function hasUnanswered(s, key) {
+    return _hasOwn.call(s.unanswered, key) && s.unanswered[key] > 0;
   }
 
   /* Fire value-change listeners for one (scriptId, key) transition.
@@ -841,33 +872,27 @@
     }
   }
 
+  /* Send at the end of the current run of script code, so a loop of
+     writes goes as one message. A microtask rather than a timer:
+     timers in a background tab are throttled to a second or more. */
   function scheduleFlush(scriptId) {
     var s = stores[scriptId];
-    if (!s) return;
-    if (s.debounceTimer != null) clearTimeout(s.debounceTimer);
-    s.debounceTimer = setTimeout(function () { flushStore(scriptId, "debounce"); }, DEBOUNCE_MS);
-    if (s.hardTimer == null) {
-      s.hardTimer = setTimeout(function () { flushStore(scriptId, "hard"); }, HARD_DEADLINE_MS);
-    }
+    if (!s || s.sendQueued) return;
+    s.sendQueued = true;
+    var run = function () { flushStore(scriptId, "task"); };
+    if (_queueMicrotask) _queueMicrotask(run);
+    else _Promise.resolve().then(run);
   }
 
-  /* Flush the pending writes for one script. Sends a single
-     sm:gm-batch-write to the SW. We don't await the reply — failures
-     surface as console warnings rather than throwing into a sync
-     caller's frame. */
+  /* Send the pending writes for one script as one sm:gm-batch-write.
+     The SW's reply carries the batch's sequence number. */
   function flushStore(scriptId, reason) {
     var s = stores[scriptId];
-    if (!s || s.pending.length === 0) {
-      if (s) {
-        if (s.debounceTimer != null) { clearTimeout(s.debounceTimer); s.debounceTimer = null; }
-        if (s.hardTimer != null) { clearTimeout(s.hardTimer); s.hardTimer = null; }
-      }
-      return;
-    }
+    if (!s) return;
+    s.sendQueued = false;
+    if (s.pending.length === 0) return;
     var batch = s.pending;
     s.pending = [];
-    if (s.debounceTimer != null) { clearTimeout(s.debounceTimer); s.debounceTimer = null; }
-    if (s.hardTimer != null) { clearTimeout(s.hardTimer); s.hardTimer = null; }
     /* Wire format: each entry is {key, value}. value === DELETED_SENTINEL
        (compared by reference on this side) marks a delete. We encode
        deletes as {key, deleted: true} for the SW because the wire is
@@ -885,55 +910,92 @@
         wireWrites.push({ key: w.key, value: w.value });
       }
     }
+    var answered = false;
+    var answer = function (seq) {
+      if (answered) return;
+      answered = true;
+      settleBatch(scriptId, batch, seq);
+    };
     try {
       var msg = { type: "sm:gm-batch-write", scriptId: scriptId, writes: wireWrites };
       if (reason === "pagehide") {
         /* The document is going away; there is no later task to
            await a reply in, so skip the request/reply path. */
         transportSendNow(msg);
+        /* No answer will come. A document restored from the bfcache
+           would otherwise hold this batch's keys' broadcasts forever. */
+        answer(null);
         return;
       }
       var p = transportSend(msg);
       if (p && typeof p.then === "function") {
         p.then(function (reply) {
           /* A resolved promise isn't proof the write landed. The SW
-             answers {ok:true}; the MAIN-world bridge answers with a
+             answers {ok:true, seq}; the MAIN-world bridge answers with a
              generic fallback when the SW call failed, and the SW
              answers {ok:false} when the bridge gate refused. Both
              resolve, so check the payload or lose writes in silence. */
-          if (reply && reply.ok === true) return;
+          if (reply && reply.ok === true && typeof reply.seq === "number") { answer(reply.seq); return; }
           try { console.info("[SourceMonkey] storage flush not confirmed", scriptId, reply && reply.error); } catch (_e0) {}
+          answer(null);
         }, function (err) {
           try { console.info("[SourceMonkey] storage flush rejected", scriptId, err && err.message); } catch (_e) {}
+          answer(null);
         });
+      } else {
+        answer(null);
       }
     } catch (e) {
       try { console.info("[SourceMonkey] storage flush threw", scriptId, e && e.message); } catch (_e2) {}
+      answer(null);
     }
   }
 
+  /* The SW answered a batch: `seq` is its number, or null when it
+     didn't take it. Releases the broadcasts held for its keys. */
+  function settleBatch(scriptId, batch, seq) {
+    var s = stores[scriptId];
+    if (!s) return;
+    var touched = [];
+    for (var i = 0; i < batch.length; i++) {
+      var key = batch[i].key;
+      if (hasUnanswered(s, key)) s.unanswered[key]--;
+      if (seq !== null && seq > knownSeq(s, key)) s.seqByKey[key] = seq;
+      touched.push(key);
+    }
+    for (var j = 0; j < touched.length; j++) {
+      var k = touched[j];
+      if (hasUnanswered(s, k) || !_hasOwn.call(s.held, k)) continue;
+      var h = s.held[k];
+      delete s.held[k];
+      applyRemoteWrite(scriptId, s, h.write, h.seq);
+    }
+  }
 
   /* Force-flush every script's pending writes — wired into pagehide
      so a bfcache eviction or tab close doesn't lose buffered writes.
      Synchronous from the caller's perspective: we issue the
      sendMessage and don't await the reply. Chrome holds the message
      channel open across pagehide for long enough to deliver it. */
-  function flushAll() {
+  function flushAll(reason) {
     var keys = _ObjectKeys(stores);
-    for (var i = 0; i < keys.length; i++) flushStore(keys[i], "pagehide");
+    for (var i = 0; i < keys.length; i++) {
+      if (stores[keys[i]].pending.length) flushStore(keys[i], reason);
+    }
   }
   /* These flushes go over `transportSendNow`, which drops the reply
      rather than parking a Promise a dying document will never settle.
      Delivery itself is synchronous in both worlds — see the transport
      section — so the write leaves before this handler returns. */
   try {
-    window.addEventListener("pagehide", flushAll, { capture: true });
+    window.addEventListener("pagehide", function () { flushAll("pagehide"); }, { capture: true });
     /* visibilitychange → hidden is a softer signal that also tends to
        precede tab close; flushing here gives one more shot at
        delivery before bfcache. */
     window.addEventListener("visibilitychange", function () {
       if (!document) return;
-      if (document.visibilityState === "hidden") flushAll();
+      /* Hidden isn't gone, so these go the ordinary way, answered. */
+      if (document.visibilityState === "hidden") flushAll("task");
       /* Coming back into view is a free moment to re-check the cache
          against the worker, in case a broadcast was lost while this
          tab sat in the background. See resyncListeningStores. */
@@ -942,35 +1004,46 @@
   } catch (_evErr) {}
 
   /* Cross-tab broadcast handler. The SW sends a sm:gm-value-update
-     message to every tab running the script after a write batch
-     applies (excluding the originator). We apply the diff locally
-     so subsequent GM_getValue reads in this tab see the change
-     without a re-register.
-
-     The listener is shared across all scripts in the document
-     (USER_SCRIPT world has one realm per document), so we dispatch
-     by the message's scriptId rather than per-script.
-
-     Also fires value-change listeners for each write so cross-tab
-     observers see remote updates. */
-  function applyRemoteUpdate(scriptId, writes) {
+     to every other document running the script, with the batch's
+     sequence number. We apply what's newer than what we have, so
+     later GM_getValue reads see it, and fire value-change listeners
+     with remote=true. One listener serves every script in the
+     document, so we dispatch by the message's scriptId. */
+  function applyRemoteUpdate(scriptId, writes, seq) {
+    if (!writes || !writes.length || typeof seq !== "number") return;
+    /* No ready store: the script doesn't run in this document (the
+       broadcast goes to every frame of a tab), or hasn't started. One
+       that starts later learns of anything it missed from the worker
+       (see sm:gm-values-stale). */
     var s = stores[scriptId];
     if (!s || !s.ready) return;
-    if (!writes || !writes.length) return;
-    for (var i = 0; i < writes.length; i++) {
-      var w = writes[i];
-      var oldValue = _hasOwn.call(s.cache, w.key) ? s.cache[w.key] : undefined;
-      /* Counted like a local write: a resync reply that predates
-         this broadcast must not roll it back. */
-      s.writeSeqByKey[w.key] = ++s.writeSeq;
-      if (w.deleted) {
-        delete s.cache[w.key];
-        fireListeners(scriptId, w.key, oldValue, undefined, true);
-      } else {
-        var newValue = decodeValue(w.value);
-        s.cache[w.key] = newValue;
-        fireListeners(scriptId, w.key, oldValue, newValue, true);
-      }
+    for (var i = 0; i < writes.length; i++) applyRemoteWrite(scriptId, s, writes[i], seq);
+  }
+
+  /* One batch can write a key more than once, and every write in it
+     has the batch's number; they arrive in order, so a write at the
+     number a broadcast already gave the key is a later one of the same
+     batch and still applies. Equal to the snapshot's number is a write
+     the snapshot already has. */
+  function applyRemoteWrite(scriptId, s, w, seq) {
+    var key = w.key;
+    if (hasUnanswered(s, key)) {
+      var h = s.held[key];
+      if (!h || h.seq <= seq) s.held[key] = { write: w, seq: seq };
+      return;
+    }
+    var own = _hasOwn.call(s.seqByKey, key);
+    if (own ? seq < s.seqByKey[key] : seq <= s.snapSeq) return;
+    s.seqByKey[key] = seq;
+    var oldValue = _hasOwn.call(s.cache, key) ? s.cache[key] : undefined;
+    if (w.deleted) {
+      if (!_hasOwn.call(s.cache, key)) return;
+      delete s.cache[key];
+      fireListeners(scriptId, key, oldValue, undefined, true);
+    } else {
+      var newValue = decodeValue(w.value);
+      s.cache[key] = newValue;
+      fireListeners(scriptId, key, oldValue, newValue, true);
     }
   }
   /* ---------- Resync: recovering from a lost broadcast ----------
@@ -1019,32 +1092,16 @@
     try { return _JSONStringify(a) === _JSONStringify(b); } catch (_sE) { return false; }
   }
 
-  /* Apply a snapshot the worker answered a `sm:gm-resync` with.
-     `writeSeqAt` is the store's change counter as of the moment we
-     SENT that request — a reply can only speak for writes the
-     worker had already seen by then. Ways a key can be newer than
-     the reply, all of which we leave alone:
-
-       - it is still in `s.pending` (never flushed, so the worker
-         has not seen it at all);
-       - it was written after the request went out, flushed while
-         the reply was in flight, and so has left `s.pending`
-         again;
-       - a broadcast for it landed while the reply was in flight.
-     The counter catches the last two.
-
-     A key written and flushed BEFORE the request needs nothing:
-     messages from one document reach the worker in order, and the
-     worker parks a write in its in-flight overlay before awaiting
-     storage, so the snapshot already includes it. */
-  function applyResyncSnapshot(scriptId, values, writeSeqAt) {
+  /* Apply a snapshot the worker answered a `sm:gm-resync` with,
+     current to sequence number `seq`. A key the snapshot can't speak
+     for is left alone: one with a write of ours the SW hasn't
+     answered, or one we already know at a newer number. */
+  function applyResyncSnapshot(scriptId, values, seq) {
     var s = stores[scriptId];
-    if (!s || !s.ready || !values) return;
-    var pendingKeys = _ObjectCreate(null);
-    for (var p = 0; p < s.pending.length; p++) pendingKeys[s.pending[p].key] = true;
-    var written = s.writeSeqByKey;
+    if (!s || !s.ready || !values || typeof seq !== "number") return;
     var stale = function (key) {
-      return !!pendingKeys[key] || (_hasOwn.call(written, key) && written[key] > writeSeqAt);
+      if (hasUnanswered(s, key)) { pinKnownSeq(s, key); return true; }
+      return knownSeq(s, key) > seq;
     };
     var inSnapshot = _ObjectCreate(null);
     var keys = _ObjectKeys(values);
@@ -1084,26 +1141,37 @@
       delete s.cache[ck];
       fireListeners(scriptId, ck, prev, undefined, true);
     }
+    adoptSnapshotSeq(s, seq);
   }
 
-  function requestResync(scriptId) {
+  /* `force`: the worker said this document's snapshot is behind, so
+     no rate limit, and one asked while another is out runs after it. */
+  function requestResync(scriptId, force) {
     var s = stores[scriptId];
-    if (!s || !s.ready || s.resyncInFlight) return;
+    if (!s || !s.ready) return;
+    if (s.resyncInFlight) {
+      if (force) s.resyncAgain = true;
+      return;
+    }
     var now = _now();
     /* Stamped on the attempt, not on success: a worker that is
        failing to answer shouldn't get asked once per visibility
        change. */
-    if (s.lastResyncAt && (now - s.lastResyncAt) < RESYNC_MIN_INTERVAL_MS) return;
+    if (!force && s.lastResyncAt && (now - s.lastResyncAt) < RESYNC_MIN_INTERVAL_MS) return;
     s.lastResyncAt = now;
     s.resyncInFlight = true;
-    /* Captured BEFORE the send — see applyResyncSnapshot. */
-    var writeSeqAt = s.writeSeq;
-    var done = function () { s.resyncInFlight = false; };
+    var done = function () {
+      s.resyncInFlight = false;
+      if (s.resyncAgain) {
+        s.resyncAgain = false;
+        requestResync(scriptId, true);
+      }
+    };
     /* Over whichever transport this world has — a MAIN-world store
        resyncs through the bridge like every other SW call. */
     transportSend({ type: "sm:gm-resync", scriptId: scriptId }).then(function (reply) {
+      if (reply && reply.ok && reply.values) applyResyncSnapshot(scriptId, reply.values, reply.seq);
       done();
-      if (reply && reply.ok && reply.values) applyResyncSnapshot(scriptId, reply.values, writeSeqAt);
     }, done);
   }
 
@@ -1114,16 +1182,32 @@
     }
   }
 
+  /* A document in the back/forward cache gets no messages, so it
+     missed every broadcast while it was there, and the answers to
+     batches sent as it went in. On a restore, every store resyncs,
+     listeners or not: GM_getValue alone would read the stale cache. */
+  try {
+    window.addEventListener("pageshow", function (ev) {
+      if (!ev || !ev.persisted) return;
+      var ids = _ObjectKeys(stores);
+      for (var i = 0; i < ids.length; i++) requestResync(ids[i], true);
+    }, { capture: true });
+  } catch (_psErr) {}
+
   /* The SW's own messages, over whichever transport this world has —
      `chrome.runtime.onMessage` in USER_SCRIPT, the bridge's re-post in
      MAIN. `onPush` applies the sender filter for us; see the transport
      section at the top of this file. */
   onPush(function (msg) {
     if (msg.type === "sm:gm-resync-hint") { resyncListeningStores(); return; }
+    if (msg.type === "sm:gm-values-stale") {
+      if (typeof msg.scriptId === "string") requestResync(msg.scriptId, true);
+      return;
+    }
     if (msg.type !== "sm:gm-value-update") return;
     if (typeof msg.scriptId !== "string") return;
     if (!msg.writes || typeof msg.writes.length !== "number") return;
-    applyRemoteUpdate(msg.scriptId, msg.writes);
+    applyRemoteUpdate(msg.scriptId, msg.writes, msg.seq);
   });
 
   var storage = {
@@ -1138,14 +1222,16 @@
        scriptId replaces the cache with the new snapshot, except for the
        keys the cache changed since the last init: this document's own
        writes (which the worker may not have had when it took the
-       snapshot) and other tabs' broadcasts. Two paths reach it in
+       snapshot) and other tabs' broadcasts newer than it. Two paths reach it in
        normal operation:
        - a swap primed the cache, page CSP then refused the eval, and
          the baked-in body runs its own init;
        - a manual script's next run in the same document
-         (docs/manual-scripts.md), with a snapshot taken for it. */
-    init: function (scriptId, values) {
+         (docs/manual-scripts.md), with a snapshot taken for it.
+       `seq` is the sequence number the snapshot is current to. */
+    init: function (scriptId, values, seq) {
       var s = ensureStore(scriptId);
+      var snapSeq = typeof seq === "number" ? seq : 0;
       /* Defensive copy so the userscript can't mutate the values
          object the SW handed us. Use Object.create(null) so a user
          that has clobbered Object.prototype can't shadow our cached
@@ -1158,19 +1244,25 @@
          stored. Rows written before the codec existed are plain and
          pass through decodeValue unchanged. */
       for (var i = 0; i < keys.length; i++) copy[keys[i]] = decodeValue(values[keys[i]]);
-      /* Only a store already in use has any. `writeSeqByKey` counts
-         local writes and applied broadcasts alike. */
       if (s.ready) {
-        var changed = _ObjectKeys(s.writeSeqByKey);
-        for (var j = 0; j < changed.length; j++) {
-          var key = changed[j];
-          if (s.writeSeqByKey[key] <= s.initSeq) continue;
-          if (_hasOwn.call(s.cache, key)) copy[key] = s.cache[key];
-          else delete copy[key];
+        /* Keep what this document knows past the snapshot. */
+        var keep = function (key) {
+          if (hasUnanswered(s, key)) { pinKnownSeq(s, key); return true; }
+          return knownSeq(s, key) > snapSeq;
+        };
+        var cachedKeys = _ObjectKeys(s.cache);
+        for (var c = 0; c < cachedKeys.length; c++) {
+          var ck = cachedKeys[c];
+          if (keep(ck)) copy[ck] = s.cache[ck];
+        }
+        for (var d = 0; d < keys.length; d++) {
+          var dk = keys[d];
+          if (_hasOwn.call(s.cache, dk)) continue;
+          if (keep(dk)) delete copy[dk];
         }
       }
       s.cache = copy;
-      s.initSeq = s.writeSeq;
+      adoptSnapshotSeq(s, snapSeq);
       s.ready = true;
     },
     get: function (scriptId, key, defaultValue) {
@@ -1201,7 +1293,7 @@
       var encoded = encodeValue(value);
       var oldValue = _hasOwn.call(s.cache, key) ? s.cache[key] : undefined;
       s.cache[key] = value;
-      s.writeSeqByKey[key] = ++s.writeSeq;
+      s.unanswered[key] = (hasUnanswered(s, key) ? s.unanswered[key] : 0) + 1;
       s.pending.push({ key: key, value: encoded });
       scheduleFlush(scriptId);
       fireListeners(scriptId, key, oldValue, value, false);
@@ -1210,7 +1302,7 @@
       var s = ensureStore(scriptId);
       var oldValue = _hasOwn.call(s.cache, key) ? s.cache[key] : undefined;
       delete s.cache[key];
-      s.writeSeqByKey[key] = ++s.writeSeq;
+      s.unanswered[key] = (hasUnanswered(s, key) ? s.unanswered[key] : 0) + 1;
       s.pending.push({ key: key, value: DELETED_SENTINEL });
       scheduleFlush(scriptId);
       fireListeners(scriptId, key, oldValue, undefined, false);

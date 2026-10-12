@@ -67042,8 +67042,7 @@
       "version": "2.4.4"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
+      "status": "pass",
       "date": "2026-10-11",
       "version": "2.4.4"
     },
@@ -67055,6 +67054,11 @@
         "date": "2026-10-11",
         "version": "2.4.4",
         "text": "A.C.A.S runs its engine in a GUI tab (`psyyke.github.io/A.C.A.S/app/`) and talks to the chess-site tab through GM values (the CommLink library: write a packet, poll `GM_getValue` for the other tab's `result`). Tested logged out with the GUI tab plus `lichess.org/analysis` (no other players), after ticking the GUI's ToS box.\n\n- SourceMonkey: both tabs started with no errors and the GUI detected the userscript, but it stayed at \"WAITING FOR INSTANCES...\" (Created instances 0) for over a minute. The lichess tab pinged in a loop and after 10 tries opened another GUI tab with `GM_openInTab`.\n- Each ping: the lichess tab writes a packet, the GUI tab writes `pong` about 155 ms later, and the lichess tab gives up and deletes the packet at 250 ms (`singlePacketResponseWaitTime: 250`), before the reply reaches it.\n- Measured one-way cross-tab latency (`GM_setValue` in one tab until `GM_getValue` in the other changes): 162, 238, 157 ms. That's SourceMonkey's 150 ms write debounce (docs/GM-APIs-storage.md, \"Backing store and write batching\"), paid once each way, so a 250 ms round trip can't fit.\n- Tampermonkey, same steps: the GUI showed the lichess board (\"Chess (1 engine), lichess.org\") within seconds.\n- SourceMonkey: a second problem seen here. The lichess tab's `GM_listValues()` grew to 657 keys while storage held 8. A tab's own delete, followed by another tab's older write arriving by broadcast, leaves the key in that tab's cache, and the SW (service worker) never sends the later delete back to the tab that made it."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "2.4.4",
+        "text": "Re-tested after the GM value store change (the worker keeps each script's values in memory, numbers every write, and pages send writes a microtask after making them instead of after a 150 ms debounce): now passes.\n- Same steps (GUI tab, ToS ticked, then `lichess.org/analysis`): the GUI left \"WAITING FOR INSTANCES...\" and showed the lichess board (\"Chess (1 engine), lichess.org\") within seconds, as under Tampermonkey. No extra GUI tab was opened.\n- One-way cross-tab latency (`GM_setValue` in the lichess tab until `GM_getValue` in the GUI tab changes): 2-5 ms over 6 writes, was 155-240 ms.\n- The value caches stay in step: both tabs' `GM_listValues()` and the worker's `values` held the same 6 keys (was 657 keys in one tab against 8 stored).\n- Keeps the `value-sync-latency` tag: it passes because of this fix."
       }
     ]
   },

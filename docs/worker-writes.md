@@ -157,6 +157,15 @@ log labels keep tables derived from them.
   changes a row can't change the cache; `sharedRows` returns the frozen
   rows.
 
+## The value store
+
+`value-store.ts` plays the same part for `GM_setValue` values
+(`gmval:` rows): the one copy in the worker, which every read and
+write of them goes through. Unlike the row cache, nothing else in
+production writes those rows, so it needs no change-event safety net
+(tests that do make it forget its maps). Details:
+[GM-APIs-storage.md](GM-APIs-storage.md#the-workers-value-store).
+
 ## What moves
 
 | Area | Page entry points | How |

@@ -30,8 +30,13 @@ export async function launchSourceMonkeyContext(opts: {
   // location from `chrome.downloads`, which the local-copy feature
   // depends on.
   downloads?: { dir: string };
+  // Keep Chrome's back/forward cache, which Playwright turns off.
+  backForwardCache?: boolean;
 } = {}): Promise<LaunchedSmContext> {
-  const launched = await launchExtensionBrowser({ downloadsDir: opts.downloads?.dir });
+  const launched = await launchExtensionBrowser({
+    downloadsDir: opts.downloads?.dir,
+    backForwardCache: opts.backForwardCache,
+  });
   const ctx = launched.context;
 
   if (process.env.SM_FORWARD_SW_CONSOLE === '1') {

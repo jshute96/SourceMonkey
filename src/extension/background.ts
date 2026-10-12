@@ -173,6 +173,8 @@ import {
   sweepUnusedBlobsLocked,
   checkScriptRowWrite,
   seedStorageForTests,
+  readLocalStorageUsage,
+  STORAGE_NEARLY_FULL,
   storeFormatReady,
   _setCollectionWriteFailureForTests,
   markFirstRunComplete,
@@ -247,12 +249,15 @@ import {
 import { managedChanges } from './managed-changes.js';
 import { managedCollection, managedScripts } from './managed-items.js';
 import {
-  applyBatchValues,
-  DELETED_SENTINEL,
-  isDeletionSentinel,
-  loadAllValues,
-  type ValueWrite,
-} from './gm-values.js';
+  forgetLoadedValues,
+  onValueSaveFailed,
+  readValues,
+  valueWritesSaved,
+  valuesChangedSince,
+  writeValues,
+  type ValueFailureKind,
+  type ValueSnapshot,
+} from './value-store.js';
 import {
   abortXhr,
   abortXhrsForTab,
@@ -362,7 +367,7 @@ import {
 } from './popup-view.js';
 import { identityKey } from './script-identity.js';
 import { setCollectionEnabledExclusive, setScriptEnabledExclusive } from './script-enablement.js';
-import { scriptDisplayName } from '../script-display.js';
+import { formatStorageUsage, scriptDisplayName } from '../script-display.js';
 
 interface SourceMonkeyApi {
   version: string;
@@ -575,11 +580,13 @@ interface SourceMonkeyApi {
   // a cached verdict from a fresh one.
   getParseCheckRuns: () => number;
   clearScriptLog: (scriptId: string) => Promise<void>;
-  // Every PERSISTED GM value for a script, excluding the in-flight
-  // overlay. Tests wait on this for the wrapper's batched write to land
-  // rather than pausing — the batch fires 150ms after the last write and
-  // its timing moves with machine load.
+  // A script's GM values as the worker's value store has them, which
+  // includes writes not yet on disk. Tests wait on this for a page's
+  // write to reach the worker rather than pausing.
   getGmValues: (scriptId: string) => Promise<Record<string, unknown>>;
+  // Resolves once every value write the worker has taken is on disk, and
+  // any failure to save one is on the script's Log.
+  gmValuesSaved: () => Promise<void>;
   // Write GM values (wire form, as a page sends them) as another tab of
   // the script would: stored, and pushed to every tab running it, so
   // its value-change listeners fire. sm-dev's `set`.
@@ -803,7 +810,12 @@ const api: SourceMonkeyApi = {
     _setCollectionWriteFailureForTests(message);
   },
   clearScriptLog,
-  getGmValues: loadAllValues,
+  getGmValues: async (scriptId: string) => (await readValues(scriptId)).values,
+  gmValuesSaved: async () => {
+    await valueWritesSaved();
+    // And the Log entries for any failures, which follow the save.
+    await Promise.all([...valueFailureReports]);
+  },
   writeGmValues: async (scriptId, writes) => {
     // No sender tab, so every tab running the script hears it.
     await handleBatchWrite({ scriptId, writes }, {});
@@ -941,7 +953,17 @@ const api: SourceMonkeyApi = {
   forgetRegistrationState,
   forgetStoreMigration: () => forgetStoreMigrationForTests(),
   sweepUnusedBlobs: async () => (await sweepUnusedBlobsLocked())!,
-  seedStorage: seedStorageForTests,
+  seedStorage: async (items) => {
+    // A save still in flight would land on top of the seeded rows, so
+    // they finish first, the forgotten maps' included.
+    await valueWritesSaved();
+    forgetLoadedValues();
+    await valueWritesSaved();
+    await seedStorageForTests(items);
+    // Seeded `gmval:` rows would sit under maps the value store
+    // already loaded.
+    forgetLoadedValues();
+  },
   backfillUsesUnsafeWindow,
   setScriptEnabledExclusive: async (id, enabled) => { await setScriptEnabledExclusive(id, enabled); },
   resetAllState: async () => {
@@ -990,8 +1012,16 @@ const api: SourceMonkeyApi = {
     // lands first and gets wiped with everything else rather than
     // re-seeding `sm:gm-openers` just after.
     await resetGmOpenersState();
+    // Same for value saves still in flight, before and after the clear:
+    // a page write landing in between starts a save of its own, which
+    // `valueWritesSaved` still waits for once its map is forgotten.
+    await valueWritesSaved();
     await chrome.storage.local.clear();
     await chrome.storage.session.clear();
+    // The value store's maps came from the rows just cleared.
+    forgetLoadedValues();
+    await valueWritesSaved();
+    await chrome.storage.local.clear();
     // sm-dev's claims and run leases live in memory too, and a lease
     // left from a test minutes ago would have its run's collection swept
     // from under a later test that reuses the run id.
@@ -2669,11 +2699,11 @@ async function tryManualRun(tabId: number, scriptId: string): Promise<ManualRunR
   if (script.status !== 'ok') {
     return { ok: false, error: describeDiagnostic(script.errorMessage ?? 'This script does not parse', script.errorLocation) };
   }
-  const gmValues = scriptGrantsSubsystem(scriptId, STORAGE_SUBSYSTEMS)
+  const gmSnapshot = scriptGrantsSubsystem(scriptId, STORAGE_SUBSYSTEMS)
     ? await loadSnapshotForCheckPending(scriptId)
     : undefined;
   const injections = await buildManualRunInjections(
-    script, chrome.runtime.getManifest().version, getScriptLogLabel(scriptId), gmValues,
+    script, chrome.runtime.getManifest().version, getScriptLogLabel(scriptId), gmSnapshot,
   );
   // validateHeader keeps a script with no usable pattern from being `ok`.
   if (!injections) return { ok: false, error: 'Internal error: This script has no page pattern Chrome can use' };
@@ -3439,8 +3469,8 @@ interface CheckPendingPayload {
 // `gmValues` is attached by the check-pending message handler (not
 // by handleCheckPending itself, which only decides the reload-
 // fast-path action). It carries the script's current GM_setValue
-// state — the SW-authoritative snapshot, including in-flight writes
-// from `gmValueOverlay` that haven't been confirmed persisted yet.
+// state — from the worker's value store, so it includes writes not yet
+// on disk — and `gmSeq`, the sequence number it's current to.
 // The wrapper's prelude uses this as the SOLE source for its
 // initial cache; if it's missing the prelude hard-aborts (sm:error
 // + return) and the user body doesn't run.
@@ -3464,7 +3494,7 @@ interface CheckPendingPayload {
 // updated registration moves to the end), and by run time every
 // document_start registration has executed.
 type CheckPendingReply = (
-  | { action: 'run'; gmValues?: Record<string, unknown> }
+  | { action: 'run'; gmValues?: Record<string, unknown>; gmSeq?: number }
   | {
       action: 'run-new';
       body: string;
@@ -3472,6 +3502,7 @@ type CheckPendingReply = (
       seedValues?: boolean;
       needsRuntime?: boolean;
       gmValues?: Record<string, unknown>;
+      gmSeq?: number;
     }
   | { action: 'skip'; reason: string; detail?: string }
 ) & {
@@ -3680,10 +3711,10 @@ async function handleCheckPending(
     || (!swap.needsValues && payload.needsValues !== true)
     || await bridgeMayActAs(payload.id, sender, STORAGE_SUBSYSTEMS);
   const handlerWillAttach = payload.needsValues === true && bridgeValuesOk;
-  let gmValues: Record<string, unknown> | undefined;
+  let gmSnapshot: ValueSnapshot | undefined;
   if (swap.needsValues && !handlerWillAttach && bridgeValuesOk) {
     try {
-      gmValues = await loadSnapshotForCheckPending(refreshed.id);
+      gmSnapshot = await loadSnapshotForCheckPending(refreshed.id);
     } catch (err) {
       // Same reasoning as the hard-abort in the emitted prelude:
       // running a storage script against values we couldn't read
@@ -3716,7 +3747,7 @@ async function handleCheckPending(
     // Only set on the grant-added path; otherwise the message
     // handler's enrichment supplies the same field from its own
     // concurrent read.
-    ...(gmValues !== undefined ? { gmValues } : {}),
+    ...(gmSnapshot !== undefined ? { gmValues: gmSnapshot.values, gmSeq: gmSnapshot.seq } : {}),
   };
 }
 
@@ -4537,75 +4568,6 @@ function clearTabFromGmOpeners(tabId: number): void {
   }).catch(() => undefined);
 }
 
-// ---------- In-flight value-write overlay ----------
-//
-// Per-script in-memory record of writes that have been received via
-// `sm:gm-batch-write` but whose `chrome.storage.local.set` hasn't
-// resolved yet. Used by `loadSnapshotForCheckPending` to merge the
-// authoritative SW view (overlay + persisted rows) into the snapshot
-// we ship back on the check-pending reply, so a new document that
-// starts loading WHILE its predecessor's pagehide flush is still
-// hitting the disk still sees the latest values.
-//
-// Eviction: each call to `handleBatchWrite` writes its tuples into
-// the bucket, awaits the persistence call, then evicts only the
-// entries whose value reference is still the one IT installed. If a
-// later write overwrote the key, the new value stays in the overlay
-// until ITS own persistence resolves. This avoids the otherwise
-// possible "evict races a fresher write" hazard without needing
-// generation tokens.
-//
-// We mark deletions with `GMVAL_DELETED` (a local symbol) rather than
-// the `DELETED_SENTINEL` exported by gm-values, because that sentinel
-// only lives long enough to flow through `applyBatchValues` — there's
-// nothing wrong with using a second sentinel here that's local to
-// the overlay layer.
-const GMVAL_DELETED: unique symbol = Symbol('sm:overlay-deleted');
-type OverlayValue = unknown | typeof GMVAL_DELETED;
-const gmValueOverlay = new Map<string, Map<string, OverlayValue>>();
-
-function overlayInstallWrites(
-  scriptId: string,
-  writes: readonly ValueWrite[],
-): Map<string, OverlayValue> {
-  let bucket = gmValueOverlay.get(scriptId);
-  if (!bucket) {
-    bucket = new Map();
-    gmValueOverlay.set(scriptId, bucket);
-  }
-  const installed = new Map<string, OverlayValue>();
-  for (const w of writes) {
-    const v: OverlayValue = isDeletionSentinel(w.value) ? GMVAL_DELETED : w.value;
-    bucket.set(w.key, v);
-    installed.set(w.key, v);
-  }
-  return installed;
-}
-
-function overlayEvictIfUnchanged(
-  scriptId: string,
-  installed: Map<string, OverlayValue>,
-): void {
-  const bucket = gmValueOverlay.get(scriptId);
-  if (!bucket) return;
-  for (const [k, v] of installed) {
-    // Identity compare: only drop the entry if the value we wrote is
-    // still there. A subsequent write has its own (newer) install
-    // that will evict itself when its own persistence resolves.
-    //
-    // Correctness assumption: chrome.storage.local serializes set /
-    // remove calls FIFO per area. Two parallel `handleBatchWrite`
-    // calls for the same key therefore land in `chrome.storage.local`
-    // in their start order — the overlay tracks what's in flight, not
-    // what's persistence-ordered. If chrome were ever to reorder
-    // writes internally, the persisted state could disagree with the
-    // overlay's last-installed value and this scheme would need
-    // revisiting.
-    if (bucket.get(k) === v) bucket.delete(k);
-  }
-  if (bucket.size === 0) gmValueOverlay.delete(scriptId);
-}
-
 // Test-only knob — when set, `loadSnapshotForCheckPending` throws,
 // which makes the check-pending handler reply without `gmValues`,
 // which makes the wrapper's prelude hard-abort. Drives the
@@ -4617,67 +4579,81 @@ function setDebugForceSnapshotFailure(value: boolean): void {
   __debugForceSnapshotFailure = !!value;
 }
 
-// Read the full snapshot for one script: chrome.storage.local rows
-// merged with the in-flight overlay. The overlay wins on conflict
-// (a write that hasn't persisted is still authoritative — the
-// persisted row, if any, is older).
+// The script's values for a document about to run it, with the
+// sequence number they're current to (`ValueSnapshot`). From the value
+// store, so writes not yet on disk are included.
 //
 // Caller is responsible for only invoking this when the script
 // actually grants a storage API (via the `needsValues` flag the
-// wrapper passes on sm:check-pending). The read lists this script's
+// wrapper passes on sm:check-pending). A script's first read lists its
 // `gmval:` keys and reads those rows — narrow, but not free, and it
-// happens inside the reload fast path's window. It used to scan the
-// whole namespace, which cost 155 ms of that window; see
+// can happen inside the reload fast path's window; see
 // docs/GM-APIs-storage.md#why-the-read-must-stay-narrow.
-async function loadSnapshotForCheckPending(scriptId: string): Promise<Record<string, unknown>> {
+// A script whose values can't be saved gets an error on its Log, so the
+// badge shows it: the value store reports the first failure, and again
+// only after a save has worked.
+onValueSaveFailed((scriptId, err, kind) => { void reportValueSaveFailure(scriptId, err, kind); });
+
+// Pending Log writes for failures, so the test surface can wait for them.
+const valueFailureReports = new Set<Promise<void>>();
+
+function reportValueSaveFailure(scriptId: string, err: unknown, kind: ValueFailureKind): Promise<void> {
+  const report = (async () => {
+    const usage = kind === 'save' ? await readLocalStorageUsage() : null;
+    logScriptEvent(scriptId, { level: 'error', source: 'gm-storage', message: describeValueFailure(err, kind, usage) });
+  })();
+  valueFailureReports.add(report);
+  void report.finally(() => valueFailureReports.delete(report));
+  return report;
+}
+
+// A failed save names the quota when storage is nearly full, which is
+// what it almost always is; otherwise, and for a failed read, Chrome's
+// own reason.
+function describeValueFailure(
+  err: unknown,
+  kind: ValueFailureKind,
+  usage: { used: number; quota: number } | null,
+): string {
+  const reason = err instanceof Error ? err.message : String(err);
+  if (kind === 'load') {
+    return `This script's stored values could not be read, so its changes to them were refused (Chrome reported: ${reason}).`;
+  }
+  const lost = 'The values that could not be saved are kept only in memory, and will be lost.';
+  if (usage && usage.used >= usage.quota * STORAGE_NEARLY_FULL) {
+    return `This script's stored values could not be saved, because SourceMonkey's storage is nearly full: ${formatStorageUsage(usage.used, usage.quota)}. ${lost}`;
+  }
+  return `This script's stored values could not be saved (Chrome reported: ${reason}). ${lost}`;
+}
+
+async function loadSnapshotForCheckPending(scriptId: string): Promise<ValueSnapshot> {
   if (__debugForceSnapshotFailure) {
     throw new Error('[SourceMonkey] debug: forced snapshot failure');
   }
-  const persisted = await loadAllValues(scriptId);
-  const bucket = gmValueOverlay.get(scriptId);
-  if (!bucket || bucket.size === 0) return persisted;
-  const out: Record<string, unknown> = { ...persisted };
-  for (const [k, v] of bucket) {
-    if (v === GMVAL_DELETED) delete out[k];
-    else out[k] = v;
-  }
-  return out;
+  return readValues(scriptId);
 }
 
 async function handleBatchWrite(
   payload: BatchWritePayload,
   sender: chrome.runtime.MessageSender,
-): Promise<{ ok: true }> {
-  // Translate the wire format ({key, value | deleted: true}) into the
-  // SW-internal `ValueWrite` shape that uses a sentinel-by-reference
-  // for deletes. We hand-roll the translation here so the gm-values
-  // module stays wire-format-agnostic.
-  const internal: ValueWrite[] = payload.writes.map((w) => ({
-    key: w.key,
-    value: w.deleted ? DELETED_SENTINEL : w.value,
-  }));
-  // Park the writes in the overlay BEFORE awaiting persistence: a
-  // concurrent check-pending that races us to the snapshot read
-  // must see these writes too.
-  const installed = overlayInstallWrites(payload.scriptId, internal);
-  try {
-    await applyBatchValues(payload.scriptId, internal);
-  } finally {
-    overlayEvictIfUnchanged(payload.scriptId, installed);
-  }
+): Promise<{ ok: true; seq: number }> {
+  // The store takes the writes into its map at once and saves them
+  // behind; nothing here waits for disk. A document that starts now
+  // gets them in its snapshot from the same map.
+  const seq = await writeValues(payload.scriptId, payload.writes);
   // Broadcast the delta to every OTHER document running this script:
   // other tabs, and the writer's tab's other frames. The writing
-  // document already has the writes applied in its page-side cache (it
-  // issued the writes); broadcasting back would be redundant and could
-  // feed back through value-change listeners.
+  // document already has the writes in its page-side cache; it learns
+  // their sequence number from this reply instead, and uses it to
+  // order the broadcasts it hears for the same keys.
   const senderTabId = sender.tab?.id;
   const writerDocument = (sender as { documentId?: string }).documentId;
   // The writer runs the script, so its document is one an update from
   // another frame of its tab should reach (`openerDocs`).
   if (senderTabId != null) registerOpener(payload.scriptId, senderTabId, writerDocument);
   emitSmDevEvent({ kind: 'values', scriptId: payload.scriptId, tabId: senderTabId, ...(writerDocument ? { documentId: writerDocument } : {}), writes: payload.writes });
-  await broadcastValueUpdate(payload.scriptId, payload.writes, senderTabId, writerDocument);
-  return { ok: true };
+  await broadcastValueUpdate(payload.scriptId, payload.writes, seq, senderTabId, writerDocument);
+  return { ok: true, seq };
 }
 
 // Test-only knob — see `setDebugSuppressGmBroadcast` on the test
@@ -4688,13 +4664,14 @@ let __debugSuppressGmBroadcast = false;
 async function broadcastValueUpdate(
   scriptId: string,
   writes: readonly BatchWriteEntry[],
+  seq: number,
   excludeTabId: number | undefined,
   excludeDocId?: string,
 ): Promise<void> {
   if (__debugSuppressGmBroadcast) return;
   await hydrateGmOpeners();
   const targets = gmOpeners.get(scriptId);
-  const message = { type: 'sm:gm-value-update', smWorld: pushWorld(scriptId), scriptId, writes };
+  const message = { type: 'sm:gm-value-update', smWorld: pushWorld(scriptId), scriptId, writes, seq };
   let sent = 0;
   // The writer's own tab: the other documents of it running the script
   // (its page and frames), each addressed by document, so one that
@@ -4753,7 +4730,7 @@ async function broadcastValueUpdate(
 async function handleGmResync(
   payload: { scriptId?: unknown; __viaBridge?: unknown },
   sender: chrome.runtime.MessageSender,
-): Promise<{ ok: boolean; values?: Record<string, unknown>; error?: string }> {
+): Promise<{ ok: boolean; values?: Record<string, unknown>; seq?: number; error?: string }> {
   // A bridge-relayed request hands back a whole value map, and a
   // MAIN-world page can forge the scriptId on anything it gets the
   // bridge to forward — so it goes through the same gate every other
@@ -4765,8 +4742,8 @@ async function handleGmResync(
   if (viaBridge(payload) && !(await bridgeMayActAs(scriptId, sender, STORAGE_SUBSYSTEMS))) return { ok: false, error: BRIDGE_DENIED };
   const tabId = sender.tab?.id;
   if (tabId != null) registerOpener(scriptId, tabId, (sender as { documentId?: string }).documentId);
-  const values = await loadSnapshotForCheckPending(scriptId);
-  return { ok: true, values };
+  const { values, seq } = await loadSnapshotForCheckPending(scriptId);
+  return { ok: true, values, seq };
 }
 
 // Nudge every open tab to resync.
@@ -5079,13 +5056,13 @@ function installScriptMessageListener(): void {
       // stands, and a storage script that would run aborts on its own,
       // saying so (the prelude's hard abort), rather than this turning
       // into a missing decision.
-      const snapshotP: Promise<Record<string, unknown> | undefined> =
+      const snapshotP: Promise<ValueSnapshot | undefined> =
         valueReadAllowed.then((ok) => (ok ? loadSnapshotForCheckPending(payload.id) : undefined)).catch((err) => {
           console.info('[SourceMonkey] check-pending storage snapshot failed:', err);
           return undefined;
         });
       Promise.all([decisionP, snapshotP]).then(
-        async ([reply, gmValues]) => {
+        async ([reply, gmSnapshot]) => {
           // A frame's copy prints the script's header warnings only when
           // nothing else on the page does (`frameShowsStartupLogs`), and
           // not where it doesn't run at all (`no-match`).
@@ -5093,7 +5070,9 @@ function installScriptMessageListener(): void {
           const startupLogs = sender.frameId !== 0 && tabId != null && !noMatch
             && await frameShowsStartupLogs(tabId, payload.id, sender).catch(() => false);
           const enriched: CheckPendingReply = {
-            ...(gmValues !== undefined && reply.action !== 'skip' ? { ...reply, gmValues } : reply),
+            ...(gmSnapshot !== undefined && reply.action !== 'skip'
+              ? { ...reply, gmValues: gmSnapshot.values, gmSeq: gmSnapshot.seq }
+              : reply),
             ...(startupLogs ? { startupLogs: true as const } : {}),
           };
           try { sendResponse(enriched); } catch { /* gone */ }
@@ -5212,10 +5191,9 @@ function installScriptMessageListener(): void {
       );
     }
     if (type === 'sm:gm-batch-write') {
-      // Batched storage flush from the page-side cache. The wrapper
-      // doesn't actually await the reply today (fire-and-forget), but
-      // returning a real {ok} keeps the channel honest for future error
-      // surfacing.
+      // A page's value writes. Its runtime waits for the reply's
+      // sequence number to order other tabs' broadcasts for the same
+      // keys (docs/GM-APIs-storage.md#ordering-writes).
       const writePayload = msg as BatchWritePayload;
       return respondAsync(
         'gm-batch-write',
@@ -5342,6 +5320,7 @@ function installScriptMessageListener(): void {
       stack?: string;
       loadedAt?: number;
       fromLoadedAt?: number;
+      gmSeq?: number;
       reason?: string;
       detail?: string;
       opaqueOrigin?: boolean;
@@ -5518,6 +5497,7 @@ async function recordScriptReport(
     stack?: string;
     loadedAt?: number;
     fromLoadedAt?: number;
+    gmSeq?: number;
     reason?: string;
     detail?: string;
     opaqueOrigin?: boolean;
@@ -5579,6 +5559,15 @@ async function recordScriptReport(
   // and needs the same pairing so future writes can fan out to it.
   if (type === SM_START_MSG || type === SM_SWAPPED_MSG) {
     registerOpener(id, tabId, senderDocId || undefined);
+    // The document hears broadcasts from here on. A write made between
+    // its snapshot (`gmSeq`) and now reached it neither way, so it
+    // resyncs. Its `storage.init` runs in the same task as this report,
+    // so a broadcast can't arrive before its cache is ready.
+    if (typeof payload.gmSeq === 'number' && valuesChangedSince(id, payload.gmSeq)) {
+      const stale = { type: 'sm:gm-values-stale', smWorld: pushWorld(id), scriptId: id };
+      const target = senderDocId ? { documentId: senderDocId } : { frameId: sender.frameId ?? 0 };
+      void chrome.tabs.sendMessage(tabId, stale, target).catch(() => undefined);
+    }
   }
   if (type === SM_START_MSG) {
     console.log(`[SourceMonkey] start ${label}${tabPart} ${senderUrl}`);

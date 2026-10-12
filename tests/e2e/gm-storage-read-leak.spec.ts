@@ -82,7 +82,7 @@ test.describe('GM storage cross-script read leak', () => {
     const victimId = detail!.scripts.find((s) => s.relativePath === 'victim.user.js')!.id;
 
     // The probe below is only meaningful once there is something stored
-    // to leak, and GM_setValue's write is batched 150ms after the fact.
+    // to leak, and GM_setValue's write reaches the worker a message later.
     await waitFor(
       () => sm.getGmValues(victimId),
       (values) => values.secret === SECRET,

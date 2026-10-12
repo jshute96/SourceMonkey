@@ -16,6 +16,7 @@
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
+import { waitForGmValues } from '../fixtures/sw-api';
 import { UserscriptServer } from '../fixtures/userscript-server';
 
 const PAGE = 'page-globals.html';
@@ -99,8 +100,7 @@ test.describe('@grant unsafeWindow', () => {
     // Page access and storage both work in the same script.
     await expect(first.locator('body')).toHaveAttribute('data-sm-app-name', 'page-app');
     await expect(first.locator('body')).toHaveAttribute('data-sm-visits', '0');
-    // Let the debounced write flush to the SW.
-    await first.waitForTimeout(500);
+    await waitForGmValues(sm, (values) => values.visits === 1, 'visits = 1');
     await first.close();
 
     // A fresh document must be seeded from the SW snapshot — which is

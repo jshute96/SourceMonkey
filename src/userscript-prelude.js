@@ -909,7 +909,10 @@
   function startManualRun(entry, cfg) {
     entry.runAtFired = true;
     entry.decision = { action: "run" };
-    if (cfg.manualRun.gmValues) entry.decision.gmValues = cfg.manualRun.gmValues;
+    if (cfg.manualRun.gmValues) {
+      entry.decision.gmValues = cfg.manualRun.gmValues;
+      entry.decision.gmSeq = cfg.manualRun.gmSeq;
+    }
   }
 
   /* Another run of a manual script already run in this document. The
@@ -1062,7 +1065,7 @@
         var swapSnap = decision.gmValues;
         if (swapSnap && typeof swapSnap === "object") {
           try {
-            window.__SM_GM__.storage.init(cfg.id, swapSnap);
+            window.__SM_GM__.storage.init(cfg.id, swapSnap, decision.gmSeq);
             swapReady = true;
           } catch (_smSI) {}
         }
@@ -1100,6 +1103,9 @@
           name: cfg.name,
           fromLoadedAt: cfg.loadedAt,
           loadedAt: newLoadedAt,
+          /* The snapshot the cache was seeded from, so the worker can
+             say if writes came in after it (sm:gm-values-stale). */
+          gmSeq: decision.gmSeq,
           url: location.href
         });
         if (evalErr) {
@@ -1126,6 +1132,9 @@
       id: cfg.id,
       name: cfg.name,
       loadedAt: cfg.loadedAt,
+      /* As on sm:swapped. Sent in the same task as the body's
+         storage.init, just before it. */
+      gmSeq: decision.gmSeq,
       url: location.href
     });
     try {

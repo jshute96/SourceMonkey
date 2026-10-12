@@ -116,10 +116,10 @@ partway becomes an `Internal error:` result.
   - What the last run did to the page directly (timers, listeners,
     DOM) stays. Nothing can stop that from outside.
 - `storage.init` on a store already seeded in this document takes the
-  run's fresh snapshot, except for the keys the cache changed since the
-  last run started (`writeSeqByKey` past `initSeq`): this document's
-  own writes, which the worker may not have had yet, and other tabs'
-  broadcasts.
+  run's fresh snapshot, except for the keys this document knows past
+  it: its own writes the worker hasn't answered yet, and keys whose
+  known sequence number is newer than the snapshot's
+  ([GM-APIs-storage.md](GM-APIs-storage.md#ordering-writes)).
 
 ## Status and badge
 

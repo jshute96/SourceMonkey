@@ -270,7 +270,7 @@ interface ScriptCfgLiteral {
   matching: { matches: string[]; includes: string[]; excludes: string[] } | null;
   startupLogs: ReadonlyArray<StartupLog>;
   // See `RegistrationSpecOptions.manualRun`.
-  manualRun?: { gmValues?: Record<string, unknown> };
+  manualRun?: { gmValues?: Record<string, unknown>; gmSeq?: number };
 }
 
 // Build the per-script config blob. Calls
@@ -826,7 +826,7 @@ export interface RegistrationSpecOptions {
   // registration: the config carries the run decision, with the GM
   // values snapshot a storage script seeds from (what a registered
   // script gets from its check-pending answer).
-  manualRun?: { gmValues?: Record<string, unknown> };
+  manualRun?: { gmValues?: Record<string, unknown>; gmSeq?: number };
 }
 
 export async function buildRegistrationSpec(
@@ -1263,10 +1263,10 @@ export async function buildManualRunInjections(
   script: StoredScript,
   scriptHandlerVersion: string,
   logLabel: string,
-  gmValues: Record<string, unknown> | undefined,
+  gmSnapshot: { values: Record<string, unknown>; seq: number } | undefined,
 ): Promise<ManualRunInjection[] | null> {
   const spec = await buildRegistrationSpec(script, scriptHandlerVersion, logLabel, {
-    manualRun: gmValues !== undefined ? { gmValues } : {},
+    manualRun: gmSnapshot !== undefined ? { gmValues: gmSnapshot.values, gmSeq: gmSnapshot.seq } : {},
   });
   if (!spec) return null;
   const world = (spec.world ?? 'USER_SCRIPT') as InjectionWorld;

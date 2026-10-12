@@ -160,7 +160,7 @@
      unprompted via chrome.tabs.sendMessage; MAIN world has no
      chrome.runtime to receive them on. */
   var PUSHED = [
-    "sm:gm-value-update", "sm:gm-xhr-event", "sm:gm-tab-closed",
+    "sm:gm-value-update", "sm:gm-values-stale", "sm:gm-xhr-event", "sm:gm-tab-closed",
     "sm:gm-notification-event", "sm:gm-menu-fire",
     "sm:gm-download-event"
   ];

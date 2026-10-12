@@ -162,9 +162,9 @@ it fits; the list, with descriptions, is `HELP.tag` in
   (its jQuery, a player API on an element) without `unsafeWindow`.
 
 Some tags name gaps since fixed (`connect-subdomain`, `connect-undeclared`,
-`xhr-response-readystate`, `needs-xhr-onprogress`, `shadows-window`,
-`idle-after-load`). They stay on scripts that
-pass only because of the fix; don't use them for new failures.
+`value-sync-latency`, `xhr-response-readystate`, `needs-xhr-onprogress`,
+`shadows-window`, `idle-after-load`). They stay on scripts that pass only
+because of the fix; don't use them for new failures.
 
 A new tag is fine when nothing fits. Keep it short and kebab-case, and
 report it with a one-sentence description, so it can be added to

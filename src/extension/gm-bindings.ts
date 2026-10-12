@@ -611,7 +611,7 @@ export function emitGmBindings(
       `  __smSend({ type: "sm:error", id: __smId, name: __smName, loadedAt: __smLoadedAt, url: location.href, message: ${jsLit(gmValuesFailure)} });`,
       `  return;`,
       `}`,
-      `window.__SM_GM__.storage.init(${jsLit(info.scriptId)}, __smGmSnap);`,
+      `window.__SM_GM__.storage.init(${jsLit(info.scriptId)}, __smGmSnap, __smDecision.gmSeq);`,
     );
   }
   const prelude = preludeLines.join(' ');
