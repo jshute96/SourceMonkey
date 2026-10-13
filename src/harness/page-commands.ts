@@ -69,16 +69,12 @@ export interface PageInput extends ParsedArgs {
 }
 
 /**
- * Where `eval` runs: a script's own scope, with its name for messages,
- * whether it was named (`--script=<script>`) or is the selected one, and
- * the world it runs in instead when the selected one has no scope here;
- * or a world: the page's (`--page`, or no run script selected), or the
- * scripts' shared one (`--script` with none selected).
+ * Where `eval` runs: a script's own scope, with its name for messages
+ * and whether a missing scope falls back to the page (a bare `eval`) or
+ * is a failure (`--script`); or the page (`--page`, or no run script
+ * selected).
  */
-export type EvalIn = { scope: ScriptScope | null; name: string; named: boolean; fallback: EvalWorld; manager?: string } | EvalWorld;
-type EvalWorld = 'page' | 'scripts';
-
-const WORLD_NAMES: Record<EvalWorld, string> = { page: 'the page', scripts: 'the isolated scripts\' shared world' };
+export type EvalIn = { scope: ScriptScope | null; name: string; inPageIfMissing: boolean; manager?: string } | 'page';
 
 // Image types `screenshot` can write, by the file's extension.
 const IMAGE_FILE = /\.(png|jpe?g)$/i;
@@ -190,9 +186,9 @@ export async function runPageCommand(
         const noScope = typeof evalIn !== 'object' ? ''
           : evalIn.manager && evalIn.scope ? ui`sm-dev couldn't reach the scope of ${nameRole(evalIn.name)} under ${evalIn.manager}`
           : ui`${nameRole(evalIn.name)} ${evalIn.scope ? ui`hasn't run ${frame ? ui`in ${frameShown}` : 'on this page'}` : 'isn\'t installed in the extension'}`;
-        // A selected script with no scope runs its code in its fallback
-        // world, as said. A named one was asked for, so that's a
-        // failure.
+        // A bare `eval` whose script has no scope runs its code in the
+        // page, as said. With `--script` the script was asked for, so
+        // that's a failure.
         const evaluate = (): Promise<string> => {
           // --timeout-seconds (`given`): how long to wait for a document,
           // on a page between them.
@@ -200,9 +196,9 @@ export async function runPageCommand(
           const inScript = evalIn.scope ? tab.link.evaluate(expression, evalIn.scope, given, frame) : Promise.reject(new NoEvalHook());
           return inScript.catch((err: unknown) => {
             if (!(err instanceof NoEvalHook)) throw err;
-            if (evalIn.named) throw err;
-            say(ui`${noScope}, so this ran in ${WORLD_NAMES[evalIn.fallback]}`);
-            return tab.link.evaluate(expression, evalIn.fallback, given, frame);
+            if (!evalIn.inPageIfMissing) throw err;
+            say(ui`${noScope}, so this ran in the page`);
+            return tab.link.evaluate(expression, 'page', given, frame);
           });
         };
         const evaluated = evaluate().then((r) => { result = r; });

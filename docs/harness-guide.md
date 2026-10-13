@@ -1582,8 +1582,8 @@ current one.
   - With no script selected, `eval` runs in the page.
   - A selected script that hasn't run on the page (it doesn't match,
     or hasn't reached its `@run-at` yet) runs the code in the page
-    too, and says so. With `--script` that is the scripts' shared world
-    instead. A named one is an error.
+    too, and says so. With `--script`, or `--script=<script>`, that's
+    an error instead.
   - How it works: sm-dev's scripts carry a small eval hook in their
     wrapper (see [injection.md](injection.md#sm-devs-eval-hook)).
 

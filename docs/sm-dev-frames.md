@@ -255,10 +255,10 @@ inside a tab's iframes.
 
 - `eval --frame F2` runs in that iframe, in the same world it would in
   the top frame: the selected script's scope there, a named one's
-  (`--script=2`), the isolated scripts' shared world, or the page's (`--page`).
+  (`--script=2`), or the page's (`--page`).
   - The worlds are found among the frame's session's contexts: its
     default one is the page's, and one with the extension's origin
-    the scripts'.
+    the isolated scripts'.
   - A frame between documents is looked for again until
     `--timeout-seconds`, as for the top frame.
 - `click`, `hover`, `type`, `snapshot`, `screenshot`, `probe` and

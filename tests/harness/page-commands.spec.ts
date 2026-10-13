@@ -305,19 +305,25 @@ test('eval --script reaches a MAIN-world script and a script\'s IIFE, keeps stri
   // Inside the script's IIFE, with its GM_* bindings still in reach.
   expect(await run('eval --script=Iife hidden + " " + typeof GM_log')).toEqual(['"inside function"']);
   // Other didn't match the page: selected, a bare eval runs in the
-  // page, and --script in the world Other runs in (the page's too);
-  // named, that's a failure.
+  // page; with --script, bare or named, that's a failure.
   ctx.current = other;
   expect(await run('eval typeof count')).toEqual([
     '[sm-dev] Other hasn\'t run on this page, so this ran in the page',
     '"undefined"',
   ]);
-  expect(await run('eval --script document.title')).toEqual([
-    '[sm-dev] Other hasn\'t run on this page, so this ran in the page',
-    '"target"',
-  ]);
+  expect(await run('eval --script document.title')).toEqual(['[sm-dev] Other hasn\'t run on this page, so its scope can\'t be reached. Load a page it matches, or reload this one.']);
+  expect(await runConsoleCommand('eval --script 1', ctx)).toBe(false);
   expect(await run('eval --script=Other 1')).toEqual(['[sm-dev] Other hasn\'t run on this page, so its scope can\'t be reached. Load a page it matches, or reload this one.']);
   expect(await runConsoleCommand('eval --script=Other 1', ctx)).toBe(false);
+  // No run script at all: a bare eval runs in the page, and --script
+  // has none to run in.
+  const noScripts: ConsoleContext = { ...ctx, scripts: [], current: undefined };
+  lines.length = 0;
+  expect(await runConsoleCommand('eval document.title', noScripts)).not.toBe(false);
+  expect(lines).toEqual(['"target"']);
+  lines.length = 0;
+  expect(await runConsoleCommand('eval --script 1', noScripts)).toBe(false);
+  expect(lines).toEqual(['[sm-dev] ERROR: No script of this run is selected, so `eval --script` has none to run in. Name one with --script=<script>, or use --page.']);
 });
 
 test('eval --script reaches a page-world script on a page whose CSP forbids eval', async ({ page, fixtureServer, host, attachment, loadScript }) => {

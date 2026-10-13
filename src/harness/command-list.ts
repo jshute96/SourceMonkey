@@ -576,10 +576,7 @@ export const HELP_SECTIONS: HelpSection[] = [
           { term: '--page', about: 'Evaluate in the page instead, where the page\'s own globals are.' },
           {
             term: '--script[=<script>]',
-            about: [
-              'Evaluate inside the selected script, or the one named.',
-              'A selected script that hasn\'t run on the page falls back to the world it runs in: the page\'s, or the isolated scripts\' shared world.',
-            ],
+            about: 'Evaluate inside the selected script, or the one named. A script that hasn\'t run on the page is an error.',
           },
           { term: '--file <path>', about: 'Evaluate a JavaScript file, in place of `<js>`.' },
           { term: '--out FILE', about: 'Write the result to a file instead. Printed results are cut past 10,000 characters.' },

@@ -386,20 +386,19 @@ export class PageAttachment implements PageLink {
 
   /**
    * Evaluates `expression` in the main frame, or in `frame` (one of the
-   * page's iframes), in the page's own world, the scripts' (the
-   * user-script world every isolated script shares), or
-   * one script's own scope, for `eval`. Resolves to the result as a
+   * page's iframes), in the page's own world or one script's own
+   * scope, for `eval`. Resolves to the result as a
    * line to print; rejects with a `ScriptThrew` for what the expression
    * threw, a `NoEvalHook` for a script that hasn't run here, a
    * `NoDocument` for a frame that has gone, or an error of the
    * evaluation's own (the page gone, say).
    */
-  async evaluate(expression: string, world: 'page' | 'scripts' | ScriptScope, documentWaitMs = DOCUMENT_WAIT_MS, frame?: Frame): Promise<string> {
+  async evaluate(expression: string, world: 'page' | ScriptScope, documentWaitMs = DOCUMENT_WAIT_MS, frame?: Frame): Promise<string> {
     const at = frame && frame !== this.page.mainFrame() ? await this.frameContexts(frame, documentWaitMs) : await this.topContexts(documentWaitMs);
     if (typeof world === 'object') return this.evaluateInScript(at, expression, world);
-    const contextId = world === 'page' ? at.page : at.scripts;
+    const contextId = at.page;
     // The page context can go again between the wait and here.
-    if (contextId === null) throw world === 'page' ? new NoDocument(BETWEEN_DOCUMENTS) : new Error('The scripts\' world isn\'t set up in this document');
+    if (contextId === null) throw new NoDocument(BETWEEN_DOCUMENTS);
     const { cdp } = at;
     let { result, exceptionDetails } = await cdp.send('Runtime.evaluate', {
       expression, contextId, awaitPromise: true, replMode: true, userGesture: true,
