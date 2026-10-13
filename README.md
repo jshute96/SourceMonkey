@@ -401,7 +401,7 @@ For the header tags SourceMonkey honors, see
 ### How scripts run
 
 Like in Tampermonkey and Violentmonkey, scripts run in the page's own
-JavaScript world, so they can read its globals by name, like `jQuery`.
+JavaScript world, so they can read its globals by name.
 Unless it has `@grant none`, a script gets its own `window` showing the
 browser's built-ins, so what it writes there (or a library it loads)
 stays its own; `unsafeWindow` is the page's. Set `@inject-into content` or
