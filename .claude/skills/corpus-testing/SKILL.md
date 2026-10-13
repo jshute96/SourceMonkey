@@ -78,16 +78,17 @@ browser games (WebGL, canvas) keep a CPU core busy.
   1). Nothing can reach them, and they ignore SIGTERM, so `kill -9`
   them.
 
-Each agent:
+In each agent's prompt:
 
-- Gets its script IDs, a run name prefix of its own (`DhA`, `DhB`, ...;
-  never `D1`/`D2`, which are the person's), and
-  [references/testing-a-script.md](references/testing-a-script.md) to read
-  first. Add site hints (which sites block headless, which to avoid).
-- Records its own results with `record-results.mjs`, which is safe to run in
-  parallel.
-- Doesn't edit results.html, TODO.md or the friction log: it reports new
-  tags, SourceMonkey gaps and friction back, for one person to merge.
+- Give it its script IDs and a run name prefix of its own (`DhA`, `DhB`,
+  ...; never `D1`/`D2`, which are the person's).
+- Tell it to read
+  [references/testing-a-script.md](references/testing-a-script.md) first.
+- Add site hints (which sites block headless, which to avoid).
+- Tell it to record its own results with `record-results.mjs` (safe to
+  run in parallel).
+- Tell it not to edit results.html, TODO.md or the friction log, but to
+  report new tags, SourceMonkey gaps and friction back to you to merge.
 
 Keep notes as reports arrive (a scratchpad file), since there are many.
 

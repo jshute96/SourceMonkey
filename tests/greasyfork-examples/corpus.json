@@ -3998,9 +3998,8 @@
       "version": "1.66"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "1.66"
     },
     "tags": [
@@ -4011,6 +4010,11 @@
         "date": "2026-10-11",
         "version": "1.66",
         "text": "On the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the script throws at startup: `W is not defined` (line 859, its `W?.userscripts?.state?.isInitialized` bootstrap check).\n- SourceMonkey: it grants only `GM_xmlhttpRequest`, so it runs in the isolated world, where the page's `W` is not visible. No `unsafeWindow` in the script.\n- Tampermonkey (`--manager tm`, same page, logged out) ran it without the error: it logged `WME Route Checker: initialising v1.65` and WME logged `registered new sidebar tab for script \"wmeRouteChecker\"`.\n- The editor shows a sign-in dialog when logged out, so the route check itself could not be tried."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "1.66",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the `W is not defined` error is gone. It logged `WME Route Checker: initialising v1.65` and WME logged `registered new sidebar tab for script \"wmeRouteChecker\"`, the same as Tampermonkey in the earlier test. The route check itself still needs a login."
       }
     ]
   },
@@ -21043,9 +21047,8 @@
       "version": "2026.06.09.01"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "2026.06.09.01"
     },
     "tags": [
@@ -21056,6 +21059,11 @@
         "date": "2026-10-11",
         "version": "2026.06.09.01",
         "text": "On the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the script throws at startup in the top frame: `SDK_INITIALIZED is not defined`, from its `@require` \"WME Utils - Bootstrap\" (greasyfork 509664, line 71, a bare `await SDK_INITIALIZED`).\n- SourceMonkey: the script has `@grant`s, so it runs in the isolated world, where the page's `SDK_INITIALIZED` global is not visible.\n- Tampermonkey (`--manager tm`) ran WME Junction Angle Info, which uses the same Bootstrap require, on the same page with no error in the top frame (only in the sign-in iframe, which has no SDK in any manager).\n- The editor needs a login past that point (sign-in dialog), so the script's features could not be tried."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "2026.06.09.01",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the top frame no longer throws `SDK_INITIALIZED is not defined`. The \"WME Utils - Bootstrap\" require got past its `await SDK_INITIALIZED` and logged `WME SDK initialized (SDK v0 on WME v2.370-...)`, after WazeWrap initialized, with no errors in 5 s more. The features still need a login."
       }
     ]
   },
@@ -22411,9 +22419,8 @@
       "version": "2026.06.09.00"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "2026.06.09.00"
     },
     "tags": [
@@ -22424,6 +22431,11 @@
         "date": "2026-10-11",
         "version": "2026.06.09.00",
         "text": "On the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the script throws at startup in the top frame: `SDK_INITIALIZED is not defined`, from its `@require` \"WME Utils - Bootstrap\" (greasyfork 509664, line 71, a bare `await SDK_INITIALIZED`).\n- SourceMonkey: the script has `@grant`s, so it runs in the isolated world, where the page's `SDK_INITIALIZED` global is not visible.\n- Tampermonkey (`--manager tm`) ran WME Junction Angle Info, which uses the same Bootstrap require, on the same page with no error in the top frame (only in the sign-in iframe, which has no SDK in any manager).\n- The editor needs a login past that point (sign-in dialog), so the script's features could not be tried."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "2026.06.09.00",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the top frame no longer throws `SDK_INITIALIZED is not defined`. The \"WME Utils - Bootstrap\" require got past its `await SDK_INITIALIZED` and logged `WME SDK initialized (SDK v0 on WME v2.370-...)`, after WazeWrap initialized, with no errors in 5 s more. The features still need a login."
       }
     ]
   },
@@ -27247,9 +27259,8 @@
       "version": "3.3.1"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "3.3.1"
     },
     "tags": [
@@ -27260,6 +27271,11 @@
         "date": "2026-10-11",
         "version": "3.3.1",
         "text": "On the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the script throws at startup in the top frame: `SDK_INITIALIZED is not defined`, from its `@require` \"WME Utils - Bootstrap\" (greasyfork 509664, line 71, a bare `await SDK_INITIALIZED`).\n- SourceMonkey: the script has `@grant`s, so it runs in the isolated world, where the page's `SDK_INITIALIZED` global is not visible.\n- Tampermonkey (`--manager tm`) ran WME Junction Angle Info, which uses the same Bootstrap require, on the same page with no error in the top frame (only in the sign-in iframe, which has no SDK in any manager).\n- The editor needs a login past that point (sign-in dialog), so the script's features could not be tried."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "3.3.1",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the top frame no longer throws `SDK_INITIALIZED is not defined`. The \"WME Utils - Bootstrap\" require got past its `await SDK_INITIALIZED` and logged `WME SDK initialized (SDK v0 on WME v2.370-...)`, after WazeWrap initialized. The features still need a login.\n- It still throws `SDK_INITIALIZED is not defined` in the sign-in iframe, which has no SDK; Tampermonkey does the same there."
       }
     ]
   },
@@ -29831,9 +29847,8 @@
       "version": "2024.10.28.003"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "2024.10.28.003"
     },
     "tags": [
@@ -29844,6 +29859,11 @@
         "date": "2026-10-11",
         "version": "2024.10.28.003",
         "text": "On the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the script throws at startup in the top frame: `SDK_INITIALIZED is not defined`, from its `@require` \"WME Utils - Bootstrap\" (greasyfork 509664, line 71, a bare `await SDK_INITIALIZED`).\n- SourceMonkey: the script has `@grant`s, so it runs in the isolated world, where the page's `SDK_INITIALIZED` global is not visible.\n- Tampermonkey (`--manager tm`) ran WME Junction Angle Info, which uses the same Bootstrap require, on the same page with no error in the top frame (only in the sign-in iframe, which has no SDK in any manager).\n- The editor needs a login past that point (sign-in dialog), so the script's features could not be tried."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "2024.10.28.003",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the top frame no longer throws `SDK_INITIALIZED is not defined`. The \"WME Utils - Bootstrap\" require got past its `await SDK_INITIALIZED` and logged `WME SDK initialized (SDK v0 on WME v2.370-...)`, after WazeWrap initialized, with no errors in 5 s more. The features still need a login."
       }
     ]
   },
@@ -30704,9 +30724,8 @@
       "version": "2025.10.09.001"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "2025.10.09.001"
     },
     "tags": [
@@ -30717,6 +30736,11 @@
         "date": "2026-10-11",
         "version": "2025.10.09.001",
         "text": "On the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the script starts, then logs `ClickSaver: jQuery not ready. Retry loading translations...` every 250 ms (50+ times in 10 s) and never gets further.\n- SourceMonkey: it grants `GM_xmlhttpRequest` and `GM_addElement`, so it runs in the isolated world, where the page's `$` is not visible (`typeof $ === 'undefined'` check, line 1511). Its later `bootstrap()` call uses the \"WME Utils - Bootstrap\" require, which reads the page's `SDK_INITIALIZED` the same way.\n- Tampermonkey (`--manager tm`, same page) logged `ClickSaver: Translations loaded.` on the first try.\n- The editor needs a login for the click-saving features, so those could not be tried."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "2025.10.09.001",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) it logged `ClickSaver: Translations loaded.` on the first try (no more `jQuery not ready` retries), then WazeWrap initialized and the Bootstrap require logged `WME SDK initialized`. The click-saving features still need a login."
       }
     ]
   },
@@ -30783,9 +30807,8 @@
       "version": "2026.04.14.00"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "2026.04.14.00"
     },
     "tags": [
@@ -30796,6 +30819,11 @@
         "date": "2026-10-11",
         "version": "2026.04.14.00",
         "text": "On the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the script throws at startup in the top frame: `SDK_INITIALIZED is not defined`, from its `@require` \"WME Utils - Bootstrap\" (greasyfork 509664, line 71, a bare `await SDK_INITIALIZED`).\n- SourceMonkey: the script has `@grant`s, so it runs in the isolated world, where the page's `SDK_INITIALIZED` global is not visible.\n- Tampermonkey (`--manager tm`) ran WME Junction Angle Info, which uses the same Bootstrap require, on the same page with no error in the top frame (only in the sign-in iframe, which has no SDK in any manager).\n- The editor needs a login past that point (sign-in dialog), so the script's features could not be tried."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "2026.04.14.00",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the top frame no longer throws `SDK_INITIALIZED is not defined`. The \"WME Utils - Bootstrap\" require got past its `await SDK_INITIALIZED` and logged `WME SDK initialized (SDK v0 on WME v2.370-...)`, after WazeWrap initialized. The features still need a login.\n- It still throws `SDK_INITIALIZED is not defined` in the sign-in iframe, which has no SDK; Tampermonkey does the same there."
       }
     ]
   },
@@ -31182,7 +31210,7 @@
     "test": {
       "status": "fail",
       "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "date": "2026-10-12",
       "version": "1.7.3"
     },
     "tags": [
@@ -31194,6 +31222,11 @@
         "date": "2026-10-11",
         "version": "1.7.3",
         "text": "Promises a control panel (opened by a `confirm` at load) and split/feed hotkeys for agar.io and gota.io. Judged at the agar.io main menu; the hotkeys need a live match.\n- SourceMonkey: on https://agar.io/ it never runs. Its only agar.io rule, `@match agar.io*`, has no path and is dropped (`ignored-match`; TODO.md \"A bare origin, no path\"). Under `--manager tm` on the same page Tampermonkey ran it: its `confirm` opened and the panel showed.\n- SourceMonkey: with a copy matching `*://agar.io/*`, the panel opened but its HOME/THEME/SETUP/ABOUT tabs stayed empty, with `openPage is not defined` page errors on each click. The tab buttons use inline `onclick=\"openPage(...)\"`, and the script defines `document.openPage` in its isolated world, which the page's inline handlers can't see. Tampermonkey runs it in the page: Home showed at once, and THEME switched to the Theme tab.\n- The same copy with `@inject-into page` added worked like Tampermonkey (Home shown, THEME switched, no errors).\n- Its split and feed keys call the page's `window.onkeydown`, which the isolated world can't see either.\n- gota.io/web: the script started on Cloudflare's challenge page; a headed browser got the \"Verify you are human\" checkbox, so gota.io couldn't be judged."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "1.7.3",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): still fails: on https://agar.io/ the original still never runs, since `@match agar.io*` has no path and is dropped (`match` gives \"no match\"; TODO.md \"A bare origin, no path\").\n- The inline-handler part now works: a copy matching `*://agar.io/*`, with no other change, opened its panel after the `confirm`, showed Home at once, and THEME switched to the Theme tab, with no `openPage is not defined` errors. The page's inline `onclick=\"openPage(...)\"` finds the script's `document.openPage`, since `document` is now the page's own.\n- Kept `inline-handler-scope`: the script relies on it and it now works. Kept `ignored-match`, the remaining failure.\n- Split and feed keys call `window.onkeydown(...)`, but the page's `window.onkeydown` is null on today's agar.io (in the page too), so they would throw in any manager; not judged (needs a live match)."
       }
     ]
   },
@@ -39882,7 +39915,7 @@
     "test": {
       "status": "fail",
       "blame": "script",
-      "date": "2026-10-11",
+      "date": "2026-10-12",
       "version": "9.2.0"
     },
     "tags": [
@@ -39899,6 +39932,11 @@
         "date": "2026-10-11",
         "version": "9.2.0",
         "text": "Re-tested after 52f830e (sandbox `window` for granted scripts) and c2dbb1f (granted `GM_*` names reassignable): both SourceMonkey failures are gone, but it still fails (script).\n- On www.rainews.it/tgr/lazio (headless), unmodified copy: the shim at line 39 ran without error, and bare `$` is now the `@require`d jQuery, not the page's `class $`. `$(document).ready` at line 348 ran: its `<style>` (`.tagManagerError`) was appended and it logged `isTGR: true`.\n- Script: still nothing to handle. The TGR branch looks for `div.Player[data-mediaurl]`; the page has no `div.Player`, `[data-mediaurl]` or `[data-video-url]`. rai.it videos live on raiplay.it now (script 2128).\n- Kept `gm-reassign` and `page-shadows-require`: the script still relies on both behaviors and gets past them only because of the fixes."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "9.2.0",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): still fails (script), the same as the last re-test. On www.rainews.it/tgr/lazio, headless, unmodified copy:\n\n- SourceMonkey: the `GM_xmlhttpRequest = GM.xmlHttpRequest` shim at line 39 ran without error. In the page world, bare `$` in the script is the `@require`d jQuery 1.11.1, while the page's own `$` is still its `class $` (a Lit element). Its `$(document).ready` ran: the `.tagManagerError` `<style>` was added and it logged `isTGR: true`.\n- Script: nothing to handle. The page has no `div.Player`, `[data-mediaurl]`, `[data-video-url]` or `<video>`; rai.it videos live on raiplay.it now (script 2128).\n- Kept `gm-reassign` and `page-shadows-require`: the script still relies on both behaviors and gets past them only because of the fixes."
       }
     ]
   },
@@ -57141,9 +57179,8 @@
       "version": "1.10.5"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-10",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "1.10.5"
     },
     "tags": [
@@ -57154,6 +57191,11 @@
         "date": "2026-10-10",
         "version": "1.10.5",
         "text": "On the Douban book page `https://book.douban.com/subject/1084336/` (小王子) the script started, registered its two menu commands, then threw `jQuery is not defined`: it uses the site's jQuery without `unsafeWindow` or a `@require`, and has `@grant`s, so it runs in the isolated world. The page's own `jQuery` is a function. No links were added under the cover (`#mainpic`).\n\n- A copy with `@grant unsafeWindow` and `var jQuery = unsafeWindow.jQuery;` works: under the cover it adds a \"参考联盟\" link to `book.ucdrs.superlib.net/search?sw=9787020042494...` (the book's ISBN, read from the page's ld+json) and the 📑 copy-metadata link, with no errors."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "1.10.5",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on `https://book.douban.com/subject/1084336/` (小王子), headless.\n\n- SourceMonkey: the unmodified copy started, registered its two menu commands, and threw nothing: bare `jQuery` now resolves to the page's own.\n- Under the cover (`#mainpic`) it added the \"参考联盟\" link to `book.ucdrs.superlib.net/search?sw=9787020042494...` and the 📑 copy-metadata link, the same as the `unsafeWindow` copy did before.\n- Kept `needs-page-globals`: the script still uses the site's jQuery without `unsafeWindow` or a `@require`, and passes only because scripts now run in the page world."
       }
     ]
   },
@@ -57843,9 +57885,8 @@
       "version": "0.14"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "0.14"
     },
     "tags": [
@@ -57856,6 +57897,11 @@
         "date": "2026-10-11",
         "version": "0.14",
         "text": "On https://x.com/NASA (logged out):\n\n- SourceMonkey: the script throws at startup, `exportFunction is not defined` (line 81). It calls Firefox's `exportFunction` unchecked to replace the page's `JSON.parse`; Violentmonkey defines a pass-through stand-in on Chrome. Known gap: TODO.md \"No `cloneInto` / `exportFunction` / `createObjectIn`\".\n- A copy with a one-line stand-in (`const exportFunction = (fn, target, opts) => { target[opts.defineAs] = fn; }`) started cleanly and replaced the page's `JSON.parse`: parsing `{\"legacy\":{\"possibly_sensitive\":true},\"media\":[{\"sensitive_media_warning\":1}]}` in the page gave `possibly_sensitive: false` and the warning removed.\n- Not checked against a real sensitive tweet (none found logged out); X's own use of `JSON.parse` for that data is unverified."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "0.14",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on https://x.com/NASA (logged out, headless):\n\n- The unmodified copy started with no errors. Its `exportFunction(new_parse, unsafeWindow.JSON, { defineAs: \"parse\" })` now goes through SourceMonkey's `exportFunction` stand-in (f3d2c5c) and replaces the page's `JSON.parse`.\n- In the page, `JSON.parse('{\"legacy\":{\"possibly_sensitive\":true},\"media\":[{\"sensitive_media_warning\":1}]}')` gave `possibly_sensitive: false` and the warning removed, as with the hand-patched copy before.\n- Still not checked against a real sensitive tweet (none found logged out), and the logged-out page made no `JSON.parse` calls of its own while scrolling.\n- Kept `needs-cloneinto`: the script still calls `exportFunction` unchecked and passes only because of the stand-in."
       }
     ]
   },
@@ -63509,9 +63555,8 @@
       "version": "14.2"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "14.2"
     },
     "tags": [
@@ -63523,6 +63568,11 @@
         "date": "2026-10-11",
         "version": "14.2",
         "text": "GeoGuessr shows \"Sign up to play\" logged out, so no round could be played. The script installed and started on www.geoguessr.com with no errors.\n- Script: it finds the location by patching `XMLHttpRequest.prototype.open` (no `unsafeWindow`) to read Google Maps `GetMetadata` / `SingleImageSearch` responses. It grants `GM_webRequest` (ignored, never used), so it is not `@grant none`.\n- SourceMonkey: it runs in the isolated world, so the patch lands on that world's `XMLHttpRequest`. After start, `eval --page XMLHttpRequest.prototype.open` was still native; inside the script it was the patched function. The page's Maps requests can't reach the hook, so it would never see coordinates.\n- Tampermonkey (`--manager tm`, same page): `eval --page XMLHttpRequest.prototype.open` showed the script's patched function, so the hook works there.\n- Blame inferred from the hook landing in the wrong world; the full place-a-guess flow wasn't observed (login wall)."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "14.2",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes as far as it can be checked logged out; GeoGuessr still shows \"Sign up to play\", so no round was played.\n- On www.geoguessr.com, `eval --page XMLHttpRequest.prototype.open` is now the script's patched function (as under Tampermonkey before), so the page's Maps `GetMetadata` requests reach the hook.\n- Its marker placement reads React's `__reactFiber$` expandos on elements; from the script, 429 elements had them on the home page.\n- Kept `patches-page-builtins` and `needs-page-globals`: it relies on both, and passes only because of the change."
       }
     ]
   },
@@ -65370,13 +65420,11 @@
       "version": "1.5.0"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "1.5.0"
     },
     "tags": [
-      "needs-page-globals",
       "patches-page-builtins"
     ],
     "notes": [
@@ -65384,6 +65432,11 @@
         "date": "2026-10-11",
         "version": "1.5.0",
         "text": "Promises a wallhack (F), chat toggle (V), ad hiding, and a red screen edge at low health. The wallhack hooks `Object.prototype.material` to catch the game's three.js player materials, and the ad blocker sets `window.show_rewarded` and `show_preroll` to no-ops.\n\n- kirka.io (headless temp browser): the script started with no errors; its styles (ad-hiding rules, notification and `.bloody-screen` CSS) and the `.bloody-screen` div were added.\n- SourceMonkey: it grants `GM.info`, so it runs in the isolated world, and its `Object.prototype` setter and `window.show_*` stubs land there. In the page, `Object.prototype` had no `material` property and `window.show_rewarded` was undefined, so the game never feeds the wallhack.\n- Tampermonkey (same page): the page's `Object.prototype` had the `material` setter.\n- A copy with `@inject-into page` under SourceMonkey put both in the page (`material` setter present, `show_rewarded` is the script's `_`).\n- Not checked: whether the wallhack itself still works on the current game. It needs a live match; a private party never started, and on the menu the page-world copy's `players` list stayed empty."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "1.5.0",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on https://kirka.io/ the page's `Object.prototype` has the script's `material` getter/setter (the wallhack hook) and the `.bloody-screen` div is in.\n- `window.show_rewarded` / `show_preroll` are set only on the script's sandbox `window` (undefined in the page), the same as under Tampermonkey (`--manager tm`, same page: setter present, both undefined).\n- Kept `patches-page-builtins` (it relies on the `Object.prototype` hook reaching the page). Removed `needs-page-globals`: the script reads no page globals; its only page-window use is those writes, which stay sandboxed in Tampermonkey too.\n- The wallhack itself still needs a live match and wasn't judged."
       }
     ]
   },
@@ -71137,8 +71190,8 @@
     },
     "test": {
       "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-10",
+      "blame": "script",
+      "date": "2026-10-12",
       "version": "3.0.7"
     },
     "tags": [
@@ -71149,6 +71202,11 @@
         "date": "2026-10-10",
         "version": "3.0.7",
         "text": "Opened https://bumble.com/app in a temp browser: Bumble redirects to https://bumble.com/web-not-available/ (\"Bumble is now app-only\"), so the web app the script enhances is gone, and the rest would need an account.\n- SourceMonkey: the script started, registered its \"Config\" and \"Last Seen Table\" menu commands, then threw `exportFunction is not defined` (line 270) where it wraps `XMLHttpRequest.prototype.send` on `unsafeWindow`. It threw the same in the `consent.bumble.com` iframe.\n- Script: it calls Firefox's `exportFunction` without checking. Known gap, see the `needs-cloneinto` item in TODO.md (Violentmonkey provides pass-through stand-ins on Chrome).\n- A copy with `const exportFunction = (fn) => fn;` added ran to its own \"bumble-enhanced loaded\" line with no errors."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "3.0.7",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): the SourceMonkey failure is gone, but it still fails (script).\n\n- https://bumble.com/app still redirects to https://bumble.com/web-not-available/ (\"Bumble is now app-only\"), logged out, headless.\n- SourceMonkey: the unmodified copy ran to its \"bumble-enhanced loaded\" line in the page and the `consent.bumble.com` iframe with no `exportFunction` error. The page's `XMLHttpRequest.prototype.send` is now the script's wrapper (and `sendEx` is set), through the `exportFunction` stand-in (f3d2c5c).\n- Script: about 5 seconds later its timer threw `Failed to fetch` (line 1504) on its `fetch` of `bumble.com/mwebapi.phtml?SERVER_GET_USER_LIST`. The web app it enhances is gone, so it has nothing to do in any manager.\n- Kept `needs-cloneinto`: it still calls `exportFunction` unchecked and gets past it only because of the stand-in."
       }
     ]
   },
@@ -71851,9 +71909,8 @@
       "version": "2.1"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-10",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "2.1"
     },
     "tags": [
@@ -71864,6 +71921,11 @@
         "date": "2026-10-10",
         "version": "2.1",
         "text": "On https://moomoo.io/ (main menu) the script's style (`animation: none`, `transition: none`) went in and 48 of 50 images got `loading=lazy`, but it broke the page:\n- SourceMonkey: the script grants `unsafeWindow`, so it runs in the page world, and its closing `window.requestAnimationFrame = () => {}`, `window.setTimeout = fn => fn()` and `window.setInterval = fn => fn()` replace the page's own. The game's code then recursed through the fake `setInterval` (\"Maximum call stack size exceeded\", thrown from moomoo's `index-*.js`), and the page never finished loading within 60 s.\n- Under Tampermonkey 5.5.1 (`--manager tm`) on the same page, the style and lazy images are the same, but the page's `requestAnimationFrame` and `setTimeout` stay native and the page loads normally.\n- A copy with `@inject-into content` added behaves as under Tampermonkey in SourceMonkey (style in, 48 lazy images, page timers native, no error).\n- Known design: `unsafeWindow` forces the page world (docs/injection.md, \"unsafeWindow forces MAIN world\")."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "2.1",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on https://moomoo.io/ the style (`animation: none`) went in, 48 of 50 images got `loading=lazy`, and the page loaded normally (`complete`, 3 canvases, no \"Maximum call stack size exceeded\").\n- The closing `window.requestAnimationFrame` / `setTimeout` / `setInterval` assignments stay on the sandbox: the page's three stayed native, while the script's `window.setTimeout(() => 42)` returned 42. Same as Tampermonkey in the earlier note.\n- Kept `window-writes-reach-page`: the script passes only because those writes no longer reach the page."
       }
     ]
   },
@@ -72823,9 +72885,8 @@
       "version": "1.5.0"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-10",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "1.5.0"
     },
     "tags": [
@@ -72836,6 +72897,11 @@
         "date": "2026-10-10",
         "version": "1.5.0",
         "text": "Promises a speed hack by replacing `performance.now` with `() => Date.now() * 5`.\n- SourceMonkey: on https://kirka.io/ the script started with no errors, but it grants `GM.info`, so it runs in the isolated world. Its `performance.now` there read 8958508652590 while the page's stayed native (5173, `function now() { [native code] }`), so the game never sees the change.\n- Tampermonkey (`--manager tm`, same file): the page's `performance.now` was the script's `() => Date.now() * 5` and read 8958508706780.\n- A copy with `@inject-into page` added gave the same page-side result in SourceMonkey.\n- The speed effect itself needs a live match and wasn't judged."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "1.5.0",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on https://kirka.io/ the page's `performance.now` is the script's `() => Date.now() * 5` (read 8959093093415), the same function the script sees, as under Tampermonkey. Kept `patches-page-builtins`: the script relies on its patch reaching the page. The speed effect itself needs a live match and wasn't judged."
       }
     ]
   },
@@ -75250,9 +75316,8 @@
       "version": "5.0.8"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-02",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "5.0.8"
     },
     "tags": [
@@ -75263,6 +75328,11 @@
         "date": "2026-10-02",
         "version": "5.0.8",
         "text": "Tested in sm-dev in the shared visible browser (Reddit blocks headless), signed out, on r/MorbidReality, an NSFW subreddit.\n\n- Script: it patches Reddit's custom elements (`shreddit-blurred-container` and others) through `customElements.whenDefined`. It grants `GM_*`, so SourceMonkey runs it in the isolated USER_SCRIPT world, where `customElements` is `null`; every `waitDefined` call threw `Cannot read properties of null (reading 'whenDefined')`. Its `over18` cookie and CSS still applied, so the age interstitial went away after a reload, but all 3 posts stayed blurred (`blurred: true`) and the \"Unblur\" header button never appeared.\n- A copy with `@inject-into page` (MAIN world, the page's own registry, as Tampermonkey and Violentmonkey run it) ran with no errors: all 3 posts had `blurred: false` and the \"Unblur\" button was in the header.\n- The `over18` cookie the script set was removed afterwards."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "5.0.8",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on r/MorbidReality, signed out, in a headed temp browser (the first attempt got Reddit's reCAPTCHA page; a second fresh browser got through).\n\n- SourceMonkey: the unmodified copy ran with no errors. `customElements` is the page's registry now, so its `waitDefined` hooks applied: after a reload all 3 `shreddit-blurred-container`s had `blurred: false`, and the \"Unblur\" button was in the header.\n- Both managers now show a \"Mature Content\" dialog (\"Yes, I'm Over 18\" or \"Log In\") over the page. Its `configured-xpromo-modal` context is `bypassable_xpromo_nsfw_bypassable_desktop`, which isn't in the script's block list, so the script lets it through. Tampermonkey (`--manager tm`) gave the same: posts unblurred, the button there, the same dialog shown. Version 5.0.9 is out and may handle it.\n- Kept `needs-page-globals`: the script still uses the page's `customElements` without `unsafeWindow`, and passes only because scripts now run in the page world."
       }
     ]
   },
@@ -77262,9 +77332,8 @@
       "version": "2.2.0"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "2.2.0"
     },
     "tags": [
@@ -77275,6 +77344,11 @@
         "date": "2026-10-11",
         "version": "2.2.0",
         "text": "On https://evoworld.io/ (main menu) the script loads its menu HTML from raw.githubusercontent.com with `GM_xmlhttpRequest` (no `@connect` lines, so SourceMonkey asked about raw.githubusercontent.com; allowed). After its two confirm/alert dialogs the menu loaded (58 buttons) and `Tab` toggled it (opacity 0 to 1).\n\n- SourceMonkey: the hacks read the page's own globals (`game`, `Engine`, `joinedGame`, `leaderboard`, `sendChat`) without `unsafeWindow`, and with `@grant GM_xmlhttpRequest` the script runs in the isolated world. Clicking \"Smooth Movement\" threw `game is not defined`, and the page's `game.maxInterpolateDistanceTeleport` stayed 300.\n- Under Tampermonkey (sm-dev `--manager tm`, a copy with only `@connect raw.githubusercontent.com` added, since its prompt was auto-refused) the same click set it to 3500.\n- A SourceMonkey copy with `const game = unsafeWindow.game;` at the top of `main()` also set it to 3500.\n- Site: evoworld's consent dialog swallows all clicks on the page (even on elements it didn't add) until it is answered; answer it (CONFIRM, OK) before clicking the menu.\n- In-game hacks (level, hp, zoom, noclip) not checked in a live game."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "2.2.0",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on https://evoworld.io/ (main menu), after allowing raw.githubusercontent.com, its dialogs and evoworld's consent dialog, `Tab` opened the menu (opacity 1) and clicking \"Smooth Movement\" set the page's `game.maxInterpolateDistanceTeleport` from 300 to 3500, with no errors. In the script, bare `game` is the page's object (`game === unsafeWindow.game`).\n- Kept `needs-page-globals`: it reads `game` and other page globals by bare name, and passes only because they're now visible.\n- In-game hacks still not checked in a live game."
       }
     ]
   },
@@ -80585,9 +80659,8 @@
       "version": "47.0"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "47.0"
     },
     "tags": [
@@ -80598,6 +80671,11 @@
         "date": "2026-10-11",
         "version": "47.0",
         "text": "Logged out, on a game page (`/games/920587237/Adopt-Me`):\n\n- Script: started, showed its \"Rolocate Update V47.0\" dialog and the SmartSearch navbar box; typing \"adopt me\" there fetched `apis.roblox.com/search-api/omni-search` and game icons through `GM_xmlhttpRequest` (all 200).\n- SourceMonkey: after the dialog's refresh, the game page's setup threw `Roblox is not defined` (line 14834, `InitRobloxLaunchHandler`). The script grants `GM_*`, so it runs in the isolated world, and reads the page's `Roblox.GameLauncher` without `unsafeWindow`. The throw aborts the games-page block (join interceptor, filter, server hop and recent server buttons).\n- A copy with `@inject-into page` under SourceMonkey didn't throw and wrapped `Roblox.GameLauncher.joinGameInstance` (`_robloxJoinInterceptorInitialized` true).\n- The server filter buttons themselves need the logged-in server list (the logged-out Servers tab shows \"There are currently no running games.\" in both copies), so they couldn't be checked further."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "47.0",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; logged out, headless, on `/games/920587237/Adopt-Me`.\n\n- SourceMonkey: the unmodified copy showed its \"Rolocate Update\" dialog and the SmartSearch navbar box. After the dialog's \"Exit (Refresh)\", the games-page setup ran with no `Roblox is not defined` error: the page's `Roblox.GameLauncher.joinGameInstance` is now the script's async wrapper, and its `_robloxJoinInterceptorInitialized` is true.\n- The server filter buttons still can't be checked logged out: the Servers tab shows \"There are currently no running games.\", as before.\n- Kept `needs-page-globals`: the script still reads the page's `Roblox` without `unsafeWindow`, and passes only because scripts now run in the page world."
       }
     ]
   },
@@ -83240,13 +83318,11 @@
       "version": "1.1"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "1.1"
     },
     "tags": [
-      "needs-page-globals",
       "patches-page-builtins"
     ],
     "notes": [
@@ -83254,6 +83330,11 @@
         "date": "2026-10-11",
         "version": "1.1",
         "text": "GeoGuessr shows \"Sign up to play\" logged out, so no round could be played. The script installed and started on www.geoguessr.com with no errors.\n- Script: same hook as 450253 (same author): patches `XMLHttpRequest.prototype.open` without `unsafeWindow` to read Google Maps metadata responses, then POSTs the coordinates to georesolver.0x978.com for viewing on another device. On first run it stored a `sessionId` and opened `https://georesolver.0x978.com/?id=...` in a new tab (\"GeoGuessr Live Viewer\"), and it pings geoguessrping.0x978.com with its version.\n- SourceMonkey: it runs in the isolated world (it grants `GM_getValue`/`GM_setValue`), so the page's `XMLHttpRequest.prototype.open` stayed native after start while the script's world had the patched one. The page's Maps requests never reach the hook.\n- Tampermonkey patches the page's `XMLHttpRequest` for the same code (checked with 450253 under `--manager tm`).\n- Blame inferred; the send-to-viewer flow wasn't observed (login wall)."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "1.1",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes as far as it can be checked logged out; GeoGuessr still shows \"Sign up to play\", so no round was played.\n- On www.geoguessr.com, `eval --page XMLHttpRequest.prototype.open` is now the script's patched function, so the page's Maps requests reach the hook. It started with no errors, stored its `sessionId` and opened the georesolver.0x978.com viewer tab as before.\n- Kept `patches-page-builtins`. Removed `needs-page-globals`: it reads no page globals (its fetches go through a blank iframe's `fetch`)."
       }
     ]
   },
@@ -83847,9 +83928,8 @@
       "version": "9.3.11"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "9.3.11"
     },
     "tags": [
@@ -83860,6 +83940,11 @@
         "date": "2026-10-11",
         "version": "9.3.11",
         "text": "Promises a Stockfish panel that shows (and by default plays) the best move. Tested logged out on `/analysis` and on a guest game against a bot (`/play/computer`), with no other players involved.\n\n- Script: started with no errors and drew its \"SF ENGINE\" panel, but stayed at \"Waiting for analysis...\" and sent no engine requests.\n- SourceMonkey: it grants `GM_*`, so it runs in the isolated world. It reads the board through the element's `game` property (`board.game.getFEN()`, `getTurn()`, `getPlayingAs()`), an expando the page's code sets. From the script's world `board.game` is `undefined`; `eval --page` gives the game object.\n- A copy with `@inject-into page` under SourceMonkey worked on the bot game: it posted to `chess-api.com/v1` (200), showed \"+0.41 Slight Advantage\" and \"Best: c2c4\", and auto-played moves (FEN after a few moves: `rnbqk2r/ppp1bppp/4pn2/8/Q1pP4/5NP1/PP2PPBP/RNB1K2R b`).\n- On `/analysis` `getPlayingAs()` is null, so it never analyzes there in any world.\n- Tampermonkey not checked here; it runs scripts in the page's world by default."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "9.3.11",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on `/play/computer` as a guest (no account), unmodified, the script read the board through `board.game`, posted to `chess-api.com/v1` (200, many times) and auto-played a whole game against the 250 bot behind the \"Play the bots\" modal, ending in checkmate (\"You Beat Martinfoot\"). Its panel showed \"Best: d1d8\"; final FEN `1n1R1kB1/2N1b1p1/p7/4p2p/1B6/1N5P/PPP2PP1/2K4R b`.\n- Kept `needs-page-globals`: it relies on the page-set `game` expando on the board element, visible now that it runs in the page."
       }
     ]
   },
