@@ -105,7 +105,9 @@ dependency `url` when one failed. It also carries:
   each as `{ level, message, location? }`.
 
 `record-results.mjs validate` runs the tool with `--json` and records
-each verdict in `corpus.json`.
+each verdict in `corpus.json`, keeping only the `warn`-level
+diagnostics as its warnings (an `info` note, like a missing
+`@connect`, isn't one).
 
 ## Testing
 

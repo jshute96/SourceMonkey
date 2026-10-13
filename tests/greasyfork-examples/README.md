@@ -126,12 +126,17 @@ The raw `.user.js` URLs are *not* behind the bot check, so these fetch normally:
 node tests/greasyfork-examples/download-scripts.mjs [--count N]
 ```
 
-Three phases: every `script_url` from `corpus.json`, then every unique `@require` URL
-and `@resource` URL found in the metadata blocks of what it just downloaded.
+Four phases: every `script_url` from `corpus.json`, then every unique `@require`
+URL, `@resource` URL and `@icon` URL found in the metadata blocks of what it just
+downloaded. For icons, that's the one icon SourceMonkey would show.
 
 Options: `--corpus`, `--root`, `--count`, `--delay MS` (default 200),
-`--concurrency N` (default 1), `--force`, `--scripts-only`, `--requires-only`,
-`--resources-only`, `--max-broken-hosts N` (default 5).
+`--concurrency N` (default 1), `--force`, `--include PARTS` (a comma-separated list
+of `scripts`, `requires`, `resources`, `icons`, or `all`; default `all`),
+`--max-broken-hosts N` (default 5).
+
+`requires`, `resources` and `icons` are found in the headers of scripts already on
+disk, so `--include icons` alone needs the scripts from an earlier run.
 
 Requires a build (`pnpm run build`) — the `@require` scan reuses the extension's
 own metadata-block parser from `dist/userscript-header.js`.
@@ -319,7 +324,7 @@ Beside `listing`, a record can hold:
 | `version` | `validate` | `@version` of the downloaded copy |
 | `file` | `validate` | Where the downloaded copy is, relative to `files/` |
 | `sites` | `validate` | What its `@match` / `@include` lines target, for the results page: a site, a host pattern, a regex, or `*` |
-| `valid` | `validate` | The latest offline verdict: `status` (`ok` / `invalid` / `tool error`), `error`, `warnings`, derived `tags`, `date`, `version` |
+| `valid` | `validate` | The latest offline verdict: `status` (`ok` / `invalid` / `tool error`), `error`, `warnings` (`warn`-level diagnostics only), derived `tags`, `date`, `version` |
 | `test` | `set --test` | The latest run on the target site: `status`, `reason` or `blame`, `date`, `version` |
 | `tags` | `set --tag` / `--untag` | Hand-added labels |
 | `notes` | `set --note` | `{ date, version, text }` list, oldest first; `text` is markdown. `--replace-note` / `--remove-note` fix one |

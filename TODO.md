@@ -1767,8 +1767,8 @@ itself once a sync places it. What's missing:
 
 - **The match-pattern check is narrower than Chrome's parser.**
   `matchPatternProblem` (`src/url-match.ts`) covers the shapes Chrome
-  names — no path, bad scheme, empty host, a host holding characters no
-  hostname can, misplaced host wildcard — and stops there, because a
+  names — bad or missing scheme, empty host, a host holding characters
+  no hostname can, misplaced host wildcard — and stops there, because a
   false positive would drop a pattern that works. A malformed port and
   anything Chrome tightens next still land as REJECTED (a port out of
   range, say — `https://host:65536/*` passes our check and Chrome

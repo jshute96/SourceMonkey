@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Download the userscripts listed in corpus.json, then the unique
-// `@require` libraries and `@resource` assets they pull in, into a URL-shaped
-// tree on disk.
+// `@require` libraries, `@resource` assets and `@icon` images they pull in,
+// into a URL-shaped tree on disk.
 //
 // Layout: every file lands at <root>/<host>/<path>, keeping the URL's
 // percent-encoding verbatim in the filename, e.g.
@@ -20,9 +20,11 @@
 //   --delay MS         pause between requests (default 200)
 //   --concurrency N    parallel requests (default 1 — be polite)
 //   --force            re-download files that already exist on disk
-//   --scripts-only     only the userscripts; skip @require and @resource
-//   --requires-only    only @require libraries, scanned from downloaded scripts
-//   --resources-only   only @resource assets, scanned from downloaded scripts
+//   --include PARTS    a comma-separated list of what to download: `scripts`,
+//                      `requires`, `resources`, `icons`, or `all` (default all).
+//                      `requires`, `resources` and `icons` are found in the
+//                      headers of scripts already on disk, so they need the
+//                      scripts downloaded first, in this run or an earlier one
 //   --report PATH      where to write the run report (default download-report.json here)
 //   --max-broken-hosts N  abort once more than N hosts have gone unreachable (default 5)
 //
@@ -37,6 +39,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseHeader, getValues } from '../../dist/userscript-header.js';
+import { iconRefFromHeader } from '../../dist/script-icon.js';
 import {
   CORPUS_JSON, dependencyUrlFor, checkRoot, exists, listingRows, readCorpus, readDownloaded, resolveTarget, urlToPath,
   printHelp,
@@ -51,6 +54,20 @@ const REPORT_PATH = path.join(REPO_ROOT, 'tests/greasyfork-examples/download-rep
 const USER_AGENT =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
+// What `--include` can name, each a phase of the download.
+const PARTS = ['scripts', 'requires', 'resources', 'icons'];
+
+// `--include`'s list, as `{ scripts, requires, resources, icons }` flags.
+function includedParts(given) {
+  const words = given.split(',').map((p) => p.trim()).filter(Boolean);
+  const unknown = words.find((p) => p !== 'all' && !PARTS.includes(p));
+  if (unknown !== undefined || words.length === 0) {
+    const takes = [...PARTS, 'all'].map((p) => `\`${p}\``).join(', ');
+    throw new Error(`The \`--include\` flag takes ${takes}, comma-separated${unknown !== undefined ? `, and not \`${unknown}\`` : ''}`);
+  }
+  return Object.fromEntries(PARTS.map((p) => [p, words.includes('all') || words.includes(p)]));
+}
+
 function parseArgs(argv) {
   const opts = {
     corpus: CORPUS_JSON,
@@ -59,9 +76,7 @@ function parseArgs(argv) {
     delay: 200,
     concurrency: 1,
     force: false,
-    scripts: true,
-    requires: true,
-    resources: true,
+    ...includedParts('all'),
     maxBrokenHosts: 5,
     report: REPORT_PATH,
   };
@@ -79,9 +94,7 @@ function parseArgs(argv) {
       case '--delay': opts.delay = Number(next()); break;
       case '--concurrency': opts.concurrency = Number(next()); break;
       case '--force': opts.force = true; break;
-      case '--scripts-only': opts.requires = false; opts.resources = false; break;
-      case '--requires-only': opts.scripts = false; opts.resources = false; break;
-      case '--resources-only': opts.scripts = false; opts.requires = false; break;
+      case '--include': Object.assign(opts, includedParts(next())); break;
       case '--report': opts.report = path.resolve(next()); break;
       case '--max-broken-hosts': opts.maxBrokenHosts = Number(next()); break;
       default: throw new Error(`Unknown argument: ${arg}`);
@@ -259,11 +272,19 @@ async function downloadAll(urls, opts, label) {
 }
 
 /**
- * Collect dependency URLs of one tag (`require` or `resource`) from the
- * userscripts we have on disk. Relative and `//host/path` forms are resolved
+ * Collect dependency URLs of one tag (`require`, `resource` or `icon`) from
+ * the userscripts we have on disk. For `icon`, only the one icon SourceMonkey
+ * would show, picked from `@icon` and its aliases as it picks it. Relative and `//host/path` forms are resolved
  * against the script's own URL, which is exactly what the file's location under
  * <root> encodes.
  */
+// The icon SourceMonkey would show, unless it's inline (`data:`), which has
+// nothing to download.
+function iconValues(header) {
+  const ref = iconRefFromHeader(header);
+  return ref && !ref.startsWith('data:') ? [ref] : [];
+}
+
 async function collectDependencies(scriptUrls, opts, tag) {
   const urls = new Map(); // absolute URL → first script that asked for it
   const unresolved = [];
@@ -274,7 +295,8 @@ async function collectDependencies(scriptUrls, opts, tag) {
 
     const header = parseHeader(downloaded.text);
     if (!header) continue;
-    for (const value of getValues(header, tag)) {
+    const values = tag === 'icon' ? iconValues(header) : getValues(header, tag);
+    for (const value of values) {
       if (!value.trim()) continue;
       // Shared with build-db.mjs so both agree on which URL a line names.
       const resolved = dependencyUrlFor(tag, value, scriptUrl);
@@ -299,7 +321,7 @@ async function main() {
     .slice(0, opts.count === Infinity ? undefined : opts.count);
   console.info(`${scriptUrls.length} script URLs from ${path.relative(REPO_ROOT, opts.corpus)}`);
 
-  const report = { root: opts.root, scripts: null, requires: null, resources: null };
+  const report = { root: opts.root, scripts: null, requires: null, resources: null, icons: null };
   const aborted = () => Object.values(report).some((phase) => phase?.aborted);
 
   const summarize = (results) => {
@@ -318,10 +340,12 @@ async function main() {
     summarize(report.scripts);
   }
 
-  // @require libraries, then @resource assets — same collect-and-fetch shape.
+  // @require libraries, @resource assets, then @icon images — same
+  // collect-and-fetch shape.
   const phases = [
     ['requires', 'require', opts.requires, 'Phase 2: @require libraries'],
     ['resources', 'resource', opts.resources, 'Phase 3: @resource assets'],
+    ['icons', 'icon', opts.icons, 'Phase 4: @icon images'],
   ];
   for (const [key, tag, enabled, banner] of phases) {
     // An abort in ANY earlier phase stops the rest: a 429 in phase 2 means the

@@ -200,7 +200,10 @@ async function importValidation(opts, results, unchecked = []) {
       ...location,
       file: location.file === own ? 'the script' : safeDecode(location.file),
     });
-    const warnings = (result.warnings ?? []).map((w) => describe(w.message, w.location));
+    // Only real warnings: an `info` note (no `@connect`, say) isn't one.
+    const warnings = (result.warnings ?? [])
+      .filter((w) => w.level !== 'info')
+      .map((w) => describe(w.message, w.location));
     // `ok` with a category is a check that couldn't decide (see the validator's
     // classify()); worth seeing, but not a failure.
     if (result.status === 'ok' && result.category !== 'ok') warnings.push(`${result.category}: ${result.detail}`);
