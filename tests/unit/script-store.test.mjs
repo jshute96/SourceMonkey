@@ -136,11 +136,11 @@ test('validateHeader complains about a null header', async () => {
 test('validateHeader rejects a script whose every @match is unusable', async () => {
   const problem = validateHeader(parseHeader(`// ==UserScript==
 // @name  X
-// @match https://example.com
-// @match https://other.example
+// @match https://www.*.com/*
+// @match https://other.*.example/*
 // ==/UserScript==
 `));
-  assert.match(problem.message, /@match https:\/\/example\.com has no path/);
+  assert.match(problem.message, /@match https:\/\/www\.\*\.com\/\* uses "\*" inside its host/);
   assert.match(problem.message, /never run on any page/);
   assert.equal(problem.line, 3);
 });
@@ -237,15 +237,15 @@ test('extractStartupLogs warns once per unusable @match, each on its own line', 
   const header = parseHeader(`// ==UserScript==
 // @name X
 // @match https://good.example/*
-// @match https://bare.example
+// @match https://www.*.example/*
 // @match httpx://other.example/*
 // ==/UserScript==
 `);
   assert.deepEqual(extractStartupLogs(header, 'x.user.js'), [
     {
       level: 'warn',
-      message: 'Ignoring @match https://bare.example, which has no path; '
-        + 'add a trailing "/*" to match all pages on that host',
+      message: 'Ignoring @match https://www.*.example/*, which uses "*" inside its host; '
+        + '"*" has to be the whole host or its first label, as in *.example.com',
       location: { file: 'x.user.js', line: 4 },
     },
     {

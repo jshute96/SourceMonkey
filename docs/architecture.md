@@ -141,7 +141,8 @@ details live in the topic-specific docs linked below.
   actually change behavior, see
   [supported-headers.md](supported-headers.md).
 - **URL matcher** (`src/url-match.ts`) — pure
-  `@match`/`@include`/`@exclude` evaluator. See
+  `@match`/`@include`/`@exclude` evaluator. What the rules mean:
+  [match-rules.md](match-rules.md); how they're matched:
   [matching.md](matching.md).
 - **Match index** (`src/extension/match-index.ts`) — in-memory cache of every
   `ok` script's matching info, kept in sync with storage; lets the SW
@@ -446,8 +447,10 @@ takes effect:
   the OUTDATED status.
 - [script-viewer.md](script-viewer.md) — userscript viewer page, header parsing,
   syntax highlighting.
-- [matching.md](matching.md) — `@match`/`@include`/`@exclude`
-  semantics, in-memory match index, per-tab badge + tooltip.
+- [match-rules.md](match-rules.md) — what `@match`/`@include`/`@exclude`
+  rules mean, compared with Chrome, Tampermonkey and Violentmonkey.
+- [matching.md](matching.md) — how rules are matched and registered,
+  in-memory match index, per-tab badge + tooltip.
 - [injection.md](injection.md) — `chrome.userScripts` registration
   lifecycle, the activation/error wrapper, opt-in requirements,
   unsupported pattern forms.

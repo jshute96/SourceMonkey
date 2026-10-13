@@ -122,6 +122,36 @@ test.describe('injection', () => {
     });
   }
 
+  // A `:*` port is any port to Chrome. The `@include` makes the
+  // wrapper's in-page matcher run, which has to read `:*` the same way
+  // or it skips the script Chrome injected.
+  test('a `:*` port @match injects past the in-page matcher', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    const hostname = new URL(fixtureServer.baseUrl).hostname;
+    scriptsDir.write({
+      relativePath: 'any-port.user.js',
+      meta: {
+        name: 'Any Port',
+        match: [`*://${hostname}:*/*`],
+        include: ['https://never.invalid/*'],
+        runAt: 'document-end',
+      },
+      body: `
+        document.getElementById('target').textContent = 'injected on any port';
+      `,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('#target')).toHaveText('injected on any port');
+    await page.close();
+  });
+
   // The negative half of the claim the pair expansion rests on. Nothing
   // in the pipeline can produce `*://host:PORT/*` any more, so this asks
   // Chrome directly: if it ever starts accepting that spelling, this

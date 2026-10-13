@@ -74,10 +74,11 @@ function parseMatchPattern(pattern: string): ParsedMatch | null {
   if (scheme !== 'http' && scheme !== 'https') return null;
 
   // Split host:port so the host-wildcard rules apply only to the
-  // host portion. The port (digits only) is preserved verbatim.
+  // host portion. A numeric port is preserved verbatim. A `:*` port
+  // (any port) covers the default one, so the icon comes from there.
   const colon = rawHost.lastIndexOf(':');
-  const hasPort = colon > 0 && /^\d+$/.test(rawHost.slice(colon + 1));
-  const port = hasPort ? rawHost.slice(colon) : '';
+  const hasPort = colon > 0 && /^(\d+|\*)$/.test(rawHost.slice(colon + 1));
+  const port = hasPort && rawHost.slice(colon + 1) !== '*' ? rawHost.slice(colon) : '';
   let host = (hasPort ? rawHost.slice(0, colon) : rawHost).toLowerCase();
   if (host === '*' || host === '') return null;
   if (host.startsWith('*.')) host = host.slice(2);

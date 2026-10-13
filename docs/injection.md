@@ -599,7 +599,7 @@ rules and why it carries no location.
   accepted.
 - **Rarer than it was.** The malformed `@match` shapes we are sure
   about are caught at parse time and never reach a registration, and
-  the two Chrome merely can't spell are rewritten into a spelling it
+  the ones Chrome merely can't spell are rewritten into a spelling it
   takes (see
   [matching.md](matching.md#lenient-readings-canonicalmatchpatterns)).
   What
@@ -1407,6 +1407,14 @@ The User Scripts API has no equivalent for `/regex/` `@include` /
 
 - **Registration layer.** Glob `@include` / `@exclude` patterns go to
   `includeGlobs` / `excludeGlobs`. `@match` goes to `matches`.
+  - We read globs ignoring case, and Chrome doesn't. So an `@include`
+    registers widened (`chromeIncludeGlob`): the host lowercased, as
+    Chrome lowercases it in the URL, and every other letter replaced
+    by `?`, Chrome's one-character wildcard.
+  - An `@exclude` registers as written, which Chrome reads narrower
+    than we do, except one with a `?` (a one-character wildcard to
+    Chrome), which isn't registered. Every `@exclude` is enforced in
+    the page.
   - Any script with `includeGlobs` also gets a stand-in in `matches`,
     `NO_PAGE_MATCH` (`*://*/__sourcemonkey_no_page__/*`): any host,
     a path no real page uses. Chrome ORs the globs with `matches`
@@ -1433,13 +1441,13 @@ The User Scripts API has no equivalent for `/regex/` `@include` /
     page and frame, and only its body is skipped off-target. A `.tld`
     script pays that only on pages its coarse glob reaches.
 - **Wrapper layer.** When a script has any regex, `.tld` or glob
-  pattern,
+  pattern, or any `@exclude`,
   the wrapper embeds the full `{matches, includes, excludes}` object
   and a small self-contained matcher equivalent to
   `urlMatchesScript()`. Before the body runs, the wrapper re-checks
   `location.href` and silently returns if it doesn't match.
-  - A regex is tested ignoring case, as Tampermonkey and Violentmonkey
-    test it. A glob stays case-sensitive, as Chrome tests it.
+  - A regex and a glob are tested ignoring case, as Tampermonkey and
+    Violentmonkey test them.
 
 Net effect: badge and injection stay in sync. The wrapper-side
 matcher must agree byte-for-byte with `src/url-match.ts`; a unit test

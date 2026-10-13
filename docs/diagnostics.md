@@ -37,7 +37,7 @@ it, shared with the header diagnostics.
 | "No `@name`" / "No `@match` or `@include`" | the `// ==UserScript==` marker |
 | unknown `@grant` (a warning) | the first offending `@grant` line |
 | a `@match` Chrome's grammar refuses (a warning) | the `@match` line that declared it |
-| "`@match <pattern>` has no path, so this script would never run…" | the first offending `@match` line, when no pattern is usable |
+| `@match <pattern> uses "*" inside its host, so this script would never run…` | the first offending `@match` line, when no pattern is usable |
 | `@require` / `@resource` that won't load | the header line that declared it |
 
 The header messages are exported constants rather than inline literals,
@@ -807,8 +807,8 @@ The lesson worth keeping:
   validator, especially what they do with a partial location.
 - `tests/e2e/rejected-registration.spec.ts` — the REJECTED state end to
   end, driven by a `@match` with a malformed port (valid to us, invalid
-  to Chrome — the empty-path case it used to use is now caught before
-  registration).
+  to Chrome — the empty-path case it used to use is now read as the
+  root page).
 - `tests/unit/url-match.test.mjs` — the `@match` grammar check, and the
   invariant that everything it flags is a pattern `matchPattern` could
   never match anyway.

@@ -89,7 +89,29 @@ test('matchPattern: file:// patterns work', () => {
 
 test('matchPattern: malformed pattern returns false', () => {
   assert.equal(matchPattern('not a url pattern', 'https://example.com/'), false);
-  assert.equal(matchPattern('https://example.com', 'https://example.com/'), false); // missing /path
+});
+
+test('matchPattern: no path reads as the root page', () => {
+  assert.deepEqual(canonicalMatchPatterns('https://example.com'), ['https://example.com/']);
+  assert.deepEqual(canonicalMatchPatterns('example.com'), ['*://example.com/']);
+  assert.equal(matchPattern('https://example.com', 'https://example.com/'), true);
+  assert.equal(matchPattern('https://example.com', 'https://example.com'), true);
+  assert.equal(matchPattern('https://example.com', 'https://example.com/page'), false);
+  assert.equal(matchPattern('https://example.com', 'https://example.com/?q=1'), false);
+  assert.equal(matchPatternProblem('https://example.com'), null);
+});
+
+test('matchPattern: a `*` stuck to the front of a host reads as `*.`', () => {
+  assert.deepEqual(canonicalMatchPatterns('*://*example.com/*'), ['*://*.example.com/*']);
+  assert.deepEqual(canonicalMatchPatterns('*example.com/*'), ['*://*.example.com/*']);
+  assert.equal(matchPattern('*://*example.com/*', 'https://example.com/'), true);
+  assert.equal(matchPattern('*://*example.com/*', 'https://www.example.com/x'), true);
+  assert.equal(matchPattern('*://*example.com/*', 'https://fooexample.com/'), false);
+  assert.equal(matchPatternProblem('https://*example.com/*'), null);
+  // A `:*` port's own `*` isn't a second one in the host.
+  assert.deepEqual(canonicalMatchPatterns('https://*example.com:*/*'), ['https://*.example.com:*/*']);
+  // Only a lone leading `*`: one elsewhere in the host is still flagged.
+  assert.match(matchPatternProblem('https://*exam*.com/*')?.what ?? '', /"\*" inside its host/);
 });
 
 test('matchPattern: malformed URL returns false', () => {
@@ -114,11 +136,11 @@ test('includePattern: /regex/ form is honored', () => {
   assert.equal(includePattern('/example\\.com/', 'https://other.org/x'), false);
 });
 
-test('includePattern: a regex ignores case, a glob does not', () => {
-  // As Tampermonkey and Violentmonkey read a regex. A glob is Chrome's
-  // to evaluate, case-sensitively.
+test('includePattern: a regex and a glob both ignore case', () => {
+  // As Tampermonkey and Violentmonkey read them.
   assert.equal(includePattern('/EXAMPLE\\.com\\/Page/', 'https://example.com/page'), true);
-  assert.equal(includePattern('*EXAMPLE.com/Page*', 'https://example.com/page'), false);
+  assert.equal(includePattern('*EXAMPLE.com/Page*', 'https://example.com/page'), true);
+  assert.equal(includePattern('https://*.google.tld/Maps*', 'https://www.google.de/maps'), true);
   // A flag after the closing slash isn't one: the pattern is a glob,
   // and matches nothing, as in the other managers.
   assert.equal(includePattern('/example\\.com/i', 'https://example.com/'), false);
@@ -206,6 +228,13 @@ test('matchPattern: port-less pattern matches any port', () => {
   assert.equal(matchPattern('http://127.0.0.1/*', 'http://127.0.0.1/x'), true);
 });
 
+test('matchPattern: a `:*` port matches any port, as in Chrome', () => {
+  assert.equal(matchPattern('*://localhost:*/*', 'http://localhost:3000/x'), true);
+  assert.equal(matchPattern('http://localhost:*/*', 'http://localhost/x'), true);
+  assert.equal(matchPattern('https://example.com:*/*', 'https://example.com:8443/'), true);
+  assert.equal(matchPattern('*://localhost:*/*', 'http://otherhost:3000/x'), false);
+});
+
 test('matchPattern: port pinning works with subdomain wildcard', () => {
   assert.equal(matchPattern('https://*.example.com:8443/*', 'https://api.example.com:8443/x'), true);
   assert.equal(matchPattern('https://*.example.com:8443/*', 'https://api.example.com/x'), false);
@@ -230,9 +259,16 @@ test('urlMatchesScript: regex-form exclude is honored', () => {
 test('canonicalMatchPatterns: supplies an omitted scheme', () => {
   assert.deepEqual(canonicalMatchPatterns('*.example.com/*'), ['*://*.example.com/*']);
   assert.deepEqual(canonicalMatchPatterns('example.com/path/*'), ['*://example.com/path/*']);
-  // Protocol-relative and empty-scheme spellings of the same omission.
-  assert.deepEqual(canonicalMatchPatterns('//example.com/*'), ['*://example.com/*']);
-  assert.deepEqual(canonicalMatchPatterns('://example.com/*'), ['*://example.com/*']);
+});
+
+test('canonicalMatchPatterns: leaves a broken scheme for the check to flag', () => {
+  // `*//` would otherwise read as "any host, path beginning `//host/`".
+  for (const p of ['//example.com/*', '://example.com/*', '*//example.com/*']) {
+    assert.deepEqual(canonicalMatchPatterns(p), [p]);
+    assert.match(matchPatternProblem(p)?.what ?? '', /doesn't start with a scheme and "\:\/\/"/);
+    assert.equal(matchPattern(p, 'https://example.com/'), false);
+    assert.equal(matchPattern(p, 'https://other.example//example.com/x'), false);
+  }
 });
 
 test('canonicalMatchPatterns: expands a scheme glob over the supported schemes', () => {
@@ -287,12 +323,7 @@ test('canonicalMatchPatterns: spells `*` out beside a numeric port', () => {
   assert.deepEqual(canonicalMatchPatterns('http://localhost:3000/*'), ['http://localhost:3000/*']);
 });
 
-test('canonicalMatchPatterns: reads `*//host/…` as the `*://` it is missing a colon from', () => {
-  // Read literally it would be "any host, path beginning `//host/`",
-  // which names a different site than the one written.
-  assert.deepEqual(canonicalMatchPatterns('*//example.com/*'), ['*://example.com/*']);
-  // A single slash after the `*` is a host wildcard and a path, and
-  // stays one.
+test('canonicalMatchPatterns: `*/path` is a host wildcard and a path', () => {
   assert.deepEqual(canonicalMatchPatterns('*/foo/*'), ['*://*/foo/*']);
 });
 
@@ -306,7 +337,7 @@ test('matchPatternProblem: a scheme glob is a problem only when every form is', 
   assert.equal(matchPatternProblem('f*:///*'), null);
   assert.equal(matchPattern('f*:///*', 'file:///home/me/notes.txt'), true);
   // Both forms bad — still reported, with the first form's reason.
-  assert.match(matchPatternProblem('f*://host')?.what ?? '', /no path/);
+  assert.match(matchPatternProblem('f*://www.*.com/*')?.what ?? '', /"\*" inside its host/);
 });
 
 test('canonicalMatchPatterns: leaves everything else verbatim', () => {
@@ -361,8 +392,6 @@ const VALID_PATTERNS = [
   // Shapes Chrome's parser refuses and canonicalMatchPatterns reads
   // leniently, so nothing downstream should flag them either.
   '*.example.com/*',
-  '//example.com/*',
-  '://example.com/*',
   'http*://example.com/*',
   '*s://example.com/*',
   // The host check is a reject-list of characters no hostname holds,
@@ -378,14 +407,6 @@ test('matchPatternProblem: accepts every well-formed pattern', () => {
   }
 });
 
-test('matchPatternProblem: a bare origin has no path', () => {
-  // The case Chrome answers "Empty path" to, and by far the most common.
-  const problem = matchPatternProblem('https://example.com');
-  assert.equal(problem?.pattern, 'https://example.com');
-  assert.match(problem.what, /no path/);
-  assert.match(problem.fix ?? '', /"\/\*"/);
-});
-
 test('matchPatternProblem: names the other malformed shapes', () => {
   assert.match(matchPatternProblem('httpx://example.com/*')?.what ?? '', /unsupported scheme "httpx"/);
   assert.match(matchPatternProblem('https:///*')?.what ?? '', /no host/);
@@ -397,7 +418,7 @@ test('matchPatternProblem: names the other malformed shapes', () => {
   assert.match(matchPatternProblem('chrome-*://example.com/*')?.what ?? '', /unsupported scheme "chrome-\*"/);
   // Judged after the lenient rewrite, so the problem is what is left
   // once the missing scheme is supplied — not the missing scheme.
-  assert.match(matchPatternProblem('example.com')?.what ?? '', /no path/);
+  assert.match(matchPatternProblem('www.*.com/*')?.what ?? '', /"\*" inside its host/);
   // A regex pasted into an `@match` reads as a scheme-less pattern
   // whose "host" is regex syntax. It has to stay flagged: Chrome
   // refuses it, and a refusal takes the whole registration down, where
@@ -423,8 +444,10 @@ test('matchPatternProblem: everything it flags is unmatchable anyway', () => {
   // The invariant that lets buildRegistrationSpec drop these patterns
   // without changing which pages a script runs on.
   const flagged = [
-    'https://example.com',
-    'example.com',
+    'www.*.com/*',
+    '//example.com/*',
+    '*//example.com/*',
+    '://example.com/*',
     'httpx://example.com/*',
     'https:///*',
     'https://www.*.com/*',
@@ -451,14 +474,14 @@ test('matchPatternProblem: everything it flags is unmatchable anyway', () => {
 });
 
 test('matchPatternProblem: the two messages carry the pattern and the fix', () => {
-  const problem = matchPatternProblem('https://example.com');
+  const problem = matchPatternProblem('https://www.*.com/*');
   const ignored = ignoredMatchMessage(problem);
   const unusable = unusableMatchMessage(problem);
   // No trailing period, subject included — these strings land in the Log
   // and in the message bar (docs/diagnostics.md, "Wording").
   for (const message of [ignored, unusable]) {
-    assert.match(message, /@match https:\/\/example\.com/);
-    assert.match(message, /add a trailing "\/\*"/);
+    assert.match(message, /@match https:\/\/www\.\*\.com\/\*/);
+    assert.match(message, /first label, as in \*\.example\.com/);
     assert.equal(message, message.replace(/\.$/, ''));
   }
   // Capitalized, per the same rules — except where the message opens on
@@ -479,10 +502,10 @@ test('matchPatternProblem: a "#" in the path is flagged, with @include as the fi
 test('unusableMatchGroupKey: elides the pattern, and declines anything else', () => {
   // What the corpus validator groups a survey by. Two scripts with
   // different bad patterns and the same mistake must key alike.
-  const a = unusableMatchMessage(matchPatternProblem('https://example.com'));
-  const b = unusableMatchMessage(matchPatternProblem('https://other.example'));
+  const a = unusableMatchMessage(matchPatternProblem('https://www.*.com/*'));
+  const b = unusableMatchMessage(matchPatternProblem('https://other.*.example/*'));
   assert.equal(unusableMatchGroupKey(a), unusableMatchGroupKey(b));
-  assert.match(unusableMatchGroupKey(a), /^@match … has no path, so this script would never run/);
+  assert.match(unusableMatchGroupKey(a), /^@match … uses "\*" inside its host, so this script would never run/);
   // Different mistakes stay apart.
   assert.notEqual(
     unusableMatchGroupKey(a),
@@ -490,7 +513,7 @@ test('unusableMatchGroupKey: elides the pattern, and declines anything else', ()
   );
   // Not one of ours: the warning form, and the message for a script that
   // declared no pattern at all (which ends with the same clause).
-  assert.equal(unusableMatchGroupKey(ignoredMatchMessage(matchPatternProblem('https://example.com'))), null);
+  assert.equal(unusableMatchGroupKey(ignoredMatchMessage(matchPatternProblem('https://www.*.com/*'))), null);
   assert.equal(
     unusableMatchGroupKey('No @match or @include in the metadata block, so this script would never run on any page'),
     null,
@@ -550,6 +573,8 @@ test('.tld: a `*.` host covers the base domain and subdomains, in @match and @in
 test('.tld: @match reads it after the lenient rewrites, and with a port', () => {
   assert.equal(matchPattern('*.google.tld/*', 'https://www.google.fr/'), true);
   assert.equal(matchPattern('http*://www.google.tld/*', 'http://www.google.fr/'), true);
+  assert.equal(matchPattern('www.google.tld/*', 'https://www.google.fr/'), true);
+  assert.equal(matchPattern('www.google.tld/*', 'https://www.google.evil.com/'), false);
   assert.equal(matchPattern('https://www.google.tld:8443/*', 'https://www.google.fr:8443/'), true);
   assert.equal(matchPattern('https://www.google.tld:8443/*', 'https://www.google.fr/'), false);
   assert.equal(matchPatternProblem('*://www.google.tld/*'), null);

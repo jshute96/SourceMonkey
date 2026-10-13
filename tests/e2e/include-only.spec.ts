@@ -67,6 +67,42 @@ test.describe('glob-only @include', () => {
     await page.close();
   });
 
+  // A glob ignores case, as in Tampermonkey and Violentmonkey, though
+  // Chrome tests globs case-sensitively: the `@include` registers
+  // widened, and the wrapper's matcher applies the `@exclude`, which
+  // Chrome's case-sensitive copy doesn't cover.
+  test('an @include and an @exclude glob ignore case', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'any-case.user.js',
+      meta: {
+        name: 'Any Case',
+        include: [`${fixtureServer.baseUrl.toUpperCase()}/*.HTML`],
+        exclude: ['*/OTHER*'],
+        runAt: 'document-end',
+      },
+      body: `
+        document.documentElement.dataset.anyCase = '1';
+        const el = document.getElementById('target');
+        if (el) el.textContent = 'injected by SourceMonkey';
+      `,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('#target')).toHaveText('injected by SourceMonkey');
+
+    // Excluded, ignoring case: Chrome injects, and the wrapper keeps
+    // the body from running.
+    await page.goto(`${fixtureServer.baseUrl}/other.html`);
+    await page.waitForLoadState('networkidle');
+    expect(await page.evaluate(() => document.documentElement.dataset.anyCase)).toBeUndefined();
+    await page.close();
+  });
+
   // A granted script (USER_SCRIPT world, so the GM runtime listens for
   // messages from the service worker) with a @match on one host and a
   // glob @include on another. Without NO_PAGE_MATCH's `*` host, Chrome

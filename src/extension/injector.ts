@@ -96,7 +96,7 @@ import { scanStorageRows } from './storage-scan.js';
 import { cachedRows, sharedRows } from './row-cache.js';
 import { isScratchUrl, scratchRunOf } from './directories.js';
 import { evalHookKey, withEvalHook } from '../eval-hook.js';
-import { canonicalMatchPatterns, hostEndsInTld, matchPatternProblem, tldCoarseGlob } from '../url-match.js';
+import { canonicalMatchPatterns, chromeIncludeGlob, hostEndsInTld, matchPatternProblem, tldCoarseGlob } from '../url-match.js';
 import { dlog } from '../debug-log.js';
 import { startPhaseTimer, type PhaseTimer } from '../phase-timing.js';
 import {
@@ -967,22 +967,27 @@ export async function buildRegistrationSpec(
   const includeGlobSet = new Set<string>();
   const excludeGlobSet = new Set<string>();
   // A `.tld` `@include` registers its coarse glob, like a `.tld`
-  // `@match`. A `.tld` `@exclude` goes with the regexes, enforced only
-  // in-page: widened to `.*`, it would exclude pages it shouldn't.
+  // `@match`. A glob `@include` ignores case, so Chrome gets a glob
+  // wide enough for that (`chromeIncludeGlob`).
+  //
+  // Every `@exclude` is enforced in the page, which ignores case.
+  // Chrome also gets the ones it can only ever read narrower than ours,
+  // to skip injecting at all: not a regex, not a `.tld` (widened to
+  // `.*`, it would exclude pages it shouldn't), and not one with a `?`,
+  // which Chrome reads as a one-character wildcard.
   let hasRegexInclude = false;
-  let hasRegexExclude = false;
   let hasTldRule = tldMatches.length > 0;
-  for (const m of tldMatches) includeGlobSet.add(tldCoarseGlob(m, true));
+  for (const m of tldMatches) includeGlobSet.add(chromeIncludeGlob(tldCoarseGlob(m, true)));
   for (const inc of script.matching.includes) {
     if (isRegexLiteral(inc)) hasRegexInclude = true;
     else if (hostEndsInTld(inc)) {
-      includeGlobSet.add(tldCoarseGlob(inc, false));
+      includeGlobSet.add(chromeIncludeGlob(tldCoarseGlob(inc, false)));
       hasTldRule = true;
-    } else includeGlobSet.add(inc);
+    } else includeGlobSet.add(chromeIncludeGlob(inc));
   }
+  const hasExclude = script.matching.excludes.length > 0;
   for (const ex of script.matching.excludes) {
-    if (isRegexLiteral(ex) || hostEndsInTld(ex)) hasRegexExclude = true;
-    else excludeGlobSet.add(ex);
+    if (!isRegexLiteral(ex) && !hostEndsInTld(ex) && !ex.includes('?')) excludeGlobSet.add(ex);
   }
   const includeGlobs = [...includeGlobSet];
   const excludeGlobs = [...excludeGlobSet];
@@ -1040,7 +1045,7 @@ export async function buildRegistrationSpec(
   // A script with globs keeps the in-page check too: Chrome's glob
   // reading isn't ours (case, `?`), a `.tld` glob is coarse, and
   // `NO_PAGE_MATCH` is a real (if unlikely) path.
-  const needsWrapperFilter = hasRegexInclude || hasRegexExclude || usedAllUrlsFallback
+  const needsWrapperFilter = hasRegexInclude || hasExclude || usedAllUrlsFallback
     || usedNoPageStandIn || hasTldRule;
   const sourceUrl = buildSourceUrl(logLabel);
 

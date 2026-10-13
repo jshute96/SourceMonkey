@@ -85,15 +85,21 @@ Pattern forms beyond Chrome's own grammar:
   - Public suffixes are the ones domain registries hand out names
     under, from the ICANN section of the Public Suffix List. Hosting
     suffixes like `github.io` and local names like `.lan` don't count.
-  - See [matching.md](matching.md#tld-hosts).
+  - See [match-rules.md](match-rules.md#tld-hosts).
 - **Regex `@include` / `@exclude`**: Chrome can't match these, so the
   script checks them as it starts on a page. A script with a regex
   `@include` is registered for all pages and skips the ones that don't
   match. See [injection.md](injection.md#regex-pattern-forms).
-- **Lenient `@match` spellings**: a pattern with no scheme
-  (`*.example.com/*`) or a globbed one (`http*://…`) is read as the
-  pattern Chrome takes, since real scripts use them. See
-  [matching.md](matching.md#lenient-readings-canonicalmatchpatterns).
+- **Lenient `@match` spellings**: real scripts use a few shapes
+  Chrome's own pattern rules don't allow, so SourceMonkey reads them
+  as their authors mean:
+  - No scheme (`example.com/*`) runs on http and https.
+  - `http*://` runs on http and https.
+  - No path (`https://example.com`) runs on that site's root page
+    only.
+  - A `*` stuck to the host (`*example.com`) runs on that domain and
+    its subdomains, like `*.example.com`.
+  - More: [match-rules.md](match-rules.md#lenient-readings).
 
 ---
 

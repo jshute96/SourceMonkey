@@ -1776,29 +1776,6 @@ itself once a sync places it. What's missing:
   so each addition wants a probe against a real Chrome first (the one
   in `tests/e2e/rejected-registration.spec.ts`'s header is the record
   of the last such run).
-- **Two Chrome-refused shapes are left unread.** The scheme-less and
-  scheme-glob shapes are now rewritten into Chrome's spelling
-  (`canonicalMatchPatterns`, see
-  [docs/matching.md](docs/matching.md#lenient-readings-canonicalmatchpatterns)),
-  which took the corpus from 1,035 refused patterns / 81 dead scripts
-  down to 158 / 34. What still fails, and why neither is as clear-cut:
-    - **A bare origin, no path** (92 patterns: `https://example.com`,
-      `zombs.io`). Chrome says "Empty path". The reading is either
-      "that one page" or "the whole host", and the two differ — TM
-      matches the exact URL. Probe TM before picking.
-    - **A `*` in the middle of a host** (62: `*://*brainly.com/*`,
-      `https://video.sina.*/*`). Chrome's host wildcard is only the
-      whole host or its first label, so a TLD glob or a bare prefix
-      has no Chrome spelling as a match pattern. It can register as an
-      `includeGlobs` entry instead and be decided in the prelude, as
-      `.tld` hosts now are (see `tldCoarseGlob`).
-      - TM runs these: 445355 (`https://*fdownloader.net/*`) and
-        455327 (`https://*krunker.io/*`) ran under `--manager tm` and
-        fail in SourceMonkey only for this (corpus tag
-        `ignored-match`). A copy of 445355 with the `*` dropped
-        works.
-  `pnpm run test:e2e:tm` drives a real TM, which is where "what does TM
-  run for this" gets answered.
 - **The install preview doesn't show parse-time warnings.**
   `checkPreviewSource` builds the row and reports header errors and
   syntax errors, but drops `startupLogs` — so an unsupported `@grant`

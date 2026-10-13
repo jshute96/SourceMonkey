@@ -104,7 +104,7 @@ export const BAD_CASES = [
   // unlike the missing-tag failures above, this text really is in the
   // file.
   { file: 'unusable-match.user.js',        expectedStatus: 'invalid',
-    errorMatcher: /@match https:\/\/example\.com has no path, so this script would never run on any page/,
+    errorMatcher: /@match https:\/\/www\.\*\.com\/\* uses "\*" inside its host, so this script would never run on any page/,
     errorIn: 'unusable-match.user.js' },
 
   // ---------- Where the error is ----------

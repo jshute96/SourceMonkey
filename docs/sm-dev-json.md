@@ -765,7 +765,7 @@ Text:
 
 ```text
 INVALID  bad.user.js
-    @match nope has no path, so this script would never run on any page; add a trailing "/*" to match all pages on that host (in bad.user.js, line 3)
+    @match https://www.*.com/* uses "*" inside its host, so this script would never run on any page; "*" has to be the whole host or its first label, as in *.example.com (in bad.user.js, line 3)
 ok       scripts/gm-log.user.js
 
 1 ok, 1 invalid
@@ -780,7 +780,7 @@ JSON:
     {
       "script": "bad.user.js",
       "verdict": "invalid",
-      "error": "@match nope has no path, so this script would never run on any page; add a trailing \"/*\" to match all pages on that host (in bad.user.js, line 3)"
+      "error": "@match https://www.*.com/* uses \"*\" inside its host, so this script would never run on any page; \"*\" has to be the whole host or its first label, as in *.example.com (in bad.user.js, line 3)"
     },
     {
       "script": "scripts/gm-log.user.js",

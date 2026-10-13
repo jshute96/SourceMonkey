@@ -5,97 +5,56 @@ result becomes the toolbar badge + tooltip you see on a tab.
 
 Related modules:
 
+- [match-rules.md](match-rules.md) — what `@match`, `@include` and
+  `@exclude` rules mean, and how other managers read them.
 - [storage.md](storage.md) — the underlying `StoredScript` shape and
   where `matching` comes from.
 - [script-viewer.md](script-viewer.md) — header parsing (`@match`,
   `@include`, `@exclude` originate here).
 
-## Pattern semantics
+## How patterns are matched
 
-Three pattern flavours, all implemented in `src/url-match.ts`:
+What the rules mean, and how other managers read them:
+[match-rules.md](match-rules.md). How SM gets there:
 
-### `@match` — Chrome match-pattern grammar
+- **One matcher**, `src/url-match.ts`, for the badge, `sm-dev match`,
+  and the worker's checks.
+- **Chrome injects** from what `buildRegistrationSpec` (`injector.ts`)
+  registers: `matches` for `@match`, `includeGlobs` / `excludeGlobs`
+  for globs.
+- **The wrapper's in-page matcher** (`userscript-prelude.js`) narrows
+  that wherever Chrome can't say a rule exactly. It mirrors
+  `url-match.ts` and must agree with it; the prelude cases in
+  `tests/unit/injector.test.mjs` check the two side by side.
 
-`<scheme>://<host>/<path>` plus the literal `<all_urls>`.
+### Lenient readings (`canonicalMatchPatterns`)
 
-- **scheme**: `*` (http or https only), `http`, `https`, `file`, `ftp`.
-- **host**: `*` (any host), `*.example.com` (base domain OR any
-  subdomain), exact domain, or empty (for `file://`). May include a
-  `:port` suffix — Chrome's docs disallow ports but its matcher
-  accepts them, and we follow that so the badge stays in step with
-  what Chrome actually injects. Port-less patterns match any port.
-- **path**: glob with `*`. `*` matches any chars including `/`. The
-  glob runs against `pathname + search`, so `?id=*` works.
-  - Not the `#hash`, as in Chrome's matcher: a URL's fragment never
-    stops a match, and a `@match` naming a `#hash` matches no URL (see
-    [Patterns Chrome refuses](#patterns-chrome-refuses)).
-  - `@include` / `@exclude` do see the hash (below). Tampermonkey
-    ignores it there too; see `tests/examples/headers-match-hash/`.
+The readings in
+[match-rules.md](match-rules.md#lenient-readings) are rewrites into
+Chrome's spelling, done before anything else looks at a pattern.
 
-Host comparison is case-insensitive.
-
-#### Lenient readings (`canonicalMatchPatterns`)
-
-Two shapes Chrome's parser refuses have one obvious reading, and real
-scripts are full of them. Both are rewritten into Chrome's spelling
-before anything else looks at them:
-
-| Written | Read as | Why |
-|---------|---------|-----|
-| `*.example.com/*` | `*://*.example.com/*` | Scheme omitted |
-| `//example.com/*` | `*://example.com/*` | Protocol-relative |
-| `://example.com/*` | `*://example.com/*` | Empty scheme |
-| `*//example.com/*` | `*://example.com/*` | `*://` missing its colon |
-| `http*://example.com/*` | `*://example.com/*` | Scheme glob |
-| `*s://example.com/*` | `https://example.com/*` | Scheme glob |
-
-- A scheme containing `*` is **globbed against the supported schemes**
-  (`http`, `https`, `file`, `ftp`), and one pattern comes back per
-  scheme it names — the glob is enumerated, not approximated.
+- **One pattern in, one per scheme out.** Usually one, and the input
+  verbatim when there's nothing to rewrite.
+- **A scheme glob is enumerated, not approximated.**
   - `http*://` names http + https, which is exactly what `*` means, so
-    it comes back as `*://` — the same set said shorter.
+    it comes back as `*://`.
   - Every other expansion comes back as concrete schemes: `*s://` →
     `https://` alone, `*t*://` → `http://` + `https://` + `ftp://`.
   - So there is **no scheme re-check afterwards, and none is needed**.
-    Nothing is ever rounded up to `*`: a `*s://` pattern is registered
-    as `https://` and never sees an http page in the first place. That
-    matters because Chrome does the matching — a pattern registered
-    wider than the author's would inject before any wrapper-side
-    filter could run.
-- A glob naming **no** supported scheme (`chrome-*://…`) is left alone,
-  so it is still reported as an unsupported scheme rather than
-  silently widened.
-- The rewrite runs ahead of the matcher, the validator, and the
-  registration, so all three see one pattern. In particular Chrome
-  registers the rewritten form — an unrewritten pattern would be
-  dropped, and the script would stop running where its author said.
-- `userscript-prelude.js` carries the same rewrite, because the
+    Nothing is ever rounded up to `*`. That matters because Chrome
+    does the matching: a pattern registered wider than the author's
+    would inject before any wrapper-side filter could run.
+- **The host and path readings** (no path, a leading `*` on a host)
+  are `readHostAndPath`.
+- **The rewrite runs ahead of the matcher, the validator, and the
+  registration**, so all three see one pattern. Chrome registers the
+  rewritten form: an unrewritten pattern would be refused, and the
+  script would stop running where its author said.
+- **`userscript-prelude.js` carries the same rewrite**, because the
   wrapper-side matcher has to agree with what the SW registered.
-- A rewritten pattern is honored **as written**, host wildcard and
-  all: `http*://*/forum.php` becomes `*://*/forum.php` and the script
-  runs on every site with that path. It ran nowhere before, so this is
-  a widening — but to the scope its author asked for, and 45 corpus
-  patterns are of that shape.
-- `*//example.com/*` is the one shape read as a typo rather than
-  literally. Taken at face value it means "any host, path beginning
-  `//example.com/`" — a different site from the one written, which the
-  bullet above would then widen to. Chrome refuses it either way.
-
-Why bother:
-
-- Over the Greasy Fork corpus these two shapes are nearly every
-  `@match` Chrome refuses — 710 scheme-less and 202 globbed, out of
-  1,035 (see below). The rewrite makes **877** of them usable; the
-  remainder fail for a second reason as well.
-- Those are the site's most-installed scripts, so they work under
-  whatever manager their authors and users run. Only Chrome's parser
-  can't spell what they wrote.
-- **Not** measured against a real Tampermonkey: that needs the
-  cross-manager browser profile, which is set up by hand (see
-  [cross-manager-testing.md](cross-manager-testing.md)).
-- Safe without that measurement anyway — every pattern the rewrite
-  touches is one Chrome refused outright, so a lenient reading can
-  only add pages a script runs on, never take one away.
+- **Not measured against a real Tampermonkey** in the suite: that
+  needs the cross-manager browser profile, which is set up by hand
+  (see [cross-manager-testing.md](cross-manager-testing.md)).
 
 #### `*` beside a numeric port
 
@@ -114,122 +73,72 @@ So `*://host:3000/*` is registered as the pair `http://host:3000/*` +
 - Probed against Chrome 148; the lenient-match cases in
   `tests/e2e/injection.spec.ts` pin it against a real browser.
 
-#### Patterns Chrome refuses
+### Patterns Chrome refuses
 
-`matchPatternProblem` checks each `@match` against the same grammar at
-parse time, because Chrome refuses a **registration as a whole** over
-one malformed pattern — the script's good patterns die with the bad
-one, and the complaint comes back in Chrome's coordinates
-(`matches[1]: Empty path`).
+`matchPatternProblem` finds the patterns SM ignores (listed in
+[match-rules.md](match-rules.md#patterns-sm-ignores)).
 
-It judges the **canonical** form, so the lenient shapes above are
-accepted, and a problem the rewrite doesn't cure is reported against
-the pattern the author actually wrote.
+- **Why at parse time**: Chrome refuses a **registration as a whole**
+  over one malformed pattern. The script's good patterns die with the
+  bad one, and the complaint comes back in Chrome's coordinates
+  (`matches[1]: Invalid host wildcard`), with no way back to the
+  header line.
+- **It judges the canonical forms**, so the lenient shapes are
+  accepted, and a problem the rewrite doesn't cure is reported against
+  the pattern the author actually wrote.
+  - A pattern is a problem only when every canonical form is one.
+- **What happens to one**:
+  - `buildRegistrationSpec` leaves it out of the registration.
+  - `extractStartupLogs` turns it into a Log warning on its header
+    line.
+  - `validateHeader` stores the row INVALID with its reason, when no
+    `@match` or `@include` is left.
+- **Deliberately narrower than Chrome's parser**: a false positive
+  would ignore a pattern that works. A malformed port, say, still
+  reaches Chrome and still comes back as
+  [REJECTED](injection.md#rejected-registrations), which remains the
+  backstop for everything this doesn't reproduce.
+- **Ignoring them is safe** because the two agree: every pattern
+  flagged here is one `matchPattern` could never have matched either,
+  so no page loses a script it was getting.
+  `tests/unit/url-match.test.mjs` pins it.
 
-What it flags that Chrome names in its own refusal:
+### Registering `@include` and `@exclude`
 
-- no path (`https://example.com`) — the common one, and the one other
-  managers accept;
-- a scheme outside `*` / `http` / `https` / `file` / `ftp` (after glob
-  expansion, so `chrome-*://` is flagged and `http*://` is not);
-- an empty host, for a scheme that has one;
-- a host holding a character no hostname can (`https?:\/\/weibo.com/p/*`
-  — a regex in an `@match`, which the scheme-less reading would
-  otherwise turn into a pattern with a host of `https?:\`);
-- `*` anywhere in the host but as the whole host or its first label.
+Chrome tests globs case-sensitively, and reads `?` as a one-character
+wildcard. SM's globs ignore case and take `?` literally. So:
 
-One more that Chrome accepts, but which can never match:
-
-- a `#` in the path (`https://app.example/#/settings*`). Chrome
-  matches without the URL's `#hash`. Violentmonkey does match it, so
-  a script written there would otherwise never run, with no word why.
-  The warning points to `@include`.
-
-What happens to one:
-
-- **Dropped** from the registration spec (`buildRegistrationSpec`), so
-  the script still runs everywhere its other patterns say.
-- **Warned about** in the Log, on the header line that declared it —
-  one row per pattern, since each has its own reason and line.
-- **Fatal** only when it leaves the script with no `@match` and no
-  `@include` that could ever match: `validateHeader` then stores the
-  row INVALID with that pattern's own reason.
-
-Deliberately narrower than Chrome's parser — a false positive would
-drop a pattern that works. A malformed port, say, still reaches Chrome
-and still comes back as
-[REJECTED](injection.md#rejected-registrations), which remains the
-backstop for everything this doesn't reproduce.
-
-Dropping is safe because the two agree: every pattern flagged here is
-one `matchPattern` could never have matched either, so no page loses a
-script it was getting.
-
-How common this is, measured over the Greasy Fork corpus
-(`tests/greasyfork-examples/corpus.db`, 1,991 scripts, 9,003 `@match`
-patterns):
-
-- **158 patterns** still fail the check, and **34 scripts** are left
-  with nothing usable.
-- Before the lenient readings it was 1,035 and 81 — the rewrite is
-  what closed the gap.
-- What is left is mostly a bare origin with no path (92) and a `*` in
-  the middle of a host (62). Neither has a single obvious reading;
-  TODO.md tracks them. The rest is a scheme nothing supports and one
-  regex pasted into an `@match`.
-
-None of these can run under Chrome either way — it refuses their
-registrations — but the patterns exist because other managers match
-with their own engines rather than Chrome's.
-
-### `@include` — free-form glob
-
-A `*`-glob anchored to the whole URL string, `#hash` included, as
-Chrome's `include_globs` are. `*` matches any run of characters. If the
-pattern is wrapped in `/.../` it is treated as a JavaScript regex instead.
-
-- A glob is case-sensitive: Chrome evaluates it.
-- A regex ignores case, as in Tampermonkey and Violentmonkey. Chrome
-  has no regex rules, so the wrapper's in-page matcher applies it.
-- Slashes inside a regex need no escaping. A flag after the closing
-  slash (`/.../i`) makes the pattern a glob, which matches nothing, as
-  in the other managers.
-- Tampermonkey and Violentmonkey also ignore case in a glob, since they
-  match every rule themselves. See `tests/examples/headers-include-regex/`.
-
-### `@exclude` — same syntax as `@include`
-
-Same grammar (`*`-glob or `/regex/`). **Excludes always win** — if any
-`@exclude` pattern matches the URL, the script does not match, even if
-a `@match` or `@include` would have hit.
+- **A glob `@include`** registers widened (`chromeIncludeGlob`):
+  - The host is lowercased, which keeps it exact, since Chrome
+    lowercases it in the URL.
+  - Every other letter becomes `?`, which Chrome reads as any one
+    character, so it takes the letter in either case:
+    `*://WWW.Example.com/Page*` registers as
+    `*://www.example.com/????*`.
+  - The host is the text before the first `/`, after any leading
+    `scheme://`, when it has a dot or follows `scheme://` with no `*`
+    (`localhost`). In `*Foo/bar*`, `Foo` may well be in the path, so
+    it becomes `???` too.
+  - A `.tld` `@match`'s coarse glob goes through the same widening,
+    so its host is lowercased as well.
+- **A regex `@include`** has no Chrome equivalent, so its script
+  registers for every page.
+- **An `@exclude`** is always checked in the page, which turns on the
+  wrapper's matcher. Chrome also gets each glob `@exclude` it can only
+  read narrower than ours, to skip injecting: all but `.tld` ones and
+  ones with a `?`.
+- **The wrapper's matcher** then holds the script to its rules. More:
+  [injection.md](injection.md#regex-pattern-forms).
 
 ### `.tld` hosts
 
-Tampermonkey's suffix for "this name under any public suffix":
-`*://www.google.tld/*` runs on www.google.com, www.google.de and
-www.google.co.uk. Read the same way in `@match`, `@include` and
-`@exclude`.
+What `.tld` means: [match-rules.md](match-rules.md#tld-hosts).
 
-- **Where it counts**: only as a host's last label (`www.google.tld`,
-  `*.imdb.tld`, with or without a `:port`). `.tld` anywhere else, or
-  inside a `/regex/`, is literal text.
-  - An `@include` glob may run the host straight into a `*` with no
-    `/` (`http://www.google.tld*`); the `.tld` still ends the host.
-  - `*.tld` with no name in front stays literal in all three tags.
-- **What it matches**: any suffix in the ICANN section of the Public
-  Suffix List (PSL, publicsuffix.org), the suffixes under which
-  domain registries hand out names. That includes multi-level ones a
-  registry keeps (`co.uk`, `com.au`), and not ordinary names
-  (`com.de`, `evil.com`).
-  - The PSL's private section (`blogspot.com`, `github.io`) is left
-    out: a name under one belongs to whoever registered it there, and
-    `www.google.blogspot.com` isn't Google's. Violentmonkey includes
-    it; Tampermonkey uses its own fixed, ICANN-only list.
-  - Names no registry hands out (`.local`, `.lan`) don't match: the
-    PSL's implicit "any unknown label" rule isn't applied.
 - **How it's tested**: each public suffix the URL's own host ends in
   is put in place of `.tld`, and the result tested as an ordinary
   pattern. So `.tld` can only ever stand for the host's real suffix.
+  - In a `@match`, it's found in each canonical form, so it's judged
+    on the pattern as read, the same text that is registered.
 - **The list**: `src/public-suffixes.ts`, generated by
   `node scripts/update-public-suffixes.mjs` and committed, so the
   build stays offline. Rerun it now and then; the diff shows what
@@ -250,22 +159,19 @@ www.google.co.uk. Read the same way in `@match`, `@include` and
   - With no reply (the worker never answered), a `.tld` script skips
     rather than runs: the loose reading alone would also take hosts
     like `www.google.evil.com`.
-- **Site icons and links** for a `.tld` `@match` use `.com`.
 - Pinned by `tests/unit/url-match.test.mjs`, the prelude cases in
   `tests/unit/injector.test.mjs`, and in a real browser by
   `tests/e2e/tld-hosts.spec.ts`.
 
 ### Combined rule (`urlMatchesScript`)
 
-A script matches a URL iff:
+The rule in [match-rules.md](match-rules.md#combining-rules), as one
+function. `explainUrlMatch` is the same rule, listing every hit for
+`sm-dev match`.
 
-1. No `@exclude` pattern matches, AND
-2. At least one `@match` OR `@include` pattern matches.
-
-A script with zero `@match` and zero `@include` patterns never matches
-anything — but those scripts are also rejected by `validateHeader`
-upstream, so they never make it into the match index in the first
-place.
+- A script with no `@match` and no `@include` never matches, but
+  `validateHeader` stores those INVALID, so they never reach the match
+  index.
 
 ### Effective enabled
 

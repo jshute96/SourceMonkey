@@ -101,7 +101,7 @@ import { MISSING_BLOB_MESSAGE } from '../../dist/extension/script-blobs.js';
 import { remapStackText } from '../../dist/stack-link.js';
 import { buildRequireSourceUrl, buildSourceUrl } from '../../dist/script-source-url.js';
 import { WRAPPER_BRIDGE, WRAPPER_PRELUDE } from '../../dist/generated-wrappers.js';
-import { urlMatchesScript } from '../../dist/url-match.js';
+import { matchPattern, urlMatchesScript } from '../../dist/url-match.js';
 
 // ---------- normalizeDeclaredRunAt ----------
 
@@ -859,7 +859,7 @@ test('buildRegistrationSpec: drops a @match Chrome would refuse, keeping the res
   // anyway, and the reason is already a warning in the script's Log.
   const spec = await buildRegistrationSpec(makeScript({
     matching: {
-      matches: ['https://example.com/*', 'https://example.com', 'https://www.*.com/*'],
+      matches: ['https://example.com/*', 'https://*.example.*/*', 'https://www.*.com/*'],
       excludes: [],
       includes: [],
     },
@@ -907,7 +907,7 @@ test('buildRegistrationSpec: unusable @match with a regex @include still falls b
   // `@match` at all.
   const spec = await buildRegistrationSpec(makeScript({
     matching: {
-      matches: ['https://example.com'],
+      matches: ['https://www.*.com/*'],
       excludes: [],
       includes: ['/^https:\\/\\/foo\\..*$/'],
     },
@@ -919,7 +919,7 @@ test('buildRegistrationSpec: nothing usable at all registers nothing', async () 
   // `validateHeader` stores such a script `invalid`, so this is the
   // belt-and-braces case: no spec rather than a spec Chrome refuses.
   const spec = await buildRegistrationSpec(makeScript({
-    matching: { matches: ['https://example.com'], excludes: [], includes: [] },
+    matching: { matches: ['https://www.*.com/*'], excludes: [], includes: [] },
   }));
   assert.equal(spec, null);
 });
@@ -1012,13 +1012,79 @@ test('buildRegistrationSpec: @match alone gets no stand-in', async () => {
   assert.equal(spec.includeGlobs, undefined);
 });
 
-test('buildRegistrationSpec: all @match patterns refused + glob @include gets the stand-in', async () => {
-  // `https://example.com` (no path) is a pattern Chrome's grammar
-  // refuses, so it never reaches the spec — leaving the script with
-  // globs only, which is the stand-in case.
+test('buildRegistrationSpec: a glob @include registers wide enough to ignore case', async () => {
+  // Chrome lowercases a URL's scheme and host, so those stay exact once
+  // lowercased; a path with letters can only widen, for the wrapper to
+  // narrow.
   const spec = await buildRegistrationSpec(makeScript({
     matching: {
-      matches: ['https://example.com'],
+      matches: [],
+      excludes: [],
+      includes: ['*://WWW.Example.com/Page*', 'https://example.org/*', '*Example.net*', 'https://*.google.tld/Maps*',
+        'http://LocalHost:3000/App*', '*Foo/bar*'],
+    },
+  }));
+  assert.deepEqual(spec.includeGlobs, ['*://www.example.com/????*', 'https://example.org/*', '*example.net*', 'https://*.google.*/????*',
+    'http://localhost:3000/???*', '*???/???*']);
+});
+
+// How Chrome tests an `includeGlobs` entry: `*` any text, `?` any one
+// character, case-sensitive, against the URL with its scheme and host
+// lowercased.
+function chromeGlobMatches(glob, url) {
+  const body = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
+  return new RegExp('^' + body + '$').test(new URL(url).href);
+}
+
+test('buildRegistrationSpec: Chrome injects wherever the script matches, in any case', async () => {
+  // Registering narrower than our own reading would leave a script the
+  // badge expects never injected: the wrapper can only narrow.
+  const scripts = [
+    { matches: [], excludes: [], includes: ['*Foo/bar*'] },
+    { matches: [], excludes: [], includes: ['http://*Foo/x*'] },
+    { matches: [], excludes: [], includes: ['*example.com/redirect?to=http://Foo*'] },
+    { matches: [], excludes: [], includes: ['*://WWW.Example.com/Page*', '*Example.net*'] },
+    { matches: [], excludes: [], includes: ['https://*.google.tld/Maps*'] },
+    { matches: ['*://www.Google.tld/*', 'HTTPS://Example.org/A*'], excludes: [], includes: [] },
+  ];
+  const urls = [
+    'https://example.com/Foo/bar', 'http://example.com/Foo/x', 'https://example.com/Redirect?to=http://FOO',
+    'https://www.example.com/PAGE/1', 'https://www.example.net/X', 'https://maps.google.de/maps',
+    'https://www.google.de/Q', 'https://example.org/A1',
+  ];
+  for (const matching of scripts) {
+    const spec = await buildRegistrationSpec(makeScript({ matching }));
+    for (const url of urls) {
+      if (!urlMatchesScript(url, matching)) continue;
+      const injected = spec.matches.some((m) => m === '<all_urls>' || matchPattern(m, url))
+        || (spec.includeGlobs ?? []).some((g) => chromeGlobMatches(g, url));
+      assert.ok(injected, `${JSON.stringify(matching)} should inject on ${url}`);
+    }
+  }
+});
+
+test('buildRegistrationSpec: an @exclude is always checked in the page, and a `?` one only there', async () => {
+  // Chrome would read the `?` as a one-character wildcard, excluding
+  // more than the header says. The others go to Chrome too, which reads
+  // them case-sensitively: narrower than ours, so never wrong.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: {
+      matches: ['https://example.com/*'],
+      excludes: ['*/Admin*', '*?id=1*'],
+      includes: [],
+    },
+  }));
+  assert.deepEqual(spec.excludeGlobs, ['*/Admin*']);
+  assert.match(spec.js[0].code, /"matching"/);
+});
+
+test('buildRegistrationSpec: all @match patterns refused + glob @include gets the stand-in', async () => {
+  // `https://www.*.com/*` is a pattern Chrome's grammar refuses, so it
+  // never reaches the spec — leaving the script with globs only, which
+  // is the stand-in case.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: {
+      matches: ['https://www.*.com/*'],
       excludes: [],
       includes: ['*://example.com/*'],
     },
@@ -1601,16 +1667,35 @@ test('prelude matcher: @match passes', async () => {
   assert.equal(match('https://example.com/x', { matches: ['https://example.com/*'], excludes: [], includes: [] }), true);
 });
 
-test('prelude matcher: a regex ignores case, as urlMatchesScript does', async () => {
+test('prelude matcher: a regex and a glob ignore case, as urlMatchesScript does', async () => {
   const match = await loadPreludeMatcher();
   const url = 'https://example.com/page';
   for (const [m, expected] of [
     [{ matches: [], excludes: [], includes: ['/EXAMPLE\\.COM\\/PAGE/'] }, true],
     [{ matches: ['https://example.com/*'], excludes: ['/PAGE/'], includes: [] }, false],
-    [{ matches: [], excludes: [], includes: ['*EXAMPLE.COM*'] }, false],
+    [{ matches: [], excludes: [], includes: ['*EXAMPLE.COM*'] }, true],
+    [{ matches: ['https://example.com/*'], excludes: ['*/PAGE'], includes: [] }, false],
   ]) {
     assert.equal(match(url, m), expected, JSON.stringify(m));
     assert.equal(urlMatchesScript(url, m), expected, JSON.stringify(m));
+  }
+});
+
+test('prelude matcher: reads a bare origin and a `*` stuck to a host as url-match.ts does', async () => {
+  const match = await loadPreludeMatcher();
+  for (const [pattern, url, expected] of [
+    ['https://example.com', 'https://example.com/', true],
+    ['https://example.com', 'https://example.com/page', false],
+    ['*://*example.com/*', 'https://www.example.com/x', true],
+    ['*://*example.com/*', 'https://fooexample.com/', false],
+    ['*://localhost:*/*', 'http://localhost:3000/', true],
+    ['www.google.tld/*', 'https://www.google.de/', true],
+    ['//example.com/*', 'https://example.com/', false],
+    ['*//example.com/*', 'https://example.com/', false],
+  ]) {
+    const m = { matches: [pattern], excludes: [], includes: [] };
+    assert.equal(match(url, m), expected, `${pattern} ${url}`);
+    assert.equal(urlMatchesScript(url, m), expected, `${pattern} ${url}`);
   }
 });
 
@@ -1634,7 +1719,6 @@ test('prelude matcher: agrees with url-match.ts on the lenient shapes', async ()
     ['*.example.com/*', 'https://www.example.com/x'],
     ['*.example.com/*', 'http://example.com/'],
     ['example.com/p/*', 'http://example.com/p/1'],
-    ['//example.com/*', 'https://example.com/'],
     ['http*://example.com/*', 'http://example.com/'],
     ['*s://example.com/*', 'https://example.com/'],
     ['f*://example.com/*', 'ftp://example.com/x'],

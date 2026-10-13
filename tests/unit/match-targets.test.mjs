@@ -48,13 +48,11 @@ test('originFromMatchPattern: subdomain wildcard collapses to base host', () => 
   );
 });
 
-test('originFromMatchPattern: rejects a wildcard port', () => {
-  // Chrome's match-pattern grammar doesn't formally support ports
-  // at all, and the de-facto support is digits only. A `:*` port is
-  // not a usable target — treat it the same as any other host-side
-  // wildcard we can't pin to one site.
-  assert.equal(originFromMatchPattern('http://localhost:*/path'), null);
-  assert.equal(originFromMatchPattern('https://*.example.com:*/path'), null);
+test('originFromMatchPattern: a `:*` port reads as the default port', () => {
+  // Any port covers the default one, so that is where the icon is.
+  assert.equal(originFromMatchPattern('http://localhost:*/path'), 'http://localhost');
+  assert.equal(originFromMatchPattern('https://*.example.com:*/path'), 'https://example.com');
+  // A port that is only partly a wildcard names no one site.
   assert.equal(originFromMatchPattern('http://localhost:80*/path'), null);
 });
 
@@ -117,10 +115,12 @@ test('originFromMatchPattern: reads the lenient shapes like the matcher', () => 
   // canonicalMatchPatterns (src/url-match.ts).
   assert.equal(originFromMatchPattern('*.example.com/*'), 'https://example.com');
   assert.equal(originFromMatchPattern('example.com/app/*'), 'https://example.com');
-  assert.equal(originFromMatchPattern('//example.com/*'), 'https://example.com');
-  assert.equal(originFromMatchPattern('://example.com/*'), 'https://example.com');
   assert.equal(originFromMatchPattern('http*://example.com/*'), 'https://example.com');
-  assert.equal(originFromMatchPattern('*//example.com/*'), 'https://example.com');
+  // Any port covers the default one, so the icon comes from there.
+  assert.equal(originFromMatchPattern('*://localhost:*/*'), 'https://localhost');
+  // A broken scheme is ignored, so it names no site.
+  assert.equal(originFromMatchPattern('//example.com/*'), null);
+  assert.equal(originFromMatchPattern('*//example.com/*'), null);
 });
 
 test('originFromMatchPattern: a port-pinned `*` scheme still reads as https', () => {

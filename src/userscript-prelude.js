@@ -796,12 +796,12 @@
      script needing the recheck doesn't need a separate matcher entry;
      the prelude is on every script's js[] and the algorithm is tiny.
      The matcher block is only consulted when cfg.matching is present:
-     scripts with a regex or `.tld` @include/@exclude/@match, and
-     scripts with any glob @include (registered with NO_PAGE_MATCH; see
-     injector.ts). A script whose @match patterns carry the whole
-     registration skips it. */
+     scripts with a regex or `.tld` @include/@exclude/@match, scripts
+     with any glob @include (registered with NO_PAGE_MATCH; see
+     injector.ts), and scripts with any @exclude. A script whose
+     @match patterns carry the whole registration skips it. */
   function escRx(s) { return s.replace(/[.+?^${}()|[\]\\]/g, "\\$&"); }
-  function globRx(g) { return new RegExp("^" + escRx(g).replace(/\*/g, ".*") + "$"); }
+  function globRx(g, flags) { return new RegExp("^" + escRx(g).replace(/\*/g, ".*") + "$", flags || ""); }
   function includeMatch(pat, url) {
     if (pat.length >= 2 && pat.charAt(0) === "/" && pat.charAt(pat.length - 1) === "/") {
       /* Ignoring case, as url-match.ts does. */
@@ -832,10 +832,11 @@
   }
   function includeGlobRx(g) {
     var at = tldIndex(g, true);
-    if (at < 0) return globRx(g);
+    /* Ignoring case, as url-match.ts's includePattern does. */
+    if (at < 0) return globRx(g, "i");
     var a = escRx(g.slice(0, at)).replace(/\*/g, ".*");
     var b = escRx(g.slice(at + 4)).replace(/\*/g, ".*");
-    return new RegExp("^" + a + TLD_RX + b + "$");
+    return new RegExp("^" + a + TLD_RX + b + "$", "i");
   }
   function hostMatchesTld(patternHost, hostname) {
     var base = patternHost.slice(0, -4).toLowerCase();
@@ -843,22 +844,24 @@
     var name = (anySub ? base.slice(2) : base).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return new RegExp("^" + (anySub ? "(?:.+\\.)?" : "") + name + TLD_RX + "$").test(hostname.toLowerCase());
   }
-  /* Lenient readings of the two shapes Chrome's parser refuses — an
-     omitted scheme and a scheme glob. Mirrors canonicalMatchPatterns()
+  /* Lenient readings of the shapes Chrome's parser refuses — an
+     omitted scheme, a scheme glob, no path, a `*` stuck to a host.
+     Mirrors canonicalMatchPatterns()
      in src/url-match.ts; see its header for why. Keep the two in
      lockstep: the SW registers the canonical form, so a wrapper that
      didn't know the rewrite would reject a page Chrome injected it on. */
   var CONCRETE_SCHEMES = ["http", "https", "file", "ftp"];
   function canonicalPatterns(pat) {
     if (pat === "<all_urls>") return [pat];
+    /* A broken scheme stays as written, and matches nothing. */
+    if (/^(\*?\/\/|:)/.test(pat)) return [pat];
     var p = pat;
-    if (p.indexOf("*//") === 0) p = "*:" + p.slice(1);
-    else if (p.indexOf("//") === 0) p = "*:" + p;
-    else if (p.indexOf("://") < 0) p = "*://" + p;
+    if (p.indexOf("://") < 0) p = "*://" + p;
+    p = readHostAndPath(p);
     var sep = p.indexOf("://");
     var scheme = p.slice(0, sep).toLowerCase();
     var rest = p.slice(sep);
-    if (scheme === "*" || scheme === "") return anyScheme(rest);
+    if (scheme === "*") return anyScheme(rest);
     if (scheme.indexOf("*") < 0) return [p];
     var expanded = [];
     for (var i = 0; i < CONCRETE_SCHEMES.length; i++) {
@@ -870,6 +873,17 @@
     if (expanded.join() === "http,https") return anyScheme(rest);
     for (var j = 0; j < expanded.length; j++) expanded[j] += rest;
     return expanded;
+  }
+  /* No path reads as `/`, and a `*` stuck to the front of a host as
+     `*.`. Mirrors readHostAndPath() in src/url-match.ts. */
+  function readHostAndPath(p) {
+    var start = p.indexOf("://") + 3;
+    var slash = p.indexOf("/", start);
+    var host = slash < 0 ? p.slice(start) : p.slice(start, slash);
+    var path = slash < 0 ? "/" : p.slice(slash);
+    var bareHost = host.replace(/:(\d+|\*)$/, "");
+    if (/^\*[^.*:]/.test(bareHost) && bareHost.indexOf("*", 1) < 0) host = "*." + host.slice(1);
+    return p.slice(0, start) + host + path;
   }
   /* http-or-https, spelled out beside a numeric port because Chrome's
      parser refuses `*` there. Same reasoning as anyScheme() in
@@ -903,7 +917,7 @@
        with no port matches any port. Keep this in lockstep with
        url-match.ts. */
     var colon = host.lastIndexOf(":");
-    var hasPort = colon > 0 && /^\d+$/.test(host.slice(colon + 1));
+    var hasPort = colon > 0 && /^(\d+|\*)$/.test(host.slice(colon + 1));
     var patternHost = hasPort ? host.slice(0, colon) : host;
     var patternPort = hasPort ? host.slice(colon + 1) : "";
     if (patternHost === "*") {
@@ -917,13 +931,16 @@
     } else if (patternHost === "") {
       if (u.hostname !== "") return false;
     } else if (u.hostname.toLowerCase() !== patternHost.toLowerCase()) return false;
-    if (patternPort !== "" && u.port !== patternPort) return false;
+    if (patternPort !== "" && patternPort !== "*" && u.port !== patternPort) return false;
     /* Not the fragment, as in Chrome's matcher and url-match.ts. */
     var tail = u.pathname + u.search;
     try { return globRx(path).test(tail); } catch (_e) { return false; }
   }
   function hasTldRule(m) {
-    var all = m.matches.concat(m.includes, m.excludes);
+    /* A @match's `.tld` is found in its canonical forms, as
+       url-match.ts finds it. */
+    var all = m.includes.concat(m.excludes);
+    for (var j = 0; j < m.matches.length; j++) all = all.concat(canonicalPatterns(m.matches[j]));
     for (var i = 0; i < all.length; i++) {
       if (!isRegexPat(all[i]) && all[i] !== "<all_urls>" && tldIndex(all[i], true) >= 0) return true;
     }
