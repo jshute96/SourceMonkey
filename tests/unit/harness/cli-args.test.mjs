@@ -337,8 +337,10 @@ test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
   });
   const none = { code: 1, out: 'No sm-dev runs are active. Start one with `sm-dev start`.' };
   assert.deepEqual(cli('tabs'), none);
-  // status needs no run: it shows the browser, and says there are no runs.
-  const status = spawnSync(process.execPath, [CLI, '--browser', '1', 'status'], { encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
+  // status needs no run: it says there are none, after the browser the line names.
+  const bare = spawnSync(process.execPath, [CLI, 'status'], { encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
+  assert.equal(bare.stdout, 'No current run. (Use `start` or `attach` to connect to one.)\n\nNo other active runs\n');
+  const status = spawnSync(process.execPath, [CLI, '--existing-browser', '--browser', '1', 'status'], { encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
   assert.equal(status.status, 0);
   assert.equal(status.stdout, [
     'No current run. (Use `start` or `attach` to connect to one.)',
@@ -347,6 +349,80 @@ test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
     'No other active runs',
     '',
   ].join('\n'));
+  const noD9 = { code: 1, stdout: '', stderr: 'There is no run D9. Use `sm-dev list` to see the runs.\n' };
+  assert.deepEqual(piped('status\n', '--run', 'D9'), noD9);
+  assert.deepEqual(piped('status\n', '--run=D9', '--stdin'), noD9);
+  assert.deepEqual(piped('status\n', '--run', '9'), { code: 2, stdout: '', stderr: 'ERROR: Runs are named D1, D2 and so on. Did you mean --run D9?\n' });
+  // A line-wide flag goes first.
+  assert.deepEqual(piped('', 'list', '--stdin'), {
+    code: 2, stdout: '', stderr: 'ERROR: The --stdin flag is for the whole command line, so it goes first, before any command: `sm-dev --stdin <command>`\n',
+  });
+});
+
+test('stdin from a file is checked in full; lines a pipe sends later run as read, up to a mistake', async () => {
+  // A file: every mistake in it said, none run.
+  const file = path.join(RUNS_DIR, 'steps.txt');
+  writeFileSync(file, 'status\nevel 1\n');
+  const fd = openSync(file, 'r');
+  const r = spawnSync(process.execPath, [CLI], { stdio: [fd, 'pipe', 'pipe'], encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
+  closeSync(fd);
+  assert.equal(r.status, 2);
+  assert.equal(r.stderr, 'stdin > evel 1\nERROR: `evel` is not a command a run takes. Use `sm-dev help commands` to list them.\nNone of the commands were run.\n');
+  // A pipe: a command first, then later a mistake, said as it comes,
+  // which stops the rest, as a failed command does. The mistake is
+  // sent only once `list` has answered: a fixed pause raced a slow
+  // start, and both writes then arrived as one batch, checked in full.
+  const child = spawn(process.execPath, [CLI], { env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
+  let stdout = '';
+  let stderr = '';
+  const listed = new Promise((resolve) => {
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+      if (stdout.includes('No sm-dev runs are active')) resolve();
+    });
+  });
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  child.stdin.write('list\n');
+  await listed;
+  child.stdin.write('evel 1\ntabs {{\n}}\n');
+  child.stdin.end();
+  const code = await new Promise((r) => child.on('exit', r));
+  assert.equal(code, 1);
+  assert.equal(stderr, [
+    'stdin > evel 1',
+    'ERROR: `evel` is not a command a run takes. Use `sm-dev help commands` to list them.',
+    'That command failed, so the commands after it were not run',
+    '',
+  ].join('\n'));
+});
+
+test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
+  // A list of only comments sends nothing.
+  assert.deepEqual(cli('# a comment\n\n'), { code: 2, out: `ERROR: ${NO_COMMANDS}` });
+  assert.deepEqual(cli('tabs {{\n}}'), {
+    code: 2, out: 'ERROR: Line 1: Only the cdp, eval, set and type commands take a {{ block, so its lines up to }} are skipped. None of the commands were run.',
+  });
+  const none = { code: 1, out: 'No sm-dev runs are active. Start one with `sm-dev start`.' };
+  assert.deepEqual(cli('tabs'), none);
+  // status needs no run: it says there are none, after the browser the line names.
+  const bare = spawnSync(process.execPath, [CLI, 'status'], { encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
+  assert.equal(bare.stdout, 'No current run. (Use `start` or `attach` to connect to one.)\n\nNo other active runs\n');
+  const status = spawnSync(process.execPath, [CLI, '--existing-browser', '--browser', '1', 'status'], { encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
+  assert.equal(status.status, 0);
+  assert.equal(status.stdout, [
+    'No current run. (Use `start` or `attach` to connect to one.)',
+    'Browser: None answering at 127.0.0.1:1. Start one with `sm-dev --open-browser --browser 127.0.0.1:1`.',
+    '',
+    'No other active runs',
+    '',
+  ].join('\n'));
+  // A browser's own commands, with no run, need a browser named: a temp browser comes only with a run.
+  assert.deepEqual(cli('manager', 'install'), { code: 2, out: 'ERROR: The `manager install` command needs a browser, and no run is going. Use --existing-browser for the browser at 127.0.0.1:9233, or --open-browser to start one there.' });
+  assert.deepEqual(cli('collection', 'list'), { code: 2, out: 'ERROR: The `collection` command needs a browser, and no run is going. Use --existing-browser for the browser at 127.0.0.1:9233, or --open-browser to start one there.' });
+  // --browser alone is a temp browser's port, not a browser to connect to.
+  assert.deepEqual(cli('--browser', '1', 'status'), { code: 2, out: 'ERROR: The `status` command connects to a browser, and --browser alone is the port for a temp browser. Use --existing-browser to connect to the browser at 127.0.0.1:1.' });
+  const statusJson = spawnSync(process.execPath, [CLI, '--json=single', 'status'], { encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
+  assert.deepEqual(JSON.parse(statusJson.stdout), { command: 'status', runs: [] });
   const noD9 = { code: 1, out: 'There is no run D9. Use `sm-dev list` to see the runs.' };
   assert.deepEqual(cli('--run', 'D9', 'status'), noD9);
   assert.deepEqual(cli('--run=d9', 'status'), noD9);
@@ -630,7 +706,7 @@ test('help for one command shows its entry and only its flags', () => {
   assert.match(wait, /^Logs:\n {2}--log-source SOURCE/m);
   // start's own groups, then the ones it shares.
   const start = help('help', 'start').out;
-  assert.ok(start.indexOf('Lifetime:') < start.indexOf('Browser selection'));
+  assert.ok(start.indexOf('Lifetime:') < start.indexOf('Browser options'));
   assert.match(start, /^ {2}--watch /m);
   assert.doesNotMatch(start, /--extension/);
   // --help before or after the command asks the same.
@@ -692,23 +768,31 @@ test('the browser options are global, and only one browser is chosen', () => {
     code: 2,
     out: 'ERROR: The --open-browser flag is for the whole command line, so it goes first, before any command: `sm-dev --open-browser <command>`',
   });
-  for (const flag of ['--temp-browser', '--headed']) {
+  for (const flag of ['--temp-browser', '--existing-browser', '--headed', '--headless']) {
     assert.deepEqual(run(SCRIPT, flag), { code: 2, out: `ERROR: The ${flag} flag is for the whole command line, so it goes first, before any command: \`sm-dev ${flag} <command>\`` });
   }
   assert.deepEqual(run(SCRIPT, '--profile', 'x'), { code: 2, out: 'ERROR: The --profile flag is for the whole command line, so it goes first, before any command: `sm-dev --profile ... <command>`' });
-  assert.deepEqual(cliLine('--headed', 'start', SCRIPT), { code: 2, out: 'ERROR: The --headed flag only applies with --temp-browser' });
-  assert.deepEqual(cliLine('--mute', 'start', SCRIPT), { code: 2, out: 'ERROR: The --mute flag only applies with --temp-browser or --open-browser' });
+  // An existing browser isn't launched.
+  assert.deepEqual(cliLine('--existing-browser', '--headed', 'start', SCRIPT), { code: 2, out: 'ERROR: The --headed flag only applies when sm-dev launches the browser, so not with --existing-browser' });
+  assert.deepEqual(cliLine('--existing-browser', '--nomute', 'start', SCRIPT), { code: 2, out: 'ERROR: The --nomute flag only applies when sm-dev launches the browser, so not with --existing-browser' });
+  assert.deepEqual(cliLine('--existing-browser', '--mute', 'start', SCRIPT), { code: 2, out: 'ERROR: The --mute flag only applies when sm-dev launches the browser, so not with --existing-browser' });
+  assert.deepEqual(cliLine('--headed', '--headless', 'start', SCRIPT), { code: 2, out: 'ERROR: The command line takes --headed or --headless, not both' });
   assert.deepEqual(cliLine('--temp-browser', '--mute', '--nomute', 'start', SCRIPT), { code: 2, out: 'ERROR: The command line takes --mute or --nomute, not both' });
   assert.deepEqual(cliLine('--profile', 'x', 'start', SCRIPT), { code: 2, out: 'ERROR: The --profile flag only applies with --open-browser' });
-  assert.deepEqual(cliLine('--browser', '9222', '--temp-browser', 'start', SCRIPT), { code: 2, out: 'ERROR: The --temp-browser flag can\'t be used with --browser' });
-  assert.deepEqual(cliLine('--temp-browser', 'start', SCRIPT, '--browser', '9222'), { code: 2, out: 'ERROR: The --temp-browser flag can\'t be used with --browser' });
+  // At most one browser mode.
   assert.deepEqual(cliLine('--open-browser', '--temp-browser', 'start', SCRIPT), { code: 2, out: 'ERROR: The --temp-browser flag can\'t be used with --open-browser' });
+  assert.deepEqual(cliLine('--existing-browser', '--open-browser', 'start', SCRIPT), { code: 2, out: 'ERROR: The --open-browser flag can\'t be used with --existing-browser' });
+  // A temp browser's --browser is a local port for it.
+  assert.deepEqual(cliLine('--browser', 'example.com:9222', 'start', SCRIPT, '--detach'), { code: 2, out: 'ERROR: A temp browser starts on this machine, so --browser must be a local port, not example.com:9222' });
+  assert.deepEqual(cliLine('--temp-browser', 'start', SCRIPT, '--browser', 'example.com:9222', '--detach'), { code: 2, out: 'ERROR: A temp browser starts on this machine, so --browser must be a local port, not example.com:9222' });
   // Given on a line with no start, they'd do nothing.
   assert.deepEqual(cliLine('--temp-browser', 'eval', '1'), { code: 2, out: 'ERROR: The --temp-browser flag is for the runs a start begins, and this line has no start' });
+  assert.deepEqual(cliLine('--headless', 'eval', '1'), { code: 2, out: 'ERROR: The --headless flag is for the runs a start begins, and this line has no start' });
+  assert.deepEqual(cliLine('--mute', 'eval', '1'), { code: 2, out: 'ERROR: The --mute flag is for the runs a start begins, and this line has no start' });
   // start's own --browser would go elsewhere than the browser --open-browser starts.
   assert.deepEqual(cliLine('--open-browser', 'start', SCRIPT, '--browser', '9300', '--detach'), { code: 2, out: 'ERROR: The `start` command connects to the browser --open-browser starts, so give --browser once, first: `sm-dev --open-browser --browser ... start ...`' });
   // A value in the same word, and not the next option taken for one.
-  assert.deepEqual(cliLine('--browser=9222', '--temp-browser', 'start', SCRIPT), { code: 2, out: 'ERROR: The --temp-browser flag can\'t be used with --browser' });
+  assert.deepEqual(cliLine('--browser=example.com:1', 'start', SCRIPT, '--detach'), { code: 2, out: 'ERROR: A temp browser starts on this machine, so --browser must be a local port, not example.com:1' });
   assert.deepEqual(cliLine('--browser', '--open-browser'), { code: 2, out: 'ERROR: The --browser flag needs a value' });
   assert.deepEqual(cliLine('--open-browser', '--browser', 'http://127.0.0.1'), { code: 2, out: 'ERROR: The --open-browser flag starts a browser on this machine, so --browser must be a local port, not 127.0.0.1' });
   assert.deepEqual(cliLine('--open-browser', '--browser', 'http://abc.com:234/xxx'), { code: 2, out: 'ERROR: The --open-browser flag starts a browser on this machine, so --browser must be a local port, not abc.com:234/xxx' });

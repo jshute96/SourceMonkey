@@ -276,7 +276,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/rebuild-advice.ts` | Says how to rebuild sm-dev, in the checkout or in the checkout an installed copy came from |
 | `src/harness/stuck-tabs.ts` | Before `sm-dev start` connects, names the tabs that don't answer (a dialog, say), and waits for them |
 | `src/harness/run.ts` | The run process `sm-dev start` spawns: open a browser, push the scripts into SourceMonkey, follow tabs, serve clients |
-| `src/harness/extension-launch.ts` | Launches Chromium with the built extension (or a fetched manager) on a temp profile: `--temp-browser`, and the e2e suites' browser |
+| `src/harness/extension-launch.ts` | Launches Chromium with the built extension (or a fetched manager) on a temp profile: sm-dev's temp browser, and the e2e suites' browser |
 | `src/harness/extension-link.ts` | A run's or fixture test's connection to the real extension: version check, worker calls, pushes, claims and lease, page markers, events; the collection and script calls, also run-less |
 | `src/harness/manager-commands.ts` | The `collection` and `script` verbs: list, show, print, save and change a manager's collections and scripts |
 | `src/harness/external-manager.ts` | Violentmonkey and Tampermonkey: their `collection`/`script` calls, a run's scripts in them, and scripts on a tab |
@@ -292,7 +292,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/frames.ts` | A run's iframe ids (`F3`), a tab's frame tree, and matching the extension's frames to Playwright's |
 | `src/harness/frame-sessions.ts` | A tab's CDP sessions per process, reaching cross-origin iframes, and finding a frame in them |
 | `src/harness/extension-backend.ts` | Finds SourceMonkey in a browser: its id and its service worker |
-| `src/harness/run-log.ts` | A run's log file and `--temp-browser` downloads folder: timestamped names in `/tmp/sm-dev-logs-<user>`, stamped lines, per-run links |
+| `src/harness/run-log.ts` | A run's log file and temp browser downloads folder: timestamped names in `/tmp/sm-dev-logs-<user>`, stamped lines, per-run links |
 | `src/harness/download-watch.ts` | Prints where a download from one of the run's tabs was saved, from Chrome's CDP download events |
 | `src/harness/tab-refs.ts` | Naming and picking a run's tabs (`T2`, target ids), the current tab, the dialog message |
 | `src/harness/wait.ts` | The `wait` command, when a tab has settled (loaded, scripts started, quiet), and when a load is done |
@@ -606,14 +606,14 @@ built extension loaded; fixtures in `tests/fixtures/harness.ts`.
 | `tests/harness/console-commands.spec.ts` | The commands typed into `sm-dev start`: `scripts`, `values`, `menu` by M number, dialogs, several tabs, stopped loads |
 | `tests/harness/frames.spec.ts` | sm-dev on the frames example: frame ids, `frames`, scripts per frame, menus, `match --frames`, `--frame`, JSON |
 | `tests/harness/run-tabs.spec.ts` | `sm-dev start` end to end: followed tabs, `--all`, `--notab`, `load` / `update` / `--watch` reloads, `--from-saved`, sandboxed pages, `--lang` |
-| `tests/harness/run-downloads.spec.ts` | Download lines from a run's tabs: a `--temp-browser` saves beside the run log, a connected browser by its own setting |
+| `tests/harness/run-downloads.spec.ts` | Download lines from a run's tabs: a temp browser saves beside the run log, a connected browser by its own setting |
 | `tests/harness/page-commands.spec.ts` | The run commands that drive and read a page, in both worlds, with dialogs, quoting, and files |
 | `tests/harness/stack-lines.spec.ts` | sm-dev's `threw` reports and console lines name the `@require` or script line a stack frame came from |
 | `tests/harness/wait.spec.ts` | `wait` in its forms, the actions settling on their own, `--nowait`, and what a busy page reports |
 | `tests/harness/browser-launch.spec.ts` | `sm-dev --open-browser`: a browser that outlives sm-dev, started once, and its profile's lock |
 | `tests/harness/manager-commands.spec.ts` | The `collection` and `script` verbs from the command line, with no run and in a run, text and `--json` |
 | `tests/harness/run-remote.spec.ts` | `sm-dev start` driven from other shells: `--detach`, `--run`, `--` lines, sent commands, logs, stuck tabs, `--json` |
-| `tests/harness/temp-extension.spec.ts` | `--temp-browser` runs: the launched extension, `--values` and local files, run commands, managed scripts (E1) kept out |
+| `tests/harness/temp-extension.spec.ts` | Temp browser runs: the launched extension, `--values` and local files, run commands, managed scripts (E1) kept out |
 | `tests/harness/managers.spec.ts` | Managers in a browser: `manager install`/`enable`/`disable`, the warnings, and a run under another manager |
 | `tests/harness/violentmonkey.spec.ts` | sm-dev under the fetched Violentmonkey: the collection and script commands, and a run's scripts in it |
 | `tests/harness/tampermonkey.spec.ts` | sm-dev under the fetched Tampermonkey: the collection and script commands, a run's scripts, and their stack lines |

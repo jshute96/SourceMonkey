@@ -148,7 +148,7 @@ manager about as well as under SourceMonkey (SM).
 - The run removes its scripts for good, found by their mark: into
   VM's recycle bin and out again, since VM removes for good only from
   there.
-- Not in a `--temp-browser`, whose scripts go away with the browser,
+- Not in a temp browser, whose scripts go away with the browser,
   nor from a browser that has closed.
 - A run that crashed leaves its scripts.
   - The next run under VM in that browser removes them as it starts,
@@ -183,7 +183,7 @@ manager about as well as under SourceMonkey (SM).
 
 - VM's default blacklist (`file://*/*`) keeps scripts off `file://`
   pages, as a page opened with `open page.html` is.
-- In a `--temp-browser`, sm-dev clears that entry, so scripts run on
+- In a temp browser, sm-dev clears that entry, so scripts run on
   local test pages as under SM. Elsewhere it's the person's setting,
   and sm-dev leaves it.
 - Saved pages (`--from-saved`) aren't `file://` pages: they're served
@@ -235,7 +235,7 @@ Where VM defines these (links are to v2.49.0, the version tried):
 | An answer is unwrapped once the options page has loaded | Every call | Calls fail on a wrapped answer | Yes |
 | `UpdateScriptInfo {id, config: {enabled}}` turns a script on or off | `script enable`, `disable` | Those fail | Yes |
 | `MarkRemoved {id, removed}` moves a script to the recycle bin, and `RemoveScripts [ids]` removes it from there for good | `script uninstall`, the end of a run | Scripts are left behind | Yes |
-| `SetOptions` and `GetAllOptions` with the `isApplied` and `blacklist` options | `C0 enable`, `disable`, and `file://` pages in a `--temp-browser` | Those fail | Yes |
+| `SetOptions` and `GetAllOptions` with the `isApplied` and `blacklist` options | `C0 enable`, `disable`, and `file://` pages in a temp browser | Those fail | Yes |
 | A script's code is named `chrome-extension://<VM id>/<name>.user.js#<id>` in stacks | Logs and errors by script | Lines aren't traced to scripts; nothing else breaks | Yes |
 | The extension's name starts with `Violentmonkey`, or it has the store's id | Finding VM in a browser ([sm-dev-managers.md](sm-dev-managers.md)) | VM isn't found | No |
 
@@ -295,8 +295,8 @@ Where VM defines these (links are to v2.49.0, the version tried):
 | `script print`, `script save` | `GetScriptCode`, without sm-dev's comment. Not the `@require` / `@resource` files |
 | `script enable`, `disable` | `UpdateScriptInfo`. VM doesn't turn other copies off, so neither does sm-dev |
 | `script refresh` | Re-reads the source (the comment's `file`, or `lastInstallURL`) and installs it by `id` |
-| `script install <file\|url>` | `ParseScript`. Replacing one with the same name and namespace is reported as such, and needs `--force` outside a `--temp-browser`, unless an ended run left it |
-| `script uninstall` | To VM's recycle bin. Needs `--force` outside a `--temp-browser`, as under SM |
+| `script install <file\|url>` | `ParseScript`. Replacing one with the same name and namespace is reported as such, and needs `--force` outside a temp browser, unless an ended run left it |
+| `script uninstall` | To VM's recycle bin. Needs `--force` outside a temp browser, as under SM |
 | `script move` | Refused: there's only `C0` |
 
 ### Run commands
@@ -323,7 +323,7 @@ Where VM defines these (links are to v2.49.0, the version tried):
 | Run's scripts kept to its tabs | Yes | No | No |
 | Scripts on a tab | Reported by the extension | Predicted by sm-dev's matching | Predicted by TM's matching |
 | Script logs | `sm` source, and console lines | Console lines, by source URL | Console lines, by source URL |
-| `file://` pages | Runs there | Blacklisted by default; cleared in a `--temp-browser` | Needs Chrome's file access, on for an unpacked copy |
+| `file://` pages | Runs there | Blacklisted by default; cleared in a temp browser | Needs Chrome's file access, on for an unpacked copy |
 | Values, menus | Yes | No | No |
 
 ## Code layout

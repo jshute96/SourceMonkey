@@ -1139,7 +1139,7 @@ See [docs/harness-design.md](docs/harness-design.md).
   lines" note**, though that tab runs no scripts (corpus 518609). Seen
   once; find which path printed it.
 - **Downloads leak to `~/Downloads` after a second `start`.** In a
-  `--temp-browser` run, the first `start`'s downloads go to the run's
+  temp browser run, the first `start`'s downloads go to the run's
   `...-downloads/` folder beside its log; after another `start` in the
   same run, they land in the person's real `~/Downloads`. Reproduced
   in a corpus run (2026-10-04). The download behavior is probably set

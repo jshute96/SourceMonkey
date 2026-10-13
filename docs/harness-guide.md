@@ -68,11 +68,10 @@ has them log where the tools got in the way.
 ### Requirements
 
 - Node 22+ and pnpm.
-- A Chromium that Playwright can reach, with a remote-debugging port.
-  See [A browser to work in](#a-browser-to-work-in).
-- SourceMonkey loaded in that browser, with "Allow User Scripts" on. A
-  `--temp-browser` has it; for another browser, see
-  [Setting it up](#setting-it-up).
+- A browser to work in. By default each run launches its own, with
+  SourceMonkey loaded. See [A browser to work in](#a-browser-to-work-in).
+- For a lasting browser of your own: SourceMonkey loaded in it, with
+  "Allow User Scripts" on. See [Setting it up](#setting-it-up).
 
 ### Install
 
@@ -130,7 +129,12 @@ working on both), also add this to `package.json`:
 
 ## Quick start
 
-### 1. Open a browser
+### 1. Pick a browser
+
+- By default, each run launches a temp browser of its own, with
+  SourceMonkey loaded, closed when the run ends. Nothing to set up.
+- For sites that need a login, open a lasting browser instead, and add
+  `--open-browser` to the commands below:
 
 ```sh
 sm-dev --open-browser
@@ -141,8 +145,6 @@ sm-dev --open-browser
   sites your scripts need once, there.
 - The first time, load SourceMonkey into it (see
   [Setting it up](#setting-it-up)). The profile keeps it.
-- For a quick try with no login, use `--temp-browser` on the next step
-  instead, which comes with SourceMonkey.
 
 ### 2. Start a run
 
@@ -154,7 +156,8 @@ sm-dev --interactive start sites/example.com/add-button.user.js --watch
   URL its `@match` implies) in tab `T1`, where it runs.
 - Streams the script's console lines, errors, and whether it started.
 - `--watch` pushes the script again and reloads the page on each save.
-- `--interactive` then shows a `> ` prompt for more commands.
+- `--interactive` then shows a `> ` prompt for more commands. At a
+  prompt, the temp browser has a window.
 
 ### 3. Work at the prompt
 
@@ -325,9 +328,11 @@ At a terminal with color, sm-dev's output is colored too:
 
 ## A browser to work in
 
-`sm-dev` connects to a browser over CDP (Chrome DevTools Protocol, the
-remote-control interface DevTools and Playwright use). There are three
-ways to get one. Each needs SourceMonkey in it (see
+`sm-dev` drives a browser over CDP (Chrome DevTools Protocol, the
+remote-control interface DevTools and Playwright use). A line picks at
+most one of three browser modes: `--temp-browser` (the default),
+`--open-browser` and `--existing-browser`. Each needs SourceMonkey in
+the browser (see
 [A browser with SourceMonkey installed](#a-browser-with-sourcemonkey-installed)).
 
 ### A lasting browser: `--open-browser`
@@ -340,8 +345,9 @@ sm-dev --open-browser start x.user.js --detach  # the browser, then a run in it
 sm-dev --open-browser --browser 9300            # another one, on port 9300
 ```
 
-- It has a window, and listens on `--browser`'s port (9233 by default),
-  which is where later commands connect.
+- It has a window (`--headless` hides it), and listens on `--browser`'s
+  port (9233 by default), which is where later lines with
+  `--open-browser` or `--existing-browser` connect.
 - It stays open after sm-dev ends. Close it as any browser: by closing
   its window.
 - It has sound. `--mute` starts it muted (no effect on one already
@@ -349,7 +355,7 @@ sm-dev --open-browser --browser 9300            # another one, on port 9300
 - Google Chrome when it's installed (it handles Google sign-in), else
   Playwright's Chromium. `SM_DEV_BROWSER_BINARY` names another binary.
 - Google Chrome ignores the flag that would load SourceMonkey, so load
-  it there once with `sm-dev manager install` (see
+  it there once with `sm-dev --existing-browser manager install` (see
   [Setting it up](#setting-it-up)).
 - Its profile is kept, so sign-ins and extensions carry over:
   `~/.config/sm-dev/browser-profile-<port>`, or `--profile DIR`.
@@ -364,10 +370,14 @@ sm-dev --open-browser --browser 9300            # another one, on port 9300
 - Its output goes to `sm-dev-browser.log` in the profile directory, and
   the log's last line is shown if it fails to start.
 
-### A throwaway browser: `--temp-browser`
+### A throwaway browser: `--temp-browser` (the default)
 
-- Launches a hidden Chromium for each run, with an empty profile,
-  closed when the run ends. `--headed` shows it.
+- Launches a Chromium for each run, with an empty profile, closed when
+  the run ends.
+- It's hidden, except on a line that goes to a prompt (`--interactive`,
+  or one implied). `--headed` or `--headless` says outright.
+- It listens on a free port, or the local port `--browser` names,
+  which must not be in use. `$SM_DEV_BROWSER` doesn't apply to it.
 - It's muted, headed or not. `--nomute` gives it sound.
 - Useful for a quick run whose page needs no login.
 - It needs no setup: it loads SourceMonkey's built extension (the
@@ -381,20 +391,21 @@ sm-dev --open-browser --browser 9300            # another one, on port 9300
 - Hidden, it still sends a windowed Chrome's user agent, not
   `HeadlessChrome`, which some servers refuse a script's `@require`s
   and requests for.
-- Needs a `start` on the line (or `--interactive` or `--stdin`, where
-  one can come).
+- Given outright, `--temp-browser` needs a `start` on the line (or
+  `--interactive` or `--stdin`, where one can come).
 
-### Your own browser
+### Your own browser: `--existing-browser`
 
 Any Chromium started with `--remote-debugging-port`, with SourceMonkey
-loaded. Point sm-dev at it with `--browser`. Your ordinary browser with
-SourceMonkey installed works too, given that port.
+loaded. Point sm-dev at it with `--existing-browser`, and `--browser`
+for its address. Your ordinary browser with SourceMonkey installed works
+too, given that port.
 
 ### A browser with SourceMonkey installed
 
 - Every run needs SourceMonkey in its browser, with "Allow User
-  Scripts" on. A `--temp-browser` has it; an `--open-browser` or your
-  own browser needs it loaded once (see
+  Scripts" on. A temp browser has it; an `--open-browser` or
+  `--existing-browser` browser needs it loaded once (see
   [Setting it up](#setting-it-up)).
   - Without it, with it turned off, or with "Allow User Scripts" off,
     the run refuses to start and says how to fix it.
@@ -430,7 +441,7 @@ For a browser that keeps the extension (and your logins):
    extension to its `dist/`. In a repo of userscripts, `pnpm install`
    already built it under `node_modules/sourcemonkey/dist/`.
 2. With the browser open (`sm-dev --open-browser`), run
-   `sm-dev manager install`. It loads `dist/` as an unpacked extension,
+   `sm-dev --existing-browser manager install`. It loads `dist/` as an unpacked extension,
    with "Allow User Scripts" on. An `--open-browser` profile keeps it
    from then on.
 
@@ -445,29 +456,34 @@ turn on "Allow User Scripts".
 
 ### Choosing the browser: `--browser`
 
-- `--browser` takes a URL, a `host:port` (`http://` is added), or just a
-  port on this machine (`9222` or `:9222`). An IPv6 host needs brackets
-  (`[::1]:9222`).
-- It defaults to the `SM_DEV_BROWSER` environment variable, which
-  takes the same forms, then port 9233.
+- With `--open-browser` or `--existing-browser`, `--browser` is the
+  browser's address: a URL, a `host:port` (`http://` is added), or just
+  a port on this machine (`9222` or `:9222`). An IPv6 host needs
+  brackets (`[::1]:9222`).
+  - It defaults to the `SM_DEV_BROWSER` environment variable, which
+    takes the same forms, then port 9233.
+- With a temp browser, it's the local port to launch it on.
 - `SM_DEV_BROWSER_BINARY` (not `SM_DEV_BROWSER`) names the binary
   `--open-browser` starts.
 - These are global options, so they go first:
-  `sm-dev --temp-browser start x.user.js`.
+  `sm-dev --existing-browser start x.user.js`.
   - As a global option, `--browser` holds for the whole line (and
     `--open-browser`). After `start`, it's for that command alone.
-- One browser choice per line: `--temp-browser` can't go with
-  `--browser` or `--open-browser`, and after `--open-browser`, `start`
-  takes no `--browser` of its own.
+- One browser mode per line, and after `--open-browser`, `start` takes
+  no `--browser` of its own.
 - A command sent to a run acts in the run's browser. A `--browser` that
   names another one is refused, rather than passed over.
+- Commands for a browser rather than a run need `--existing-browser` or
+  `--open-browser` when there's no run to use, since a temp browser
+  exists only with a run.
   - The `collection` and `script` commands for what's installed
-    (`collection list`, `script show`, ...) are the exception: they
-    need no run, so with a `--browser` no run is in, they act on that
-    browser.
-  - The `manager` commands act on the `--browser` browser unless a run
-    is picked (by `--run`, `start` or `attach`), and then on its
-    browser. An active run that isn't picked is left alone.
+    (`collection list`, `script show`, ...) need no run, so with a
+    browser no run is in, they act on that browser.
+  - The `manager` commands act on that browser unless a run is picked
+    (by `--run`, `start` or `attach`), and then on its browser. An
+    active run that isn't picked is left alone.
+  - `status` with no run shows the named browser and its managers,
+    then the active runs.
 
 ### Other managers: Tampermonkey and Violentmonkey
 
@@ -477,9 +493,9 @@ case. SourceMonkey is the default.
 
 ```sh
 sm-dev --manager tm manager fetch                  # download Tampermonkey
-sm-dev --manager tm --temp-browser start <url>     # a run in a browser with it
-sm-dev --manager tm manager install                # into the --browser browser
-sm-dev manager disable                             # turn SourceMonkey off there
+sm-dev --manager tm start <url>                    # a run in a temp browser with it
+sm-dev --existing-browser --manager tm manager install  # into the --browser browser
+sm-dev --existing-browser manager disable          # turn SourceMonkey off there
 ```
 
 | Command | What it does |
@@ -490,7 +506,7 @@ sm-dev manager disable                             # turn SourceMonkey off there
 
 - A fetched copy keeps its Web Store id, so its storage and settings
   carry over when it's updated.
-- `--temp-browser` loads the chosen manager, fetching it the first
+- A temp browser loads the chosen manager, fetching it the first
   time. Its Tampermonkey has its "installed" page turned off, which it
   would otherwise open in a new tab at each start.
 - **A run works with one manager**, the one it started with. A later
@@ -579,7 +595,7 @@ sm-dev manager disable                             # turn SourceMonkey off there
 - `values E1` shows one's stored values, and `scripts E1` picks it for
   `get` and `set`. Any installed script can be picked (`script list`
   lists them), not only one on the current tab.
-- Outside a `--temp-browser`, `set` on one needs `--force`, since it
+- Outside a temp browser, `set` on one needs `--force`, since it
   changes your real data: `set key --force <json>`.
 
 ## Starting a run
@@ -688,7 +704,7 @@ What to open:
   commands, on a blank page or the URLs given. `load` adds scripts
   later. It can't be combined with `--all`, `--values`,
   `--values-file` or `--watch`.
-  - With `--temp-browser --headed`, that's a throwaway browser with
+  - In a temp browser with `--headed`, that's a throwaway browser with
     SourceMonkey, to try by hand. The scripts it `load`s run only in
     the run's tabs (`newtab`, and the tabs those open), not in tabs you
     open yourself.
@@ -717,17 +733,17 @@ The browser's language:
 - Each tab the run opens or follows gets it from its next load, over a
   CDP (Chrome DevTools Protocol) session held for the run. Other tabs
   in a shared browser keep theirs.
-- In a browser the run connects to (`--browser`, `--open-browser`),
+- In a browser the run connects to (`--existing-browser`, `--open-browser`),
   cross-site iframes and workers keep the browser's own languages, so a
   script running in such an iframe sees those.
-- A headless `--temp-browser` is also launched with Chrome's `--lang`
+- A temp browser is also launched with Chrome's `--lang`
   and `--accept-lang`, which reach those iframes and workers too, and a
   popup's first page. Use it when a script runs in frames.
 - `GM_xmlhttpRequest` and `GM_download` requests go from the
   extension's service worker (its background script), which the tab's
   setting doesn't reach. They carry the browser's own languages, unless
   the script sets `Accept-Language` itself.
-  - A headless `--temp-browser`'s launch flags reach them, so there
+  - A temp browser's launch flags reach them, so there
     they carry the `--lang` languages.
 
 The run's lifetime:
@@ -1073,9 +1089,10 @@ The options:
   - A run keeps the `--root` and `--local` it started with. A line that
     sends a command to a run it didn't start refuses them.
 - `--stdin` and `--interactive`, above.
-- The browser options, `--browser`, `--open-browser`, `--profile`,
-  `--temp-browser` and `--headed` (see
-  [A browser to work in](#a-browser-to-work-in)).
+- The browser mode (`--temp-browser`, `--open-browser`,
+  `--existing-browser`) and its options (`--browser`, `--profile`,
+  `--headed`, `--headless`, `--mute`, `--nomute`); see
+  [A browser to work in](#a-browser-to-work-in).
 - `--manager NAME` picks the userscript manager (see
   [Other managers](#other-managers-tampermonkey-and-violentmonkey)).
 - `--json` prints results as JSON (see [JSON output](#json-output)).
@@ -1206,7 +1223,7 @@ do. Like the listings, they work with no run too, against `--browser`.
 | `script <script> uninstall` | Removes a script from its container collection |
 | `script [script] move <collection>` | Moves a script to another container collection |
 
-- **`--force`:** outside a `--temp-browser` the scripts are the
+- **`--force`:** outside a temp browser the scripts are the
   person's own, so `script uninstall` needs `--force`. Enabling and
   disabling are easily undone, so they don't need it.
 - **What's refused:**
@@ -1940,7 +1957,7 @@ D2   81502  1m      127.0.0.1:41234 (owned, headless)  SourceMonkey  1     a.use
 
 - Browser is where the run's browser takes CDP connections.
 - Manager is the one the run works with (`--manager`).
-- `owned` marks one the run launched (`--temp-browser`), which closes
+- `owned` marks one the run launched (a temp browser), which closes
   when it ends; `headless`, one without a window.
 - `status` says the same on its first line:
   `Attached run: D2 (pid 81502), connected to owned headless browser
@@ -1948,9 +1965,9 @@ D2   81502  1m      127.0.0.1:41234 (owned, headless)  SourceMonkey  1     a.use
   - The heading says how this sm-dev came to the run: `Started run:`
     (`Started run (detached):`), `Attached run:`, or `Selected run:`
     (by `--run`, or an earlier command on the line).
-  - With no run picked, `status` says `No current run`, then shows the
-    browser commands with no run use (`--browser`'s) and its managers,
-    then every active run, each headed `Other run:`.
+  - With no run picked, `status` says `No current run`, then shows
+    every active run, each headed `Other run:`. With
+    `--existing-browser`, it shows that browser and its managers first.
   - `has SourceMonkey`, `SourceMonkey disabled` or `no SourceMonkey`
     says whether the run's manager is there. Checked each time.
   - The `Managers:` line after it lists every manager in the browser,
@@ -2017,7 +2034,8 @@ page print on their own, or to look back at what happened when.
   of the line, or on `exit`). `status` shows it too, as `Log: ...`.
 - Its first line says which browser the run uses:
   `Connected to browser 127.0.0.1:9233 (Chrome 153.0.8010.12)`, or
-  `Launched owned headless browser ...` for `--temp-browser`.
+  `Launched owned headless browser ...` for a temp browser (without
+  `headless` when it's headed).
 - The run's output all goes there. A client following the run shows the
   same lines, without the timestamps.
 
@@ -2217,8 +2235,8 @@ that, since the answer is a function.
 
 - **"SourceMonkey is not installed in this browser"**, **"is turned
   off"**, or a message that "Allow User Scripts" is off: load it, or
-  turn it on, as in [Setting it up](#setting-it-up), or use
-  `--temp-browser`.
+  turn it on, as in [Setting it up](#setting-it-up), or drop
+  `--existing-browser` or `--open-browser` to use a temp browser.
 - **"skipped on <url>: No @match or @include covers this URL"**, or
   another rule named there: the script would not run there outside
   sm-dev either. Broaden the pattern or change the URL; see

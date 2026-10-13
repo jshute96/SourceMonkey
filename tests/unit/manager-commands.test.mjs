@@ -138,7 +138,7 @@ test('a change to another run\'s script, or one that takes something away, is re
   assert.deepEqual(asked, []);
   // Turning one off is easily undone, so needs no --force.
   assert.deepEqual(await run('disable', ['E4']), { ok: true, out: ['Disabled E4: Dark mode'] });
-  // A --temp-browser's scripts are the run's own.
+  // A temp browser's scripts are the run's own.
   assert.deepEqual(await run('uninstall', ['E4'], false), { ok: true, out: ['Uninstalled E4: Dark mode from C2: Scripts from web'] });
   assert.deepEqual(asked, [['s1', false], ['s1']]);
 });

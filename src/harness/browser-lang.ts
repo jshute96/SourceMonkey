@@ -6,7 +6,7 @@
 // tab's life by a session of its own, so it works in a shared browser
 // without touching its other tabs. That reaches the tab's own frames
 // only: cross-site iframes and workers have targets of their own, and
-// keep the browser's languages. A headless `--temp-browser` is also
+// keep the browser's languages. A headless temp browser is also
 // launched with Chrome's own language flags, which reach those too,
 // and a popup's first load.
 //

@@ -302,7 +302,7 @@ export interface StatusData {
     testCollection?: string;
     /** The run's log file. */
     log?: string;
-    /** Where a `--temp-browser` saves downloads. */
+    /** Where a temp browser saves downloads. */
     downloads?: string;
   };
   tabs: Tab[];
@@ -311,7 +311,7 @@ export interface StatusData {
   scripts: StatusScript[];
 }
 
-/** The browser `status` would use with no run: `--browser`'s, and its managers. */
+/** The browser `status` shows with no run: the `--existing-browser` or `--open-browser` one, and its managers. */
 export interface BrowserStatus {
   address: string;
   /** Whether a browser answers there. */
@@ -327,11 +327,11 @@ export interface BrowserStatus {
 
 /**
  * `status` with no run picked (no --run, start or attach): the browser
- * the line would use, and every active run's status, each with
- * `connection: "other"`.
+ * the line names (with `--existing-browser` or `--open-browser`), and
+ * every active run's status, each with `connection: "other"`.
  */
 export interface StatusRunsData {
-  browser: BrowserStatus;
+  browser?: BrowserStatus;
   runs: StatusData[];
 }
 

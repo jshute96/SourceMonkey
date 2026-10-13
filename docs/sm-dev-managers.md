@@ -45,7 +45,7 @@ Violentmonkey (VM) implement them too.
     `Tampermonkey`).
   - Picks which extension the commands talk to, and the `manager`
     verbs act on. They take the manager only from it.
-  - With `--temp-browser`, also picks which extension the temp browser
+  - With a temp browser (the default), also picks which extension it
     loads.
 - **A run works with one manager**, the one it started with, recorded
   with the run. A later line's `--manager` has to match it, as its
@@ -68,24 +68,27 @@ Violentmonkey (VM) implement them too.
 ## Where the commands run
 
 - **No run needed.** They need a browser, not a run. With no run to
-  use, sm-dev connects to `--browser`, runs the command, and
-  disconnects (`openManagerLink` in `extension-link.ts`).
+  use, sm-dev connects to the `--existing-browser` or `--open-browser`
+  browser, runs the command, and disconnects (`openManagerLink` in
+  `extension-link.ts`).
   - That connection claims no tabs and hears no events.
   - It doesn't need "Allow User Scripts", since nothing it does runs
     a script.
 - **In a run.** When there is a run to use (`--run`, or the only one
   going), the command goes to it, as the run's other commands do, and
   the run asks SourceMonkey through its own connection.
-  - A `--browser` that names a browser no run is in lists that browser,
-    with no run. One naming another run's browser than the run picked
+  - An `--existing-browser` (or `--browser`) that names a browser no
+    run is in lists that browser, with no run. One naming another run's browser than the run picked
     is refused, as for any command sent to a run.
 - **The `manager` verbs** run in sm-dev itself, never in a run. They act
-  on the `--browser` browser unless a run is picked (by `--run`,
+  on the `--existing-browser` or `--open-browser` browser unless a run
+  is picked (by `--run`,
   `start` or `attach`), and then on its browser. An active run that
   isn't picked is left alone, as `status` with no run shows.
-- **`--temp-browser` with no run** would make a browser and drop it
-  straight away, so it's only useful inside a run (`start --notab`, then
-  the commands).
+- **A temp browser with no run** would make a browser and drop it
+  straight away, so with no run and no browser named, these commands
+  are refused, saying to use `--existing-browser`. Inside a run
+  (`start --notab`, then the commands) they use the run's temp browser.
 
 ## Command form
 
@@ -544,7 +547,7 @@ What `script show` shows, where the manager has it:
 
 ## Changing the person's real scripts
 
-- Outside a `--temp-browser`, the scripts and collections are the
+- Outside a temp browser, the scripts and collections are the
   person's own. The commands that remove something need `--force`
   there, as `set` on an E-script does now: `script uninstall`, and
   `collection drop`.

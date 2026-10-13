@@ -20,6 +20,7 @@ import {
 import { applyLang, langLaunchArgs } from './browser-lang.js';
 import { watchDownloads, type DownloadWatch } from './download-watch.js';
 import { managerState, managersIn, otherManagersWarning, stateLabel, type ManagerState } from './browser-extensions.js';
+import { DROP_BROWSER_MODE } from './extension-backend.js';
 import { ExtensionHost } from './extension-host.js';
 import { launchExtensionBrowser } from './extension-launch.js';
 import { fetchManager, fetchedVersion } from './manager-fetch.js';
@@ -124,10 +125,11 @@ export interface RunOptions extends ConnectOptions {
   timeoutMs?: number;
 }
 
-// How the browser commands reach a browser: connect to one over CDP
-// (the default, for the developer's own logged-in browser) or launch
-// a fresh Chromium (`--temp-browser`).
+// How the browser commands reach a browser: launch a fresh Chromium
+// (`tempBrowser`, sm-dev's default) or connect to one over CDP
+// (`--existing-browser`, for the developer's own logged-in browser).
 export interface ConnectOptions {
+  /** The browser to connect to, or with `tempBrowser`, the port to launch it on. */
   cdp?: string;
   /**
    * `--manager`: the userscript manager the run works with, and a
@@ -135,8 +137,8 @@ export interface ConnectOptions {
    */
   manager?: ManagerName;
   /**
-   * `--temp-browser`: launch a Chromium of the run's own instead, with
-   * the package's own build of SourceMonkey loaded.
+   * A temp browser: launch a Chromium of the run's own, with the
+   * package's own build of SourceMonkey (or `manager`) loaded.
    */
   tempBrowser?: boolean;
   headed?: boolean;
@@ -192,13 +194,18 @@ function cdpSetting(opts: ConnectOptions): string {
 }
 
 /**
- * ` --browser <address>`, for advice to run a command against the
- * browser at `endpoint`, unless that's where commands go anyway. Empty
- * for a launched one (`launched`), which closes with the run.
+ * ` --existing-browser`, with the address (`addressArg`), for advice to
+ * run a command against the browser at `endpoint`. Empty for a launched
+ * one (`launched`), which closes with the run, so the advice goes to
+ * the run.
  */
 export function browserArg(endpoint: string, launched = false): string {
-  if (launched || sameBrowser(endpoint, browserSetting())) return '';
-  return ` --browser ${endpoint.replace(/^https?:\/\//, '')}`;
+  return launched ? '' : ` --existing-browser${addressArg(endpoint)}`;
+}
+
+/** ` --browser <address>`, unless `endpoint` is the default browser. */
+export function addressArg(endpoint: string): string {
+  return sameBrowser(endpoint, browserSetting()) ? '' : ` --browser ${endpoint.replace(/^https?:\/\//, '')}`;
 }
 
 /**
@@ -214,7 +221,7 @@ export interface BrowserSession {
   browser: Browser;
   /** The browser's CDP endpoint, a launched one's too. */
   endpoint: string;
-  /** Launched for this run (`--temp-browser`), and closed with it. */
+  /** Launched for this run (a temp browser), and closed with it. */
   launched: boolean;
   /** Running without a window. */
   headless: boolean;
@@ -305,7 +312,9 @@ async function openBrowser(
     try {
       // Fetched the first time it's wanted, as `manager fetch` would.
       if (manager !== 'sourcemonkey' && fetchedVersion(manager) === null) await fetchManager(manager, out);
-      launched = await launchExtensionBrowser({ headed: opts.headed === true, muted: opts.muted, args: langLaunchArgs(opts.lang), connectedElsewhere: true, downloadsDir, manager });
+      // Only a port given outright: $SM_DEV_BROWSER names a lasting browser.
+      const port = opts.cdp === undefined ? undefined : Number(new URL(cdpEndpoint(opts.cdp)).port);
+      launched = await launchExtensionBrowser({ port, headed: opts.headed === true, muted: opts.muted, args: langLaunchArgs(opts.lang), connectedElsewhere: true, downloadsDir, manager });
     } catch (err) {
       out(S.asError(`Could not launch a browser with ${label}: ${(err as Error).message}`));
       return null;
@@ -342,7 +351,7 @@ async function openBrowser(
       }
       const from = browserSettingName(opts.cdp) === '$SM_DEV_BROWSER' ? ' (from $SM_DEV_BROWSER)' : '';
       out(S.asError(`Could not connect to a browser at ${endpoint}${from}: ${message}`));
-      out(S.err('Start one with `sm-dev --open-browser`, pass `--browser`, or use `--temp-browser`'));
+      out(S.err(`Use \`--open-browser\` to start one there, or ${DROP_BROWSER_MODE}`));
       return null;
     }
   }
@@ -880,7 +889,7 @@ async function runInBrowser(
   const manager = opts.manager ?? DEFAULT_MANAGER;
   const { label } = MANAGERS[manager];
   if (manager === 'sourcemonkey' && managerNow === 'disabled') {
-    opts.out(`[sm-dev] SourceMonkey is turned off in this browser. Turn it on with ${quoted(`sm-dev${browserArg(session.endpoint, session.launched)} manager enable`)}, or use ${quoted('--temp-browser')}, which loads it.`);
+    opts.out(`[sm-dev] SourceMonkey is turned off in this browser. Turn it on with ${quoted(`sm-dev${browserArg(session.endpoint, session.launched)} manager enable`)}, or ${DROP_BROWSER_MODE}, which loads it.`);
     return 1;
   }
   // Under another manager, the manager runs every script it has, and

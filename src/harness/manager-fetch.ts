@@ -1,6 +1,6 @@
 // `manager fetch`: downloads Tampermonkey or Violentmonkey from the
 // Chrome Web Store, unpacked, into sm-dev's cache, for `manager
-// install` and `--temp-browser` to load.
+// install` and a temp browser to load.
 //
 // - One folder per manager, `~/.cache/sm-dev/managers/<name>`
 //   (`$XDG_CACHE_HOME` when set), replaced whole by a newer version, so

@@ -128,7 +128,7 @@ It runs against real headless Chromium with `chrome.userScripts`,
   - `extensionContext` (worker-scoped) — persistent Chromium with the
     extension loaded and Preferences pre-seeded, launched by sm-dev's
     own launcher (`src/harness/extension-launch.ts`), so the suites and
-    `sm-dev --temp-browser` run the same browser.
+    sm-dev's temp browser run the same browser.
     - Tabs a test leaves open stay for the worker's later tests. A
       link to the collections page focuses an open one instead of
       opening a tab, so a test that waits for that tab calls

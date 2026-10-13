@@ -23,7 +23,7 @@ export const CONTEXT_LINES = 10;
 const COLLECTION_ARG: HelpItem = { term: '<collection>', about: 'A collection: `C3`, its name or a part of it, or `id=<id>`. A run\'s test collection is `D1`, by its run.' };
 
 // `script uninstall --force`, which removes one of the person's own scripts.
-const FORCE_NOTE = 'Needed outside a `--temp-browser`, where the scripts are your own.';
+const FORCE_NOTE = 'Needed outside a temp browser, where the scripts are your own.';
 
 /**
  * A term and what it means: an argument, an option, a way to name
@@ -173,14 +173,14 @@ export const HELP_SECTIONS: HelpSection[] = [
     summary: 'Example syntaxes',
     text: [
       'Choose a browser:',
-      '  # Start a headless test browser for this sm-dev run.',
-      '  sm-dev --temp-browser start <script> [<url>] ...',
+      '  # Start a test browser for this sm-dev run (the default).',
+      '  sm-dev start <script> [<url>] ...',
       '',
       '  # Launch a visible browser (if not already running).',
       '  sm-dev --open-browser [--browser <port>] [<commands...>]',
       '',
       '  # Connect to an existing browser.',
-      '  sm-dev [--browser <port>|<url>] <commands...>',
+      '  sm-dev --existing-browser [--browser <port>|<url>] <commands...>',
       '',
       'Open an interactive prompt (the default at a terminal):',
       '  # Optionally start an initial run first.',
@@ -219,7 +219,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     text: [
       'A run is an sm-dev server process connected to a browser, managing a list of tabs, and using the SourceMonkey extension to run scripts on them.',
       'The run pushes its scripts into its own test collection in the extension, which gets removed when the run ends. Injected scripts run only in the run\'s managed tabs.',
-      'The browser needs SourceMonkey installed and enabled. A `--temp-browser` has it installed automatically.',
+      'The browser needs SourceMonkey installed and enabled. A temp browser (the default) has it installed automatically.',
       '',
     ],
     commands: [
@@ -293,7 +293,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         syntax: NONE,
         about: [
           'Show overall status, script list, and tab list.',
-          'With no run picked (by `--run`, `start` or `attach`): the `--browser` browser and its managers, then each active run\'s status.',
+          'With no run picked: each active run\'s status. With `--existing-browser`, also that browser and its managers.',
         ],
         options: [FRAMES_OPTION],
       },
@@ -680,7 +680,7 @@ export const HELP_SECTIONS: HelpSection[] = [
             about: ['Store a value for the selected script.', '`set <key> {{` starts a multi-line block of JSON, ended by `}}`.'],
             options: [
               { term: '--file <path>', about: 'Read the JSON from a file, in place of `<json>`.' },
-              { term: '--force', about: 'Needed to change the real stored data of a SourceMonkey-managed script (`E1`, ...) outside a `--temp-browser`.' },
+              { term: '--force', about: 'Needed to change the real stored data of a SourceMonkey-managed script (`E1`, ...) outside a temp browser.' },
             ],
           },
         ],
@@ -714,9 +714,9 @@ export const HELP_SECTIONS: HelpSection[] = [
       'sm-dev works with one userscript manager, picked with `--manager`: SourceMonkey (the default), Tampermonkey or Violentmonkey. A run works with the one it started with.',
       'Under Tampermonkey or Violentmonkey, a run installs its scripts into it, marked as the run\'s, and removes them when it ends. The manager runs all its scripts in every tab, so `scripts` and `status` show the ones each tab is expected to run, by their match rules.',
       'The commands that work through SourceMonkey alone (`values`, `menu`, `connect`, ...) are refused under the others.',
-      'A `--temp-browser` has the manager installed. Another browser gets it with `manager install`.',
+      'A temp browser has the manager installed. Another browser gets it with `manager install`.',
       'A manager enabled beside the chosen one runs its scripts too, so sm-dev warns of one when it connects, and in `status`.',
-      'These act on the `--browser` browser, or with a run picked (by `--run`, `start` or `attach`), the run\'s browser.',
+      'These act on the run\'s browser, with a run picked (by `--run`, `start` or `attach`). Without one, they need `--existing-browser` or `--open-browser`.',
       '',
     ],
     commands: [
@@ -745,7 +745,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     text: [
       'What SourceMonkey has installed. Collections are named `C1`, `C2`, ... and scripts `E1`, `E2`, ..., by the numbers SourceMonkey keeps for them.',
       'Under Tampermonkey or Violentmonkey, its scripts are `E1`, `E2`, ..., in one collection, `C0`, whose `enable` and `disable` are its switch for all scripts. Violentmonkey\'s are its own numbers; Tampermonkey\'s are ones sm-dev keeps for it.',
-      'Without a run, these connect to the `--browser` browser. In a run, they use the run\'s browser.',
+      'In a run, these use the run\'s browser. Without one, they need `--existing-browser` or `--open-browser`.',
     ],
     subsections: [
       {
@@ -847,7 +847,7 @@ export const HELP_SECTIONS: HelpSection[] = [
                 term: '--collection <collection>',
                 about: 'The container collection to install it in. (Default: the one SourceMonkey keeps for its kind: Scripts from local disk, from web, or from GitHub)',
               },
-              { term: '--force', about: 'Under Tampermonkey or Violentmonkey, outside a `--temp-browser`: replace a script with the same name and namespace.' },
+              { term: '--force', about: 'Under Tampermonkey or Violentmonkey, outside a temp browser: replace a script with the same name and namespace.' },
             ],
           },
           {
@@ -884,43 +884,45 @@ export const HELP_SECTIONS: HelpSection[] = [
             ],
           },
           {
-            title: 'Browser selection',
+            title: 'Browser mode',
+            text: ['Give at most one. It picks the browser `start` uses, and for commands without a run, the browser they act on.'],
             options: [
-              { term: '--browser URL|PORT', about: ['The browser to connect to, and where `--open-browser` starts one: a URL, `host:port`, or port.', '(Default: `$SM_DEV_BROWSER` or `9233`)'], commands: ['start'] },
+              { term: '--temp-browser', about: ['(Default) Launch a browser for each run, with an empty profile and the `--manager` manager installed.', 'Close it when the run ends.'] },
               {
                 term: '--open-browser',
                 about: [
-                  'Start a browser, if none is running at the `--browser` address (which must be a local port).',
-                  'Starts it headed (with a visible window), and leaves it open after sm-dev ends.',
-                  'Uses Google Chrome if installed, else Chromium.',
+                  'Use the browser at `--browser`, starting it first if none is running there.',
+                  'It stays open after sm-dev ends. Uses Google Chrome if installed, else Chromium.',
                   'Used alone (`sm-dev --open-browser`), just start the browser.',
                 ],
+              },
+              { term: '--existing-browser', about: 'Connect to a browser already running at `--browser`. Assumes the manager is already installed (see `manager install`).' },
+            ],
+          },
+          {
+            title: 'Browser options',
+            options: [
+              {
+                term: '--browser URL|PORT',
+                about: [
+                  'With `--open-browser` or `--existing-browser`: the browser\'s address, as a URL, `host:port`, or port. `--open-browser` needs a local port.',
+                  '(Default: `$SM_DEV_BROWSER` or `9233`)',
+                  'With a temp browser: a local port for it. Fails if the port is in use.',
+                  '(Default: a free port)',
+                ],
+                commands: ['start'],
               },
               {
                 term: '--manager NAME',
                 about: [
                   'The userscript manager to work with: `sm`, `tm` or `vm`, or `sourcemonkey`, `tampermonkey` or `violentmonkey`. See `help managers`.',
+                  'A temp browser has it installed automatically.',
                   '(Default: `sm`, or a run\'s own)',
                 ],
               },
+              { term: '--headed, --headless', about: ['When launching a browser: show its window or not.', '(Default: headed for `--open-browser`, and for a temp browser in `--interactive` mode; headless otherwise)'] },
+              { term: '--mute, --nomute', about: ['When launching a browser: turn its sound off or on.', '(Default: muted for a temp browser, sound on for `--open-browser`)'] },
               { term: '--profile DIR', about: ['With `--open-browser`: the browser profile, kept between launches.', '(Default: `~/.config/sm-dev/browser-profile-<port>`)'] },
-              { term: '--temp-browser', about: 'Instead, launch a hidden, muted browser for each run, with an empty profile and the `--manager` manager installed, and close it when the run ends.' },
-              { term: '--headed', about: 'With `--temp-browser`: make its window visible.' },
-              { term: '--mute, --nomute', about: ['When launching a browser: turn its sound off or on.', '(Default: muted for `--temp-browser`, sound on for `--open-browser`)'] },
-            ],
-          },
-          {
-            title: 'Output',
-            options: [
-              {
-                term: '--json[=single|multi]',
-                about: [
-                  'Print results as JSON. (Supported for most commands.)',
-                  'Each result is on one line (`single`), or multi-line (`multi`).',
-                  '(Default: `multi` at a terminal, `single` when piped)',
-                  'Error and status messages go to stderr.',
-                ],
-              },
             ],
           },
           {
@@ -933,6 +935,20 @@ export const HELP_SECTIONS: HelpSection[] = [
                   'Only needed when multiple are active.',
                   'Default new names are `D1`, `D2`, etc.',
                   'If only one run is active, it\'s chosen by default.',
+                ],
+              },
+            ],
+          },
+          {
+            title: 'Output',
+            options: [
+              {
+                term: '--json[=single|multi]',
+                about: [
+                  'Print results as JSON. (Supported for most commands.)',
+                  'Each result is on one line (`single`), or multi-line (`multi`).',
+                  '(Default: `multi` at a terminal, `single` when piped)',
+                  'Error and status messages go to stderr.',
                 ],
               },
             ],
@@ -1515,7 +1531,7 @@ export function commandSyntax(name: string): CommandSyntax {
 }
 
 // The flags for the whole line, which go before any command.
-export const GLOBAL_FLAGS = ['--run', '--root', '--local', '--stdin', '--interactive', '--browser', '--manager', '--open-browser', '--profile', '--temp-browser', '--headed', '--mute', '--nomute', '--json'];
+export const GLOBAL_FLAGS = ['--run', '--root', '--local', '--stdin', '--interactive', '--temp-browser', '--open-browser', '--existing-browser', '--browser', '--manager', '--profile', '--headed', '--headless', '--mute', '--nomute', '--json'];
 
 // Those of them that take a value.
 export const VALUE_GLOBALS = new Set(['--run', '--root', '--local', '--browser', '--manager', '--profile']);

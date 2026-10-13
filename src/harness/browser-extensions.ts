@@ -284,7 +284,8 @@ export async function loadUnpacked(endpoint: string, dir: string): Promise<strin
  * Warns of each manager enabled beside `chosen`, whose scripts run in
  * the run's tabs too, with how to turn it off. For a run's first lines,
  * `status`, and the commands that connect without a run. `browserArg`:
- * ` --browser <address>` for a browser that isn't the default.
+ * the flags that name the browser in the advice (see `browserArg` in
+ * run.ts).
  */
 export function otherManagersWarning(managers: InstalledManager[], chosen: ManagerName, browserArg = ''): string[] {
   const others = [...new Set(managers.filter((m) => m.enabled && m.manager !== chosen).map((m) => m.manager))];

@@ -396,7 +396,13 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
   if (lineManager !== undefined && lineManager !== 'sourcemonkey' && opts.values) {
     throw new UsageError(`The ${quoted(opts.valuesFlag ?? '--values')} flag works with SourceMonkey only, and ${quoted('--manager')} names ${MANAGERS[lineManager].label}`);
   }
-  if (lineTempBrowser && opts.cdp !== undefined) throw new UsageError('The --temp-browser flag can\'t be used with --browser');
+  if (tempBrowserLine() && (opts.cdp ?? lineCdp) !== undefined) {
+    // A temp browser's own port, which must be free.
+    const { launchEndpointMistake } = await import('./browser-launch.js');
+    const { cdpEndpoint } = await import('./run.js');
+    const mistake = launchEndpointMistake(cdpEndpoint((opts.cdp ?? lineCdp)!), '--browser', 'A temp browser starts');
+    if (mistake) throw new UsageError(mistake);
+  }
   if (lineOpenBrowser && opts.cdp !== undefined) throw new UsageError('The `start` command connects to the browser `--open-browser` starts, so give `--browser` once, first: `sm-dev --open-browser --browser ... start ...`');
   if (!opts.detach && !detachedLog && opts.newRun) throw new UsageError('The `--new` flag only applies with `--detach`');
   const files = await Promise.all(scripts.map((s) => scriptFile(s)));
@@ -474,8 +480,8 @@ async function runHere(
       noTab: opts.noTab,
       cdp: opts.cdp ?? lineCdp,
       manager: lineManager,
-      tempBrowser: lineTempBrowser,
-      headed: lineHeaded,
+      tempBrowser: tempBrowserLine(),
+      headed: launchHeaded(),
       muted: lineMuted,
       lang: opts.lang,
       watch: opts.watch,
@@ -906,38 +912,22 @@ async function sendCommand(words: string[], client: Client): Promise<number> {
 }
 
 /**
- * `status` with no run picked: the browser the line would use, with its
- * managers, then every active run's status, each headed `Other run:`.
+ * `status` with no run picked: the browser the line names, if any, with
+ * its managers, then every active run's status, each headed `Other run:`.
  * Under --json, one result holding them all, so its shape depends only
  * on whether a run was picked. 1 when a run couldn't be read.
  */
 async function statusWithoutRun(words: string[], source: CommandSource): Promise<number> {
   const { liveRuns, RunClient } = await import('./runs.js');
-  const { browserArg, browserSetting } = await import('./run.js');
-  const { browserVersion, managersIn, managersText, otherManagersWarning } = await import('./browser-extensions.js');
   // The command's own --json too, which the runs read.
   const json = lineJson || words.some((w) => /^--json(=|$)/.test(w));
-  const endpoint = browserSetting(lineCdp);
-  const address = endpoint.replace(/^https?:\/\//, '');
-  const chosen = lineManager ?? DEFAULT_MANAGER;
-  const version = await browserVersion(endpoint);
-  const managers = version ? await managersIn(endpoint) : null;
-  const browser: BrowserStatus = {
-    address,
-    answering: version !== null,
-    ...(version ? { version: version.version, headless: version.headless } : {}),
-    manager: chosen,
-    ...(managers ? { managers: managers.map((m) => ({ manager: m.manager, name: m.name, version: m.version, id: m.id, enabled: m.enabled, userScripts: m.userScripts })) } : {}),
-  };
+  if (lineCdp !== undefined) await needBrowserWithoutRun('status');
+  if (!json) print(S.message('No current run. (Use `start` or `attach` to connect to one.)'));
+  // A temp browser comes with a run, so there's a browser to show only
+  // when the line names one.
+  const browser = lineOpenBrowser || lineExistingBrowser ? await browserStatus(json) : undefined;
   const runs = await liveRuns();
   if (!json) {
-    print(S.message('No current run. (Use `start` or `attach` to connect to one.)'));
-    print(version ? S.ui`${S.heading('Browser')}: ${address} (Chrome ${version.version}${version.headless ? ', headless' : ''})`
-      : S.ui`${S.heading('Browser')}: ${S.message(`None answering at ${address}. Start one with ${quoted(`sm-dev --open-browser${browserArg(endpoint)}`)}.`)}`);
-    if (managers) {
-      print(S.ui`${S.heading('Managers')}: ${managersText(managers, chosen, 'chosen')}`);
-      for (const line of otherManagersWarning(managers, chosen, browserArg(endpoint))) print(line);
-    }
     print('');
     print(runs.length === 0 ? 'No other active runs' : S.ui`${S.heading('Other active runs')}:`);
   }
@@ -965,10 +955,39 @@ async function statusWithoutRun(words: string[], source: CommandSource): Promise
     }
   }
   if (json) {
-    const line = jsonResult('status', { browser, runs: statuses } satisfies StatusRunsData);
+    const line = jsonResult('status', { ...(browser ? { browser } : {}), runs: statuses } satisfies StatusRunsData);
     print(layout ? withLayout(line, layout) : line);
   }
   return code;
+}
+
+/**
+ * The `--existing-browser` or `--open-browser` browser, with its
+ * managers, for `status` with no run. Printed too unless `json`.
+ */
+async function browserStatus(json: boolean): Promise<BrowserStatus> {
+  const { addressArg, browserArg, browserSetting } = await import('./run.js');
+  const { browserVersion, managersIn, managersText, otherManagersWarning } = await import('./browser-extensions.js');
+  const endpoint = browserSetting(lineCdp);
+  const address = endpoint.replace(/^https?:\/\//, '');
+  const chosen = lineManager ?? DEFAULT_MANAGER;
+  const version = await browserVersion(endpoint);
+  const managers = version ? await managersIn(endpoint) : null;
+  if (!json) {
+    print(version ? S.ui`${S.heading('Browser')}: ${address} (Chrome ${version.version}${version.headless ? ', headless' : ''})`
+      : S.ui`${S.heading('Browser')}: ${S.message(`None answering at ${address}. Start one with ${quoted(`sm-dev --open-browser${addressArg(endpoint)}`)}.`)}`);
+    if (managers) {
+      print(S.ui`${S.heading('Managers')}: ${managersText(managers, chosen, 'chosen')}`);
+      for (const line of otherManagersWarning(managers, chosen, browserArg(endpoint))) print(line);
+    }
+  }
+  return {
+    address,
+    answering: version !== null,
+    ...(version ? { version: version.version, headless: version.headless } : {}),
+    manager: chosen,
+    ...(managers ? { managers: managers.map((m) => ({ manager: m.manager, name: m.name, version: m.version, id: m.id, enabled: m.enabled, userScripts: m.userScripts })) } : {}),
+  };
 }
 
 /**
@@ -1337,31 +1356,52 @@ function promptCommands(client: Client): Promise<number> {
 /**
  * Whether a `collection` or `script` command for what's installed runs
  * here rather than in a run: when no run is picked and none is going, or
- * `--browser` names a browser no run is in. They need SourceMonkey, not
- * a run.
+ * the line names a browser no run is in (see `noRunToUse`). They need
+ * SourceMonkey, not a run.
  */
 async function listsHere(words: string[], client: Client): Promise<boolean> {
   return managerCommandOf(words) !== null && await noRunToUse(client);
 }
 
 // Whether a command for the browser itself, rather than a run's tabs,
-// has no run to go to: no run is picked and none is going, or
-// `--browser` names a browser no run is in.
+// has no run to go to: no run is picked and none is going, or the line
+// names a browser no run is in (`--existing-browser`, `--open-browser`
+// or `--browser`).
 async function noRunToUse(client: Client): Promise<boolean> {
   if (client.runId !== undefined) return false;
   const { liveRuns } = await import('./runs.js');
   const runs = await liveRuns();
   if (runs.length === 0) return true;
-  if (lineCdp === undefined) return false;
-  const { sameBrowser } = await import('./run.js');
-  return !runs.some((run) => sameBrowser(run.browser, lineCdp!));
+  const { browserSetting, sameBrowser } = await import('./run.js');
+  const named = tempBrowserLine() ? lineCdp : browserSetting(lineCdp);
+  if (named === undefined) return false;
+  return !runs.some((run) => sameBrowser(run.browser, named));
+}
+
+// Throws for a command that acts on a browser outside a run, when the
+// line names none: a temp browser comes only with a run. `--browser`
+// alone is a temp browser's port, so it's refused too rather than
+// taken as the browser to connect to.
+async function needBrowserWithoutRun(command: string): Promise<void> {
+  if (!tempBrowserLine()) return;
+  const { liveRuns } = await import('./runs.js');
+  const { browserSetting } = await import('./run.js');
+  const address = browserSetting(lineCdp).replace(/^https?:\/\//, '');
+  const existing = quoted('--existing-browser');
+  if (lineCdp !== undefined) {
+    throw new UsageError(`The ${quoted(command)} command connects to a browser, and ${quoted('--browser')} alone is the port for a temp browser. Use ${existing} to connect to the browser at ${address}.`);
+  }
+  if ((await liveRuns()).length > 0) {
+    throw new UsageError(`The ${quoted(command)} command needs a browser. Pick a run with ${quoted('--run')}, or use ${existing} for the browser at ${address}.`);
+  }
+  throw new UsageError(`The ${quoted(command)} command needs a browser, and no run is going. Use ${existing} for the browser at ${address}, or ${quoted('--open-browser')} to start one there.`);
 }
 
 /**
  * A `manager` command, which sm-dev does itself: in the browser of the
- * run picked (by --run, start or attach), else the --browser one, as
- * `status` shows it with no run. Never an active run that isn't picked.
- * `fetch` needs no browser.
+ * run picked (by --run, start or attach), else the --existing-browser
+ * or --open-browser one, as `status` shows it with no run. Never an
+ * active run that isn't picked. `fetch` needs no browser.
  */
 async function managerVerbHere(words: string[], client: Client): Promise<number> {
   const parsed = parseCommandArgs('manager', { words: words.slice(1) });
@@ -1384,6 +1424,7 @@ async function managerVerbHere(words: string[], client: Client): Promise<number>
   // run, so --manager can name another manager than the run's (to turn
   // off one a warning names, say).
   if (run) await checkRunBrowser(run);
+  else if (verb !== 'fetch') await needBrowserWithoutRun(`manager ${verb}`);
   const manager = lineManager ?? run?.manager ?? DEFAULT_MANAGER;
   const endpoint = run?.browser ?? browserSetting(lineCdp);
   const runsUsing = verb === 'disable' && manager === 'sourcemonkey'
@@ -1402,7 +1443,8 @@ async function managerVerbHere(words: string[], client: Client): Promise<number>
 
 /**
  * A `collection` or `script` command with no run: connects to the
- * --browser browser for it, and disconnects after.
+ * --existing-browser or --open-browser browser for it, and disconnects
+ * after.
  */
 async function managerHere(words: string[]): Promise<number> {
   const [, ...rest] = words;
@@ -1413,6 +1455,7 @@ async function managerHere(words: string[]): Promise<number> {
     print(commandHelpFor(words[0], rest.filter((w) => !HELP_FLAGS.has(w))).trimEnd());
     return 0;
   }
+  await needBrowserWithoutRun(words[0]);
   const chosen = lineManager ?? DEFAULT_MANAGER;
   const unsupported = unsupportedCommand(name, chosen, '--manager names');
   if (unsupported) throw new UsageError(unsupported);
@@ -1644,17 +1687,23 @@ let rootsGiven = false;
 // `--run`: the run the line works with.
 let globalRun: string | undefined;
 // `--browser`, for the commands that connect to a browser (their own
-// `--browser` wins) and for `--open-browser`.
+// `--browser` wins) and for `--open-browser`. With a temp browser, the
+// port to launch it on.
 let lineCdp: string | undefined;
-// `--open-browser` and `--profile`: a lasting browser to start first.
+// The browser mode: `--open-browser` (a lasting browser to start first,
+// with `--profile`) or `--existing-browser`. Neither is a temp browser
+// for each run, closed with it; `lineTempBrowser` is that given outright.
 let lineOpenBrowser = false;
-let lineProfile: string | undefined;
-// `--temp-browser` and `--headed`: a browser of each run's own, closed
-// with it.
+let lineExistingBrowser = false;
 let lineTempBrowser = false;
-let lineHeaded = false;
+let lineProfile: string | undefined;
+// `--headed` (true) or `--headless` (false): the window of a browser the
+// line launches. Unset is headed for --open-browser, and for a temp
+// browser when the line goes to a prompt (`linePrompt`).
+let lineHeaded: boolean | undefined;
+let linePrompt = false;
 // `--mute` / `--nomute`: sound in the browser the line launches. Unset
-// is muted for --temp-browser, and with sound for --open-browser.
+// is muted for a temp browser, and with sound for --open-browser.
 let lineMuted: boolean | undefined;
 // `--json`: the commands with a JSON form print it (see json-output.ts).
 let lineJson = false;
@@ -1673,8 +1722,9 @@ interface GlobalFlags {
 /**
  * Takes the global options off the front of the line: `--run ID`,
  * `--root DIR`, `--local DIR` (repeatable), `--stdin`, `--interactive`
- * and the browser's: `--browser`, `--manager`, `--open-browser`, `--profile`,
- * `--temp-browser`, `--headed`, `--mute`, `--nomute`. One later on the line, among a
+ * and the browser's: `--temp-browser`, `--open-browser`,
+ * `--existing-browser`, `--browser`, `--manager`, `--profile`, `--headed`,
+ * `--headless`, `--mute`, `--nomute`. One later on the line, among a
  * command's words, is said to go first.
  */
 function takeGlobalFlags(argv: string[]): GlobalFlags {
@@ -1688,8 +1738,13 @@ function takeGlobalFlags(argv: string[]): GlobalFlags {
     if (word === '--stdin') flags.stdin = true;
     else if (word === '--interactive') flags.interactive = true;
     else if (word === '--open-browser') lineOpenBrowser = true;
+    else if (word === '--existing-browser') lineExistingBrowser = true;
     else if (word === '--temp-browser') lineTempBrowser = true;
-    else if (word === '--headed') lineHeaded = true;
+    else if (word === '--headed' || word === '--headless') {
+      const headed = word === '--headed';
+      if (lineHeaded !== undefined && lineHeaded !== headed) throw new UsageError('The command line takes --headed or --headless, not both');
+      lineHeaded = headed;
+    }
     else if (word === '--mute' || word === '--nomute') {
       const muted = word === '--mute';
       if (lineMuted !== undefined && lineMuted !== muted) throw new UsageError('The command line takes --mute or --nomute, not both');
@@ -1722,14 +1777,15 @@ function takeGlobalFlags(argv: string[]): GlobalFlags {
   }
   lineRoots = { collectionRoot, localRoots };
   flags.rest = argv.slice(i);
-  // The browser: one of --browser, --open-browser and --temp-browser's own.
-  if (lineTempBrowser) {
-    const others = [[lineCdp !== undefined, '--browser'], [lineOpenBrowser, '--open-browser']].filter(([on]) => on).map(([, name]) => name);
-    if (others.length > 0) throw new UsageError(`The ${quoted('--temp-browser')} flag can't be used with ${others.map((f) => quoted(f)).join(' or ')}`);
-  }
-  if (lineHeaded && !lineTempBrowser) throw new UsageError('The `--headed` flag only applies with `--temp-browser`');
-  if (lineMuted !== undefined && !lineTempBrowser && !lineOpenBrowser) {
-    throw new UsageError(`The ${quoted(lineMuted ? '--mute' : '--nomute')} flag only applies with ${quoted('--temp-browser')} or ${quoted('--open-browser')}`);
+  // At most one browser mode.
+  const modes = [[lineTempBrowser, '--temp-browser'], [lineOpenBrowser, '--open-browser'], [lineExistingBrowser, '--existing-browser']] as const;
+  const given = modes.filter(([on]) => on).map(([, name]) => name);
+  if (given.length > 1) throw new UsageError(`The ${quoted(given[0])} flag can't be used with ${given.slice(1).map((f) => quoted(f)).join(' or ')}`);
+  if (lineExistingBrowser) {
+    const launching = [[lineHeaded !== undefined, lineHeaded ? '--headed' : '--headless'], [lineMuted !== undefined, lineMuted ? '--mute' : '--nomute']] as const;
+    for (const [on, name] of launching) {
+      if (on) throw new UsageError(`The ${quoted(name)} flag only applies when sm-dev launches the browser, so not with ${quoted('--existing-browser')}`);
+    }
   }
   if (lineProfile !== undefined && !lineOpenBrowser) throw new UsageError('The `--profile` flag only applies with `--open-browser`');
   return flags;
@@ -1762,10 +1818,24 @@ function globalWords(runId: string | undefined): string[] {
     ...(runId ? ['--run', runId] : []),
     ...(lineCdp !== undefined ? ['--browser', lineCdp] : []),
     ...(lineManager !== undefined ? ['--manager', lineManager] : []),
-    ...(lineTempBrowser ? ['--temp-browser'] : []),
-    ...(lineHeaded ? ['--headed'] : []),
-    ...(lineTempBrowser && lineMuted !== undefined ? [lineMuted ? '--mute' : '--nomute'] : []),
+    // The run connects to the browser --open-browser started, or the
+    // one --existing-browser names.
+    ...(lineOpenBrowser || lineExistingBrowser ? ['--existing-browser'] : []),
+    // A detached run has no prompt, so the prompt's headed default goes
+    // as the flag.
+    ...(tempBrowserLine() && launchHeaded() ? ['--headed'] : []),
+    ...(tempBrowserLine() && lineMuted !== undefined ? [lineMuted ? '--mute' : '--nomute'] : []),
   ];
+}
+
+// Whether runs the line starts launch a temp browser: the default mode.
+function tempBrowserLine(): boolean {
+  return !lineOpenBrowser && !lineExistingBrowser;
+}
+
+// Whether a browser the line launches is headed.
+function launchHeaded(): boolean {
+  return lineHeaded ?? (lineOpenBrowser || linePrompt);
 }
 
 // Where one command ends and the next begins, when a line has several.
@@ -2005,11 +2075,19 @@ async function main(): Promise<void> {
       return;
     }
   }
-  // --temp-browser and --headed shape the runs this line starts; with no
-  // start to use them, they'd be silently ignored.
+  // Decided by now: a temp browser opened from a prompt is headed.
+  linePrompt = flags.interactive;
+  // --temp-browser, --headed, --headless, --mute and --nomute shape the
+  // runs this line starts (or --open-browser's browser); with no start
+  // to use them, they'd be silently ignored.
   const starts = commands.some((words) => parseCommand(words).kind === 'cli' && parseArgs(words).command === 'start');
-  if ((lineTempBrowser || lineHeaded) && !starts && !stdin && !flags.interactive) {
-    process.exitCode = printMistake(new UsageError(`The ${lineTempBrowser ? '--temp-browser' : '--headed'} flag is for the runs a start begins, and this line has no start`));
+  const shaping = lineTempBrowser ? '--temp-browser'
+    : lineOpenBrowser ? null
+    : lineHeaded !== undefined ? (lineHeaded ? '--headed' : '--headless')
+    : lineMuted !== undefined ? (lineMuted ? '--mute' : '--nomute')
+    : null;
+  if (shaping && !starts && !stdin && !flags.interactive) {
+    process.exitCode = printMistake(new UsageError(`The ${shaping} flag is for the runs a start begins, and this line has no start`));
     return;
   }
   // The lasting browser first, for the commands to connect to.
@@ -2020,7 +2098,7 @@ async function main(): Promise<void> {
       const endpoint = browserSetting(lineCdp);
       const mistake = launchEndpointMistake(endpoint, browserSettingName(lineCdp));
       if (mistake) throw new UsageError(mistake);
-      await launchBrowser(endpoint, lineProfile, print, lineMuted === true);
+      await launchBrowser(endpoint, lineProfile, print, lineMuted === true, !launchHeaded());
     } catch (err) {
       process.exitCode = printMistake(err);
       return;

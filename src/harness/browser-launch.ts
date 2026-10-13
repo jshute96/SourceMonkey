@@ -1,6 +1,6 @@
 // `sm-dev --open-browser`: starts a browser that stays open after sm-dev
 // exits, with a window and a debugging port, for runs to connect to.
-// Unlike `--temp-browser` (Playwright's own launch, which ends
+// Unlike a temp browser (Playwright's own launch, which ends
 // with the run), it is spawned on its own, as a person would start it.
 //
 // - The port is `--browser`'s (default $SM_DEV_BROWSER or 9233), which
@@ -119,20 +119,20 @@ function debuggingPort(dir: string, pid: number): string | undefined {
  * Why `--open-browser` can't start a browser at `endpoint`, or null: it
  * starts one on this machine only.
  */
-export function launchEndpointMistake(endpoint: string, setting = '--browser'): string | null {
+export function launchEndpointMistake(endpoint: string, setting = '--browser', starter = 'The --open-browser flag starts a browser'): string | null {
   const url = new URL(endpoint);
   // Chrome's debugging port listens on 127.0.0.1 only, so not [::1];
   // and a port is all it takes, not a path.
   const local = ['127.0.0.1', 'localhost'].includes(url.hostname) && url.port && url.pathname === '/' && !url.search;
   if (local) return null;
-  return `The --open-browser flag starts a browser on this machine, so ${setting} must be a local port, not ${endpoint.replace(/^https?:\/\//, '')}`;
+  return `${starter} on this machine, so ${setting} must be a local port, not ${endpoint.replace(/^https?:\/\//, '')}`;
 }
 
 /**
  * Starts the browser at `endpoint` unless one answers there already,
  * and says which. Throws an error saying why it couldn't.
  */
-export async function launchBrowser(endpoint: string, profile: string | undefined, out: (line: string) => void, muted = false): Promise<void> {
+export async function launchBrowser(endpoint: string, profile: string | undefined, out: (line: string) => void, muted = false, headless = false): Promise<void> {
   const url = new URL(endpoint);
   const where = `${url.hostname}:${url.port}`;
   if (await answers(endpoint)) {
@@ -157,7 +157,7 @@ export async function launchBrowser(endpoint: string, profile: string | undefine
   try {
     child = spawn(file, [
       `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`,
-      '--no-first-run', '--no-default-browser-check', ...(muted ? ['--mute-audio'] : []), ...extra,
+      '--no-first-run', '--no-default-browser-check', ...(muted ? ['--mute-audio'] : []), ...(headless ? ['--headless=new'] : []), ...extra,
     ], { detached: true, stdio: ['ignore', log, log] });
     child.on('exit', (code, signal) => { ended ??= `It exited (${signal ?? `code ${code}`})`; });
     child.on('error', (err) => { ended = `It could not be started from ${file}: ${err.message}`; });

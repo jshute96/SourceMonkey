@@ -85,7 +85,7 @@ up-front check before a push:
 - The package is `sourcemonkey`, built by `tsconfig.lib.json` into
   `lib/` with declarations; `dist/` is the extension. See
   [architecture.md](architecture.md#two-outputs-dist-and-lib).
-- Both ship: `dist/` is the extension `--temp-browser` and the fixture
+- Both ship: `dist/` is the extension sm-dev's temp browser and the fixture
   load into the browsers they launch.
 - `package.json` carries:
   - `exports`: `./harness` for the harness entry, and `./*` mapping to
@@ -248,7 +248,7 @@ adds nothing the page or its scripts can see:
 
 - Launches Playwright's Chromium with the package's `dist/` loaded, in
   a throwaway profile with "Allow User Scripts" granted up front.
-- One launcher serves `sm-dev --temp-browser`, the fixture, and the
+- One launcher serves sm-dev's temp browser, the fixture, and the
   repo's own e2e suites.
 - Details in [sm-dev-design.md](sm-dev-design.md#--temp-browser-extension-launchts).
 

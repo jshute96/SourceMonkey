@@ -26,7 +26,7 @@ export interface ManagerActionOptions {
   manager: ManagerName;
   /** The browser's CDP endpoint; not needed for `fetch`. */
   endpoint?: string;
-  /** ` --browser <address>` for advice, when the browser isn't the default. */
+  /** ` --existing-browser [--browser <address>]` for advice (see `browserArg`). */
   browserArg?: string;
   /** The runs using SourceMonkey in that browser, which `disable` can't turn it off under. */
   runsUsing?: string[];

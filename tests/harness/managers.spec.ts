@@ -71,7 +71,7 @@ function cli(...args: (string | { input: string })[]): Promise<{ code: number | 
     XDG_CACHE_HOME: path.join(dir, 'cache'), PLAYWRIGHT_BROWSERS_PATH: browsers,
   };
   return new Promise((resolve) => {
-    const child = execFile(process.execPath, [CLI, ...words], { env, timeout: 60_000 }, (_err, stdout, stderr) => {
+    const child = execFile(process.execPath, [CLI, ...(words.includes('--temp-browser') ? [] : ['--existing-browser']), ...words], { env, timeout: 60_000 }, (_err, stdout, stderr) => {
       resolve({ code: child.exitCode, stdout, stderr });
     });
     // Commands on stdin, as piped; none otherwise.
@@ -93,7 +93,7 @@ test('manager install, enable and disable, with a warning for the other one enab
   const install = await cli('--manager', 'vm', 'manager', 'install');
   expect(install.code).toBe(0);
   expect(install.stdout).toMatch(/^Installed Violentmonkey 9\.9\.9 from .*violentmonkey, with Allow User Scripts on\n$/);
-  expect(install.stderr).toBe('Warning: SourceMonkey is also enabled in this browser, so its scripts run too. To turn it off, use `sm-dev --manager sm manager disable`.\n');
+  expect(install.stderr).toBe('Warning: SourceMonkey is also enabled in this browser, so its scripts run too. To turn it off, use `sm-dev --existing-browser --manager sm manager disable`.\n');
   expect((await cli('--manager', 'vm', 'manager', 'install')).stdout).toMatch(/^Violentmonkey 9\.9\.9 is already installed, from /);
   const vm = (await installedManagers(endpoint)).find((m) => m.manager === 'violentmonkey');
   expect(vm).toMatchObject({ name: 'Violentmonkey', enabled: true, userScripts: true });
@@ -111,7 +111,7 @@ test('manager install, enable and disable, with a warning for the other one enab
   expect(before[1]).toMatch(/^Browser: 127\.0\.0\.1:\d+ \(Chrome [\d.]+, headless\)$/);
   expect(before.slice(2)).toEqual([
     'Managers: SourceMonkey 0.0.1 (chosen), Violentmonkey 9.9.9',
-    'Warning: Violentmonkey is also enabled in this browser, so its scripts run too. To turn it off, use `sm-dev --manager vm manager disable`.',
+    'Warning: Violentmonkey is also enabled in this browser, so its scripts run too. To turn it off, use `sm-dev --existing-browser --manager vm manager disable`.',
     '',
     'No other active runs',
     '',

@@ -5,6 +5,7 @@
 
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -223,7 +224,7 @@ async function driveCli(args: string[], steps: Step[]): Promise<string[]> {
   // The line's own flags go first.
   const at = args.indexOf('--root');
   const root = at >= 0 ? args.splice(at, 2) : [];
-  const child = spawn(process.execPath, [cli, '--stdin', ...root, '--temp-browser', 'start', ...args, '--stop-after-seconds', '25'], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [cli, '--stdin', ...root, 'start', ...args, '--stop-after-seconds', '25'], { stdio: ['pipe', 'pipe', 'pipe'] });
   const lines: string[] = [];
   let pending = [...steps];
   let since = 0;
@@ -869,7 +870,7 @@ test('--lang sets the languages of each tab, in a launched browser and in one co
   // A launched browser, from the command line: in this process,
   // Playwright's test runner would give the browser a locale of its own.
   const cli = await new Promise<string>((resolve) => {
-    execFile(process.execPath, [CLI, '--temp-browser', '--root', scriptsDir.path, 'start', '--lang', 'zh-cn,en', file, ...urls, '--', 'wait', 'log', '[lang] ?two'],
+    execFile(process.execPath, [CLI, '--root', scriptsDir.path, 'start', '--lang', 'zh-cn,en', file, ...urls, '--', 'wait', 'log', '[lang] ?two'],
       (_err, stdout, stderr) => resolve(stdout + stderr));
   });
   // A launched one's flags, which Chrome expands (`zh-CN,zh;q=0.9,en;q=0.8`).
@@ -933,4 +934,26 @@ test('a manual script waits to be run, again after going back, and not in a tab 
   // Nothing about it in the tab without scripts.
   expect(lines.filter((l) => l.startsWith('[T2]') && l.includes('is waiting to be run'))).toEqual([]);
   expect(lines.slice(at('"settled"')).some((l) => l.includes('No menu commands are registered on T2'))).toBe(true);
+});
+
+test('--browser gives a temp browser its port, which must be free', async () => {
+  const blocker = net.createServer();
+  await new Promise<void>((resolve) => blocker.listen(0, '127.0.0.1', resolve));
+  const taken = (blocker.address() as net.AddressInfo).port;
+  // Free again, for the browser to take.
+  const port = await new Promise<number>((resolve) => {
+    const probe = net.createServer().listen(0, '127.0.0.1', () => {
+      const { port: p } = probe.address() as net.AddressInfo;
+      probe.close(() => resolve(p));
+    });
+  });
+  const cli = (...args: string[]): Promise<string> => new Promise((resolve) => {
+    execFile(process.execPath, [CLI, ...args], (_err, stdout, stderr) => resolve(stdout + stderr));
+  });
+  try {
+    expect(await cli('--browser', String(port), 'start', '--', 'status')).toContain(`browser 127.0.0.1:${port}`);
+    expect(await cli('--browser', String(taken), 'start', '--', 'status')).toContain(`Port ${taken} is already in use`);
+  } finally {
+    blocker.close();
+  }
 });

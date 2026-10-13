@@ -183,7 +183,7 @@ export interface ConsoleContext {
   runId?: string;
   /** The run's log file (see run-log.ts), for `status`. */
   log?: string;
-  /** Where a `--temp-browser` saves downloads, for `status`. */
+  /** Where a temp browser saves downloads, for `status`. */
   downloadsDir?: string;
   /** The run's browser, for `status`: `connected to browser 127.0.0.1:9233`. */
   browser?: string;
@@ -198,7 +198,7 @@ export interface ConsoleContext {
   backend?: () => string;
   /** The userscript manager the run works with (`--manager`); SourceMonkey when unset. */
   managerName?: ManagerName;
-  /** ` --browser <address>` for advice to run sm-dev against the run's browser, when it isn't the default. */
+  /** ` --existing-browser [--browser <address>]` for advice to run sm-dev against the run's browser (see `browserArg`). */
   browserArg?: string;
   /** The managers in the browser now, for `status`; null when unknown. */
   managers?: () => Promise<InstalledManager[] | null>;

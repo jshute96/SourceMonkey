@@ -68,8 +68,15 @@ async function readManifest(): Promise<{ key?: unknown }> {
 /** `findExtensionWorker` finding no SourceMonkey in the browser. */
 export class ExtensionMissingError extends Error {}
 
+/**
+ * The way out of a browser the run connects to, for advice: a temp
+ * browser is the default, so it's the mode flag to drop rather than
+ * `--temp-browser` to add, which the line would refuse beside it.
+ */
+export const DROP_BROWSER_MODE = 'drop `--existing-browser` or `--open-browser` to use a temp browser';
+
 const NOT_INSTALLED = 'SourceMonkey is not installed in this browser. Load it there as an unpacked extension, with Allow User Scripts on '
-  + '(see https://github.com/jshute96/SourceMonkey/blob/main/docs/harness-guide.md#setting-it-up), or use `--temp-browser`, which loads it.';
+  + `(see https://github.com/jshute96/SourceMonkey/blob/main/docs/harness-guide.md#setting-it-up), or ${DROP_BROWSER_MODE}, which loads it.`;
 
 // The extension's worker in this context, once its `self.SourceMonkey`
 // surface is there. A worker can be listed before its module has run

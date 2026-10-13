@@ -301,7 +301,7 @@ export interface ManagerContext {
   run?: ManagerRun;
   /**
    * The collections and scripts are the person's own (not a
-   * `--temp-browser`'s), so a change that takes something away needs
+   * a temp browser's), so a change that takes something away needs
    * `--force`.
    */
   guarded: boolean;

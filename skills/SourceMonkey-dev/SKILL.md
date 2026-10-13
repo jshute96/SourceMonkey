@@ -97,38 +97,41 @@ Where to look:
 
 ## Getting a browser
 
-sm-dev connects to a browser on port 9233 (or `--browser PORT`). With
-none there, it says so: `Start one with sm-dev --open-browser, pass
---browser, or use --temp-browser`.
+A line picks one browser mode:
 
-- `pnpm sm-dev --temp-browser start ...`: a hidden throwaway browser
-  for that run, on a random port, closed when the run ends, with
-  SourceMonkey loaded and ready. Good for pages with no login. Its
-  profile is empty.
-- `pnpm sm-dev --open-browser`: a visible browser that stays open, with
-  a kept profile, so sign-ins persist. Use it for sites that need a
-  login; ask the person to sign in there. A no-op if one is already up.
-- If the person already has a browser on the port, use it: their tabs
-  are left alone, and only the run's own tabs are touched.
+- `pnpm sm-dev start ...` (the default): a temp, throwaway
+  browser for that run, on a random port, closed when the run ends,
+  with SourceMonkey loaded and ready. Good for pages with no login. Its
+  profile is empty. Hidden, unless the line goes to a prompt;
+  `--headed` or `--headless` says outright.
+- `pnpm sm-dev --open-browser`: a visible browser on port 9233 (or
+  `--browser PORT`) that stays open, with a kept profile, so sign-ins
+  persist. Use it for sites that need a login; ask the person to sign
+  in there. A no-op if one is already up. Then pass `--open-browser`
+  (or `--existing-browser`) to the `start` that uses it.
+- `--existing-browser`: connect to the browser already on port 9233
+  (or `--browser PORT`), such as the person's own. Their tabs are left
+  alone, and only the run's own tabs are touched.
 
 The run needs SourceMonkey in the browser, with "Allow User Scripts" on.
 
-- `--temp-browser` always has it. An `--open-browser` or `--browser`
-  browser needs it loaded once: `pnpm sm-dev manager install` loads it,
-  with "Allow User Scripts" on.
+- A temp browser always has it. An `--open-browser` or
+  `--existing-browser` browser needs it loaded once:
+  `pnpm sm-dev --existing-browser manager install` loads it, with
+  "Allow User Scripts" on.
 - The run's first line (`Connected to browser ... (Chrome ..., has
   SourceMonkey)`) and `status` say which: `has SourceMonkey`,
   `SourceMonkey disabled` or `no SourceMonkey`. `status` also lists the
   browser's managers, marking one whose "Allow User Scripts" is off.
-- When it is missing, use `--temp-browser` if no login is needed.
+- When it is missing, use a temp browser if no login is needed.
   Otherwise ask the person whether to install it into their browser
   with `manager install`, or `manager enable` if it's disabled.
 - Another manager enabled there (Tampermonkey, Violentmonkey) runs its
   scripts in the run's tabs too. The run's first lines and `status`
   warn of it: ask the person before turning it off with
-  `pnpm sm-dev --manager tm manager disable`.
+  `pnpm sm-dev --existing-browser --manager tm manager disable`.
 
-The headless `--temp-browser` is often blocked by large sites (Reddit,
+A headless temp browser is often blocked by large sites (Reddit,
 Google, Amazon, Vimeo, IMDb, parts of YouTube).
 
 - The block page still loads, so `start` reports the script as
@@ -202,7 +205,7 @@ What the stream looks like:
   `--lang zh-CN` (or `--lang zh-CN,en`) to `start`: the run's tabs then
   report it in `navigator.language(s)`, `Accept-Language` and `Intl`.
   In a connected browser, cross-site iframes and workers keep the
-  browser's languages; use `--temp-browser` for a script in frames.
+  browser's languages; use a temp browser for a script in frames.
 
 A person at a terminal can use `pnpm sm-dev start ...` with no commands
 after `start` for an interactive prompt. An agent should use `--detach`
@@ -733,8 +736,8 @@ $R stop                  # also removes the run's test collection
   - `scripts` lists those others on the tab by their SourceMonkey
     script numbers (`E12`, the same in every run);
     `values E1` reads one's stored values, and `scripts E1` picks it
-    for `get`/`set` (`set key --force <json>` outside a
-    `--temp-browser`, since that's the person's real data).
+    for `get`/`set` (`set key --force <json>` outside a temp
+    browser, since that's the person's real data).
 - A `document-start` script may run after the page's first inline
   scripts in a tab a run tab opened (a popup, a link to a new tab),
   where SourceMonkey alone would run it first: every script there waits
@@ -775,7 +778,7 @@ and whatever the script does with its response wait.
 - Find a downloaded file at the path its `Download saved: <path>` line
   names (for an http(s) `GM_download`, the `GM_download` line's
   `-> <path>`).
-- With `--temp-browser`, `status` shows the folder as `Downloads:` once
+- In a temp browser, `status` shows the folder as `Downloads:` once
   something was downloaded.
 
 ### Turning it into a spec
@@ -807,8 +810,8 @@ running the same script and page under each.
 ```sh
 pnpm sm-dev --manager tm manager fetch     # once each: download Tampermonkey,
 pnpm sm-dev --manager vm manager fetch     # and Violentmonkey
-pnpm sm-dev --manager tm --run Dtm --temp-browser start sites/x/y.user.js https://x.com/ --detach
-pnpm sm-dev --manager vm --run Dvm --temp-browser start sites/x/y.user.js https://x.com/ --detach
+pnpm sm-dev --manager tm --run Dtm start sites/x/y.user.js https://x.com/ --detach
+pnpm sm-dev --manager vm --run Dvm start sites/x/y.user.js https://x.com/ --detach
 ```
 
 It reports much less than SourceMonkey: which scripts a tab runs is

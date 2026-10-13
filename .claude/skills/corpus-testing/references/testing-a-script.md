@@ -21,17 +21,19 @@ with its script IDs and a run name prefix.
    that proves it: a DOM state, a measured value, a stored value. A
    `newtab --noscript` tab on the same page is the control to compare with.
 2. **Run it on the live site** with `start <file> <url> --detach`.
-   - Use `--temp-browser` (headless, muted), a browser of the run's own.
-     Don't use the shared browser on port 9233: one agent's busy tab
-     there stalls every other agent's `start`. It also keeps a persistent
-     profile (`sm-dev --open-browser`), which is riskier for an untrusted
-     script than a throwaway one (see [Untrusted scripts](#untrusted-scripts)).
-     - It's a fallback only when a site blocks temp browsers and not this
-       one (Google's `/sorry`), only for a script that looks low-risk.
+   - Use the default temp browser (headless, muted), a browser of the
+     run's own: pass no `--existing-browser` or `--open-browser`.
+   - A browser shared between runs is a last resort:
+     - One agent's busy tab there stalls every other agent's `start`.
+     - It keeps a persistent profile, which is riskier for an untrusted
+       script than a throwaway one (see [Untrusted scripts](#untrusted-scripts)).
+     - Use one (`--open-browser`) only when a site blocks temp browsers
+       but not a regular one (Google's `/sorry`), and only for a script
+       that looks low-risk.
    - Many big sites block headless: Google (`/sorry`), Reddit, Amazon,
      IMDb (403), Codeforces and other Cloudflare sites, DuckDuckGo (empty
      results), Metacritic (its `GM_xmlhttpRequest` too), YouTube live chat
-     and captions. Use `--temp-browser --headed` for those, a visible
+     and captions. Use `--headed` for those, a visible
      browser of your own (muted too).
    - A bot check that stops the headed browser too (a captcha, a
      Cloudflare checkbox, a firewall's "Access Blocked") makes the script
@@ -55,9 +57,9 @@ one that looks risky.
 - We're mostly safe because the test browser holds no real credentials:
   it's a throwaway profile, signed in to nothing. Keep it that way, and
   never test a script as a real user.
-  - The shared browser on port 9233 is reasonably clean but persistent:
-    what a script stores or changes there stays for later runs. Prefer
-    `--temp-browser`, and never sign in to anything there either.
+  - A shared `--open-browser` browser is persistent: what a script
+    stores or changes there stays for later runs. Prefer a temp browser,
+    and never sign in to anything in a shared one either.
 - No deep audit is needed before a run. But if the name, the description,
   or the read you do to learn what the script promises looks dangerous,
   don't run it. For example, a script that:
@@ -88,7 +90,7 @@ account is `n/a` with `--reason requires-login`.
 
 Every run runs the script in the real SourceMonkey:
 
-- `--temp-browser` installs it in a throwaway browser, so it needs no
+- A temp browser (the default) installs it in a throwaway browser, so it needs no
   setup and is safe beside other agents.
 - Each run pushes its scripts into a test collection of its own, which
   `stop` removes, so parallel agents don't see each other's scripts.

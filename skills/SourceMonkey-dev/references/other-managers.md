@@ -11,7 +11,7 @@ side, with different `--run` ids, to compare.
 pnpm sm-dev --manager vm manager fetch     # once: download VM into sm-dev's cache
 R="pnpm sm-dev --manager vm --run Dvm"
 
-$R --temp-browser start sites/x/y.user.js https://x.com/ --detach
+$R start sites/x/y.user.js https://x.com/ --detach
 $R scripts                                 # each tab's expected scripts, with their VM ids
 $R logs                                    # the script's console lines and errors
 $R stop                                    # removes the run's scripts from VM
@@ -19,17 +19,18 @@ $R stop                                    # removes the run's scripts from VM
 
 - `--manager vm` goes before the command, and the run keeps it: later
   commands to the run work without it.
-- `--temp-browser` loads the fetched manager, fetching it the first
-  time, and lets scripts run on local `file://` pages:
-  - VM blocks them by default, and sm-dev clears that in a
-    `--temp-browser`;
+- A temp browser (the default) loads the fetched manager, fetching it
+  the first time, and lets scripts run on local `file://` pages:
+  - VM blocks them by default, and sm-dev clears that in a temp
+    browser;
   - TM needs Chrome's file access, which is on for the unpacked copy a
-    `--temp-browser` loads, but off by default for one from the Chrome
+    temp browser loads, but off by default for one from the Chrome
     Web Store.
 - For a site that needs a login, the person's `--open-browser` browser
-  needs VM: `pnpm sm-dev --manager vm manager install`. Ask first, and
-  about turning SourceMonkey off there (`--manager sm manager
-  disable`), since every enabled manager runs its scripts.
+  needs VM: `pnpm sm-dev --existing-browser --manager vm manager
+  install`. Ask first, and about turning SourceMonkey off there
+  (`--existing-browser --manager sm manager disable`), since every
+  enabled manager runs its scripts.
 - The run's scripts go into the manager as ordinary scripts, marked by
   a last line `// sm-dev: run=...`, and are removed when the run ends.
   - Under TM, local `@require` lines show rewritten to

@@ -1,5 +1,5 @@
 // A throwaway Chromium with the package's built SourceMonkey (dist/)
-// loaded: `sm-dev --temp-browser`'s browser, the `sourcemonkey/harness`
+// loaded: sm-dev's temp browser, the `sourcemonkey/harness`
 // fixture's, and the repo's own e2e suites'. With `--manager`, a
 // fetched Tampermonkey or Violentmonkey instead (manager-fetch.ts).
 //
@@ -18,6 +18,7 @@
 
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,6 +37,8 @@ import { quoted } from './output-style.js';
 export const EXTENSION_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'dist');
 
 export interface ExtensionLaunchOptions {
+  /** The debugging port, which must be free. Chrome picks one when not given. */
+  port?: number;
   /** A visible window. Hidden otherwise. */
   headed?: boolean;
   /** Without sound (the default), or with it when false. */
@@ -98,9 +101,14 @@ export async function launchExtensionBrowser(options: ExtensionLaunchOptions = {
     else writePreferences(profile, fetchedId(dir, manager), options.downloadsDir);
     // Port 0 has Chrome pick a free port and write it to the profile.
     // A port picked here could be taken before Chrome binds it, and the
-    // run would connect to whatever took it.
-    context = await launch(profile, headed, ['--remote-debugging-port=0', ...(options.muted === false ? [] : ['--mute-audio']), ...(options.args ?? [])], dir, options.backForwardCache === true);
-    const port = readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0].trim();
+    // run would connect to whatever took it. A port given is checked
+    // first, since Chrome starts without its port when it's taken.
+    if (options.port !== undefined && !await portFree(options.port)) {
+      throw new Error(`Port ${options.port} is already in use. Use ${quoted('--existing-browser')} to connect to a browser there, or pick another port.`);
+    }
+    context = await launch(profile, headed, [`--remote-debugging-port=${options.port ?? 0}`, ...(options.muted === false ? [] : ['--mute-audio']), ...(options.args ?? [])], dir, options.backForwardCache === true);
+    // Chrome writes the port it picked; one given, it doesn't.
+    const port = options.port ?? readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0].trim();
     if (options.connectedElsewhere) leaveDialogsOpen(context);
     if (options.downloadsDir) await chromeDownloads(context);
     if (manager === 'sourcemonkey') await warmUp(context);
@@ -117,6 +125,15 @@ export async function launchExtensionBrowser(options: ExtensionLaunchOptions = {
     if (err instanceof ExtensionMissingError) throw new Error(`Chromium did not load the extension from ${EXTENSION_DIR}`);
     throw err;
   }
+}
+
+// Whether nothing listens on `port` on this machine.
+function portFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once('error', () => resolve(false));
+    server.listen(port, '127.0.0.1', () => server.close(() => resolve(true)));
+  });
 }
 
 // The user agent a windowed Chrome of this version sends, in Chrome's

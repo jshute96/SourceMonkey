@@ -72,7 +72,7 @@ Limit how many run at once. Each agent drives its own browser, and
 browser games (WebGL, canvas) keep a CPU core busy.
 - Run about one agent per CPU core (`nproc`), and fewer for game-heavy
   groups. Queue the rest, and start the next when one reports.
-- A run that dies or is force-stopped can leave its `--temp-browser`
+- A run that dies or is force-stopped can leave its temp browser's
   Chrome behind, holding memory. Look for `chrome` processes with
   `--user-data-dir=/tmp/sm-dev-extension-*` whose parent is init (PID
   1). Nothing can reach them, and they ignore SIGTERM, so `kill -9`

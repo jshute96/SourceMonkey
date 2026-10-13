@@ -216,7 +216,7 @@ interface StatusData {
     managers?: BrowserManager[]; // the managers in the browser; left out when not known
     testCollection?: string; // once a script was pushed
     log?: string;            // the run's log file
-    downloads?: string;      // where a --temp-browser saves downloads
+    downloads?: string;      // where a temp browser saves downloads
   };
   tabs: Tab[];
   tab?: string;          // the selected tab
@@ -234,10 +234,11 @@ interface BrowserManager {
 }
 
 // With no run picked (no --run, and no start or attach earlier in the
-// line): the browser the line would use, and every active run's status,
+// line): the browser the line names, and every active run's status,
 // even when only one is going.
 interface StatusRunsData {
-  browser: BrowserStatus;
+  browser?: BrowserStatus; // with --existing-browser or --open-browser
+
   runs: StatusData[];    // each with connection: "other"
 }
 
@@ -282,8 +283,9 @@ Scripts (with status on active tab T1):
      Not active
 ```
 
-With no run picked, the browser the line would use, then every run,
-each headed `Other run:`:
+With no run picked, the browser the line names (with
+`--existing-browser` or `--open-browser`), then every run, each headed
+`Other run:`:
 
 ```text
 No current run. (Use start or attach to connect to one.)

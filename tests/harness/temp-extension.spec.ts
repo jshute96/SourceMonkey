@@ -1,4 +1,4 @@
-// `sm-dev --temp-browser start`: the launched browser loads
+// `sm-dev start` in a temp browser: the launched browser loads
 // the built extension (dist/), and the script runs in it, in the tab
 // the run opened before pushing it (see warmUp in extension-launch.ts).
 
@@ -153,7 +153,7 @@ test('an extension run takes the run commands: status, values, set, menu, eval, 
     ['[T2] [event] Cmds started on', 'newtab'],
     ['[T3] [event] Tab opened', 'stop'],
   ];
-  const { lines, left } = await driveCli(['--temp-browser', 'start', file, `${fixtureServer.baseUrl}/target.html`], steps);
+  const { lines, left } = await driveCli(['start', file, `${fixtureServer.baseUrl}/target.html`], steps);
   const text = lines.join('\n');
   expect(left, text).toEqual([]);
   expect(text).toContain('/cmds.user.js');
@@ -185,7 +185,7 @@ test('SourceMonkey-managed scripts on the tab are E1, ..., kept out, and their v
       meta: { name: 'Mine', match: ['*://*/target.html'] },
       body: `console.log('[mine] title ' + document.title);`,
     });
-    const { lines, left } = await driveCli(['--browser', launched.endpoint, 'start', file, `${fixtureServer.baseUrl}/target.html`], [
+    const { lines, left } = await driveCli(['--existing-browser', '--browser', launched.endpoint, 'start', file, `${fixtureServer.baseUrl}/target.html`], [
       ['Mine started on', 'scripts'],
       ['E1: Other', 'values E1'],
       ['seen = 1', 'scripts E1'],
@@ -246,7 +246,7 @@ test('a run keeps SourceMonkey-managed scripts out of its tabs, and runs its pag
       meta: { name: 'Main', match: ['*://*/target.html'], grant: ['none'] },
       body: `console.log('[main] ran');`,
     });
-    const { lines, left } = await driveCli(['--browser', launched.endpoint, 'start', file, main, `${fixtureServer.baseUrl}/target.html`], [
+    const { lines, left } = await driveCli(['--existing-browser', '--browser', launched.endpoint, 'start', file, main, `${fixtureServer.baseUrl}/target.html`], [
       // The opened tab's first load prints no console lines (see TODO.md).
       ['[T2] [event] Mine started on', 'stop'],
     ]);
@@ -282,7 +282,7 @@ test('a run keeps an installed page-world script out even where none of its own 
       meta: { name: 'Mine', match: ['*://*/other.html'], grant: ['none'] },
       body: '',
     });
-    const { lines, left } = await driveCli(['--browser', launched.endpoint, 'start', file, `${fixtureServer.baseUrl}/target.html`], [
+    const { lines, left } = await driveCli(['--existing-browser', '--browser', launched.endpoint, 'start', file, `${fixtureServer.baseUrl}/target.html`], [
       // Past the 10s it would have waited for an answer.
       ['Mine skipped on', 'wait 12s\neval "other is " + (document.documentElement.dataset.other ?? "out")'],
       ['other is', 'stop'],
@@ -325,7 +325,7 @@ test('a skip with no decision says why', async ({ fixtureServer, scriptsDir }) =
         });
       `,
     });
-    const { lines, left } = await driveCli(['--browser', launched.endpoint, 'start', file, `${fixtureServer.baseUrl}/target.html`], [
+    const { lines, left } = await driveCli(['--existing-browser', '--browser', launched.endpoint, 'start', file, `${fixtureServer.baseUrl}/target.html`], [
       ['Mine skipped on', 'stop'],
     ]);
     const text = lines.join('\n');
@@ -354,7 +354,7 @@ test('a run started with no scripts claims its tabs, so a script it loads runs a
       body: `console.log('[mine] other is ' + (document.documentElement.dataset.other ?? 'out'));`,
     });
     {
-      const { lines, left } = await driveCli(['--browser', launched.endpoint, 'start', `${fixtureServer.baseUrl}/target.html`], [
+      const { lines, left } = await driveCli(['--existing-browser', '--browser', launched.endpoint, 'start', `${fixtureServer.baseUrl}/target.html`], [
         ['Opening', `load ${file}`],
         ['[mine] other is', 'stop'],
       ]);

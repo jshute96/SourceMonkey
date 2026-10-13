@@ -52,7 +52,7 @@ function script(name: string, match: string, body: string, extra = ''): string {
 function cli(...words: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
   const env = { ...process.env, SM_DEV_RUNS_DIR: dir, SM_DEV_LOGS_DIR: dir, SM_DEV_BROWSER: endpoint };
   return new Promise((resolve) => {
-    const child = execFile(process.execPath, [CLI, ...words], { env, cwd: dir, timeout: 90_000 }, (_err, stdout, stderr) => {
+    const child = execFile(process.execPath, [CLI, ...(words.includes('--temp-browser') ? [] : ['--existing-browser']), ...words], { env, cwd: dir, timeout: 90_000 }, (_err, stdout, stderr) => {
       resolve({ code: child.exitCode, stdout, stderr });
     });
     child.stdin?.end('');
@@ -157,7 +157,7 @@ test('a run doesn\'t replace a script installed apart from it', async () => {
   expect((await vm('script', 'list')).stdout).toContain(`  ${id}: Hello 1.0\n`);
 });
 
-test('in a --temp-browser, scripts run on local pages', async () => {
+test('in a temp browser, scripts run on local pages', async () => {
   writeFileSync(path.join(dir, 'file.user.js'), script('On files', 'file:///*/page.html', "console.log('on a file page');"));
   const run = await vm('--temp-browser', 'start', '--stop-after-seconds', '3', 'file.user.js', 'page.html');
   expect(run.stdout).toContain('[script log] on a file page\n');

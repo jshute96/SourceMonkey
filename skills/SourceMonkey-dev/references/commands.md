@@ -12,9 +12,9 @@ commands, and `help all` everything.
 sm-dev [global options] <command> [args] [-- <command> ...]
 ```
 
-- Global options go first: `--run ID`, `--browser URL|PORT`,
-  `--manager sm|tm|vm`, `--open-browser`, `--temp-browser`, `--headed`,
-  `--mute`, `--nomute`,
+- Global options go first: `--run ID`,
+  `--open-browser`, `--existing-browser`, `--browser URL|PORT`,
+  `--manager sm|tm|vm`, `--headed`, `--headless`, `--mute`, `--nomute`,
   `--stdin`, `--interactive`,
   `--root DIR`, `--local DIR`, `--json`.
 - Read the text output by default: it's shorter, and says what an
@@ -74,14 +74,17 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 
 | Command | Use |
 | --- | --- |
+| `sm-dev start ...` | The default: a temp, throwaway browser for this run, with SourceMonkey loaded. Good for pages with no login. Headed when the line goes to a prompt |
 | `sm-dev --open-browser` | Start a lasting, visible browser on port 9233 (kept profile, so logins persist). A no-op if one is up |
-| `sm-dev --temp-browser start ...` | A hidden throwaway browser for this run, with SourceMonkey loaded. Good for pages with no login |
-| `--headed`, `--nomute` | With `--temp-browser`: a visible window; sound on (it's muted otherwise) |
-| `sm-dev --browser 9300 ...` | Use the browser on another port |
+| `sm-dev --existing-browser ...` | Connect to the browser already on port 9233 |
+| `--browser 9300` | With `--open-browser` or `--existing-browser`: the browser on another port. With a temp browser: the port to launch it on |
+| `--headed`, `--headless`, `--nomute` | When sm-dev launches the browser: show or hide its window; sound on (a temp browser is muted otherwise) |
 
 - A run pushes its scripts into SourceMonkey in that browser. With
-  `--open-browser` or `--browser`, it must be loaded there with Allow
-  User Scripts on: `manager install` does both.
+  `--open-browser` or `--existing-browser`, it must be loaded there with
+  Allow User Scripts on: `manager install` does both.
+- Commands for a browser with no run (`manager install`, `collection`,
+  `script`) need `--existing-browser` or `--open-browser`.
 
 ### Managers
 
@@ -95,7 +98,7 @@ test a script under VM or TM:
 | `--manager tm manager fetch` | Download or update TM (or VM) from the Chrome Web Store into `~/.cache/sm-dev/managers` |
 | `[--manager tm] manager install` | Load the manager into the browser unpacked, with Allow User Scripts on. No run needed |
 | `[--manager tm] manager enable` / `disable` | Turn it on or off in the browser. Not SourceMonkey while a run uses it |
-| `--manager vm --temp-browser start <script> <url>` | A run under VM (or `tm`): its scripts are installed in the manager, and removed when it ends. `values`, `get`, `set`, `menu`, `connect` and `--values` are refused |
+| `--manager vm start <script> <url>` | A run under VM (or `tm`): its scripts are installed in the manager, and removed when it ends. `values`, `get`, `set`, `menu`, `connect` and `--values` are refused |
 | `--manager vm script list`, `script E3 show`, ... | The manager's scripts, by E-ids, in one collection, `C0`. `collection C0 disable` is its switch for all scripts |
 
 - A manager enabled beside the chosen one runs its scripts in the run's
@@ -122,7 +125,7 @@ test a script under VM or TM:
 | `start ... --notab` | No tab at first; `newtab` later |
 | `start ... --detach --new` | Start another detached run, keeping earlier ones |
 | `list` | The active runs |
-| `status` | The run, its log file, tabs, and each script's state. With no run picked: the `--browser` browser and its managers, then every active run |
+| `status` | The run, its log file, tabs, and each script's state. With no run picked: every active run; with `--existing-browser`, also that browser and its managers |
 | `attach [ID]` | Follow a run's stream (Ctrl-C leaves it going) |
 | `stop [ID]`, `stop --all` | End a run |
 | `exit` | End this sm-dev (at a prompt or on stdin); runs it started without `--detach` stop |
@@ -135,7 +138,7 @@ test a script under VM or TM:
 | `validate <path>...` | Header, `@require` and syntax checks, plus warnings, e.g. an `@icon` that can't be shown (files, dirs, globs) |
 | `match <script>... <url>...` | Would it run there; which rules matched or excluded it |
 | `match`, `match all` | In a run: the selected script on the current tab; all scripts on all tabs. `--frames`: each of the tab's iframes too |
-| `scripts`, `script <script>` | List; pick the one `get`/`set`/`match` use. It also lists SourceMonkey-managed scripts on the tab as E1, ...; `scripts E1` picks one for `get`/`set`, any installed script (`script list` lists them), on the tab or not (`set key --force <json>` outside a `--temp-browser`) |
+| `scripts`, `script <script>` | List; pick the one `get`/`set`/`match` use. It also lists SourceMonkey-managed scripts on the tab as E1, ...; `scripts E1` picks one for `get`/`set`, any installed script (`script list` lists them), on the tab or not (`set key --force <json>` outside a temp browser) |
 | `load <script>...` | Add scripts to the run |
 | `update [script]` | Re-read changed scripts and reload affected tabs |
 | `collection list` (or `collections`) | SourceMonkey's collections (C1, ...), with kind, script count, enabled. No run needed |
@@ -152,8 +155,9 @@ The script or collection comes before the verb: `script E4 disable`,
 script left out is the selected one, except for `uninstall`.
 
 These change SourceMonkey's real collections and scripts, as its pages
-do, and need no run. Outside a `--temp-browser` they're the person's
-own: change them only when asked to.
+do, and need no run (with no run, they need `--existing-browser`).
+Outside a temp browser they're the person's own: change them only when
+asked to.
 
 | Command | What it does |
 | --- | --- |
@@ -163,7 +167,7 @@ own: change them only when asked to.
 | `script <script> uninstall`, `script [script] move <C>` | Remove one from, or move it between, container collections |
 | `collection <C> enable` / `disable` / `refresh`, `collection <C> rename <name>` | The same for a whole collection |
 
-- `script uninstall` needs `--force` outside a `--temp-browser`.
+- `script uninstall` needs `--force` outside a temp browser.
 - A run's test collection and other runs' scripts are refused, as is
   uninstalling or moving a script that a directory or manifest
   collection lists.

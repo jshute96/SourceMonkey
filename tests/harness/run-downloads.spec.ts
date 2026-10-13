@@ -1,6 +1,6 @@
 // A download from one of a run's tabs gets a line saying where it was
 // saved: a page's own, one from a new tab it opened, and one from a
-// cross-site iframe. A `--temp-browser` saves beside the run's log under
+// cross-site iframe. A temp browser saves beside the run's log under
 // the file's own name, rather than in Playwright's temp folder, and
 // `status` names that folder once something is in it; a connected
 // browser keeps its own download setting.
@@ -67,7 +67,7 @@ function savedLine(file: string, from: string): RegExp {
   return new RegExp(`^(\\[T\\d+\\] )?\\[event\\] Download saved: ${escaped(file)} \\(from ${from}`);
 }
 
-test('a --temp-browser download is saved beside the run log, and status names the folder once it has one', async ({ fixtureServer, scriptsDir }) => {
+test('a temp browser download is saved beside the run log, and status names the folder once it has one', async ({ fixtureServer, scriptsDir }) => {
   const file = scriptsDir.write(saver(false));
   const logs = mkdtempSync(path.join(os.tmpdir(), 'sm-dev-downloads-test-'));
   try {
@@ -78,7 +78,7 @@ test('a --temp-browser download is saved beside the run log, and status names th
       ['Download saved', 'status'],
       ['Tabs:', 'exit'],
     ];
-    const child = spawn(process.execPath, [CLI, '--stdin', '--temp-browser', 'start', file, `${fixtureServer.baseUrl}/target.html`, '--stop-after-seconds', '25'], {
+    const child = spawn(process.execPath, [CLI, '--stdin', 'start', file, `${fixtureServer.baseUrl}/target.html`, '--stop-after-seconds', '25'], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, SM_DEV_LOGS_DIR: logs },
     });

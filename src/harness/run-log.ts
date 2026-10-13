@@ -22,7 +22,7 @@ export function runLogsDir(): string {
 }
 
 /**
- * Where a `--temp-browser` run's downloads go: in the logs folder, named
+ * Where a temp browser run's downloads go: in the logs folder, named
  * after the run's log when it has one, and kept after the run ends as
  * the log is (the browser's own profile is deleted).
  */

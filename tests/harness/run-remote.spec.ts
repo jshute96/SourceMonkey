@@ -66,6 +66,11 @@ function within<T>(work: Promise<T>, ms: number): Promise<T | undefined> {
   return Promise.race([work, new Promise<undefined>((r) => setTimeout(r, ms))]);
 }
 
+// The run's browser is the test's own, already running.
+function existing(args: string[]): string[] {
+  return args.some((a) => a === '--temp-browser' || a === '--open-browser') ? args : ['--existing-browser', ...args];
+}
+
 // A headless Chromium with a debugging port, and directories of the
 // test's own for runs and logs.
 async function setUp(): Promise<Setup> {
@@ -78,24 +83,24 @@ async function setUp(): Promise<Setup> {
   };
   const runs: ChildProcess[] = [];
   const cliIn = (cwd: string, ...args: string[]): Promise<string[]> => new Promise((resolve) => {
-    execFile(process.execPath, [CLI, ...args], { env, cwd, timeout: 30_000 }, (_err, stdout, stderr) => {
+    execFile(process.execPath, [CLI, ...existing(args)], { env, cwd, timeout: 30_000 }, (_err, stdout, stderr) => {
       resolve((stdout + stderr).split('\n').filter(Boolean));
     });
   });
   const cliExit = (...args: string[]): Promise<{ code: number | null; lines: string[] }> => new Promise((resolve) => {
-    const child = execFile(process.execPath, [CLI, ...args], { env, timeout: 30_000 }, (_err, stdout, stderr) => {
+    const child = execFile(process.execPath, [CLI, ...existing(args)], { env, timeout: 30_000 }, (_err, stdout, stderr) => {
       resolve({ code: child.exitCode, lines: (stdout + stderr).split('\n').filter(Boolean) });
     });
   });
   const pipedStreams = (input: string | undefined, ...args: string[]): Promise<{ code: number | null; stdout: string[]; stderr: string[] }> => new Promise((resolve) => {
-    const child = execFile(process.execPath, [CLI, ...args], { env, timeout: 30_000 }, (_err, stdout, stderr) => {
+    const child = execFile(process.execPath, [CLI, ...existing(args)], { env, timeout: 30_000 }, (_err, stdout, stderr) => {
       resolve({ code: child.exitCode, stdout: stdout.split('\n').filter(Boolean), stderr: stderr.split('\n').filter(Boolean) });
     });
     if (input !== undefined) child.stdin?.end(input);
   });
   const cliStreams = (...args: string[]) => pipedStreams(undefined, ...args);
   const piped = (input: string, ...args: string[]): Promise<string[]> => new Promise((resolve) => {
-    const child = execFile(process.execPath, [CLI, ...args], { env, timeout: 30_000 }, (_err, stdout, stderr) => {
+    const child = execFile(process.execPath, [CLI, ...existing(args)], { env, timeout: 30_000 }, (_err, stdout, stderr) => {
       resolve((stdout + stderr).split('\n').filter(Boolean));
     });
     child.stdin?.end(input);
@@ -112,7 +117,7 @@ async function setUp(): Promise<Setup> {
     startRun: (args, cdp = String(port)) => {
       const at = args.indexOf('--root');
       const root = at >= 0 ? args.splice(at, 2) : [];
-      const proc = spawn(process.execPath, [CLI, ...root, 'start', '--browser', cdp, '--stop-after-seconds', '600', ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+      const proc = spawn(process.execPath, [CLI, '--existing-browser', ...root, 'start', '--browser', cdp, '--stop-after-seconds', '600', ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
       runs.push(proc);
       const lines: string[] = [];
       const waiters = new Set<() => void>();
@@ -335,7 +340,7 @@ test('start --detach returns once started, is replaced by the next unless --new,
     const several = await setup.cli('eval', 'document.title');
     expect(several.slice(0, 2)).toEqual(['ERROR: Multiple runs are active. Pick one with --run, or attach to one:', expect.stringMatching(/^Run\s+PID/)]);
     // Except status, which shows the browser, then each run, a blank line between.
-    const statuses = execFileSync(process.execPath, [CLI, 'status'], { env: setup.env, encoding: 'utf8' }).split('\n');
+    const statuses = execFileSync(process.execPath, [CLI, '--existing-browser', 'status'], { env: setup.env, encoding: 'utf8' }).split('\n');
     expect(statuses[0]).toBe('No current run. (Use `start` or `attach` to connect to one.)');
     expect(statuses[1]).toMatch(/^Browser: /);
     expect(statuses).toContain('Other active runs:');
@@ -477,7 +482,7 @@ test('a run logs its stream and the commands that change something', async ({ fi
     });
     // Commands piped in, as typed ones are logged. Not spawnSync, which
     // would hold up the fixture server in this process.
-    const proc = spawn(process.execPath, [CLI, '--stdin', '--root', scriptsDir.path, 'start', '--browser', String(setup.port), file, `${fixtureServer.baseUrl}/target.html`], {
+    const proc = spawn(process.execPath, [CLI, '--existing-browser', '--stdin', '--root', scriptsDir.path, 'start', '--browser', String(setup.port), file, `${fixtureServer.baseUrl}/target.html`], {
       env: setup.env, stdio: ['pipe', 'pipe', 'pipe'],
     });
     let stdout = '';

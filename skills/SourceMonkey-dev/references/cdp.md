@@ -60,8 +60,9 @@ $R cdp Browser.getVersion                          # browser-level domains work 
 sm-dev's connection doesn't own the browser: its CDP port accepts other
 clients at the same time.
 
-- The port: 9233 by default, or the `--browser` / `$SM_DEV_BROWSER`
-  sm-dev uses. A `--temp-browser` run picks a random one. `status`
+- The port: a temp browser (the default) picks a random one, or uses
+  `--browser`'s. With `--open-browser` or `--existing-browser`, 9233
+  by default, or the `--browser` / `$SM_DEV_BROWSER` sm-dev uses. `status`
   shows it on its first line (`browser 127.0.0.1:9233`).
 - The tab: its `targetId`. The run prints it when it opens the tab
   (`Opening <url> in T1 [targetId=...]`), and `tabs` lists them all.
@@ -212,7 +213,7 @@ $R wait -- eval '[innerWidth, innerHeight]'
 
 - It's a real resize: it lasts, affects the window's other tabs, and
   fires `resize` in the page. Put it back when done.
-- A headless browser (`--temp-browser`) ignores it. There, use
+- A headless browser (a temp browser, unless headed) ignores it. There, use
   `Emulation.setDeviceMetricsOverride` from a script that keeps its
   connection open, and `Emulation.clearDeviceMetricsOverride` before it
   exits. An override left set confuses later measurements.

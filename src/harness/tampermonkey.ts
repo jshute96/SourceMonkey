@@ -63,8 +63,8 @@ export class Tampermonkey implements ExternalManager {
 
   /**
    * Connects to TM in the browser at `endpoint`. Throws saying why when
-   * it isn't installed and enabled there. `browserArg`: ` --browser
-   * <address>` for the advice, when the browser isn't the default.
+   * it isn't installed and enabled there. `browserArg`: the flags
+   * that name the browser in the advice (see `browserArg` in run.ts).
    */
   static async open(endpoint: string, browserArg = ''): Promise<Tampermonkey> {
     const label = MANAGERS.tampermonkey.label;

@@ -11,8 +11,10 @@ the commands themselves are in [harness-guide.md](harness-guide.md).
 - The `sm-dev` process is only ever a **client** of runs: it starts
   them, sends them commands over a local socket, and prints what comes
   back. Any number of clients can talk to one run.
-- The run connects with Playwright's `connectOverCDP`, or launches a
-  Chromium itself with `--temp-browser`.
+- The run launches a Chromium of its own (a temp browser, the
+  default), or connects with Playwright's `connectOverCDP`
+  (`--existing-browser`, `--open-browser`). See
+  [Browser modes](#browser-modes).
 - A run pushes its scripts into SourceMonkey in its browser, which
   needs it installed: it claims its tabs, and fills its host from the
   extension's events. See
@@ -63,7 +65,7 @@ flowchart LR
 | `page-watch.ts` | Watch-only attachments: a tab's documents, activity for `wait`, and `eval` |
 | `extension-link.ts` | `ExtensionLink`: the calls into SourceMonkey's SW, tab claims, and its event stream |
 | `extension-backend.ts` | SourceMonkey's extension id, and finding its SW |
-| `extension-launch.ts` | `--temp-browser`: Chromium with SourceMonkey (or `--manager`'s manager) loaded |
+| `extension-launch.ts` | The temp browser: Chromium with SourceMonkey (or `--manager`'s manager) loaded |
 | `managers.ts` | The managers `--manager` names |
 | `browser-extensions.ts` | The managers in a browser, and turning them on, off and in |
 | `manager-fetch.ts`, `manager-actions.ts` | `manager fetch` from the Web Store; the `manager` verbs |
@@ -142,11 +144,11 @@ Serves `sm-dev list`, `stop`, `attach` and the commands sent to a run.
   command first needs it.
 - `start` and `attach` switch it to another run; `stop` leaves it with
   none.
-- `status` with no run shows the browser the line would use
-  (`--browser`'s) and its managers, then every run's status, headed
-  `Other run:`.
-  - Under `--json`, `browser` and a `runs` layer holding each run's
-    status, even with only one going. The JSON shape depends only on
+- `status` with no run shows the browser the line names, if any
+  (`--existing-browser` or `--open-browser`), and its managers, then
+  every run's status, headed `Other run:`.
+  - Under `--json`, `browser` (when named) and a `runs` layer holding
+    each run's status, even with only one going. The JSON shape depends only on
     whether a run was picked.
   - With a run, its status is headed by how the client came to it
     (`Started run:`, `Attached run:`, `Selected run:`), and its JSON
@@ -356,8 +358,9 @@ Command marks:
   command named (or its subcommand), and nothing run or checked.
 - The global options are taken off the front of the line first:
   `--run`, `--root`, `--local`, `--stdin`, `--interactive`, and the
-  browser's `--browser`, `--manager`, `--open-browser`, `--profile`,
-  `--temp-browser`, `--headed`, `--mute`, `--nomute`.
+  browser's `--temp-browser`, `--open-browser`, `--existing-browser`,
+  `--browser`, `--manager`, `--profile`, `--headed`, `--headless`,
+  `--mute`, `--nomute`.
   - One later on the line is refused, and said to go first.
   - `--browser`, which `start` also takes, is excepted.
 - The rest of the line holds one or more commands, split on `--`.
@@ -660,9 +663,10 @@ Rules:
   - a forced light color scheme.
 - A connected browser is headless when the user agent from Chrome's
   `Browser.getVersion` says `HeadlessChrome`.
-- A launched Chromium (`--temp-browser`) gets a debugging port too,
+- A launched Chromium (a temp browser) gets a debugging port too,
   which the run connects to, so other tools can as well, and `list`
-  shows where (see below).
+  shows where (see below). Chrome picks a free one, unless `--browser`
+  names one.
 - It's started with `--mute-audio`, so pages (e.g. video sites) play no
   sound, headed or not, unless the line has `--nomute`.
   - `--open-browser` has sound unless the line has `--mute`, since
@@ -690,7 +694,7 @@ Rules:
 - What it asks Chrome to do with downloads:
   - A connected browser gets `default`: its own setting, and its own
     prompts (a dangerous file, Save As) for its person to answer.
-  - A `--temp-browser` gets `allow` into a folder in the logs folder,
+  - A temp browser gets `allow` into a folder in the logs folder,
     named after the run's log (`sm-dev-<timestamp>-downloads`), kept
     after the run as the log is. `allow` keeps the files' own names, and
     skips Chrome's prompts, which nobody could answer in a hidden
@@ -733,6 +737,45 @@ Rules:
 - Playwright's test runner gives the contexts it launches a locale of
   its own, which holds the override. So the spec checks a launched
   browser through the `sm-dev` command line.
+
+### Browser modes
+
+At most one of these per line. It picks the browser `start` uses, and,
+for commands without a run, the browser they act on.
+
+- **Temp browser** (`--temp-browser`, the default): each run launches
+  its own, closed when the run ends (see below).
+  - Chosen as the default so a bare `sm-dev start` never drives a
+    browser that may be someone else's, or not running.
+  - `--browser` is the local port to launch it on. `$SM_DEV_BROWSER`
+    doesn't apply, so two runs don't contend for one port.
+- **`--open-browser`**: a lasting browser at `--browser`, started
+  first if none answers there (see below).
+- **`--existing-browser`**: connect to whatever answers at `--browser`
+  (default `$SM_DEV_BROWSER`, else port 9233).
+- `--headed`, `--headless`, `--mute` and `--nomute` on a line with no `start` are
+  refused in the default mode, as `--temp-browser` is, since nothing
+  would use them.
+- Headed or not, for a browser sm-dev launches:
+  - `--headed` / `--headless` say outright.
+  - Otherwise `--open-browser` is headed, and a temp browser is headed
+    when the line goes to a prompt (`--interactive`, or one implied).
+    So `sm-dev start x.user.js url` at a terminal opens a window.
+  - A detached run is passed `--headed` by the client that started it,
+    since it has no prompt of its own.
+  - Both, and `--mute`, are refused with `--existing-browser`.
+- Commands that act on a browser outside a run (`status`'s browser
+  part, `manager install`/`enable`/`disable`, `collection` and
+  `script` commands) need `--existing-browser` or `--open-browser`: a
+  temp browser exists only with a run.
+  - `--browser` alone is refused there too, rather than taken as the
+    browser to connect to: in the default mode it's a temp browser's
+    port.
+  - Advice naming such a command includes `--existing-browser`
+    (`browserArg` in `run.ts`).
+  - Advice to use a temp browser says to drop the mode flag
+    (`DROP_BROWSER_MODE`), since adding `--temp-browser` beside it is
+    refused.
 
 ### `--temp-browser` (`extension-launch.ts`)
 
@@ -1153,7 +1196,7 @@ User-facing behavior is in [harness-guide.md](harness-guide.md).
     sm-dev`, and how to update it.
   - sm-dev's major older: `This sm-dev is older than SourceMonkey in
     this browser`, and how to update sm-dev (see below).
-  - Either way it also offers `--temp-browser`, which loads sm-dev's
+  - Either way it also offers a temp browser, which loads sm-dev's
     own copy of the extension.
 - **Minor differs**: compatible, so the run starts, with one line
   saying which side is older and how to update it.
@@ -1291,7 +1334,7 @@ sm-dev knows a tab by its CDP target id; the extension knows it by its
   extension opens the tab blank, claims it, and only then loads the
   URL.
 - Tabs the person opens: never claimed, in any browser, a
-  `--temp-browser` included (another sm-dev can connect to its port
+  a temp browser included (another sm-dev can connect to its port
   too). They run whatever the extension has, as in normal browsing.
   - To bring one under the run, open it with `newtab` instead.
   - Possible later: a popup menu item, "Put this tab under sm-dev
@@ -1353,7 +1396,7 @@ sm-dev knows a tab by its CDP target id; the extension knows it by its
 #### Multiple runs in one browser
 
 Two sm-dev runs can share a browser: two shells on the shared browser,
-or a second run pointed at a `--temp-browser`'s port.
+or a second run pointed at a temp browser's port.
 
 - **Claims**: each tab has at most one claim, naming its run.
   - A run claims only tabs it opens, so two live runs never claim the
@@ -1547,7 +1590,7 @@ Terms used below:
 | "Allow User Scripts" off | nothing: the run is refused (toggle off) |
 | SourceMonkey on | sm-dev's scripts only |
 
-- `--temp-browser` loads SourceMonkey in the temporary browser, so it
+- A temp browser loads SourceMonkey, so it
   is in the "SourceMonkey on" row.
 - Your tabs run SourceMonkey-managed scripts if SourceMonkey is on.
   sm-dev's scripts never run in your tabs.
@@ -1602,7 +1645,7 @@ Terms used below:
     - Any installed script can be picked, by its number from `script
       list`: its values don't depend on a tab. One not on the tab's
       page is still listed, as `Not on this page`.
-  - `set` on one needs `--force` outside a `--temp-browser`, since it
+  - `set` on one needs `--force` outside a temp browser, since it
     changes the person's real data: `set key --force <json>`. Like
     any flag, it can also go after the JSON.
   - `menu` and `logs` don't take them: they never run in the run's

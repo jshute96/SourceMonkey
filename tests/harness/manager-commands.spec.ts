@@ -42,7 +42,7 @@ test.afterEach(async () => {
 function cli(...args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
   const env = { ...process.env, SM_DEV_RUNS_DIR: runsDir, SM_DEV_LOGS_DIR: runsDir, SM_DEV_BROWSER: launched.endpoint };
   return new Promise((resolve) => {
-    const child = execFile(process.execPath, [CLI, ...args], { env, timeout: 30_000 }, (_err, stdout, stderr) => {
+    const child = execFile(process.execPath, [CLI, ...(args.includes('--temp-browser') ? [] : ['--existing-browser']), ...args], { env, timeout: 30_000 }, (_err, stdout, stderr) => {
       resolve({ code: child.exitCode, stdout, stderr });
     });
   });

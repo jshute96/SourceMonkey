@@ -119,7 +119,7 @@ This doc covers only where TM differs.
 
 - TM runs scripts on `file://` pages only with Chrome's "Allow access
   to file URLs" on for it.
-- That's on for a copy loaded unpacked, as in a `--temp-browser`, and
+- That's on for a copy loaded unpacked, as in a temp browser, and
   off by default for one from the Chrome Web Store.
 - sm-dev leaves it as it is.
 
@@ -178,7 +178,7 @@ This doc covers only where TM differs.
 | Same name and namespace | One script | Any number; sm-dev keeps to one |
 | Local `@require` | Given with the install | Header rewritten to `sm-dev.invalid`, then given with `saveExternal` |
 | Other scripts on a tab | sm-dev's matching | TM's matching |
-| `file://` pages | Blacklisted by default; cleared in a `--temp-browser` | Need Chrome's file access, on for an unpacked copy |
+| `file://` pages | Blacklisted by default; cleared in a temp browser | Need Chrome's file access, on for an unpacked copy |
 | Script line numbers | As in the file | Shifted; corrected for the run's scripts |
 
 ## Code layout
