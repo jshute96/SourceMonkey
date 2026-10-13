@@ -1254,6 +1254,7 @@ too.
 - **Sub-frames.** As TM does (`page.js` hands a sub-frame the page's
   own `close`), we override `window.close` in the **top** frame only.
   `window.focus` has no such guard in either: it focuses the tab.
+
 ## DOM injection (`GM_addStyle` / `GM_addElement`)
 
 Both run without an SW round-trip or per-script state. The page's CSP
