@@ -48,6 +48,7 @@
       .storage-usage td:first-child { padding-left: 0; }
       .storage-usage td.num { text-align: right; font-variant-numeric: tabular-nums; }
       .storage-usage tr.total td { border-top: 1px solid #ddd; font-weight: 600; }
+      .storage-usage + .settings-hint { margin-top: 8px; }
     </style>
   </head>
   <body>
@@ -184,6 +185,10 @@
         <h2 class="settings-heading">Chrome storage usage</h2>
         <p id="storage-limit" class="settings-hint" hidden></p>
         <table id="storage-usage" class="storage-usage"></table>
+        <p class="settings-hint">
+          Details: <a href="debug/storage.html" target="_blank" rel="noopener">storage by script and file</a>
+          · <a href="debug/icons.html" target="_blank" rel="noopener">cached icons</a>
+        </p>
       </div>
     </div>
 

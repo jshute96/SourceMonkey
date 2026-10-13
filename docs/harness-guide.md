@@ -1227,6 +1227,43 @@ do. Like the listings, they work with no run too, against `--browser`.
   that gets a line too: `E4: Dark mode is enabled, but won't run
   because it's inside disabled collection C3: Mine`.
 
+### Extracting icons
+
+A script's `@icon`, and the site icons SourceMonkey's pages show for the
+sites it matches, can be printed or saved, for use in a script's docs.
+These come from SourceMonkey only, not Tampermonkey or Violentmonkey.
+
+- **The `@icon`** is one of the script's files:
+  - `script show` lists it, with the local file read instead when one
+    stands in for its URL
+    ([local-file-overrides.md](local-file-overrides.md)).
+  - `script print --file icon --out logo.png` writes it to a file.
+  - `script save <dir>` saves it with the other files, by default.
+- **Site icons** are the ones a page heading shows for the script's
+  `@match` sites, up to 10, with identical icons merged into one and in
+  the same order.
+  - `script save <dir> --include all,site-icons` saves them too, or
+    `--include site-icons` alone.
+  - Each is saved under `site-icons/`, named by its site's host
+    (without `www.`, and `_` for a port's `:`). One that is a page's
+    own icon adds that page's path: `site-icons/github.com.svg`,
+    `site-icons/npmjs.com/package.png`. `--flat` gives
+    `npmjs.com_package.png`.
+  - The output lists them after the files, in page order, with the
+    sites each one is for. A site with no icon of its own is listed
+    as `No icon`, and not saved.
+  - `script print --file site-icons/<name>` prints one by its saved
+    name, or a part of it only one has (`site-icons/npmjs`).
+  - `script show` lists them once they've been looked up, and
+    otherwise leaves them out.
+- **Looking them up** works as a page showing them would: a site's icon
+  is fetched once into SourceMonkey's icon cache, which its pages and
+  `sm-dev` then share. `show` never fetches.
+- **A run's fresh profile** has no browsing history, so a site behind a
+  sign-in can give a different icon than in your own browser. To get
+  the icons you see there, run `save` with no run, against your own
+  browser (`--browser`).
+
 ### Checking scripts: `match` and `validate`
 
 On their own, with files:

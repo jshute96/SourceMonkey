@@ -573,7 +573,9 @@ test.describe('viewer live updates', () => {
     // Collection disabled from the collections page / another tab: the viewer's
     // Enable toggle greys out without a reload.
     await sm.setCollectionEnabled(collection!.id, false);
-    await expect(checkbox).toBeDisabled();
+    // The viewer hears of it through a storage change, which can be slow
+    // to arrive when the whole suite runs in parallel.
+    await expect(checkbox).toBeDisabled({ timeout: 15_000 });
     await expect(label).toHaveClass(/toggle-disabled/);
 
     await page.close();

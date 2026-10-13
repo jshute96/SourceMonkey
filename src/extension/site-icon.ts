@@ -1,3 +1,5 @@
+import { base64ToBytes, bytesToBase64 } from '../bytes.js';
+import type { IconSource } from '../sm-dev-protocol.js';
 import { fetchResourceBytes, isNotModified, resolveScriptResource } from '../file-loader.js';
 import { presentLocalFileCandidates } from '../local-file-overrides.js';
 import type { DirectoryListingCache } from '../file-locations.js';
@@ -50,7 +52,13 @@ export interface SiteIconEntry {
   dataUrl: string | null;
   fetchedAt: number;
   v?: number;
+  /** Where a discovered icon came from; absent in rows written before it was kept. */
+  source?: IconSource;
 }
+
+
+// An icon found, and where.
+type Found = { dataUrl: string; source: IconSource } | null;
 
 const KEY_PREFIX = 'siteIcon:';
 const siteIconKey = (origin: string): string => `${KEY_PREFIX}${origin}`;
@@ -198,17 +206,39 @@ export function usableCacheHit(
 
 // ---------- Favicon fetch ----------
 
+// Bumped by `resetIconFetchesForTests`. A fetch started before the bump
+// returns its icon but doesn't store it: a test's reset would otherwise
+// be followed by an icon an earlier test asked for, landing in storage
+// partway through the next test.
+let fetchEpoch = 0;
+
+// For the e2e reset (`resetAllState` in background.ts): fetches already
+// running won't store what they find, and later lookups start their own.
+export function resetIconFetchesForTests(): void {
+  fetchEpoch++;
+  inflight.clear();
+}
+
 // Discover an icon for `pageUrl` specifically (Chrome's `/_favicon/` DB
 // first, then HTML discovery at `pageUrl`). Cached under
 // `pathIcon:<pageUrl>` so each deep-targeted script gets its own entry.
 // A null result means "no usable icon on this page"; callers fall back
 // to the origin-level cache rather than retrying.
 async function fetchAndCachePathIcon(pageUrl: string): Promise<string | null> {
-  const dataUrl =
-    (await fetchChromeFavicon(pageUrl, { exactPage: true })) ??
-    (await tryDiscoverIconViaHtml(pageUrl));
-  await storePathIcon(pageUrl, { dataUrl, fetchedAt: Date.now() });
-  return dataUrl;
+  const epoch = fetchEpoch;
+  const found =
+    from('favicon-store', await fetchChromeFavicon(pageUrl, { exactPage: true })) ??
+    from('page', await tryDiscoverIconViaHtml(pageUrl));
+  if (epoch === fetchEpoch) await storePathIcon(pageUrl, foundEntry(found));
+  return found?.dataUrl ?? null;
+}
+
+function from(source: IconSource, dataUrl: string | null): Found {
+  return dataUrl ? { dataUrl, source } : null;
+}
+
+function foundEntry(found: Found): SiteIconEntry {
+  return found ? { dataUrl: found.dataUrl, fetchedAt: Date.now(), source: found.source } : { dataUrl: null, fetchedAt: Date.now() };
 }
 
 // Discover an icon for `origin` via the shared fallback chain
@@ -217,32 +247,34 @@ async function fetchAndCachePathIcon(pageUrl: string): Promise<string | null> {
 // the host — the path-scoped lookup hits this when its own probe came
 // up empty.
 async function fetchAndCacheOriginIcon(origin: string): Promise<string | null> {
-  const dataUrl = await fetchOriginFallbackAsDataUrl(origin);
-  await storeSiteIcon(origin, { dataUrl, fetchedAt: Date.now() });
-  return dataUrl;
+  const epoch = fetchEpoch;
+  const found = await fetchOriginFallback(origin);
+  if (epoch === fetchEpoch) await storeSiteIcon(origin, foundEntry(found));
+  return found?.dataUrl ?? null;
 }
 
 // Fetch a script-declared (`@icon`) URL and cache it under
 // `iconUrl:<url>`. No discovery, no redirect policy: the script author
 // named this URL, so wherever it lands is what they asked for.
 async function fetchAndCacheUrlIcon(url: string): Promise<string | null> {
+  const epoch = fetchEpoch;
   const dataUrl = await fetchIconAt(url);
-  await storeUrlIcon(url, { dataUrl, fetchedAt: Date.now() });
+  if (epoch === fetchEpoch) await storeUrlIcon(url, { dataUrl, fetchedAt: Date.now() });
   return dataUrl;
 }
 
-async function fetchOriginFallbackAsDataUrl(origin: string): Promise<string | null> {
+async function fetchOriginFallback(origin: string): Promise<Found> {
   const fromChrome = await fetchChromeFavicon(origin + '/');
-  if (fromChrome) return fromChrome;
+  if (fromChrome) return from('favicon-store', fromChrome);
   const fromRoot = await tryDiscoverIconViaHtml(origin + '/');
-  if (fromRoot) return fromRoot;
+  if (fromRoot) return from('page', fromRoot);
   const fromIco = await fetchIconAt(`${origin}/favicon.ico`, { rejectCrossHostRedirect: true });
-  if (fromIco) return fromIco;
+  if (fromIco) return from('favicon.ico', fromIco);
   // Google S2 is the only leg that touches a third party. The host
   // name is already public via the @match; the request still leaks
   // "we couldn't find this site's icon ourselves" to Google. Reached
   // only when every direct leg has failed.
-  return await fetchGoogleS2Icon(origin);
+  return from('google', await fetchGoogleS2Icon(origin));
 }
 
 async function fetchGoogleS2Icon(origin: string): Promise<string | null> {
@@ -933,30 +965,34 @@ function fillMergedSlot(
   inners: readonly HTMLElement[],
   painted: readonly (string | null)[],
 ): number {
-  const firstByIcon = new Map<string, number>();
-  const mergedInto: string[][] = targets.map((t) => [t.linkUrl]);
-  const kept: number[] = [];
-  for (let i = 0; i < inners.length; i++) {
-    const icon = painted[i] ?? '';
-    const first = firstByIcon.get(icon);
-    if (first === undefined) {
-      firstByIcon.set(icon, i);
-      kept.push(i);
-      continue;
-    }
-    mergedInto[first].push(targets[i].linkUrl);
-    inners[first].title = sitesTooltip(mergedInto[first]);
+  const merged = mergeSlot(painted);
+  for (const { sites } of merged) {
+    if (sites.length > 1) inners[sites[0]].title = sitesTooltip(sites.map((i) => targets[i].linkUrl));
   }
+  slot.replaceChildren(...merged.map(({ sites }) => inners[sites[0]]));
+  return merged.length;
+}
+
+/**
+ * The icons a slot shows for its sites' icons (`painted`, null for the
+ * globe), in the order shown: each as the indexes of the sites it
+ * stands for, its own first. Byte-identical icons are one, and so are
+ * globes.
+ */
+export function mergeSlot(painted: readonly (string | null)[]): { sites: number[] }[] {
+  const byIcon = new Map<string, number[]>();
+  painted.forEach((icon, i) => {
+    const sites = byIcon.get(icon ?? '');
+    if (sites) sites.push(i);
+    else byIcon.set(icon ?? '', [i]);
+  });
+  const kept = [...byIcon.values()];
   // Real favicons before the globe: a globe says only "a site", so it
   // goes last where it isn't in the way. The first site stays first
   // even as a globe — it is the script's primary site, and the header
   // order is what the reader expects to find there.
-  const ordered = [
-    ...kept.filter((i) => i === 0 || painted[i] !== null),
-    ...kept.filter((i) => i !== 0 && painted[i] === null),
-  ];
-  slot.replaceChildren(...ordered.map((i) => inners[i]));
-  return ordered.length;
+  const shownFirst = (sites: number[]): boolean => sites[0] === 0 || painted[sites[0]] !== null;
+  return [...kept.filter(shownFirst), ...kept.filter((sites) => !shownFirst(sites))].map((sites) => ({ sites }));
 }
 
 // Lines a merged icon's tooltip can show before it turns into a count.
@@ -1086,20 +1122,22 @@ function iconImgSrc(dataUrl: string): string {
 // icon data URLs are always `;base64`; the only non-base64 icons we
 // see are inline SVG/text.
 export function dataUrlToBlob(dataUrl: string): Blob | null {
+  const content = dataUrlContent(dataUrl);
+  return content ? new Blob([base64ToBytes(content.base64)], { type: content.contentType }) : null;
+}
+
+/** A `data:` URL's type and bytes, as base64; null for one that isn't well-formed. */
+export function dataUrlContent(dataUrl: string): { contentType: string; base64: string } | null {
   const comma = dataUrl.indexOf(',');
   if (!dataUrl.startsWith('data:') || comma < 0) return null;
   const meta = dataUrl.slice(5, comma);          // e.g. "image/png;base64"
   const payload = dataUrl.slice(comma + 1);
   const isBase64 = /;base64$/i.test(meta);
-  const mime = (isBase64 ? meta.slice(0, -7) : meta).split(';')[0] || 'application/octet-stream';
+  const contentType = (isBase64 ? meta.slice(0, -7) : meta).split(';')[0] || 'application/octet-stream';
   try {
-    if (isBase64) {
-      const bin = atob(payload);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      return new Blob([bytes], { type: mime });
-    }
-    return new Blob([decodeURIComponent(payload)], { type: mime });
+    // Checked as base64 by decoding it.
+    if (isBase64) return { contentType, base64: bytesToBase64(new Uint8Array(base64ToBytes(payload.trim()))) };
+    return { contentType, base64: bytesToBase64(new TextEncoder().encode(decodeURIComponent(payload))) };
   } catch {
     return null;
   }
@@ -1299,3 +1337,82 @@ export async function refreshCachedIcon(storageKey: string): Promise<string | nu
   return wrapped;
 }
 
+
+// ---------- For sm-dev ----------
+
+/** One icon of a script's slot, for sm-dev (`siteIconsFor`). */
+export interface SlotIcon {
+  /** The sites it stands for, its own first. */
+  sites: MatchTarget[];
+  /** Null for the globe: no icon found. */
+  dataUrl: string | null;
+  source?: IconSource;
+  /** Found for the first site's page itself, rather than its origin. */
+  fromPage: boolean;
+}
+
+// A usable cache row for `storageKey`; with `fetch`, looked up first
+// when there is none.
+async function iconRow(storageKey: string, fetch: boolean): Promise<SiteIconEntry | null> {
+  const version = storageKey.startsWith(URL_ICON_KEY_PREFIX) ? undefined : DISCOVERED_ICON_CACHE_VERSION;
+  const read = async (): Promise<SiteIconEntry | null> =>
+    usableCacheHit((await chrome.storage.local.get(storageKey))[storageKey] as SiteIconEntry | undefined, version);
+  const hit = await read();
+  if (hit || !fetch) return hit;
+  await refreshCachedIcon(storageKey);
+  return read();
+}
+
+/**
+ * Worker: the icons a page heading's slot shows for these `@match`
+ * patterns, merged and in order, ignoring a declared `@icon`. Without
+ * `fetch`, only from the cache: null when any isn't there.
+ */
+export async function siteIconsFor(matches: string[], fetch: boolean): Promise<SlotIcon[] | null> {
+  const targets = representativeMatches({ matches }, HEADING_SITE_ICONS);
+  const found = await Promise.all(targets.map(async (t) => {
+    const probe = pathProbeUrl(t.origin, t.linkUrl);
+    if (probe) {
+      const page = await iconRow(pathIconKey(probe), fetch);
+      if (!page) return null;
+      if (page.dataUrl !== null) return { entry: page, fromPage: true };
+    }
+    const origin = await iconRow(siteIconKey(t.origin), fetch);
+    return origin ? { entry: origin, fromPage: false } : null;
+  }));
+  if (found.some((f) => f === null)) return null;
+  const rows = found as { entry: SiteIconEntry; fromPage: boolean }[];
+  return mergeSlot(rows.map((r) => r.entry.dataUrl)).map(({ sites }) => {
+    const { entry, fromPage } = rows[sites[0]];
+    return {
+      sites: sites.map((i) => targets[i]),
+      dataUrl: entry.dataUrl,
+      ...(entry.dataUrl !== null && entry.source ? { source: entry.source } : {}),
+      fromPage,
+    };
+  });
+}
+
+/**
+ * Worker: the local stand-in for a declared http(s) icon, searched for
+ * in `localRoots` as a page does (`ensureIconForUrl`), but read fresh
+ * each time rather than kept for the page's life. Null for none.
+ */
+export async function localIconFor(url: string, localRoots: readonly string[]): Promise<{ dataUrl: string; local: string } | null> {
+  for (const candidate of await presentLocalFileCandidates(url, localRoots, new Map())) {
+    const dataUrl = await fetchIconAt(candidate);
+    if (dataUrl) return { dataUrl, local: candidate };
+  }
+  return null;
+}
+
+/**
+ * Worker: a script's declared icon at `url`, as a `data:` URL; null
+ * when it can't be read. `file:` URLs are read fresh, uncached, as the
+ * file may have just changed. Leaves local stand-ins to `localIconFor`.
+ */
+export async function declaredIconFor(url: string): Promise<string | null> {
+  if (isDataUrl(url)) return usableDataUrl(url);
+  if (url.startsWith('file:')) return fetchIconAt(url);
+  return (await iconRow(urlIconKey(url), true))?.dataUrl ?? null;
+}

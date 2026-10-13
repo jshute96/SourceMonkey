@@ -548,8 +548,11 @@ export interface ScriptPrintData {
   /** Its id, absent for another run's script. */
   script?: string;
   name: string;
-  /** With `--file`, the `@require` or `@resource` printed. */
-  file?: { kind: 'require' | 'resource'; url: string; name?: string };
+  /**
+   * With `--file`, the file printed: a `@require`, `@resource` or
+   * `@icon` by its URL, or a site icon by its name (`site-icons/github.com.svg`).
+   */
+  file?: { kind: 'require' | 'resource' | 'icon'; url: string; name?: string } | { kind: 'site-icon'; path: string; sites: string[] };
   /** The installed text; absent with `--out`. */
   text?: string;
   /** With `--out`, the file written, absolute. */
@@ -562,10 +565,22 @@ export interface ScriptSaveData {
   name: string;
   /** The directory saved into, absolute. */
   dir: string;
-  /** Each file written; `path` is absolute. */
-  files: { kind: 'script' | 'require' | 'resource'; url?: string; name?: string; path: string }[];
+  /** Each file written; `path` is relative to `dir`. */
+  files: { kind: 'script' | 'require' | 'resource' | 'icon'; url?: string; name?: string; path: string }[];
+  /** With `--include site-icons`: the script's site icons, in the order a page shows them. */
+  siteIcons?: SiteIcon[];
   /** What wasn't saved, and why. */
   notes?: string[];
+}
+
+/** One of a script's site icons, as a page shows it. */
+export interface SiteIcon {
+  /** Where `script save` writes it, relative to its directory; absent for none found (the globe). */
+  path?: string;
+  /** Where it came from; absent for none found, or for one cached before that was kept. */
+  source?: 'favicon-store' | 'page' | 'favicon.ico' | 'google';
+  /** The sites it stands for, by the URL it links to. */
+  sites: string[];
 }
 
 /** A `@require` or `@resource`. */
@@ -590,6 +605,13 @@ export interface ScriptDetails extends Script {
   grants: string[];
   requires: FileStatus[];
   resources: (FileStatus & { name: string })[];
+  /**
+   * Its own `@icon`, resolved; `path` is where `script save` writes it,
+   * and `local` the local file read in its place.
+   */
+  icon?: { url: string; path?: string; local?: string };
+  /** Its site icons, in page order; absent until they have been looked up. */
+  siteIcons?: SiteIcon[];
   /** Absent when the manager doesn't say. */
   valueCount?: number;
 }

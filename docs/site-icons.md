@@ -10,11 +10,20 @@
     matched sites themselves (see [Multiple sites](#multiple-sites)).
 - Implemented in [`src/extension/site-icon.ts`](../src/extension/site-icon.ts).
 
+## sm-dev
+
+`sm-dev script show`, `print` and `save` give a script's site icons from
+this cache, merged and ordered as a page heading's slot
+(`siteIconsFor`, sharing `mergeSlot` with the page). `save` and `print`
+look up the missing ones the same way a page would; `show` doesn't. See
+[sm-dev-managers.md](sm-dev-managers.md#icons).
+
 ## Debug page
 
 - `/debug/icons.html` ([`src/debug/icons.html`](../src/debug/icons.html) +
   [`src/extension/debug/icons.ts`](../src/extension/debug/icons.ts)) inspects and manages cached
-  icons in `chrome.storage.local`.
+  icons in `chrome.storage.local`. Linked from the Options page's
+  storage section.
 - Displays a table of all cached rows (`siteIcon:*`, `pathIcon:*`, and
   `iconUrl:*`) with icon preview, target site/URL, scope chip,
   MIME/byte-size details, schema version, freshness status, and
@@ -366,7 +375,10 @@ the first one discovered for the host.
 ## Storage shape
 
 Parallel cache rows for the icon-collection paths, sharing the same
-`{ dataUrl, fetchedAt, v? }` shape and TTLs:
+`{ dataUrl, fetchedAt, v?, source? }` shape and TTLs. `source` is
+where a discovered icon came from (`favicon-store`, `page`,
+`favicon.ico`, `google`), for sm-dev to report; rows written before it
+was kept have none.
 
 - `pathIcon:<pageUrl>` — discovery result (`/_favicon/` DB + HTML) for
   a specific deep page. Key is the full page URL; lets two scripts on

@@ -13,6 +13,7 @@ import type { Worker } from '@playwright/test';
 import { test, expect } from '../fixtures/harness.js';
 import { findExtensionWorker } from '../../lib/harness/extension-backend.js';
 import { launchExtensionBrowser, type LaunchedExtensionBrowser } from '../../lib/harness/extension-launch.js';
+import { UserscriptServer } from '../fixtures/userscript-server.js';
 import { CONTAINER_TARGET_ONLY, LISTED_BY_LOCATION, RUN_COLLECTION_LOCKED } from '../../lib/sm-dev-protocol.js';
 
 const CLI = fileURLToPath(new URL('../../lib/harness/cli.js', import.meta.url));
@@ -173,11 +174,55 @@ test('print --file and save read the installed @require and @resource files', as
     expect(saved.stdout).toBe(`Saved E1: One to ${out}: 3 files\n  ${out}/one.user.js\n  ${out}/lib/util.js\n  ${out}/lib/data.json\n`);
     expect(readFileSync(path.join(out, 'one.user.js'), 'utf8')).toBe(readFileSync(file, 'utf8'));
     expect(readFileSync(path.join(out, 'lib/data.json'), 'utf8')).toBe('{"a": 1}\n');
-    const again = await cli('script', 'E1', 'save', out, '--only', 'requires');
+    const again = await cli('script', 'E1', 'save', out, '--include', 'requires');
     expect(again.code).not.toBe(0);
     expect(again.stdout + again.stderr).toContain(`These files already exist. Use --force to replace them:\n  ${out}/lib/util.js\n`);
   } finally {
     rmSync(out, { recursive: true, force: true });
+  }
+});
+
+test('show, print and save give a script\'s @icon and site icons', async ({ scriptsDir }) => {
+  test.setTimeout(90_000);
+  const server = await UserscriptServer.start();
+  const out = mkdtempSync(path.join(os.tmpdir(), 'sm-dev-save-'));
+  try {
+    const svg = (color: string): string => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1" fill="${color}"/></svg>`;
+    // The page's own icon, so it is named by the page's path too.
+    server.setRoute('/app/', '<html><head><link rel="icon" href="/app.svg"></head></html>', { contentType: 'text/html; charset=utf-8' });
+    server.setRoute('/app.svg', svg('red'), { contentType: 'image/svg+xml' });
+    // Its @icon by URL, with a local file standing in for it, which wins.
+    server.setRoute('/img/logo.svg', svg('green'), { contentType: 'image/svg+xml' });
+    scriptsDir.writeRaw('a/img/logo.svg', svg('blue'));
+    scriptsDir.write({ relativePath: 'a/one.user.js', meta: { name: 'One', match: [`${server.baseUrl}/app/*`], extra: [`// @icon ${server.baseUrl}/img/logo.svg`] }, body: '' });
+    await worker.evaluate((d) => (self as unknown as Sm).SourceMonkey.addCollection(d), path.join(scriptsDir.path, 'a'));
+    const site = new URL(server.baseUrl).host;
+    const named = `site-icons/${site.replace(':', '_')}/app.svg`;
+
+    const before = (await cli('script', 'E1', 'show')).stdout;
+    expect(before).toContain(`  @icon:      ${server.baseUrl}/img/logo.svg (read from ${pathToFileURL(path.join(scriptsDir.path, 'a/img/logo.svg')).href})\n`);
+    expect(before).not.toContain('Site icons');
+
+    const saved = await cli('script', 'E1', 'save', out, '--include', 'all,site-icons');
+    expect(saved.stderr).toBe('');
+    expect(saved.stdout).toBe(
+      `Saved E1: One to ${out}: 2 files and 1 site icon\n  ${out}/one.user.js\n  ${out}/img/logo.svg\nSite icons, in page order:\n  ${out}/${named}  ${site}/app/\n`,
+    );
+    expect(readFileSync(path.join(out, named), 'utf8')).toBe(svg('red'));
+    expect(readFileSync(path.join(out, 'img/logo.svg'), 'utf8')).toBe(svg('blue'));
+
+    // Known now, so `show` has them.
+    expect((await cli('script', 'E1', 'show')).stdout).toMatch(new RegExp(`^ {2}Site icons: +${named.replace(/\./g, '\\.')} +${site.replace(/\./g, '\\.')}/app/$`, 'm'));
+    const json = JSON.parse((await cli('script', 'E1', 'show', '--json')).stdout);
+    expect(json.script.icon).toEqual({
+      url: `${server.baseUrl}/img/logo.svg`, path: 'img/logo.svg', local: pathToFileURL(path.join(scriptsDir.path, 'a/img/logo.svg')).href,
+    });
+    expect(json.script.siteIcons).toEqual([{ path: named, source: 'page', sites: [`${server.baseUrl}/app/`] }]);
+    expect((await cli('script', 'E1', 'print', '--file', 'site-icons/app')).stdout).toBe(`${svg('red')}\n`);
+    expect((await cli('script', 'E1', 'print', '--file', 'icon')).stdout).toBe(`${svg('blue')}\n`);
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+    await server.stop();
   }
 });
 

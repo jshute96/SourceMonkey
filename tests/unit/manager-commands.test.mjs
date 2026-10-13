@@ -266,7 +266,7 @@ test('script print --file picks a file by resource name or a unique part of its 
   assert.match((await verb('print', [], { '--file': 'icon' })).out[0], /@resource icon .* is not text \(image\/png\), so it can't be printed\. Use `--out <file>` to write it to a file\.$/);
   // Under a manager that doesn't give the files.
   const { scriptFiles: _, ...tm } = { ...withFiles, label: 'Tampermonkey' };
-  assert.match((await verb('print', [], { '--file': 'jquery' }, { control: tm })).out[0], /Tampermonkey doesn't give sm-dev its scripts' @require and @resource files/);
+  assert.match((await verb('print', [], { '--file': 'jquery' }, { control: tm })).out[0], /Tampermonkey doesn't give sm-dev its scripts' @require, @resource and @icon files/);
 });
 
 test('script print --out writes the file', async () => {
@@ -306,7 +306,7 @@ test('script save writes the script and its files by URL, flat, or some of them,
     });
     assert.equal(readFileSync(path.join(cwd, 'out/sub/other.example.com/lib/util.js'), 'utf8'), 'util();\n');
     // Again: refused, naming what exists, until --force.
-    const again = await verb('save', ['out/sub'], { '--only': 'script,resources' }, { cwd });
+    const again = await verb('save', ['out/sub'], { '--include': 'script,resources' }, { cwd });
     assert.deepEqual(again, {
       ok: false,
       out: [
@@ -316,24 +316,24 @@ test('script save writes the script and its files by URL, flat, or some of them,
         '  out/sub/other.example.com/x/util.js',
       ],
     });
-    assert.equal((await verb('save', ['out/sub'], { '--only': 'script,resources', '--force': true }, { cwd })).ok, true);
+    assert.equal((await verb('save', ['out/sub'], { '--include': 'script,resources', '--force': true }, { cwd })).ok, true);
     // Flat: two util.js files clash.
     const flat = await verb('save', ['flat'], { '--flat': true }, { cwd });
     assert.deepEqual(flat.out, ['[sm-dev] Multiple files of E4: Dark mode would be saved under the same name. Leave out --flat to save them in folders by URL:', '  flat/util.js']);
     assert.equal(existsSync(path.join(cwd, 'flat')), false);
-    const flatRequires = await verb('save', ['flat'], { '--flat': true, '--only': 'requires' }, { cwd });
+    const flatRequires = await verb('save', ['flat'], { '--flat': true, '--include': 'requires' }, { cwd });
     assert.deepEqual(flatRequires.out, ['Saved E4: Dark mode to flat: 2 files', '  flat/jquery.min.js', '  flat/util.js']);
-    assert.match((await verb('save', ['x'], { '--only': 'script,deps' }, { cwd })).out[0], /^\[sm-dev\] ERROR: The --only flag takes `script`, `requires`, `resources`, comma-separated, and not `deps`$/);
+    assert.match((await verb('save', ['x'], { '--include': 'script,deps' }, { cwd })).out[0], /^\[sm-dev\] ERROR: The --include flag takes `script`, `requires`, `resources`, `icon`, `site-icons`, `all`, comma-separated, and not `deps`$/);
     // Under a manager that doesn't give the files: the script alone, said.
     const { scriptFiles: _, ...tm } = { ...withFiles, label: 'Tampermonkey' };
     const tmSaved = await verb('save', ['tm'], {}, { cwd, control: tm });
     assert.deepEqual(tmSaved.out, [
       'Saved E4: Dark mode to tm: 1 file',
       '  tm/dark.user.js',
-      '  Tampermonkey doesn\'t give sm-dev its scripts\' @require and @resource files, so only the script itself can be printed or saved',
+      '  Tampermonkey doesn\'t give sm-dev its scripts\' @require, @resource and @icon files, so only the script itself can be printed or saved',
     ]);
     // A file where the directory would go.
-    const blocked = await verb('save', ['out/sub/dark.user.js'], { '--only': 'script' }, { cwd });
+    const blocked = await verb('save', ['out/sub/dark.user.js'], { '--include': 'script' }, { cwd });
     assert.match(blocked.out[0], /^\[sm-dev\] Could not create the directory out\/sub\/dark\.user\.js: /);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
@@ -367,4 +367,107 @@ test('script save puts a local file where a relative @require finds it, and skip
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
+});
+
+// ---------- Icons ----------
+
+const png = (n) => Buffer.from([0x89, 0x50, 0x4e, 0x47, n]).toString('base64');
+const icons = {
+  icon: { url: 'https://cdn.example.com/img/logo.png', path: 'cdn.example.com/img/logo.png', base64: png(1), contentType: 'image/png' },
+  siteIcons: [
+    { sites: ['https://github.com/', 'https://gist.github.com/'], name: 'github.com', source: 'page', base64: png(2), contentType: 'image/svg+xml' },
+    { sites: ['https://www.npmjs.com/package/'], name: 'npmjs.com/package', source: 'favicon.ico', base64: png(3), contentType: 'image/x-icon' },
+    { sites: ['https://example.org/'], name: 'example.org' },
+  ],
+};
+const withIcons = {
+  ...withFiles,
+  scriptIcons: async (_id, load) => ({
+    icon: load.icon ? icons.icon : { url: icons.icon.url, path: icons.icon.path },
+    siteIcons: icons.siteIcons,
+  }),
+};
+
+test('script print --file picks the @icon by name or URL, and a site icon by its saved name', async () => {
+  const { mkdtempSync, readFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const path = await import('node:path');
+  const cwd = mkdtempSync(path.join(tmpdir(), 'sm-icons-'));
+  try {
+    const noResourceIcon = { ...withIcons, scriptFiles: async () => deps.filter((f) => f.name !== 'icon') };
+    assert.deepEqual(await verb('print', [], { '--file': 'icon', '--out': 'a.png' }, { cwd, control: noResourceIcon }), { ok: true, out: ['Wrote a.png (5 bytes)'] });
+    assert.deepEqual([...readFileSync(path.join(cwd, 'a.png'))], [0x89, 0x50, 0x4e, 0x47, 1]);
+    assert.equal((await verb('print', [], { '--file': 'logo', '--out': 'b.png' }, { cwd, control: noResourceIcon })).ok, true);
+    const { out } = await verb('print', [], { '--file': 'site-icons/npmjs', '--out': 'c.ico' }, { cwd, control: withIcons, json: true });
+    assert.deepEqual(JSON.parse(out[0].slice(out[0].indexOf('{'))).file, {
+      kind: 'site-icon', path: 'site-icons/npmjs.com/package.ico', sites: ['https://www.npmjs.com/package/'],
+    });
+    assert.deepEqual([...readFileSync(path.join(cwd, 'c.ico'))], [0x89, 0x50, 0x4e, 0x47, 3]);
+    const none = await verb('print', [], { '--file': 'site-icons/nope' }, { control: withIcons });
+    assert.deepEqual(none.out, [
+      '[sm-dev] No site icon of E4: Dark mode matches site-icons/nope. Its site icons:',
+      '  site-icons/github.com.svg         github.com, gist.github.com',
+      '  site-icons/npmjs.com/package.ico  npmjs.com/package/',
+    ]);
+    const noIcon = { ...withIcons, scriptFiles: async () => [], scriptIcons: async () => ({ siteIcons: [] }) };
+    assert.deepEqual((await verb('print', [], { '--file': 'icon' }, { control: noIcon })).out, ['[sm-dev] E4: Dark mode has no @icon']);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('script save --include all,site-icons saves the @icon and the site icons, listed in page order', async () => {
+  const { mkdtempSync, readFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const path = await import('node:path');
+  const cwd = mkdtempSync(path.join(tmpdir(), 'sm-icons-'));
+  const control = { ...withIcons, scriptFiles: async () => deps.slice(0, 1) };
+  try {
+    assert.deepEqual((await verb('save', ['out'], { '--include': 'all,site-icons' }, { cwd, control })).out, [
+      'Saved E4: Dark mode to out: 3 files and 2 site icons',
+      '  out/dark.user.js',
+      '  out/cdn.example.com/npm/jquery@3/jquery.min.js',
+      '  out/cdn.example.com/img/logo.png',
+      'Site icons, in page order:',
+      '  out/site-icons/github.com.svg         github.com, gist.github.com',
+      '  out/site-icons/npmjs.com/package.ico  npmjs.com/package/',
+      '  No icon                               example.org',
+    ]);
+    assert.deepEqual([...readFileSync(path.join(cwd, 'out/site-icons/github.com.svg'))], [0x89, 0x50, 0x4e, 0x47, 2]);
+    const { out } = await verb('save', ['flat'], { '--include': 'site-icons', '--flat': true }, { cwd, control, json: true });
+    const result = JSON.parse(out[0].slice(out[0].indexOf('{')));
+    assert.deepEqual(result, {
+      command: 'script save', script: 'E4', name: 'Dark mode', dir: path.join(cwd, 'flat'), files: [],
+      siteIcons: [
+        { path: 'github.com.svg', source: 'page', sites: ['https://github.com/', 'https://gist.github.com/'] },
+        { path: 'npmjs.com_package.ico', source: 'favicon.ico', sites: ['https://www.npmjs.com/package/'] },
+        { sites: ['https://example.org/'] },
+      ],
+    });
+    // Without --include: the @icon, not the site icons.
+    const plain = await verb('save', ['plain'], {}, { cwd, control, json: true });
+    assert.deepEqual(JSON.parse(plain.out[0].slice(plain.out[0].indexOf('{'))).files.map((f) => [f.kind, f.path]), [
+      ['script', 'dark.user.js'], ['require', 'cdn.example.com/npm/jquery@3/jquery.min.js'], ['icon', 'cdn.example.com/img/logo.png'],
+    ]);
+    // Site icons under another manager.
+    const { scriptFiles: _, scriptIcons: __, ...tm } = { ...control, label: 'Tampermonkey' };
+    assert.match((await verb('save', ['tm'], { '--include': 'site-icons' }, { cwd, control: tm })).out[0], /Site icons are SourceMonkey's own, so Tampermonkey doesn't give them$/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test('script show leaves icons out when reading them fails', async () => {
+  const details = {
+    ...scripts[0], match: ['https://example.org/*'], include: [], exclude: [], excludeMatch: [], grants: [], requires: [], resources: [],
+  };
+  const failing = {
+    ...withFiles,
+    scriptDetails: async () => details,
+    scriptIcons: async () => { throw new Error('The icon lookup failed'); },
+  };
+  const { ok, out } = await verb('show', [], {}, { control: failing });
+  assert.equal(ok, true);
+  assert.equal(out[0], 'E4: Dark mode 2.1');
+  assert.equal(out.some((l) => /icon/i.test(l)), false);
 });

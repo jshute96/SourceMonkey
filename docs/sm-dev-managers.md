@@ -325,8 +325,8 @@ added to or removed.
 | `scripts` | The run's scripts, then the installed scripts on the current tab, as now | yes | yes |
 | `script <id>` | Select the active script, as now | yes | yes |
 | `script [id] show` | Show one script's details (see [Script details](#script-details)) | yes | yes, fewer fields under TM / VM |
-| `script [id] print` | Print the script's installed text, or with `--file`, one of its `@require` / `@resource` files; `--out` writes it to a file | yes | yes; `--file` SourceMonkey only |
-| `script [id] save <dir>` | Save the script and its `@require` / `@resource` files into a directory (see [Saving a script's files](#saving-a-scripts-files)) | yes | yes; the files SourceMonkey only |
+| `script [id] print` | Print the script's installed text, or with `--file`, one of its `@require` / `@resource` / `@icon` files or site icons; `--out` writes it to a file | yes | yes; `--file` SourceMonkey only |
+| `script [id] save <dir>` | Save the script and its `@require` / `@resource` / `@icon` files, and with `--include site-icons` its site icons, into a directory (see [Saving a script's files](#saving-a-scripts-files)) | yes | yes; the files SourceMonkey only |
 | `script [id] enable` / `script [id] disable` | Turn a script on or off | yes, in the run's tabs | yes |
 | `script [id] refresh` | Re-read it: from disk for the run's scripts (as `update` does), from its location under SourceMonkey, or an update check under TM / VM | yes | yes |
 | `script install <file\|url>` | Install a script in the manager, for every tab, to stay | n/a | yes |
@@ -371,8 +371,10 @@ through `managed.scriptFiles`. No refetch: they are what
 runs now.
 
 - **Picking a file (`--file <name>`)**: a `@resource`'s name, exactly,
-  or a part of its URL only one file has. `script` names the script.
-  Several or none is an error listing them.
+  or a part of its URL only one file has. `script` names the script,
+  and `icon` its `@icon`. Multiple or none is an error listing them.
+- **A site icon** goes by its saved name after `site-icons/`, or a part
+  of it only one has (`site-icons/github.com`).
 - **Printing a file that isn't text** (not UTF-8, or with a NUL) is
   refused; `--out` writes its bytes.
 - **`--out` replaces** an existing file, as `eval --out` does: the
@@ -390,11 +392,48 @@ runs now.
 - **`save` replaces nothing without `--force`.** The names are
   derived, not given, so a second save could quietly overwrite an
   edited copy. It lists every file that exists and writes none.
-- **`--only script,requires,resources`** picks the parts; all by
-  default.
+- **`--include <parts>`** picks the parts: `script`, `requires`,
+  `resources`, `icon` and `site-icons`. `all` is the default set, all
+  but `site-icons`, so `--include all,site-icons` adds them.
 - **Under TM and VM** sm-dev doesn't read the files: `--file` and
-  `--only requires|resources` are refused, and a plain `save` writes
-  the script alone, saying why.
+  `--include requires|resources|icon|site-icons` are refused, and a
+  plain `save` writes the script alone, saying why.
+
+### Icons
+
+A script's `@icon` and its site icons come through `managed.scriptIcons`,
+from the same lookup and cache the collections page uses
+([site-icons.md](site-icons.md)).
+
+- **The `@icon`** is resolved as the page resolves it, against the
+  script's location; a run's script against the file it was read from.
+  - Saved like a `@require`: an http(s) one by its URL, a `file:` one
+    beside the script, a `data:` one as `icon.<ext>`.
+  - An http(s) one goes through the icon cache. A `file:` one is read
+    fresh, as it may have just changed.
+  - A local file stands in for an http(s) one as the pages use it
+    ([local-file-overrides.md](local-file-overrides.md)), read fresh
+    too. `show` names it, as it does a `@require`'s.
+- **Site icons** are the ones a page heading shows (up to
+  `HEADING_SITE_ICONS`), merged and in the same order
+  (`siteIconsFor`).
+  - Looked up only when asked for (`save --include site-icons`, `print
+    --file site-icons/...`), as a page showing them would. Then they
+    are in the cache for sm-dev and the pages alike.
+  - `show` never looks them up: it lists them only when all are
+    cached, and otherwise leaves them out.
+  - Each is named by its site's host, without `www.` and with `_` for a
+    port's `:`, plus the page's path when the icon is that page's own:
+    `site-icons/github.com.svg`, `site-icons/npmjs.com/package.png`.
+    With `--flat`, `/` becomes `_`: `npmjs.com_package.png`.
+  - The extension comes from the image type.
+  - One found for no site (the globe) is listed as `No icon`, and not
+    saved.
+  - `source` gives where each came from: Chrome's favicon store, the
+    page, `/favicon.ico` or Google.
+- **A run's fresh profile has an empty Chrome favicon store**, so a
+  site behind a sign-in can get a different icon than the person's own
+  browser shows.
 
 ### Changes on disk
 

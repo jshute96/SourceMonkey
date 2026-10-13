@@ -1118,7 +1118,20 @@ interface ScriptDetails extends Script {
   grants: string[];
   requires: FileStatus[];
   resources: (FileStatus & { name: string })[];
+  icon?: {                  // its own @icon, resolved
+    url: string;
+    path?: string;          // where `script save` writes it
+    local?: string;         // the local file read instead, if any
+  };
+  siteIcons?: SiteIcon[];   // in page order; none until looked up
   valueCount?: number;      // none when the manager doesn't say
+}
+
+interface SiteIcon {
+  path?: string;            // where `script save` writes it, relative;
+                            // none for no icon found (the globe)
+  source?: "favicon-store" | "page" | "favicon.ico" | "google";
+  sites: string[];          // the sites it stands for, by the URL it links to
 }
 
 interface FileStatus {
@@ -1211,9 +1224,13 @@ interface ScriptPrintData {
   script?: string;       // its id; none for another run's script
   name: string;
   file?: {               // with --file: the file printed
-    kind: 'require' | 'resource';
+    kind: 'require' | 'resource' | 'icon';
     url: string;
     name?: string;       // a @resource's
+  } | {
+    kind: 'site-icon';
+    path: string;        // as `script save` names it
+    sites: string[];
   };
   text?: string;         // the installed text; none with --out
   out?: string;          // with --out: the file written, absolute
@@ -1231,11 +1248,12 @@ interface ScriptSaveData {
   name: string;
   dir: string;           // absolute
   files: {
-    kind: 'script' | 'require' | 'resource';
+    kind: 'script' | 'require' | 'resource' | 'icon';
     url?: string;
     name?: string;       // a @resource's
-    path: string;        // absolute
+    path: string;        // relative to dir
   }[];
+  siteIcons?: SiteIcon[]; // with --include site-icons, in page order
   notes?: string[];      // what wasn't saved, and why
 }
 ```
@@ -1243,9 +1261,13 @@ interface ScriptSaveData {
 Text:
 
 ```text
-Saved E3: Dark mode to out: 2 files
+Saved E3: Dark mode to out: 2 files and 2 site icons
   out/dark.user.js
   out/cdn.example.com/lib/x.js
+Site icons, in page order:
+  out/site-icons/github.com.svg          github.com, gist.github.com
+  out/site-icons/npmjs.com/package.png   npmjs.com/package/
+  No icon                                example.org
 ```
 
 ### `collection <collection> show`

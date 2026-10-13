@@ -24,7 +24,7 @@ import { randomBytes } from 'node:crypto';
 import type { BrowserContext, CDPSession, Page, Worker } from '@playwright/test';
 
 import {
-  SM_DEV_EVENT, SM_DEV_MARKERS, SM_DEV_PROTOCOL, type ManagedCollection, type ManagedFileContent, type ManagedOnDisk, type ManagedScript, type ProtocolVersion,
+  SM_DEV_EVENT, SM_DEV_MARKERS, SM_DEV_PROTOCOL, type ManagedCollection, type ManagedFileContent, type ManagedOnDisk, type ManagedScriptIcons, type ScriptIconsLoad, type ManagedScript, type ProtocolVersion,
 } from '../sm-dev-protocol.js';
 import type { StackLayout } from '../composed-source.js';
 import type { PushedFile } from '../external-files.js';
@@ -685,6 +685,8 @@ function managerControl(
     scriptDetails: (id) => managed((i) => (self as unknown as Sm).SourceMonkey.managed.scriptDetails(i), id),
     scriptText: (id) => managed((i) => (self as unknown as Sm).SourceMonkey.managed.scriptText(i), id),
     scriptFiles: (id) => managed((i) => (self as unknown as Sm).SourceMonkey.managed.scriptFiles(i), id),
+    // Async, so a failure rejects, which `show` passes over.
+    scriptIcons: async (id, load) => managed(({ i, l }) => (self as unknown as Sm).SourceMonkey.managed.scriptIcons(i, l), { i: id, l: load }),
   };
 }
 
@@ -712,5 +714,6 @@ interface Api {
   managed: Omit<ManagerControl, 'label' | 'collections' | 'scripts' | 'onDisk'> & {
     onDisk(): Promise<ManagedOnDisk>;
     scriptFiles(id: string): Promise<ManagedFileContent[] | null>;
+    scriptIcons(id: string, load: ScriptIconsLoad): Promise<ManagedScriptIcons | null>;
   };
 }

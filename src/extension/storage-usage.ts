@@ -30,11 +30,13 @@ export interface UsageRow {
 
 const encoder = new TextEncoder();
 
-function jsonBytes(value: unknown): number {
+export function jsonBytes(value: unknown): number {
   return encoder.encode(JSON.stringify(value) ?? '').length;
 }
 
-function rowBytes(key: string, value: unknown): number {
+// What Chrome charges for one row. Shared with the storage debug page
+// (storage-breakdown.ts), so its sizes agree with this table.
+export function rowBytes(key: string, value: unknown): number {
   return encoder.encode(key).length + jsonBytes(value);
 }
 

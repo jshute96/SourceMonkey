@@ -15,7 +15,7 @@ import { canonicalCollectionInput, containerPath, isContainerCollection, isHttpU
 import type { ScriptMeta } from '../script-build.js';
 import {
   CONTAINER_TARGET_ONLY, LISTED_BY_LOCATION, RUN_COLLECTION_LOCKED,
-  type CollectionRefresh, type ManagedCollection, type ManagedFile, type ManagedFileContent, type ManagedOnDisk, type ManagedScript, type ManagedScriptDetails,
+  type CollectionRefresh, type ManagedCollection, type ManagedFile, type ManagedFileContent, type ManagedOnDisk, type ManagedScriptIcons, type ScriptIconsLoad, type ManagedScript, type ManagedScriptDetails,
   type ScriptEnable, type ScriptInstall, type ScriptRefresh,
 } from '../sm-dev-protocol.js';
 import { getValue, getValues, joinFullSource } from '../userscript-header.js';
@@ -26,8 +26,12 @@ import { turnOffOtherCopies } from './script-identity.js';
 import { setCollectionEnabledExclusive } from './script-enablement.js';
 import { managedCollection, managedScript } from './managed-items.js';
 import { mirrorPath } from './local-copy.js';
+import { dataUrlContent, declaredIconFor, localIconFor, siteIconsFor } from './site-icon.js';
+import { localRootsReady, localSearchRoots } from '../local-file-overrides.js';
+import { iconRefFromHeader } from '../script-icon.js';
+import { resolveScriptResource } from '../file-loader.js';
 import {
-  canonicalLocation, getAllScriptMetas, getCollection, getCollections, getCollectionWithScriptMeta, getScript, getScriptMeta, installScript, moveScript,
+  canonicalLocation, localFileScope, getAllScriptMetas, getCollection, getCollections, getCollectionWithScriptMeta, getScript, getScriptMeta, installScript, moveScript,
   removeScript, setCollectionOptions, setScriptEnabled, ALREADY_INSTALLED_IN_TARGET, COLLECTION_GONE, SCRIPT_GONE,
   type StoredCollection,
 } from './script-store.js';
@@ -44,6 +48,28 @@ function savePath(url: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+// What `script save` names a site icon: the site's host, without
+// `www.` and with a port after `_`, then the page's path when the icon
+// is that page's own. Characters a file name can't hold become `_`.
+function siteIconName(linkUrl: string, fromPage: boolean): string {
+  const at = new URL(linkUrl);
+  const host = at.host.replace(/^www\./, '').replace(':', '_');
+  const segments = fromPage ? at.pathname.split('/').filter(Boolean).map((seg) => {
+    try {
+      return decodeURIComponent(seg);
+    } catch {
+      return seg;
+    }
+  }) : [];
+  return [host, ...segments].map((part) => (part === '..' ? '_' : part.replace(/[\\:*?"<>|]/g, '_'))).join('/');
+}
+
+// A run's script: the file it was read from, as `managedScripts` gives it.
+async function scratchSourceOf(script: ScriptMeta): Promise<ScratchSource | undefined> {
+  const key = isScratchUrl(script.fileUrl) ? scratchSourceKey(script.fileUrl) : null;
+  return key === null ? undefined : (await chrome.storage.local.get(key))[key] as ScratchSource | undefined;
 }
 
 /** The numbers sm-dev names things by, assigned first: `assignAllNumbers` in background.ts. */
@@ -91,12 +117,8 @@ async function containerScript(id: string): Promise<ScriptMeta> {
 /** The calls, with `numbers` to name what they return by. */
 export function managedChanges(numbers: () => Promise<Numbers>) {
   // `known`: the numbers, when the caller has them already.
-  const shownScript = async (script: ScriptMeta, known?: Numbers): Promise<ManagedScript> => {
-    // A run's script: the file it was read from, as `managedScripts` gives it.
-    const key = isScratchUrl(script.fileUrl) ? scratchSourceKey(script.fileUrl) : null;
-    const source = key === null ? undefined : (await chrome.storage.local.get(key))[key] as ScratchSource | undefined;
-    return managedScript(script, (known ?? await numbers()).scripts[script.id], source);
-  };
+  const shownScript = async (script: ScriptMeta, known?: Numbers): Promise<ManagedScript> =>
+    managedScript(script, (known ?? await numbers()).scripts[script.id], await scratchSourceOf(script));
   // `sweep`: it may have started running, so its other copies go off.
   const shownEnable = async (script: ScriptMeta, sweep: boolean): Promise<ScriptEnable> => {
     const turnedOff = sweep ? await turnOffOtherCopies(script.id) : [];
@@ -302,6 +324,49 @@ export function managedChanges(numbers: () => Promise<Numbers>) {
         ...(script.requires ?? []).map((r) => file('require', r.url, bytesToBase64(encoder.encode(r.source)), 'text/javascript')),
         ...(script.resources ?? []).map((r) => ({ ...file('resource', r.url, r.bytesBase64, r.contentType), name: r.name })),
       ];
+    },
+
+    /**
+     * A script's `@icon` and site icons; null for no script. `load.icon`
+     * reads the `@icon`, else it has its URL alone. `load.sites` looks
+     * up site icons not in the cache, as a page showing them would;
+     * else they are given only when all are cached.
+     */
+    async scriptIcons(id: string, load: ScriptIconsLoad): Promise<ManagedScriptIcons | null> {
+      const script = await getScriptMeta(id);
+      if (!script) return null;
+      const result: ManagedScriptIcons = {};
+      const ref = iconRefFromHeader(script.header ?? null);
+      // A run's script by the file it was read from, so a relative
+      // `@icon` is found beside it.
+      const source = await scratchSourceOf(script);
+      const iconUrl = ref ? resolveScriptResource(ref, source?.fileUrl ?? script.fileUrl)?.url : undefined;
+      if (iconUrl) {
+        const path = savePath(iconUrl);
+        // A local stand-in, as the pages use: looked for even without
+        // `load.icon`, so `show` can say which.
+        const collection = await getCollection(script.collectionId);
+        const scope = collection ? localFileScope(collection) : { enabled: false };
+        if (scope.enabled) await localRootsReady();
+        const roots = localSearchRoots(script.fileUrl, scope);
+        const standIn = isHttpUrl(iconUrl) && roots.length > 0 ? await localIconFor(iconUrl, roots) : null;
+        const dataUrl = standIn?.dataUrl ?? (load.icon ? await declaredIconFor(iconUrl) : null);
+        const content = load.icon && dataUrl ? dataUrlContent(dataUrl) : null;
+        result.icon = { url: iconUrl, ...(path ? { path } : {}), ...(standIn ? { local: standIn.local } : {}), ...(content ?? {}) };
+      }
+      const slot = await siteIconsFor(script.matching.matches, load.sites === true);
+      if (slot) {
+        result.siteIcons = slot.map((icon) => {
+          const content = icon.dataUrl ? dataUrlContent(icon.dataUrl) : null;
+          return {
+            sites: icon.sites.map((t) => t.linkUrl),
+            name: siteIconName(icon.sites[0].linkUrl, icon.fromPage),
+            ...(icon.source ? { source: icon.source } : {}),
+            ...(content ?? {}),
+          };
+        });
+      }
+      return result;
     },
   };
 }
