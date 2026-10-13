@@ -11,7 +11,7 @@ anywhere in that program makes the *whole* entry fail to parse.
 
 Before this check, that was only discoverable at injection time:
 
-- The seal entry noticed `__smRun` was never called and logged
+- The seal entry noticed the registry's `run` was never called and logged
   "Script source failed to parse (a `@require` or the script body has a
   syntax error); nothing was run".
 - It fired only on a page the script actually matched, so a broken

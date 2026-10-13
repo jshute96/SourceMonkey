@@ -1,6 +1,6 @@
 // End-to-end test for GM_setClipboard (Phase 5).
 //
-// Implementation uses navigator.clipboard.writeText from USER_SCRIPT
+// Implementation uses navigator.clipboard.writeText from the script's
 // world. The headless fixture pages are focused by the time the
 // userscript runs, so the API resolves cleanly.
 

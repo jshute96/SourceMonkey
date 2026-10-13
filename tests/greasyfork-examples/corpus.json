@@ -549,18 +549,22 @@
     "test": {
       "status": "fail",
       "blame": "script",
-      "date": "2026-10-05",
+      "date": "2026-10-11",
       "version": "1.15.1"
     },
     "tags": [
-      "trusted-types",
-      "unsafewindow-on-window"
+      "trusted-types"
     ],
     "notes": [
       {
         "date": "2026-10-05",
         "version": "1.15.1",
         "text": "- SourceMonkey: the script picks its path with `if (this.unsafeWindow)` at top level. Under SourceMonkey top-level `this` is the page `window` and `this.unsafeWindow` is undefined; a probe script on example.com (`@grant unsafeWindow`) logs `this.unsafeWindow` truthy under both Tampermonkey and Violentmonkey (their `this === window` is a sandbox wrapper carrying it), and falsy under SourceMonkey.\n- So under SourceMonkey it takes the Chrome fallback, setting `script.text` to inject itself, and throws at once: `This document requires 'TrustedScript' assignment` (line 1852). Nothing runs.\n- A copy with that test changed to `typeof unsafeWindow !== \"undefined\"` initializes (`[yays]Player ready`, `[yays]Initialization finished`), then throws the same Trusted Types error at line 1838 (its `onYouTubePlayerReady` hook), as it would in Tampermonkey.\n- Script: either way it shows no UI on a watch page: its buttons need `#watch8-secondary-actions` / `#watch-action-panels` (or `#channel-navigation-menu`), all gone. Its changelog check asks to connect to `eugenox.appspot.com`, which answers 404."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "1.15.1",
+        "text": "Re-tested after c2dbb1f (sandbox window with `this.unsafeWindow`): the `this.unsafeWindow` gap is fixed, but the script still fails for its own reasons.\n- Page: https://www.youtube.com/watch?v=aqz-KE-bpKQ, headless temp browser (sm-dev).\n- SourceMonkey: the unmodified script now takes its Greasemonkey path, as under Tampermonkey: it logs `[yays]Player ready` and `[yays]Initialization finished`, then throws `This document requires 'TrustedScript' assignment` at line 1838 (its `onYouTubePlayerReady` hook), as the patched copy did before.\n- Script: no UI appears (no `yays` elements); its anchors `#watch8-secondary-actions` / `#watch-action-panels` are gone from YouTube. It asks to connect to `eugenox.appspot.com` (allowed) for its changelog check.\n- Removed `unsafewindow-on-window`: it no longer causes the failure."
       }
     ]
   },
@@ -720,14 +724,12 @@
       "version": "1.7.1.1"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-06",
+      "status": "pass",
+      "date": "2026-10-11",
       "version": "1.7.1.1"
     },
     "tags": [
-      "idle-after-load",
-      "require-clobbers-page"
+      "idle-after-load"
     ],
     "notes": [
       {
@@ -739,6 +741,11 @@
         "date": "2026-10-06",
         "version": "1.7.1.1",
         "text": "Re-tested with the idle-before-load fix (document-idle now runs just before load, and replays load to a body held past it): the load-handler half is fixed; the jQuery half is not re-checked and still fails.\n- Saved page served at https://example.com/kj.html (7 kanji), `--temp-browser`, `level` seeded to 1.\n- SourceMonkey: on 3 of 3 reloads all 7 kanji were wrapped in `wk_*` spans (5 spans, adjacent kanji grouped) and the menu commands were registered.\n- Still `fail --blame sourcemonkey` for `require-clobbers-page`: the `@require`d jQuery 1.10.2 replaces the page's own in MAIN world (see the first note)."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "1.7.1.1",
+        "text": "Re-tested after aab036d / 52f830e (granted scripts sandboxed, with their own `window`): now passes, the jQuery half included.\n- ja.wikipedia.org/wiki/日本語, headless temp browser, `level` seeded to 1: 30936 `wk_*` kanji spans highlighted, menu commands registered, `unsafeWindow.kanjiMap` set on the page.\n- The page keeps its own jQuery 3.7.1 (`window.jQuery` and `window.$` in the page world, same as a `--noscript` tab); the script sees its `@require`d 1.10.2. No `mwCollapsibleSetup` / `getAssignedGroup` errors in the logs.\n- Untagged `require-clobbers-page`. Kept `idle-after-load`: its setup is in a `load` handler, so it still relies on that fix."
       }
     ]
   },
@@ -2652,9 +2659,8 @@
       "version": "11.4.2"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-03",
+      "status": "pass",
+      "date": "2026-10-11",
       "version": "11.4.2"
     },
     "tags": [
@@ -2665,6 +2671,11 @@
         "date": "2026-10-03",
         "version": "11.4.2",
         "text": "On a raiplay.it `/video/...html` page the script throws at startup, `Assignment to constant variable.` at line 29 (`GM_xmlhttpRequest = GM.xmlHttpRequest;`), so no Download button is added.\n\n- SourceMonkey: granted `GM_*` names are declared `const`. Violentmonkey resolves them through `with(this)`, so the shim assignment works there.\n- A copy with only line 29 removed works: the `#inline-download-button` appears next to the share button, and clicking it sent the relinker requests (`GM_xmlhttpRequest` GETs to mediapolisvod.rai.it, all `206`) and opened the \"Link diretti\" modal with MP4 2400 / 1800 / * buttons.\n- From outside Italy those links are Rai's geo-block placeholder (`video_no_available.mp4`)."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "11.4.2",
+        "text": "Re-tested after c2dbb1f (granted `GM_*` names reassignable): now passes, unmodified copy.\n- On a raiplay.it `/video/...html` page (PresaDiretta, headless) the shim at line 29 ran without error and `#inline-download-button` appeared.\n- Clicking it sent the relinker `GM_xmlhttpRequest` GETs to mediapolisvod.rai.it (all `206`) and opened the modal with MP4 2400 / 1800 / * links to real akamaized.net MP4s (2061 MB / 1545 MB).\n- Kept `gm-reassign`: the script still reassigns `GM_xmlhttpRequest` and passes because of the fix."
       }
     ]
   },
@@ -2700,7 +2711,7 @@
     "test": {
       "status": "fail",
       "blame": "script",
-      "date": "2026-10-02",
+      "date": "2026-10-11",
       "version": "7.1.5"
     },
     "tags": [
@@ -2711,6 +2722,11 @@
         "date": "2026-10-02",
         "version": "7.1.5",
         "text": "On a Mediaset Infinity video page (`/video/drittoerovescio/puntata-dell1-ottobre_F314705401000501`, headless):\n- SourceMonkey: the script threw at once, \"Assignment to constant variable\", at line 30, its Greasemonkey 4 shim `GM_xmlhttpRequest = GM.xmlHttpRequest;`. SourceMonkey declares granted `GM_*` names as `const`. Not checked in Tampermonkey or Violentmonkey.\n- Script: a copy with that line removed ran, found the GUID and fetched the theplatform.eu SMIL lists through `GM_xmlhttpRequest`. It never showed links: `displayURLs` waits for `#player-container`, which the current site doesn't have (40s, no `#video-links`)."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "7.1.5",
+        "text": "Re-tested after c2dbb1f (granted `GM_*` names reassignable): the shim at line 30 now runs, but the script still fails (script).\n- On the same Mediaset Infinity page (`/video/drittoerovescio/puntata-dell1-ottobre_F314705401000501`, headless), unmodified copy: no error; it found the GUID and fetched the theplatform.eu SMIL lists (MPEG4 and M3U) through `GM_xmlhttpRequest`.\n- Script: still no links. The page has no `#player-container`, which `displayURLs` waits for, so no `#stream-url` / `#video-links` after 40s.\n- Kept `gm-reassign`: the script reassigns `GM_xmlhttpRequest` and now gets past it only because of the fix."
       }
     ]
   },
@@ -2739,9 +2755,8 @@
       "version": "3.1.0"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-06",
+      "status": "pass",
+      "date": "2026-10-11",
       "version": "3.1.0"
     },
     "tags": [
@@ -2752,6 +2767,11 @@
         "date": "2026-10-06",
         "version": "3.1.0",
         "text": "On a la7.it video page (propagandalive, entry `0_fjm7mku5`, headless temp browser, not geo-blocked) the script threw \"Assignment to constant variable\" at line 23, its Greasemonkey 4 shim `GM_xmlhttpRequest = GM.xmlHttpRequest;`, and added nothing.\n- A copy with only that line removed works: it requested `http://kdam.iltrovatore.it/.../playManifest/entryId/0_fjm7mku5` (200) and added the green \"MP4 Direct Link\" box, linking a real MP4 on awsvodpkg.iltrovatore.it (HEAD 200, video/mp4, 80 MB).\n- SourceMonkey: known gap, granted `GM_*` names are `const` (TODO.md, \"Granted `GM_*` names are `const`\")."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "3.1.0",
+        "text": "Re-tested after c2dbb1f (granted `GM_*` names reassignable): now passes, unmodified copy.\n- On www.la7.it/propagandalive (headless) the shim at line 23 ran without error. The script requested the kdam.iltrovatore.it `playManifest` for entry `0_yegm8yu0` (200) and added the \"MP4 Direct Link\" box, linking a real MP4 on awsvodpkg.iltrovatore.it (HEAD 200, video/mp4, 127 MB).\n- Kept `gm-reassign`: the script reassigns `GM_xmlhttpRequest` and passes because of the fix."
       }
     ]
   },
@@ -3978,9 +3998,8 @@
       "version": "1.66"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "1.66"
     },
     "tags": [
@@ -3991,6 +4010,11 @@
         "date": "2026-10-11",
         "version": "1.66",
         "text": "On the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the script throws at startup: `W is not defined` (line 859, its `W?.userscripts?.state?.isInitialized` bootstrap check).\n- SourceMonkey: it grants only `GM_xmlhttpRequest`, so it runs in the isolated world, where the page's `W` is not visible. No `unsafeWindow` in the script.\n- Tampermonkey (`--manager tm`, same page, logged out) ran it without the error: it logged `WME Route Checker: initialising v1.65` and WME logged `registered new sidebar tab for script \"wmeRouteChecker\"`.\n- The editor shows a sign-in dialog when logged out, so the route check itself could not be tried."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "1.66",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the `W is not defined` error is gone. It logged `WME Route Checker: initialising v1.65` and WME logged `registered new sidebar tab for script \"wmeRouteChecker\"`, the same as Tampermonkey in the earlier test. The route check itself still needs a login."
       }
     ]
   },
@@ -4825,7 +4849,7 @@
     "test": {
       "status": "fail",
       "blame": "script",
-      "date": "2026-10-06",
+      "date": "2026-10-11",
       "version": "2022.03.05.01"
     },
     "tags": [
@@ -4836,6 +4860,11 @@
         "date": "2026-10-06",
         "version": "2022.03.05.01",
         "text": "Tested in the Waze Map Editor's no-login \"Try practice mode\" (WME v2.370), with a Tampermonkey run (`--manager tm`) to compare.\n- SourceMonkey: the request loop threw `cloneInto is not defined` (line 89) on its first job, so the tile-feed request was never sent (job stuck at `added`). Known gap, see the `needs-cloneinto` item in TODO.md.\n- Tampermonkey: the same job reached `success` with the `na-feed.xml` Atom feed, but the callback still never stored a build time: the feed's `<entry>` has `<updated>`/`<published>`, no `<modified>`, so `getElementsByTagName(\"modified\")[0]` is undefined.\n- Script: in both managers the startup recolor (`rgba(0, 40, 80, 0.8)`, new WME version) and the dialog title \"Map build status for NA\" on clicking `#tile-build-status` worked; the card's \"Version WME:\" line did not appear in either.\n- Blame is `script`: the visible build-time feature fails in Tampermonkey too, against the current feed."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "2022.03.05.01",
+        "text": "Re-tested after f3d2c5c (`cloneInto` stand-in): the SourceMonkey gap is gone, and it now behaves as Tampermonkey did.\n- In WME practice mode (temp browser, WME v2.370) the `na-feed.xml` request now goes out and loads (200); no `cloneInto` error.\n- Script: the callback then throws `Cannot read properties of undefined (reading 'textContent')` (the feed has no `<modified>`), so `MTUlastupdate` keeps `usa: \"\"`. Startup recolor `rgba(0, 40, 80, 0.8)` on `#tile-build-status` worked.\n- Keeping `needs-cloneinto`: it still relies on the stand-in."
       }
     ]
   },
@@ -5525,19 +5554,20 @@
       "version": "5.73.0"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-06",
+      "status": "pass",
+      "date": "2026-10-11",
       "version": "5.73.0"
     },
-    "tags": [
-      "unsafewindow-on-window"
-    ],
     "notes": [
       {
         "date": "2026-10-06",
         "version": "5.73.0",
         "text": "On https://adsbypasser.github.io/configure.html (its own config page, headless temp browser) the script throws at startup, `Cannot read properties of undefined (reading 'Future')` at line 35, so it does nothing on any page.\n\n- SourceMonkey: its module wrappers pass top-level `this` as `context` and read `context.unsafeWindow`, which SourceMonkey leaves undefined (known gap, TODO.md \"`window.unsafeWindow` / `this.unsafeWindow` are undefined\").\n- A copy with `this.unsafeWindow = unsafeWindow;` added after the header starts cleanly, logs its config, registers its menu command, and on reload fills the config page's `#options` with 6 option controls.\n- sm-dev: on the copy's first load it threw `$.window.render is not a function`: it started with `document.readyState` already past `loading`, before the page's `defer` script defined `render`. At true document-start it would wait for DOMContentLoaded, after that script.\n- A live shortener or image host wasn't tried: the imgbox page found was deleted, and ouo.io sits behind Cloudflare."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "5.73.0",
+        "text": "Re-tested after c2dbb1f (`this.unsafeWindow` set): now passes, unmodified.\n- https://adsbypasser.github.io/configure.html, headless temp browser: the script starts, logs its config, registers \"AdsBypasser - Configure\", and after a reload `#options` holds 6 option controls (0 in a `--noscript` tab).\n- sm-dev: the first load still threw `$.window.render is not a function` (the run started the script after the page's `defer` script would have run; see the first note). Reloads are clean.\n- No live shortener tried (see the first note)."
       }
     ]
   },
@@ -5566,19 +5596,20 @@
       "version": "5.73.0"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-06",
+      "status": "pass",
+      "date": "2026-10-11",
       "version": "5.73.0"
     },
-    "tags": [
-      "unsafewindow-on-window"
-    ],
     "notes": [
       {
         "date": "2026-10-06",
         "version": "5.73.0",
         "text": "On https://adsbypasser.github.io/configure.html (headless temp browser) the script throws at startup, `Cannot read properties of undefined (reading 'Future')` at line 29, so it does nothing on any page.\n\n- SourceMonkey: same wrapper as the full AdsBypasser (4881): it reads `this.unsafeWindow`, which SourceMonkey leaves undefined (known gap, TODO.md \"`window.unsafeWindow` / `this.unsafeWindow` are undefined\").\n- A copy with `this.unsafeWindow = unsafeWindow;` added after the header starts cleanly and fills the config page's `#options` with 6 option controls.\n- No live shortener was tried (see 4881)."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "5.73.0",
+        "text": "Re-tested after c2dbb1f (`this.unsafeWindow` set): now passes, unmodified. On https://adsbypasser.github.io/configure.html (headless temp browser) it starts, registers \"AdsBypasser - Configure\" and fills `#options` with 6 option controls, on first load and after a reload. No live shortener tried."
       }
     ]
   },
@@ -6369,7 +6400,7 @@
     "test": {
       "status": "fail",
       "blame": "script",
-      "date": "2026-10-03",
+      "date": "2026-10-11",
       "version": "36"
     },
     "tags": [
@@ -6381,6 +6412,11 @@
         "date": "2026-10-03",
         "version": "36",
         "text": "On a watch page with captions (`watch?v=bkVsus8Ehxs`, headless) the script never starts: its `@require` jQuery 1.12.4 throws while loading (`Failed to set the 'innerHTML' property on 'Element': This document requires 'TrustedHTML' assignment`, from jQuery's own setup tests). No subtitle dropdown appears (`#captions_selector` never added).\n- Script: YouTube's Trusted Types block old jQuery's `innerHTML` in the script's isolated world as well; Chrome enforces it there for any manager's granted scripts, so this isn't SourceMonkey's doing.\n- Script: past that, it reads `ytd-app`'s `.data.playerResponse`, a page-world property an isolated-world script can't see without `unsafeWindow`."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "36",
+        "text": "Re-tested after aab036d (granted scripts run in the page's world by default): still fails, the same way.\n- Page: `watch?v=bkVsus8Ehxs`, headless temp browser (sm-dev). Its `@require` jQuery 1.12.4 throws while loading (`Failed to set the 'innerHTML' property on 'Element': This document requires 'TrustedHTML' assignment`), so the script never starts and `#captions_selector` is never added.\n- Script: YouTube's Trusted Types block old jQuery's `innerHTML` in the page's world too, as they would under any manager.\n- Its read of `ytd-app`'s `.data.playerResponse` would now work (the script runs in the page's world), but it never gets that far."
       }
     ]
   },
@@ -9138,7 +9174,7 @@
     "test": {
       "status": "fail",
       "blame": "script",
-      "date": "2026-10-06",
+      "date": "2026-10-11",
       "version": "4.1.6"
     },
     "tags": [
@@ -9149,6 +9185,11 @@
         "date": "2026-10-06",
         "version": "4.1.6",
         "text": "Fails twice over; the second failure would stop it in every manager.\n- SourceMonkey: on https://www.bbc.co.uk/news (headless) it threw `Assignment to constant variable.` at line 24, its Greasemonkey 4 wrapper `GM_xmlhttpRequest = GM.xmlHttpRequest;`, so nothing else ran.\n- Script: a copy with that line removed ran on the clip page https://www.bbc.co.uk/programmes/p0b38029 (Doctor Who). It found the page's `embeddedMedia` player (1 player) and requested `http://open.live.bbc.co.uk/mediaselector/5/.../vpid/p0b3802f/format/json/`, which answers 410 Gone (curl too; the v6 URL still answers). No download box appeared.\n- iPlayer itself is geo-blocked outside the UK (/iplayer links only to \"watching outside the UK\"), and bbc.co.uk/news redirects to bbc.com/news, which the script doesn't match."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "4.1.6",
+        "text": "Re-tested after c2dbb1f (granted `GM_*` names reassignable): the shim at line 24 now runs, but the script still fails (script).\n- On the clip page https://www.bbc.co.uk/programmes/p0b38029 (headless), unmodified copy: no error; it found the `embeddedMedia` player and requested the mediaselector v5 JSON for vpid `p0b3802f`, which still answers 410 Gone. No download box appeared.\n- Kept `gm-reassign`: the script reassigns `GM_xmlhttpRequest` and now gets past it only because of the fix."
       }
     ]
   },
@@ -17027,9 +17068,8 @@
       "version": "20240625.1"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-02",
+      "status": "pass",
+      "date": "2026-10-11",
       "version": "20240625.1"
     },
     "tags": [
@@ -17041,6 +17081,11 @@
         "date": "2026-10-02",
         "version": "20240625.1",
         "text": "On https://fishki.net/ it stops near the top with `cloneInto is not defined`, so none of its fixes run and no menu registers.\n\n- Script: it calls Firefox's `cloneInto` and `exportFunction` without checking. Violentmonkey provides identity versions of both in Chrome (`cloneInto: ke || (e=>e)` in its injected-web.js); SourceMonkey has neither.\n- SourceMonkey: next it adds a `GM.cookie` stub to `GM` (`GM.cookie` is unsupported here), which throws `Cannot add property cookie, object is not extensible`: SourceMonkey's `GM` is frozen. Neither Tampermonkey's nor Violentmonkey's injected code freezes it.\n- A copy with `cloneInto`/`exportFunction` shims and the stub skipped ran to the end on fishki.net: menu \"Настройки\" registered, no errors."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "20240625.1",
+        "text": "Re-tested after f3d2c5c (`cloneInto`/`exportFunction` stand-ins, `GM` not frozen): now passes. On https://fishki.net/ (temp browser) it ran to the end with no errors: menus \"Настройки\" and its compatibility warning (\"SourceMonkey не поддерживается\", shown for any manager other than TM/VM) registered, in the top page and in iframes, and its `videojs` wrapper logged. Keeping `gm-frozen` and `needs-cloneinto`: it still relies on both."
       }
     ]
   },
@@ -19415,9 +19460,8 @@
       "version": "2025.04.13"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-09-29",
+      "status": "pass",
+      "date": "2026-10-11",
       "version": "2025.04.13"
     },
     "tags": [
@@ -19428,6 +19472,11 @@
         "date": "2026-09-29",
         "version": "2025.04.13",
         "text": "- Page: https://www.youtube.com/watch?v=aqz-KE-bpKQ (qualities up to hd2160), headless temp browser (sm-dev).\n- SourceMonkey: the script grants only `GM.getValue`/`GM.setValue`, so it runs in the isolated world. It saves its settings, then calls the player's page-side API on `#movie_player` (`getPlaybackQuality`, `setPlaybackQuality`), which the isolated world can't see, so `setResOnReady` retries every 100 ms forever. The player stayed at `large` (480p). Tampermonkey runs such scripts in the page context by default, where these methods exist.\n- Script: a copy with `// @inject-into page` works: the player switched to `hd2160` (its 4K default target)."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "2025.04.13",
+        "text": "Re-tested after aab036d (granted scripts run in the page's world by default): now passes.\n- Page: https://www.youtube.com/watch?v=aqz-KE-bpKQ, headless temp browser (sm-dev). The script saved its settings, and `#movie_player.getPlaybackQuality()` reads `hd2160` (its 4K default target).\n- Control: a `--noscript` tab with `yt-player-quality` cleared from localStorage (the script writes it) stays at `large`.\n- Kept `needs-page-globals`: it still calls the player's page-side API without `unsafeWindow`, and works only because it now runs in the page's world."
       }
     ]
   },
@@ -20998,9 +21047,8 @@
       "version": "2026.06.09.01"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "2026.06.09.01"
     },
     "tags": [
@@ -21011,6 +21059,11 @@
         "date": "2026-10-11",
         "version": "2026.06.09.01",
         "text": "On the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the script throws at startup in the top frame: `SDK_INITIALIZED is not defined`, from its `@require` \"WME Utils - Bootstrap\" (greasyfork 509664, line 71, a bare `await SDK_INITIALIZED`).\n- SourceMonkey: the script has `@grant`s, so it runs in the isolated world, where the page's `SDK_INITIALIZED` global is not visible.\n- Tampermonkey (`--manager tm`) ran WME Junction Angle Info, which uses the same Bootstrap require, on the same page with no error in the top frame (only in the sign-in iframe, which has no SDK in any manager).\n- The editor needs a login past that point (sign-in dialog), so the script's features could not be tried."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "2026.06.09.01",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the top frame no longer throws `SDK_INITIALIZED is not defined`. The \"WME Utils - Bootstrap\" require got past its `await SDK_INITIALIZED` and logged `WME SDK initialized (SDK v0 on WME v2.370-...)`, after WazeWrap initialized, with no errors in 5 s more. The features still need a login."
       }
     ]
   },
@@ -21834,7 +21887,7 @@
     "test": {
       "status": "fail",
       "blame": "script",
-      "date": "2026-10-06",
+      "date": "2026-10-11",
       "version": "1.0"
     },
     "tags": [
@@ -21846,6 +21899,11 @@
         "date": "2026-10-06",
         "version": "1.0",
         "text": "`http://orteil.dashnet.org/cookieclicker/` lands on `https://orteil.dashnet.org/cookieclicker/` in the browser, and the run showed the script skipped there (\"No @match or @include covers this URL\"); its `@match`es are `http://` only. `cafe-capy.net/cookieclicker/` is a 404.\n- With the `@match` changed to https, SourceMonkey ran it and it threw `Game is not defined` every 0.1 ms: its only `@grant` is the malformed `aoh72931`, so SourceMonkey runs it in the isolated world, where the page's `Game` is not visible.\n- Tampermonkey (`--manager tm`) ran the same https copy and it worked: `Game.cookieClicks` went 703 to 785 in about 2 s.\n- A `@grant none` copy in SourceMonkey also worked: 1039 to 1090 clicks in 2 s.\n- Script: the http-only `@match` is why it fails in every manager; the isolated-world difference only shows with the https copy."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "1.0",
+        "text": "Re-tested after 52f830e (page-world default, sandbox `window` like TM/VM): still fails for the same script reason, but the SourceMonkey part is gone.\n- The original still doesn't run on `https://orteil.dashnet.org/cookieclicker/` (`match`: \"No @match or @include covers this URL\"); its `@match`es are `http://` only.\n- The https copy now works in SourceMonkey with its malformed `@grant` as written: `Game.cookieClicks` went 395 to 505 in 2 s. It threw `Game.ClickCookie is not a function` a few times only while the game was still loading.\n- Kept `needs-page-globals`: the script reads the page's `Game` by bare name, which works now."
       }
     ]
   },
@@ -22232,9 +22290,8 @@
       "version": "4.4.8"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-09-29",
+      "status": "pass",
+      "date": "2026-10-11",
       "version": "4.4.8"
     },
     "tags": [
@@ -22245,6 +22302,11 @@
         "date": "2026-09-29",
         "version": "4.4.8",
         "text": "Tested in the real extension (throwaway Playwright spec on the fixture page, with its host added to the script's built-in site list, @match narrowed), since the listed sites were Cloudflare-blocked in headless (uta-net.com) and sm-dev failed at startup (below). The page set `document.oncontextmenu = () => false` and page-world `copy` / `selectstart` listeners calling preventDefault.\n- SourceMonkey: the script started, added its floating \"限制解除\" (unlock) toggle, found the host in its list (checkbox checked) and its GM_addStyle rule applied (`user-select: text`).\n- SourceMonkey: the event restrictions stayed. After its 1.5s clear loop, `document.oncontextmenu` was still the page's handler and dispatched contextmenu and copy events were still defaultPrevented. The script hooks `EventTarget.prototype.addEventListener`, `Event.prototype.preventDefault` and DOM0 `on*` handlers from its own (USER_SCRIPT) world, which never touches the page world's. Tampermonkey runs such scripts in the page context.\n- sm-dev: the script threw at document-start, `Cannot read properties of null (reading 'clientHeight')` on `document.documentElement` in addBtn: sm-dev runs the script body (not only @requires) before `<html>` exists. The real extension had `<html>` in place."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "4.4.8",
+        "text": "Re-tested after aab036d (granted scripts run in the page world by default): now passes, on a live site this time. Page: a jjwxc.net chapter (`onebook.php?novelid=4737103&chapterid=1`, in its built-in list), headless temp browser, with a `--noscript` tab as the control:\n- With the script: `body.onselectstart` and `body.oncopy` read null, page-dispatched `selectstart`, `dragstart`, `copy` and `contextmenu` events were not prevented, the text has `user-select: text`, and a mouse drag over the chapter text selected 44 characters. Its floating toggle and menu command were added.\n- Control: the page's handlers in place, `selectstart` and `dragstart` prevented, the same drag selected 0 characters.\n- sm-dev: the earlier document-start `clientHeight` throw in the main frame did not recur.\nIt passes only because of the fix, so `needs-page-globals` stays."
       }
     ]
   },
@@ -22357,9 +22419,8 @@
       "version": "2026.06.09.00"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "2026.06.09.00"
     },
     "tags": [
@@ -22370,6 +22431,11 @@
         "date": "2026-10-11",
         "version": "2026.06.09.00",
         "text": "On the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the script throws at startup in the top frame: `SDK_INITIALIZED is not defined`, from its `@require` \"WME Utils - Bootstrap\" (greasyfork 509664, line 71, a bare `await SDK_INITIALIZED`).\n- SourceMonkey: the script has `@grant`s, so it runs in the isolated world, where the page's `SDK_INITIALIZED` global is not visible.\n- Tampermonkey (`--manager tm`) ran WME Junction Angle Info, which uses the same Bootstrap require, on the same page with no error in the top frame (only in the sign-in iframe, which has no SDK in any manager).\n- The editor needs a login past that point (sign-in dialog), so the script's features could not be tried."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "2026.06.09.00",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the top frame no longer throws `SDK_INITIALIZED is not defined`. The \"WME Utils - Bootstrap\" require got past its `await SDK_INITIALIZED` and logged `WME SDK initialized (SDK v0 on WME v2.370-...)`, after WazeWrap initialized, with no errors in 5 s more. The features still need a login."
       }
     ]
   },
@@ -24063,9 +24129,8 @@
       "version": "3.8.7"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-02",
+      "status": "pass",
+      "date": "2026-10-11",
       "version": "3.8.7"
     },
     "tags": [
@@ -24076,6 +24141,11 @@
         "date": "2026-10-02",
         "version": "3.8.7",
         "text": "On `https://www.pixiv.net/tags/landscape` the script throws `this.getValue is not a function` (in the `@require`d `GM_config.js`, line 475) and never sets up: no `[illustId]` controls are tagged, and hovering a thumbnail shows nothing. Same in the real extension (`--extension`).\n- SourceMonkey: the script grants `GM.xmlHttpRequest` but no storage API, so GM_config polyfills storage by assigning `GM.getValue = ...` / `GM.setValue = ...`. SourceMonkey's `GM` is `Object.freeze`d (docs/GM-APIs.md), so the assignment is silently dropped and GM_config's `getValue` is undefined. Violentmonkey's `GM` is a plain writable object (`createNullObj()` in `gm-api-wrapper.js`), so the polyfill works there.\n- A copy that also grants `GM.getValue` and `GM.setValue` works: \"Preview enable succeed!\", 37 thumbnails tagged `pp-control`, and hovering one opened the `.pp-main` preview (405x719) with the `i.pximg.net` `..._p0_master1200.jpg` image."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "3.8.7",
+        "text": "Re-tested after f3d2c5c (`GM` not frozen): now passes, unchanged copy. On `https://www.pixiv.net/tags/landscape` (temp browser, logged out): \"Preview enable succeed!\", 40 thumbnails tagged `pp-control`. After closing its welcome overlay (`#pps-close`), hovering one opened `.pp-main` (1018x573) with the `i.pximg.net` `..._p0_master1200.jpg` image (1200 wide). Keeping `gm-frozen`: GM_config's storage polyfill still relies on it."
       }
     ]
   },
@@ -24334,7 +24404,7 @@
     "test": {
       "status": "n/a",
       "reason": "geo-blocked",
-      "date": "2026-10-04",
+      "date": "2026-10-11",
       "version": "3.0.0"
     },
     "tags": [
@@ -24350,6 +24420,11 @@
         "date": "2026-10-04",
         "version": "3.0.0",
         "text": "Checked with a probe script: Tampermonkey and Violentmonkey both leave undeclared `exports`, `module` and `define` as `undefined` (Violentmonkey wraps each script in `(define,module,exports)=>{...}`), so this bundle would start there. SourceMonkey throws `ReferenceError`. Not re-blamed, since the target sites can't be reached anyway."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "3.0.0",
+        "text": "Re-tested after f3d2c5c (`exports` / `module` / `define` undefined): the bundle now starts unmodified. Still n/a: video.sibnet.ru answers 403 (curl, 2026-10-11) and myvi.ru is a parked \"domain for sale\" page.\n- On myvi.ru (headless temp browser) it ran its setup with no `exports is not defined`, then logged `getVideoUrl failed` / `GM_xmlhttpRequest: url required`, as there is no video.\n- Kept `needs-module-globals`: the script still relies on that fix."
       }
     ]
   },
@@ -27184,9 +27259,8 @@
       "version": "3.3.1"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "3.3.1"
     },
     "tags": [
@@ -27197,6 +27271,11 @@
         "date": "2026-10-11",
         "version": "3.3.1",
         "text": "On the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the script throws at startup in the top frame: `SDK_INITIALIZED is not defined`, from its `@require` \"WME Utils - Bootstrap\" (greasyfork 509664, line 71, a bare `await SDK_INITIALIZED`).\n- SourceMonkey: the script has `@grant`s, so it runs in the isolated world, where the page's `SDK_INITIALIZED` global is not visible.\n- Tampermonkey (`--manager tm`) ran WME Junction Angle Info, which uses the same Bootstrap require, on the same page with no error in the top frame (only in the sign-in iframe, which has no SDK in any manager).\n- The editor needs a login past that point (sign-in dialog), so the script's features could not be tried."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "3.3.1",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the top frame no longer throws `SDK_INITIALIZED is not defined`. The \"WME Utils - Bootstrap\" require got past its `await SDK_INITIALIZED` and logged `WME SDK initialized (SDK v0 on WME v2.370-...)`, after WazeWrap initialized. The features still need a login.\n- It still throws `SDK_INITIALIZED is not defined` in the sign-in iframe, which has no SDK; Tampermonkey does the same there."
       }
     ]
   },
@@ -28199,9 +28278,8 @@
       "version": "0.2.0"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-04",
+      "status": "pass",
+      "date": "2026-10-11",
       "version": "0.2.0"
     },
     "tags": [
@@ -28212,6 +28290,11 @@
         "date": "2026-10-04",
         "version": "0.2.0",
         "text": "On an album page (downloads.khinsider.com/game-soundtracks/album/minecraft) the script threw `$ is not defined` at line 32: it uses the page's jQuery from its isolated world, so no click handler is added.\n- A copy with `@inject-into page` worked: with the album cut to 2 tracks, \"click to download\" fetched both track pages, got the MP3s with `GM_xmlhttpRequest` and saved a 5.1 MB zip holding `1-01. Key.mp3` and `1-02. Door.mp3` via StreamSaver.\n- Script: its `@connect 23.237.126.42` is stale. Files are now on `lambda.vgmtreasurechest.com`, which SourceMonkey asked about (allowed)."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "0.2.0",
+        "text": "Re-tested after 52f830e (page-world default, sandbox `window` like TM/VM): now passes, headless, script as written.\n- On the Minecraft album page, no `$ is not defined` now. With the album cut to 2 tracks, \"click to download\" fetched both MP3s over `GM_xmlhttpRequest` (200) and saved a 5.1 MB zip holding `1-01. Key.mp3` and `1-02. Door.mp3` via StreamSaver.\n- SourceMonkey asked to connect to `lambda.vgmtreasurechest.com` (allowed); the script's `@connect 23.237.126.42` is stale.\n- Kept `needs-page-globals`: it uses the page's jQuery by bare name, so it passes only because of the fix."
       }
     ]
   },
@@ -28534,7 +28617,7 @@
     "test": {
       "status": "fail",
       "blame": "script",
-      "date": "2026-09-29",
+      "date": "2026-10-11",
       "version": "1.3.2"
     },
     "tags": [
@@ -28545,6 +28628,11 @@
         "date": "2026-09-29",
         "version": "1.3.2",
         "text": "- Script: its only data source, `cf-predictor-frontend.herokuapp.com`, is gone (Heroku \"No such app\", HTTP 404), so no deltas can be shown in any manager; `JSON.parse` of that HTML page would throw.\n- SourceMonkey: with `@grant GM_xmlhttpRequest` it runs in the isolated world and uses the page's jQuery `$` without `unsafeWindow`, so it threw \"$ is not defined\" at `showDeltas` before any request (Tampermonkey's sandbox exposes page globals; this is the known needs-page-globals gap).\n- Headless temp browser got Codeforces' Cloudflare \"Just a moment...\" page for /contest/2000/standings; not retried in the visible browser since the backend is dead."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "1.3.2",
+        "text": "Re-tested after aab036d (granted scripts run in the page world by default): still fails, for the script's reason only. On `codeforces.com/contest/2000/standings` (headed temp browser) the \"$ is not defined\" error is gone: the script reads the page's jQuery and sends its `GM_xmlhttpRequest` to `cf-predictor-frontend.herokuapp.com/GetNextRatingServlet?contestId=2000`, which returns 404 (Heroku app gone), so `JSON.parse` in its onload throws and no delta column is added. The SourceMonkey part of the old failure no longer applies; `needs-page-globals` stays since it passes that point only because of the fix."
       }
     ]
   },
@@ -29759,9 +29847,8 @@
       "version": "2024.10.28.003"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "2024.10.28.003"
     },
     "tags": [
@@ -29772,6 +29859,11 @@
         "date": "2026-10-11",
         "version": "2024.10.28.003",
         "text": "On the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the script throws at startup in the top frame: `SDK_INITIALIZED is not defined`, from its `@require` \"WME Utils - Bootstrap\" (greasyfork 509664, line 71, a bare `await SDK_INITIALIZED`).\n- SourceMonkey: the script has `@grant`s, so it runs in the isolated world, where the page's `SDK_INITIALIZED` global is not visible.\n- Tampermonkey (`--manager tm`) ran WME Junction Angle Info, which uses the same Bootstrap require, on the same page with no error in the top frame (only in the sign-in iframe, which has no SDK in any manager).\n- The editor needs a login past that point (sign-in dialog), so the script's features could not be tried."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "2024.10.28.003",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the top frame no longer throws `SDK_INITIALIZED is not defined`. The \"WME Utils - Bootstrap\" require got past its `await SDK_INITIALIZED` and logged `WME SDK initialized (SDK v0 on WME v2.370-...)`, after WazeWrap initialized, with no errors in 5 s more. The features still need a login."
       }
     ]
   },
@@ -30632,9 +30724,8 @@
       "version": "2025.10.09.001"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "2025.10.09.001"
     },
     "tags": [
@@ -30645,6 +30736,11 @@
         "date": "2026-10-11",
         "version": "2025.10.09.001",
         "text": "On the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the script starts, then logs `ClickSaver: jQuery not ready. Retry loading translations...` every 250 ms (50+ times in 10 s) and never gets further.\n- SourceMonkey: it grants `GM_xmlhttpRequest` and `GM_addElement`, so it runs in the isolated world, where the page's `$` is not visible (`typeof $ === 'undefined'` check, line 1511). Its later `bootstrap()` call uses the \"WME Utils - Bootstrap\" require, which reads the page's `SDK_INITIALIZED` the same way.\n- Tampermonkey (`--manager tm`, same page) logged `ClickSaver: Translations loaded.` on the first try.\n- The editor needs a login for the click-saving features, so those could not be tried."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "2025.10.09.001",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) it logged `ClickSaver: Translations loaded.` on the first try (no more `jQuery not ready` retries), then WazeWrap initialized and the Bootstrap require logged `WME SDK initialized`. The click-saving features still need a login."
       }
     ]
   },
@@ -30711,9 +30807,8 @@
       "version": "2026.04.14.00"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "2026.04.14.00"
     },
     "tags": [
@@ -30724,6 +30819,11 @@
         "date": "2026-10-11",
         "version": "2026.04.14.00",
         "text": "On the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the script throws at startup in the top frame: `SDK_INITIALIZED is not defined`, from its `@require` \"WME Utils - Bootstrap\" (greasyfork 509664, line 71, a bare `await SDK_INITIALIZED`).\n- SourceMonkey: the script has `@grant`s, so it runs in the isolated world, where the page's `SDK_INITIALIZED` global is not visible.\n- Tampermonkey (`--manager tm`) ran WME Junction Angle Info, which uses the same Bootstrap require, on the same page with no error in the top frame (only in the sign-in iframe, which has no SDK in any manager).\n- The editor needs a login past that point (sign-in dialog), so the script's features could not be tried."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "2026.04.14.00",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the top frame no longer throws `SDK_INITIALIZED is not defined`. The \"WME Utils - Bootstrap\" require got past its `await SDK_INITIALIZED` and logged `WME SDK initialized (SDK v0 on WME v2.370-...)`, after WazeWrap initialized. The features still need a login.\n- It still throws `SDK_INITIALIZED is not defined` in the sign-in iframe, which has no SDK; Tampermonkey does the same there."
       }
     ]
   },
@@ -31110,7 +31210,7 @@
     "test": {
       "status": "fail",
       "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "date": "2026-10-12",
       "version": "1.7.3"
     },
     "tags": [
@@ -31122,6 +31222,11 @@
         "date": "2026-10-11",
         "version": "1.7.3",
         "text": "Promises a control panel (opened by a `confirm` at load) and split/feed hotkeys for agar.io and gota.io. Judged at the agar.io main menu; the hotkeys need a live match.\n- SourceMonkey: on https://agar.io/ it never runs. Its only agar.io rule, `@match agar.io*`, has no path and is dropped (`ignored-match`; TODO.md \"A bare origin, no path\"). Under `--manager tm` on the same page Tampermonkey ran it: its `confirm` opened and the panel showed.\n- SourceMonkey: with a copy matching `*://agar.io/*`, the panel opened but its HOME/THEME/SETUP/ABOUT tabs stayed empty, with `openPage is not defined` page errors on each click. The tab buttons use inline `onclick=\"openPage(...)\"`, and the script defines `document.openPage` in its isolated world, which the page's inline handlers can't see. Tampermonkey runs it in the page: Home showed at once, and THEME switched to the Theme tab.\n- The same copy with `@inject-into page` added worked like Tampermonkey (Home shown, THEME switched, no errors).\n- Its split and feed keys call the page's `window.onkeydown`, which the isolated world can't see either.\n- gota.io/web: the script started on Cloudflare's challenge page; a headed browser got the \"Verify you are human\" checkbox, so gota.io couldn't be judged."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "1.7.3",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): still fails: on https://agar.io/ the original still never runs, since `@match agar.io*` has no path and is dropped (`match` gives \"no match\"; TODO.md \"A bare origin, no path\").\n- The inline-handler part now works: a copy matching `*://agar.io/*`, with no other change, opened its panel after the `confirm`, showed Home at once, and THEME switched to the Theme tab, with no `openPage is not defined` errors. The page's inline `onclick=\"openPage(...)\"` finds the script's `document.openPage`, since `document` is now the page's own.\n- Kept `inline-handler-scope`: the script relies on it and it now works. Kept `ignored-match`, the remaining failure.\n- Split and feed keys call `window.onkeydown(...)`, but the page's `window.onkeydown` is null on today's agar.io (in the page too), so they would throw in any manager; not judged (needs a live match)."
       }
     ]
   },
@@ -33808,9 +33913,8 @@
       "version": "2.0"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-09-29",
+      "status": "pass",
+      "date": "2026-10-11",
       "version": "2.0"
     },
     "tags": [
@@ -33822,6 +33926,11 @@
         "date": "2026-09-29",
         "version": "2.0",
         "text": "Page: https://example.com/, exercising EME with ClearKey (`navigator.requestMediaKeySystemAccess(\"org.w3.clearkey\", ...)` then `createMediaKeys()`).\n- SourceMonkey: called from the page's own world (as a video site's player would), the call succeeded and nothing was logged. The script has GM_* grants and no unsafeWindow, so it runs in the USER_SCRIPT world and its proxies on `Navigator.prototype`, `MediaKeys.prototype`, `MediaKeySession.prototype` and `EventTarget.prototype` patch only that world's copies.\n- Script: the same call made from the script's world (`eval --script`) printed the full `[EME] (CALL) Navigator::requestMediaKeySystemAccess` / `[SUCCESS] MediaKeys` log groups, so the logging itself works.\n- Menu registered the Disable Widevine / PlayReady / FairPlay / ClearKey commands."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "2.0",
+        "text": "Re-tested after aab036d (granted scripts run in the page world by default): now passes. On https://example.com/ (headless temp browser), the same ClearKey `requestMediaKeySystemAccess` then `createMediaKeys()` call made from the page's own world (`eval --page`) now prints the `[EME] (CALL) Navigator::requestMediaKeySystemAccess` / `MediaKeySystemAccess::createMediaKeys` log groups and `[SUCCESS] MediaKeys`. The four Disable Widevine / PlayReady / FairPlay / ClearKey menu commands registered. It patches page prototypes and passes only because of the fix, so `needs-page-globals` stays."
       }
     ]
   },
@@ -36742,8 +36851,8 @@
     },
     "test": {
       "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-02",
+      "blame": "script",
+      "date": "2026-10-11",
       "version": "0.6"
     },
     "tags": [
@@ -36754,6 +36863,11 @@
         "date": "2026-10-02",
         "version": "0.6",
         "text": "On a Steam Workshop item (`/sharedfiles/filedetails/?id=1619685021`, Move It, Cities: Skylines; headless):\n- SourceMonkey: the script threw \"$ is not defined\" at line 40 and added no button. It reads the page's `$` and `publishedfileid` without `unsafeWindow`, and runs in the isolated world because of its grants.\n- A copy with `@inject-into page` worked: \"Single item page\", the floating button appeared, and its `GM_xmlhttpRequest` to `catalogue.smods.ru` loaded (200). The button then read \"Not Available (REQUEST)\".\n- Script: the SkyMods catalogue now finds nothing: that search returns \"0 SEARCH RESULTS\", and its category pages list no items. So the download half can't work in any manager."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "0.6",
+        "text": "Re-tested after 52f830e (page-world default, sandbox `window` like TM/VM): the SourceMonkey part is fixed; it still fails for the script's reason.\n- Same Workshop item, headless, script as written: no `$ is not defined` now. It logged \"Single item page\" and \"Init successfully\", and the floating button appeared.\n- Script: its `GM_xmlhttpRequest` to `http://catalogue.smods.ru/?s=1619685021&app=255710` now gets 403, and the button reads \"Not Available (REQUEST)\". As noted before, the SkyMods catalogue no longer lists items, so the download half can't work in any manager.\n- Kept `needs-page-globals`: the script reads the page's `$` by bare name, which works now."
       }
     ]
   },
@@ -36986,9 +37100,8 @@
       "version": "1.0.0"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-04",
+      "status": "pass",
+      "date": "2026-10-11",
       "version": "1.0.0"
     },
     "tags": [
@@ -36999,6 +37112,11 @@
         "date": "2026-10-04",
         "version": "1.0.0",
         "text": "On `hpoi.net/hobby/100000` the script throws `$ is not defined` at its first line of code: it uses the site's jQuery without `unsafeWindow`, and has `@grant`s, so it runs in the isolated world. The page's own `$` is a function.\n\n- A copy with `@grant unsafeWindow` and `const $ = unsafeWindow.$;` works: on `/hobby/50` it shows \"ExHobby loading...\", POSTs to `www.exhobby.net/get/pic` (200), and adds a \"by ExHobby\" box with 1 picture from `res.e39x.com`.\n- SourceMonkey: asked to connect to www.exhobby.net (no `@connect` lines); allowed."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "1.0.0",
+        "text": "Re-tested after aab036d (scripts run in the page world by default): now passes. Unmodified copy, headless, on `www.hpoi.net/hobby/50`: no `$ is not defined`; it POSTed to `www.exhobby.net/get/pic` (200) and added the \"by ExHobby\" box with 1 picture from `res.e39x.com`.\n\n- SourceMonkey: asked to connect to www.exhobby.net (no `@connect` lines); allowed.\n- Kept `needs-page-globals`: it still reads the page's `$` without `unsafeWindow`, and passes because of the fix."
       }
     ]
   },
@@ -37903,9 +38021,8 @@
       "version": "4.1.4(en)"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-06",
+      "status": "pass",
+      "date": "2026-10-11",
       "version": "4.1.4(en)"
     },
     "tags": [
@@ -37917,6 +38034,11 @@
         "date": "2026-10-06",
         "version": "4.1.4(en)",
         "text": "On a jjwxc.net chapter (`onebook.php?novelid=4737103&chapterid=1`, in the script's built-in site list) the script starts and adds its `user-select:text` style, but the page still blocks selection: a mouse drag over the chapter text selected 0 characters, and page-dispatched `copy`, `selectstart` and `dragstart` events stayed `defaultPrevented`. Same as a `--noscript` tab.\n\n- SourceMonkey: the script is granted, so it runs in the isolated world. There it can't see the page's inline `onselectstart`/`oncopy` handlers (they read as null), and its `EventTarget.prototype.addEventListener` and `preventDefault` hooks don't reach page code.\n- A copy with `@inject-into page` worked: `body.onselectstart` cleared, none of those events prevented, and the same drag selected 93 characters.\n- Tampermonkey (`--manager tm`, same page) also cleared the handlers and prevented none of the events: it runs the script in the page. Known gap, TODO.md \"Granted scripts run in the isolated world\".\n- Script: when you tick its checkbox to add a site, it POSTs its settings (the blacklist and the current page URL) to `http://eemm.me/tool/rwl_upload/`, on by default. Not triggered here."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "4.1.4(en)",
+        "text": "Re-tested after aab036d (granted scripts run in the page world by default): now passes. Same jjwxc.net chapter, headless temp browser, with a `--noscript` tab as the control:\n- With the script: `body.onselectstart` and `body.oncopy` read null, page-dispatched `selectstart`, `dragstart`, `copy` and `contextmenu` events were not prevented, and a mouse drag over the chapter text selected 44 characters. Its floating button was added.\n- Control: `onselectstart` / `oncopy` handlers in place, `selectstart` and `dragstart` prevented, the same drag selected 0 characters.\n- Script: in some ad iframes (mediav.com) it threw `Cannot read properties of null (reading 'appendChild')` in addBtn; the main page was unaffected.\n- The checkbox that uploads the page URL to eemm.me was not ticked.\nIt passes only because of the fix, so `needs-page-globals` stays."
       }
     ]
   },
@@ -38505,9 +38627,9 @@
       "version": "1.4"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-06",
+      "status": "n/a",
+      "reason": "bot-blocked",
+      "date": "2026-10-11",
       "version": "1.4"
     },
     "tags": [
@@ -38518,6 +38640,11 @@
         "date": "2026-10-06",
         "version": "1.4",
         "text": "On `https://blog.csdn.net/guo13313/article/details/167130538` the script added its styles (`main` float went from `right` to `none`), then threw `csdn is not defined` at `csdn.clearReadMoreBtn()`: it uses the page's `$` and `csdn` without `unsafeWindow`, and has a `@grant`, so it runs in the isolated world. The page's own `csdn.clearReadMoreBtn` and `csdn.copyright` exist.\n\n- A copy with `@grant unsafeWindow` and `const $ = unsafeWindow.$, csdn = unsafeWindow.csdn;` ran to the end in the top frame at idle (no throw), with `localStorage.anonymousUserLimit` set to `\"\"`.\n- An earlier start of that copy, during the first load, threw `Cannot read properties of undefined (reading 'clearReadMoreBtn')`; the page has several `about:blank` iframes.\n- Script: the page shows no read-more box to an anonymous visitor now, so \"auto read more\" has nothing to act on."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "1.4",
+        "text": "Re-tested after aab036d (scripts run in the page world by default): CSDN now shows a slider-puzzle \"Security Verification\" page to the headless temp browser, so the live article couldn't be checked (the script threw `csdn is not defined` there, as the captcha page has no `csdn`).\n\n- Mechanism check: a stub page served at the article URL (`--from-saved`) with a fake page `$` and `csdn`. The unmodified script ran to the end: `csdn.clearReadMoreBtn()`, `$(\"#btnMoreComment>span\").remove()`, `csdn.copyright.init()` all called on the page's objects, `localStorage.anonymousUserLimit` set to `\"\"`, `main` float `none`.\n- Kept `needs-page-globals`: it still reads the page's `$`/`csdn` without `unsafeWindow`."
       }
     ]
   },
@@ -39788,7 +39915,7 @@
     "test": {
       "status": "fail",
       "blame": "script",
-      "date": "2026-10-06",
+      "date": "2026-10-12",
       "version": "9.2.0"
     },
     "tags": [
@@ -39800,6 +39927,16 @@
         "date": "2026-10-06",
         "version": "9.2.0",
         "text": "On www.rai.it and www.rainews.it/tgr/lazio (headless temp browser) the script threw \"Assignment to constant variable\" at line 39, its Greasemonkey 4 shim `GM_xmlhttpRequest = GM.xmlHttpRequest;` (known gap, TODO.md \"Granted `GM_*` names are `const`\").\n- Script: the pages it handles are gone. It looks for old rai.tv `/dl/` pages, `.Player[data-video-url]`, `videoURL` globals, Flash objects, projekktor and jwplayer; on rainews.it/tgr none of those exist, and rai.it's videos now live on raiplay.it, which it doesn't match (script 2128 replaced it). So it would add nothing in any manager.\n- SourceMonkey: with the shim line removed, the copy then threw \"Class constructor $ cannot be invoked without 'new'\" at line 348. Naming `unsafeWindow` puts it in the page world, where rainews.it's own top-level `class $` (a Lit element) shadows the `@require`d jQuery (`window.$` is jQuery, bare `$` is the class). Tampermonkey's sandbox would see jQuery."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "9.2.0",
+        "text": "Re-tested after 52f830e (sandbox `window` for granted scripts) and c2dbb1f (granted `GM_*` names reassignable): both SourceMonkey failures are gone, but it still fails (script).\n- On www.rainews.it/tgr/lazio (headless), unmodified copy: the shim at line 39 ran without error, and bare `$` is now the `@require`d jQuery, not the page's `class $`. `$(document).ready` at line 348 ran: its `<style>` (`.tagManagerError`) was appended and it logged `isTGR: true`.\n- Script: still nothing to handle. The TGR branch looks for `div.Player[data-mediaurl]`; the page has no `div.Player`, `[data-mediaurl]` or `[data-video-url]`. rai.it videos live on raiplay.it now (script 2128).\n- Kept `gm-reassign` and `page-shadows-require`: the script still relies on both behaviors and gets past them only because of the fixes."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "9.2.0",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): still fails (script), the same as the last re-test. On www.rainews.it/tgr/lazio, headless, unmodified copy:\n\n- SourceMonkey: the `GM_xmlhttpRequest = GM.xmlHttpRequest` shim at line 39 ran without error. In the page world, bare `$` in the script is the `@require`d jQuery 1.11.1, while the page's own `$` is still its `class $` (a Lit element). Its `$(document).ready` ran: the `.tagManagerError` `<style>` was added and it logged `isTGR: true`.\n- Script: nothing to handle. The page has no `div.Player`, `[data-mediaurl]`, `[data-video-url]` or `<video>`; rai.it videos live on raiplay.it now (script 2128).\n- Kept `gm-reassign` and `page-shadows-require`: the script still relies on both behaviors and gets past them only because of the fixes."
       }
     ]
   },
@@ -41449,9 +41586,8 @@
       "version": "1.0.33"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-03",
+      "status": "pass",
+      "date": "2026-10-11",
       "version": "1.0.33"
     },
     "tags": [
@@ -41462,6 +41598,11 @@
         "date": "2026-10-03",
         "version": "1.0.33",
         "text": "On manhuagui.com/comic/1128/9771.html (One Piece, page 1) pressing `d` did nothing: the keydown handler threw `ReferenceError: $ is not defined` at line 390 (`$(\"#pb, #pb-mask\").remove()`) before navigating.\n\n- SourceMonkey: it grants `GM.getValue`/`GM.setValue`, so it runs in the isolated world, and calls the site's jQuery `$` without `unsafeWindow`. The dm5 branch uses `$.ajax` the same way.\n- A copy with `@inject-into page` works: `d` went to page 2 (`#p=2`), `s` went to the other chapter (9772.html)."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "1.0.33",
+        "text": "Re-tested after aab036d (scripts run in the page world by default): now passes. Unmodified copy, headless, on `manhuagui.com/comic/1128/9771.html`: no `$ is not defined`.\n\n- `d` went to page 2 (`#p=2`); `w` (next chapter) went to 9772.html; `s` there (previous chapter) came back to 9771.html. (`s` on 9771 itself leaves `#`: vol. 1 has no previous chapter, its `prevC` link is `#`.)\n- Kept `needs-page-globals`: it still calls the page's `$` without `unsafeWindow`, and passes because of the fix."
       }
     ]
   },
@@ -42241,9 +42382,8 @@
       "version": "4.15.1"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-03",
+      "status": "pass",
+      "date": "2026-10-11",
       "version": "4.15.1"
     },
     "tags": [
@@ -42254,6 +42394,11 @@
         "date": "2026-10-03",
         "version": "4.15.1",
         "text": "Temp browser, logged out.\n\n- `github.com/MapoMagpie/comic-looms` (its own test page): showed its first-run help, and the bottom-left entry icon opened the viewer, which loaded the README image over `GM.xmlHttpRequest` (1/1).\n- SourceMonkey: on `https://www.pixiv.net/en/users/11` it threw `Cannot read properties of null (reading 'get')` at line 7731, `customElements.get(\"ugoira-element\")` in the Pixiv setup. `customElements` is `null` in the script's isolated world (`eval --script` confirms), while the page's is an object. No entry icon appeared.\n- A copy with `@inject-into page` worked on the same page: no error, and the entry icon opened a grid of the account's works (`1/718`), thumbnails loading.\n- Violentmonkey injects into the page by default, so this works there; Chrome's isolated worlds have no `customElements` registry."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "4.15.1",
+        "text": "Re-tested after aab036d/52f830e (page-world default, sandbox `window` like TM/VM): now passes, headless, script as written.\n- On `https://www.pixiv.net/en/users/11` there was no `customElements` error now. It showed its first-run help, and the bottom-left entry icon opened a grid of the account's works (`1/651`), thumbnails loading.\n- Kept `needs-custom-elements`: the script uses the page's `customElements`, so it passes only because of the fix."
       }
     ]
   },
@@ -45157,7 +45302,7 @@
     "test": {
       "status": "fail",
       "blame": "script",
-      "date": "2026-10-04",
+      "date": "2026-10-11",
       "version": "2.3.1"
     },
     "tags": [
@@ -45169,6 +45314,11 @@
         "date": "2026-10-04",
         "version": "2.3.1",
         "text": "- Headed (Baidu captchas headless). On `baidu.com/s?wd=userscript` the script adds its \"美化设置\" (settings) link and splits results into 2 `.result_column`s, but both sit at the same x (608px wide, stacked), so the page stays one column.\n- It throws `$ is not defined` in the `hideHead` setter during `setupEnv`: it calls the page's jQuery (`$(\"#head\")`) from its isolated world without `unsafeWindow`.\n- A copy with `@grant unsafeWindow` gets past that and lays out two side-by-side columns, but at 297px each with the AI answer squeezed into the first and the page's related-search blocks filling the second: the layout no longer fits Baidu's current page.\n- Script: also uses `DOMNodeInserted` on `#wrapper_wrapper` to restyle after in-page searches, which Chrome no longer fires."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "2.3.1",
+        "text": "Re-tested after aab036d (scripts run in the page world by default): the `$ is not defined` throw is gone, but it still fails for the script's own reason.\n\n- Headed, `baidu.com/s?wd=userscript`, unmodified copy: no throw; it adds \"美化设置\" and lays out two side-by-side `.result_column`s at 297px each (x 0 and 297), with the AI answer squeezed into the first and the related-search blocks in the second, the same as the `unsafeWindow` copy before. The layout no longer fits Baidu's current page.\n- Kept `needs-page-globals`: it still reads the page's `$` without `unsafeWindow`, and now gets past it because of the fix."
       }
     ]
   },
@@ -47987,9 +48137,9 @@
       "version": "5.1.5"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-09-29",
+      "status": "n/a",
+      "reason": "bot-blocked",
+      "date": "2026-10-11",
       "version": "5.1.5"
     },
     "tags": [
@@ -48000,6 +48150,11 @@
         "date": "2026-09-29",
         "version": "5.1.5",
         "text": "Page: https://blog.csdn.net/2601_96587588/article/details/165007267 (shared visible browser; headless got 403).\n- SourceMonkey: `@grant GM_*` puts the script in the isolated USER_SCRIPT world, where the page's jQuery `$` doesn't exist. It threw `$ is not defined` in its DOMContentLoaded handler (`deleteDOMs`) and in `window.onload` (`fixDirectoryJump`).\n- Result: the style-only tweaks from `GM_addStyle` applied. Everything after the first `$` call in both handlers never ran:\n  - comments not moved beside the article (`main` has no `comment-show` class);\n  - no no-login comment loading;\n  - none of the added side-toolbar buttons (`cuz-eyecomfort-*`, `cuz-comment-*`, directory), only CSDN's own vip/show/app/cs/gotop;\n  - no code-copy fix.\n- It also relies on the page's `hljs`, `mdcp` and `articleId`.\n- The two `@match` patterns with `*` inside the host (`https://*blog.csdn.net/*`) are ignored, but `https://*.blog.csdn.net/*` covers blog.csdn.net."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "5.1.5",
+        "text": "Re-tested after aab036d (scripts run in the page world by default): CSDN now shows a slider-puzzle \"Security Verification\" page to both headless and headed temp browsers (no shared browser was up), so the live page couldn't be checked.\n\n- On that page the script still threw `$ is not defined` in `deleteDOMs`, but the captcha page has no jQuery, so that says nothing.\n- Mechanism check: a stub page served at the article URL (`--from-saved`, with a fake page `$`, `#content_views`, `.csdn-side-toolbar`, and a 1.5 s inline delay so the document-start listener lands before DOMContentLoaded). The unmodified script reached the page's `$` from both handlers (`$.each`, then `$(\"#content_views\").off/find/click/unbind`), set `main.comment-show`, and added its six `cuz-*` toolbar buttons.\n- Kept `needs-page-globals`: it still reads the page's `$` without `unsafeWindow`.\n- sm-dev: on a tiny saved page with no delay, the document-start listener for DOMContentLoaded never fired (the run's late injection, a known difference)."
       }
     ]
   },
@@ -48034,17 +48189,19 @@
     "test": {
       "status": "fail",
       "blame": "script",
-      "date": "2026-10-02",
+      "date": "2026-10-11",
       "version": "2.6.39"
     },
-    "tags": [
-      "gm-on-window"
-    ],
     "notes": [
       {
         "date": "2026-10-02",
         "version": "2.6.39",
         "text": "Tested on github.com/sharkdp/bat (repo home, README blob, releases).\n\n- Works: the README page gets 7 Raw mirror buttons (`.XIU2-RF`, e.g. `wget.la/https://raw.githubusercontent.com/...`); the file list gets 30 hover download links (`a.fileDownLink`).\n- Script: Release mirrors throw on every release list: `_this.parentElement.nextElementSibling` is null at line 253, since GitHub now wraps each asset link in a `<span>` with no sibling. 0 `.XIU2-RS` added.\n- Script: Clone/SSH/ZIP mirrors in the Code dropdown never appear: the code gates them on `#repo-title-component`, which GitHub no longer has. The dropdown opened with the https clone input and the ZIP link, and 0 `.XIU2-GC` were added.\n- SourceMonkey: the Feedback menu command throws `window.GM_openInTab is not a function` (it reads the GM function off `window`). Minor; not the main failure."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "2.6.39",
+        "text": "Re-tested after c2dbb1f (`window.GM_*` for granted functions) on github.com/sharkdp/bat: still fails, for the script's release code only.\n- SourceMonkey: fixed. The Feedback menu command now opens both tabs (`GM_openInTab` to github.com/XIU2/UserScript and the greasyfork feedback page), no error.\n- Works: README page gets 7 `.XIU2-RF` Raw mirrors; repo home gets 30 `.fileDownLink`; the Code dropdown now gets 5 clone/SSH mirrors (GitHub has `#repo-title-component` again).\n- Script: Release mirrors still 0 `.XIU2-RS` on /releases; calling its `addRelease()` throws `Cannot read properties of null (reading 'insertAdjacentHTML')` (the asset link has no next sibling). A newer 2.6.41 exists upstream; this tests 2.6.39."
       }
     ]
   },
@@ -48469,7 +48626,7 @@
     "test": {
       "status": "fail",
       "blame": "script",
-      "date": "2026-10-03",
+      "date": "2026-10-11",
       "version": "2.1"
     },
     "tags": [
@@ -48480,6 +48637,11 @@
         "date": "2026-10-03",
         "version": "2.1",
         "text": "Tried on a live public share, `https://ahk.lanzoux.com/iK6zunucjqf` (KMCounter v3.7.zip):\n\n- Script: it expects `#load2`, `#sub`, `#go` and the page's `down_r()` in the download frame. Lanzou's download frame (`/fn?...`) now has only `#outime` and `#tourl`, and no `down_r`, so every line of the script would throw.\n- The top page never finished loading here (its `images.bakstotre.com` script doesn't answer from this network), so SourceMonkey's document-idle run never came; the frame's HTML was checked with curl.\n- Script: it also calls the page's `down_r` from a granted script without `unsafeWindow`, which SourceMonkey's isolated world wouldn't reach even on the old page."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "2.1",
+        "text": "Re-tested after aab036d (scripts run in the page world by default): still fails, for the script's own reason.\n\n- Headless, `https://ahk.lanzoux.com/iK6zunucjqf`: this time the script ran in the top page and threw `Cannot read properties of null (reading 'style')` at `getElementById(\"load2\")`.\n- The download frame (`/fn?...`, still `loading` after 45 s) has `#outime` and `#tourl` but no `#load2`, `#sub`, `#go` or `down_r`, as before. The page no longer has what the script drives.\n- Kept `needs-page-globals`: it calls the page's `down_r` bare, which the page world would now reach."
       }
     ]
   },
@@ -50540,9 +50702,8 @@
       "version": "2.2"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-04",
+      "status": "pass",
+      "date": "2026-10-11",
       "version": "2.2"
     },
     "tags": [
@@ -50553,6 +50714,11 @@
         "date": "2026-10-04",
         "version": "2.2",
         "text": "On a Wikipedia article the script throws at startup, `Assignment to constant variable.` at line 823 (`GM_xmlhttpRequest = safeGMxhr;` in its `GMXHRHook`, which caps concurrent requests), so its \"Save this webpage\" menu command is never registered.\n- SourceMonkey: granted `GM_*` names are declared `const`; Tampermonkey and Violentmonkey let a script reassign them.\n- A copy whose outer IIFE takes `GM_xmlhttpRequest` as a parameter (so the assignment hits a local) works: on `en.wikipedia.org/wiki/Capuchin_monkey`, the menu command ran 205 `GM_xmlhttpRequest` GETs for resources, logged `Single File Generation Complete`, and saved a 2.8 MB `SingleFile - Capuchin monkey - Wikipedia - <time>.html` with its images inlined as `data:` URLs."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "2.2",
+        "text": "Re-tested after c2dbb1f (granted `GM_*` names reassignable): now passes, unmodified.\n- On https://en.wikipedia.org/wiki/Capuchin_monkey (headless temp browser) it registers \"Save this webpage\" with no error.\n- Firing it ran 288 `GM_xmlhttpRequest` GETs, logged `[Success] Single File Generation Complete.`, and saved a 2.8 MB `SingleFile - Capuchin monkey - Wikipedia - <time>.html` with 20 `data:` images inlined.\n- Script: a few requests 404 on its own malformed `/w//w/...` URLs; harmless.\n- Kept `gm-reassign`: the script still reassigns `GM_xmlhttpRequest`, so it relies on that fix."
       }
     ]
   },
@@ -55465,9 +55631,8 @@
       "version": "0.1"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-07",
+      "status": "pass",
+      "date": "2026-10-11",
       "version": "0.1"
     },
     "tags": [
@@ -55478,6 +55643,11 @@
         "date": "2026-10-07",
         "version": "0.1",
         "text": "On https://shellshock.io/ (headed temp browser), after clicking Play (guest, `extern.inGame` true), the four `#crosshair0-3` elements kept an empty inline `backgroundColor`: no rainbow.\n- SourceMonkey: the script's only `@grant`s are the malformed `Math.mod` and `window.extern`, so it runs in the isolated world. There `typeof extern` and `typeof Math.mod` are `undefined` (both are the game's page globals), so its timer never colors anything. No error is thrown.\n- A copy with `@grant none` in SourceMonkey worked: the crosshairs read `rgb(237, 255, 0)`, `rgb(0, 255, 153)`, ... and a second later `rgb(198, 255, 0)`, `rgb(0, 255, 192)`, ..., cycling.\n- Same gap as the Cookie Clicker script with a malformed grant (27929), where Tampermonkey ran it in the page."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "0.1",
+        "text": "Re-tested after 52f830e (page-world default, sandbox `window` like TM/VM): now passes, headless.\n- On https://shellshock.io/, after Play (guest, `extern.inGame` true), the `#crosshair0-3` backgrounds read `rgb(189, 0, 255)`, `rgb(211, 255, 0)`, ... and moments later `rgb(159, 255, 0)`, `rgb(0, 255, 231)`, ...: cycling. No errors.\n- The script, with its malformed grants as written, now sees the page's `extern` and `Math.mod`. Kept `needs-page-globals`: it passes only because of the fix."
       }
     ]
   },
@@ -57009,9 +57179,8 @@
       "version": "1.10.5"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-10",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "1.10.5"
     },
     "tags": [
@@ -57022,6 +57191,11 @@
         "date": "2026-10-10",
         "version": "1.10.5",
         "text": "On the Douban book page `https://book.douban.com/subject/1084336/` (小王子) the script started, registered its two menu commands, then threw `jQuery is not defined`: it uses the site's jQuery without `unsafeWindow` or a `@require`, and has `@grant`s, so it runs in the isolated world. The page's own `jQuery` is a function. No links were added under the cover (`#mainpic`).\n\n- A copy with `@grant unsafeWindow` and `var jQuery = unsafeWindow.jQuery;` works: under the cover it adds a \"参考联盟\" link to `book.ucdrs.superlib.net/search?sw=9787020042494...` (the book's ISBN, read from the page's ld+json) and the 📑 copy-metadata link, with no errors."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "1.10.5",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on `https://book.douban.com/subject/1084336/` (小王子), headless.\n\n- SourceMonkey: the unmodified copy started, registered its two menu commands, and threw nothing: bare `jQuery` now resolves to the page's own.\n- Under the cover (`#mainpic`) it added the \"参考联盟\" link to `book.ucdrs.superlib.net/search?sw=9787020042494...` and the 📑 copy-metadata link, the same as the `unsafeWindow` copy did before.\n- Kept `needs-page-globals`: the script still uses the site's jQuery without `unsafeWindow` or a `@require`, and passes only because scripts now run in the page world."
       }
     ]
   },
@@ -57711,9 +57885,8 @@
       "version": "0.14"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "0.14"
     },
     "tags": [
@@ -57724,6 +57897,11 @@
         "date": "2026-10-11",
         "version": "0.14",
         "text": "On https://x.com/NASA (logged out):\n\n- SourceMonkey: the script throws at startup, `exportFunction is not defined` (line 81). It calls Firefox's `exportFunction` unchecked to replace the page's `JSON.parse`; Violentmonkey defines a pass-through stand-in on Chrome. Known gap: TODO.md \"No `cloneInto` / `exportFunction` / `createObjectIn`\".\n- A copy with a one-line stand-in (`const exportFunction = (fn, target, opts) => { target[opts.defineAs] = fn; }`) started cleanly and replaced the page's `JSON.parse`: parsing `{\"legacy\":{\"possibly_sensitive\":true},\"media\":[{\"sensitive_media_warning\":1}]}` in the page gave `possibly_sensitive: false` and the warning removed.\n- Not checked against a real sensitive tweet (none found logged out); X's own use of `JSON.parse` for that data is unverified."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "0.14",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on https://x.com/NASA (logged out, headless):\n\n- The unmodified copy started with no errors. Its `exportFunction(new_parse, unsafeWindow.JSON, { defineAs: \"parse\" })` now goes through SourceMonkey's `exportFunction` stand-in (f3d2c5c) and replaces the page's `JSON.parse`.\n- In the page, `JSON.parse('{\"legacy\":{\"possibly_sensitive\":true},\"media\":[{\"sensitive_media_warning\":1}]}')` gave `possibly_sensitive: false` and the warning removed, as with the hand-patched copy before.\n- Still not checked against a real sensitive tweet (none found logged out), and the logged-out page made no `JSON.parse` calls of its own while scrolling.\n- Kept `needs-cloneinto`: the script still calls `exportFunction` unchecked and passes only because of the stand-in."
       }
     ]
   },
@@ -57851,7 +58029,7 @@
     "test": {
       "status": "fail",
       "blame": "script",
-      "date": "2026-10-03",
+      "date": "2026-10-11",
       "version": "0.8.0-bata.17"
     },
     "tags": [
@@ -57863,6 +58041,11 @@
         "date": "2026-10-03",
         "version": "0.8.0-bata.17",
         "text": "Temp browser, logged out.\n\n- SourceMonkey: on `https://www.pixiv.net/en/artworks/150323557` it threw at startup: `'get' on proxy: property 'getValue' is a read-only and non-configurable data property on the proxy target but the proxy did not return its actual value`. The script wraps `GM` in a `Proxy` whose `get` returns `v.bind(target)`; with SourceMonkey's frozen `GM` that breaks the Proxy invariant, so every `GMP.*` call throws. Violentmonkey and Tampermonkey don't freeze `GM`.\n- A copy proxying `{ ...GM }` instead started cleanly.\n- Pixiv: with the copy, no translate button appeared. The artwork image's parent is now a plain `div` with no `href`, and the image has no `srcset`, so its image finder (`gtm-expand-full-size-illust`, `sc-1pkrz0g-1`) matches nothing. Its Twitter support only matches `twitter.com`.\n- Misskey (`misskey.io/@misskey_io`, image viewer at `#pswp`): the copy's translate button appeared and fetched the image (200), but `POST https://api.cotrans.touhou.ai/task/upload/v1` returned 500. The same upload from curl returns \"Internal Server Error\" 500 for every translator choice, so the translation service is down."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "0.8.0-bata.17",
+        "text": "Re-tested after f3d2c5c (`GM` not frozen): the Proxy invariant error is gone, but it still fails for the earlier second reason (service down).\n- SourceMonkey: the unchanged copy started cleanly on `https://misskey.io/@misskey_io`. Keeping `gm-frozen`: its `GM` Proxy still relies on it.\n- Opening an image (`#pswp` viewer) showed its translate button; clicking it fetched the image (200), then `POST https://api.cotrans.touhou.ai/task/upload/v1` returned 500 and the script threw parsing \"Internal Server Error\" as JSON."
       }
     ]
   },
@@ -58172,9 +58355,8 @@
       "version": "2.4"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-04",
+      "status": "pass",
+      "date": "2026-10-11",
       "version": "2.4"
     },
     "tags": [
@@ -58185,6 +58367,11 @@
         "date": "2026-10-04",
         "version": "2.4",
         "text": "On `www.pinterest.com/` the script throws at startup, `Assignment to constant variable.` at line 20 (`GM_addStyle = GM.addStyle;`, its Greasemonkey 4 wrapper, taken because SourceMonkey provides `GM.addStyle`), so it neither redirects nor adds its CSS.\n- SourceMonkey: granted `GM_*` names are declared `const`; Tampermonkey and Violentmonkey let a script reassign them.\n- A copy with that line as `var GM_addStyle = GM.addStyle;` works: `/` redirects to `/search/pins/?q=pin&rs=typed`, its style is added, and the logged-out \"Welcome to Pinterest\" login modal that a `--noscript` tab shows over the grid (after scrolling 1815px) is hidden, with the page still scrollable. The small \"You are signed out\" corner card still shows in both."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "2.4",
+        "text": "Re-tested after c2dbb1f (granted `GM_*` names reassignable): now passes, unmodified copy.\n- On `www.pinterest.com/` (headless) the shim at line 20 (`GM_addStyle = GM.addStyle;`) ran without error; `/` redirected to `/search/pins/?q=pin&rs=typed` and the script's style was added.\n- After scrolling (scrollY 1687), a `--noscript` tab showed the visible \"Welcome to Pinterest\" login modal with body `overflow-y: hidden`; the script's tab showed none, with body `overflow-y: auto`.\n- Kept `gm-reassign`: the script reassigns `GM_addStyle` and passes because of the fix."
       }
     ]
   },
@@ -63368,9 +63555,8 @@
       "version": "14.2"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "14.2"
     },
     "tags": [
@@ -63382,6 +63568,11 @@
         "date": "2026-10-11",
         "version": "14.2",
         "text": "GeoGuessr shows \"Sign up to play\" logged out, so no round could be played. The script installed and started on www.geoguessr.com with no errors.\n- Script: it finds the location by patching `XMLHttpRequest.prototype.open` (no `unsafeWindow`) to read Google Maps `GetMetadata` / `SingleImageSearch` responses. It grants `GM_webRequest` (ignored, never used), so it is not `@grant none`.\n- SourceMonkey: it runs in the isolated world, so the patch lands on that world's `XMLHttpRequest`. After start, `eval --page XMLHttpRequest.prototype.open` was still native; inside the script it was the patched function. The page's Maps requests can't reach the hook, so it would never see coordinates.\n- Tampermonkey (`--manager tm`, same page): `eval --page XMLHttpRequest.prototype.open` showed the script's patched function, so the hook works there.\n- Blame inferred from the hook landing in the wrong world; the full place-a-guess flow wasn't observed (login wall)."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "14.2",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes as far as it can be checked logged out; GeoGuessr still shows \"Sign up to play\", so no round was played.\n- On www.geoguessr.com, `eval --page XMLHttpRequest.prototype.open` is now the script's patched function (as under Tampermonkey before), so the page's Maps `GetMetadata` requests reach the hook.\n- Its marker placement reads React's `__reactFiber$` expandos on elements; from the script, 429 elements had them on the home page.\n- Kept `patches-page-builtins` and `needs-page-globals`: it relies on both, and passes only because of the change."
       }
     ]
   },
@@ -65229,13 +65420,11 @@
       "version": "1.5.0"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "1.5.0"
     },
     "tags": [
-      "needs-page-globals",
       "patches-page-builtins"
     ],
     "notes": [
@@ -65243,6 +65432,11 @@
         "date": "2026-10-11",
         "version": "1.5.0",
         "text": "Promises a wallhack (F), chat toggle (V), ad hiding, and a red screen edge at low health. The wallhack hooks `Object.prototype.material` to catch the game's three.js player materials, and the ad blocker sets `window.show_rewarded` and `show_preroll` to no-ops.\n\n- kirka.io (headless temp browser): the script started with no errors; its styles (ad-hiding rules, notification and `.bloody-screen` CSS) and the `.bloody-screen` div were added.\n- SourceMonkey: it grants `GM.info`, so it runs in the isolated world, and its `Object.prototype` setter and `window.show_*` stubs land there. In the page, `Object.prototype` had no `material` property and `window.show_rewarded` was undefined, so the game never feeds the wallhack.\n- Tampermonkey (same page): the page's `Object.prototype` had the `material` setter.\n- A copy with `@inject-into page` under SourceMonkey put both in the page (`material` setter present, `show_rewarded` is the script's `_`).\n- Not checked: whether the wallhack itself still works on the current game. It needs a live match; a private party never started, and on the menu the page-world copy's `players` list stayed empty."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "1.5.0",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on https://kirka.io/ the page's `Object.prototype` has the script's `material` getter/setter (the wallhack hook) and the `.bloody-screen` div is in.\n- `window.show_rewarded` / `show_preroll` are set only on the script's sandbox `window` (undefined in the page), the same as under Tampermonkey (`--manager tm`, same page: setter present, both undefined).\n- Kept `patches-page-builtins` (it relies on the `Object.prototype` hook reaching the page). Removed `needs-page-globals`: the script reads no page globals; its only page-window use is those writes, which stay sandboxed in Tampermonkey too.\n- The wallhack itself still needs a live match and wasn't judged."
       }
     ]
   },
@@ -65271,20 +65465,20 @@
       "version": "1.2"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-07",
+      "status": "pass",
+      "date": "2026-10-11",
       "version": "1.2"
     },
-    "tags": [
-      "gm-on-window",
-      "unsafewindow-on-window"
-    ],
     "notes": [
       {
         "date": "2026-10-07",
         "version": "1.2",
         "text": "On `https://www.xbox.com/en-US/play` (signed out) the fetch hook works, but the region menu never appears.\n- Works: a page `fetch` to www.xbox.com gets `X-Forwarded-For: 4.2.2.2` (the default United States IP).\n- SourceMonkey: the script gates its menu on `!!self.GM_registerMenuCommand && ... self.GM_getValue`, which are not `self` properties in SourceMonkey, so it logs \"your userscript extensions not support region select\" and registers no menu commands. It also logs \"use window mode\", since `self.unsafeWindow` is undefined (harmless with `@inject-into page`).\n- Tampermonkey (`--manager tm`) on the same page logs \"use unsafeWindow mode\" and no warning.\n- A copy testing `typeof GM_registerMenuCommand === \"function\"` (and the other three) registers the six region commands; choosing Japan changes the header to `122.1.0.154`.\n- The unlock itself (the `xgpuweb.gssv-play-prod.xboxlive.com` login call) only happens when signed in to a Microsoft account; not tested."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "1.2",
+        "text": "Re-tested after c2dbb1f (`this.unsafeWindow` / `self.GM_*` feature tests): now passes.\n- On `https://www.xbox.com/en-US/play` (signed out) it logs \"use unsafeWindow mode\" and registers the six region menu commands, \"✅ United States\" checked.\n- A page `fetch` to www.xbox.com gets `X-Forwarded-For: 4.2.2.2`; after choosing Japan from the menu, `122.1.0.154`, and the menu shows \"✅ Japan\".\n- The unlock itself (the signed-in `xgpuweb` login call) still not tested."
       }
     ]
   },
@@ -65746,20 +65940,21 @@
       "version": "0.2"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-07",
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-11",
       "version": "0.2"
     },
-    "tags": [
-      "gm-on-window",
-      "unsafewindow-on-window"
-    ],
     "notes": [
       {
         "date": "2026-10-07",
         "version": "0.2",
         "text": "On `https://www.xbox.com/en-US/play` (signed out) the script hooks `fetch` but registers no menu, so no server can be chosen.\n- SourceMonkey: same gate as 455261 (same author): `!!self.GM_registerMenuCommand && ... self.GM_getValue` is false in SourceMonkey, so it logs \"your userscript extensions not support region select\" and `menu` shows none. Under Tampermonkey that check passes (see 455261), and a copy using `typeof GM_x === \"function\"` registers its menu there.\n- The server list itself comes from the `/v2/login/user` response, which only arrives when signed in to a Microsoft account; signed out only the \"Auto\" item would show. Not tested signed in."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "0.2",
+        "text": "Re-tested after c2dbb1f (`self.GM_*` feature tests): the SourceMonkey gap is gone, but the feature needs a login.\n- On `https://www.xbox.com/en-US/play` (signed out) it logs \"use unsafeWindow mode\", hooks the page `fetch`, and registers \"✅ Auto (Unknown)\", storing `XCLOUD_SERVER_LIST = []`.\n- The server list comes from the signed-in `/v2/login/user` response, so no server can be chosen without a Microsoft account."
       }
     ]
   },
@@ -66141,19 +66336,21 @@
       "version": "0.8.0"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-06",
+      "status": "n/a",
+      "reason": "requires-login",
+      "date": "2026-10-11",
       "version": "0.8.0"
     },
-    "tags": [
-      "gm-on-window"
-    ],
     "notes": [
       {
         "date": "2026-10-06",
         "version": "0.8.0",
         "text": "On https://www.bing.com/search?q=hello+world the script threw `GM_getValue is not a function` (line 516, `getPosition`) at startup, and no `.chat-gpt-container` sidebar appeared.\n\n- SourceMonkey: the script is built with vite-plugin-monkey, which reads every grant off the sandbox window (`var monkeyWindow = window; ... monkeyWindow.GM_getValue`). SourceMonkey's GM_* functions are wrapper locals, not `window` properties; Violentmonkey's sandbox `window` exposes them (see 489508).\n- A copy that points `monkeyWindow` at an object of the granted functions works up to the account step: menu command \"Container Position - Side(1)/Top(0): 1\", a GET to `chat.openai.com/api/auth/session` (redirects to chatgpt.com; it asked to connect to `chatgpt.com`), then the sidebar shows \"Please login at chat.openai.com\".\n- Script: the answer itself needs a ChatGPT login, and it posts to the 2022 `backend-api/conversation` endpoint with model `text-davinci-002-render`, so it would likely fail even signed in. Not tested."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "0.8.0",
+        "text": "Re-tested after c2dbb1f (granted `GM_*` on the sandbox `window`): the SourceMonkey gap is gone; the answer needs a ChatGPT login.\n- On `https://www.bing.com/search?q=hello+world` it starts with no error, registers \"Container Position - Side(1)/Top(0): 1\", and asks to connect to `chatgpt.com` (allowed).\n- The `.chat-gpt-container` sidebar shows \"Please login at chat.openai.com\" (`getAnswer error: UNAUTHORIZED`). Not tested signed in; the 2022 endpoint would likely fail anyway."
       }
     ]
   },
@@ -69316,9 +69513,8 @@
       "version": "1.87.1"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-09-29",
+      "status": "pass",
+      "date": "2026-10-11",
       "version": "1.87.1"
     },
     "tags": [
@@ -69329,6 +69525,11 @@
         "date": "2026-09-29",
         "version": "1.87.1",
         "text": "Tested on https://codeforces.com/problemset/problem/4/A in the shared visible browser (Cloudflare blocks headless). Same pattern as AtCoder Better (471106), by the same author.\n- SourceMonkey: the script has `GM_*` grants and no `unsafeWindow`, so it runs in the isolated world, where it loops forever on \"JQuery is not loaded. Retry after N ms\" (backing off to 2000 ms): it waits for Codeforces' own page `jQuery`. Nothing is added to the page. Tampermonkey exposes page globals to such scripts.\n- Script: a copy with `// @inject-into page` works: the 1.87.1 update dialog, \"Codeforces Better! 设置\" (settings) button, Translate / MarkDown / Copy buttons on each statement section, and VJudge and Luogu links fetched with `GM_xmlhttpRequest` (all 200)."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "1.87.1",
+        "text": "Re-tested after aab036d (granted scripts run in the page world by default): now passes. On `codeforces.com/problemset/problem/4/A` (headed temp browser; Cloudflare blocks headless) there is no \"JQuery is not loaded\" loop: the \"Codeforces Better! 设置\" (settings) button, the update / success alerts, Translate / Markdown / copy buttons on each statement section, and VJudge and Luogu links (both `GM_xmlhttpRequest` 200) all appear. The script still relies on page globals and passes only because of the fix, so `needs-page-globals` stays."
       }
     ]
   },
@@ -70652,9 +70853,8 @@
       "version": "1.25.1"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-09-29",
+      "status": "pass",
+      "date": "2026-10-11",
       "version": "1.25.1"
     },
     "tags": [
@@ -70665,6 +70865,11 @@
         "date": "2026-09-29",
         "version": "1.25.1",
         "text": "On `atcoder.jp/contests/abc300/tasks/abc300_a` the script starts in SourceMonkey's isolated world (it has `GM_*` grants and never names `unsafeWindow`), then loops forever on `JQuery is not loaded. Retry after N ms`: it waits for a bare `jQuery` global, which is AtCoder's own copy on the page. Tampermonkey runs such scripts in the page context, where page globals are visible, and the script is written for Tampermonkey.\n\nWith `// @inject-into page` added to a copy it works: the 1.25.1 update dialog, Markdown / copy / translate buttons on each statement section, VJudge and Luogu links (fetched through `GM_xmlhttpRequest`), and the settings entry in the nav bar. One remaining error there, `Failed to load Monaco Editor: TypeError: Failed to fetch`, is the page-world `fetch` of `mirrors.sustech.edu.cn`, not a SourceMonkey API.\n\nSo this is a compatibility gap: granted scripts that read page globals without `unsafeWindow`."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "1.25.1",
+        "text": "Re-tested after aab036d (granted scripts run in the page world by default): now passes. On `atcoder.jp/contests/abc300/tasks/abc300_a` (headless temp browser) there is no \"JQuery is not loaded\" loop: the settings entry in the nav bar, the success alert, Markdown / copy / translate buttons on each statement section, and VJudge and Luogu links (both `GM_xmlhttpRequest` 200) all appear. The script still relies on page globals and passes only because of the fix, so `needs-page-globals` stays."
       }
     ]
   },
@@ -70985,8 +71190,8 @@
     },
     "test": {
       "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-10",
+      "blame": "script",
+      "date": "2026-10-12",
       "version": "3.0.7"
     },
     "tags": [
@@ -70997,6 +71202,11 @@
         "date": "2026-10-10",
         "version": "3.0.7",
         "text": "Opened https://bumble.com/app in a temp browser: Bumble redirects to https://bumble.com/web-not-available/ (\"Bumble is now app-only\"), so the web app the script enhances is gone, and the rest would need an account.\n- SourceMonkey: the script started, registered its \"Config\" and \"Last Seen Table\" menu commands, then threw `exportFunction is not defined` (line 270) where it wraps `XMLHttpRequest.prototype.send` on `unsafeWindow`. It threw the same in the `consent.bumble.com` iframe.\n- Script: it calls Firefox's `exportFunction` without checking. Known gap, see the `needs-cloneinto` item in TODO.md (Violentmonkey provides pass-through stand-ins on Chrome).\n- A copy with `const exportFunction = (fn) => fn;` added ran to its own \"bumble-enhanced loaded\" line with no errors."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "3.0.7",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): the SourceMonkey failure is gone, but it still fails (script).\n\n- https://bumble.com/app still redirects to https://bumble.com/web-not-available/ (\"Bumble is now app-only\"), logged out, headless.\n- SourceMonkey: the unmodified copy ran to its \"bumble-enhanced loaded\" line in the page and the `consent.bumble.com` iframe with no `exportFunction` error. The page's `XMLHttpRequest.prototype.send` is now the script's wrapper (and `sendEx` is set), through the `exportFunction` stand-in (f3d2c5c).\n- Script: about 5 seconds later its timer threw `Failed to fetch` (line 1504) on its `fetch` of `bumble.com/mwebapi.phtml?SERVER_GET_USER_LIST`. The web app it enhances is gone, so it has nothing to do in any manager.\n- Kept `needs-cloneinto`: it still calls `exportFunction` unchecked and gets past it only because of the stand-in."
       }
     ]
   },
@@ -71699,9 +71909,8 @@
       "version": "2.1"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-10",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "2.1"
     },
     "tags": [
@@ -71712,6 +71921,11 @@
         "date": "2026-10-10",
         "version": "2.1",
         "text": "On https://moomoo.io/ (main menu) the script's style (`animation: none`, `transition: none`) went in and 48 of 50 images got `loading=lazy`, but it broke the page:\n- SourceMonkey: the script grants `unsafeWindow`, so it runs in the page world, and its closing `window.requestAnimationFrame = () => {}`, `window.setTimeout = fn => fn()` and `window.setInterval = fn => fn()` replace the page's own. The game's code then recursed through the fake `setInterval` (\"Maximum call stack size exceeded\", thrown from moomoo's `index-*.js`), and the page never finished loading within 60 s.\n- Under Tampermonkey 5.5.1 (`--manager tm`) on the same page, the style and lazy images are the same, but the page's `requestAnimationFrame` and `setTimeout` stay native and the page loads normally.\n- A copy with `@inject-into content` added behaves as under Tampermonkey in SourceMonkey (style in, 48 lazy images, page timers native, no error).\n- Known design: `unsafeWindow` forces the page world (docs/injection.md, \"unsafeWindow forces MAIN world\")."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "2.1",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on https://moomoo.io/ the style (`animation: none`) went in, 48 of 50 images got `loading=lazy`, and the page loaded normally (`complete`, 3 canvases, no \"Maximum call stack size exceeded\").\n- The closing `window.requestAnimationFrame` / `setTimeout` / `setInterval` assignments stay on the sandbox: the page's three stayed native, while the script's `window.setTimeout(() => 42)` returned 42. Same as Tampermonkey in the earlier note.\n- Kept `window-writes-reach-page`: the script passes only because those writes no longer reach the page."
       }
     ]
   },
@@ -72671,9 +72885,8 @@
       "version": "1.5.0"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-10",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "1.5.0"
     },
     "tags": [
@@ -72684,6 +72897,11 @@
         "date": "2026-10-10",
         "version": "1.5.0",
         "text": "Promises a speed hack by replacing `performance.now` with `() => Date.now() * 5`.\n- SourceMonkey: on https://kirka.io/ the script started with no errors, but it grants `GM.info`, so it runs in the isolated world. Its `performance.now` there read 8958508652590 while the page's stayed native (5173, `function now() { [native code] }`), so the game never sees the change.\n- Tampermonkey (`--manager tm`, same file): the page's `performance.now` was the script's `() => Date.now() * 5` and read 8958508706780.\n- A copy with `@inject-into page` added gave the same page-side result in SourceMonkey.\n- The speed effect itself needs a live match and wasn't judged."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "1.5.0",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on https://kirka.io/ the page's `performance.now` is the script's `() => Date.now() * 5` (read 8959093093415), the same function the script sees, as under Tampermonkey. Kept `patches-page-builtins`: the script relies on its patch reaching the page. The speed effect itself needs a live match and wasn't judged."
       }
     ]
   },
@@ -75098,9 +75316,8 @@
       "version": "5.0.8"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-02",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "5.0.8"
     },
     "tags": [
@@ -75111,6 +75328,11 @@
         "date": "2026-10-02",
         "version": "5.0.8",
         "text": "Tested in sm-dev in the shared visible browser (Reddit blocks headless), signed out, on r/MorbidReality, an NSFW subreddit.\n\n- Script: it patches Reddit's custom elements (`shreddit-blurred-container` and others) through `customElements.whenDefined`. It grants `GM_*`, so SourceMonkey runs it in the isolated USER_SCRIPT world, where `customElements` is `null`; every `waitDefined` call threw `Cannot read properties of null (reading 'whenDefined')`. Its `over18` cookie and CSS still applied, so the age interstitial went away after a reload, but all 3 posts stayed blurred (`blurred: true`) and the \"Unblur\" header button never appeared.\n- A copy with `@inject-into page` (MAIN world, the page's own registry, as Tampermonkey and Violentmonkey run it) ran with no errors: all 3 posts had `blurred: false` and the \"Unblur\" button was in the header.\n- The `over18` cookie the script set was removed afterwards."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "5.0.8",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on r/MorbidReality, signed out, in a headed temp browser (the first attempt got Reddit's reCAPTCHA page; a second fresh browser got through).\n\n- SourceMonkey: the unmodified copy ran with no errors. `customElements` is the page's registry now, so its `waitDefined` hooks applied: after a reload all 3 `shreddit-blurred-container`s had `blurred: false`, and the \"Unblur\" button was in the header.\n- Both managers now show a \"Mature Content\" dialog (\"Yes, I'm Over 18\" or \"Log In\") over the page. Its `configured-xpromo-modal` context is `bypassable_xpromo_nsfw_bypassable_desktop`, which isn't in the script's block list, so the script lets it through. Tampermonkey (`--manager tm`) gave the same: posts unblurred, the button there, the same dialog shown. Version 5.0.9 is out and may handle it.\n- Kept `needs-page-globals`: the script still uses the page's `customElements` without `unsafeWindow`, and passes only because scripts now run in the page world."
       }
     ]
   },
@@ -75912,7 +76134,7 @@
     "test": {
       "status": "fail",
       "blame": "script",
-      "date": "2026-10-04",
+      "date": "2026-10-11",
       "version": "2.1.4"
     },
     "tags": [
@@ -75923,6 +76145,11 @@
         "date": "2026-10-04",
         "version": "2.1.4",
         "text": "On neal.fun/infinite-craft/ (`--headed`) it fetches its gorilla.json version file (200), then throws `exportFunction is not defined` in its `init$6` (line 823), so none of its features set up.\n- Script: it calls Firefox's `cloneInto` and `exportFunction` unchecked (it's written for Violentmonkey: `@inject-into page`, `@sandbox raw`).\n- A copy with identity stubs for both got past that and then threw `MutationObserver.observe: parameter 1 is not of type 'Node'`: the site no longer has `.instances` (or `.reset`), and the Vue component it reaches as `$nuxt.$root.$children[1].$children[0].$children[0]` has no `getCraftResponse`. So it's out of date against the current site in any manager."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "2.1.4",
+        "text": "Re-tested after f3d2c5c (`cloneInto`/`exportFunction` stand-ins): the unchanged copy now gets past `exportFunction` on neal.fun/infinite-craft/ (headless worked this time) and fetches gorilla.json (200), then still throws `Failed to execute 'observe' on 'MutationObserver': parameter 1 is not of type 'Node'` in `init$6` (line 894), as the stubbed copy did: out of date against the current site. Keeping `needs-cloneinto`: it still relies on the stand-ins."
       }
     ]
   },
@@ -76175,19 +76402,20 @@
       "version": "2.24.2"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-09-29",
+      "status": "pass",
+      "date": "2026-10-11",
       "version": "2.24.2"
     },
-    "tags": [
-      "gm-on-window"
-    ],
     "notes": [
       {
         "date": "2026-09-29",
         "version": "2.24.2",
         "text": "Tested with sm-dev (headless temp browser) on a 4chan /g/ thread.\n- Most features work: `fourchan-xt` classes, header bar, thread updater, first-run settings dialog, 57 backlinks, and a quote preview (`#qp`) on hovering a reply's quotelink.\n- Script: picks its platform with `const platform = window.GM_xmlhttpRequest ? 'userscript' : 'crx'`. Under SourceMonkey `window.GM_xmlhttpRequest` is undefined, so it takes the browser-extension path, and every `$.global(...)` call (its page-context helpers) throws `chrome is not defined`: 5 errors at startup (exposeVersion, initMain, disableNativeExtension, disable4chanIdHl, fourChanPrettyPrintListener).\n- Visible effect: 4chan's own native extension is not disabled, so its 15 `div.backlink#bl_*` blocks show alongside 4chan XT's backlinks, and hovering one throws `Cannot read properties of undefined (reading 'match')` in XT's quote-preview handler.\n- SourceMonkey: GM_* functions are locals of the script wrapper, not properties of `window`. Violentmonkey's sandbox `window` is a Proxy over its GM API object (`makeGlobalWrapper(gm)` in `src/injected/web/gm-global-wrapper.js`), so `window.GM_xmlhttpRequest` is defined there. (SourceMonkey also runs this script in MAIN world because it names `unsafeWindow` without granting it; that alone doesn't cause the failure.)\n- Not confirmed in the real extension or in Tampermonkey."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "2.24.2",
+        "text": "Re-tested after c2dbb1f (granted `GM_*` on the sandbox `window`): now passes, on a /g/ thread (296 replies).\n- `platform` is now `userscript` (it was `crx`); no `chrome is not defined` errors, no errors at all.\n- It sets `4chan-settings` `disableAll: true`; after a reload `window.Config.disableAll` is true and 0 native `div.backlink#bl_*` remain (188 on the first visit, before the setting took effect, as expected in any manager).\n- `fourchan-xt` classes, 252 XT backlinks, and hovering a reply's quotelink shows `#qp` with the quoted post."
       }
     ]
   },
@@ -77104,9 +77332,8 @@
       "version": "2.2.0"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "2.2.0"
     },
     "tags": [
@@ -77117,6 +77344,11 @@
         "date": "2026-10-11",
         "version": "2.2.0",
         "text": "On https://evoworld.io/ (main menu) the script loads its menu HTML from raw.githubusercontent.com with `GM_xmlhttpRequest` (no `@connect` lines, so SourceMonkey asked about raw.githubusercontent.com; allowed). After its two confirm/alert dialogs the menu loaded (58 buttons) and `Tab` toggled it (opacity 0 to 1).\n\n- SourceMonkey: the hacks read the page's own globals (`game`, `Engine`, `joinedGame`, `leaderboard`, `sendChat`) without `unsafeWindow`, and with `@grant GM_xmlhttpRequest` the script runs in the isolated world. Clicking \"Smooth Movement\" threw `game is not defined`, and the page's `game.maxInterpolateDistanceTeleport` stayed 300.\n- Under Tampermonkey (sm-dev `--manager tm`, a copy with only `@connect raw.githubusercontent.com` added, since its prompt was auto-refused) the same click set it to 3500.\n- A SourceMonkey copy with `const game = unsafeWindow.game;` at the top of `main()` also set it to 3500.\n- Site: evoworld's consent dialog swallows all clicks on the page (even on elements it didn't add) until it is answered; answer it (CONFIRM, OK) before clicking the menu.\n- In-game hacks (level, hp, zoom, noclip) not checked in a live game."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "2.2.0",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on https://evoworld.io/ (main menu), after allowing raw.githubusercontent.com, its dialogs and evoworld's consent dialog, `Tab` opened the menu (opacity 1) and clicking \"Smooth Movement\" set the page's `game.maxInterpolateDistanceTeleport` from 300 to 3500, with no errors. In the script, bare `game` is the page's object (`game === unsafeWindow.game`).\n- Kept `needs-page-globals`: it reads `game` and other page globals by bare name, and passes only because they're now visible.\n- In-game hacks still not checked in a live game."
       }
     ]
   },
@@ -80427,9 +80659,8 @@
       "version": "47.0"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "47.0"
     },
     "tags": [
@@ -80440,6 +80671,11 @@
         "date": "2026-10-11",
         "version": "47.0",
         "text": "Logged out, on a game page (`/games/920587237/Adopt-Me`):\n\n- Script: started, showed its \"Rolocate Update V47.0\" dialog and the SmartSearch navbar box; typing \"adopt me\" there fetched `apis.roblox.com/search-api/omni-search` and game icons through `GM_xmlhttpRequest` (all 200).\n- SourceMonkey: after the dialog's refresh, the game page's setup threw `Roblox is not defined` (line 14834, `InitRobloxLaunchHandler`). The script grants `GM_*`, so it runs in the isolated world, and reads the page's `Roblox.GameLauncher` without `unsafeWindow`. The throw aborts the games-page block (join interceptor, filter, server hop and recent server buttons).\n- A copy with `@inject-into page` under SourceMonkey didn't throw and wrapped `Roblox.GameLauncher.joinGameInstance` (`_robloxJoinInterceptorInitialized` true).\n- The server filter buttons themselves need the logged-in server list (the logged-out Servers tab shows \"There are currently no running games.\" in both copies), so they couldn't be checked further."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "47.0",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; logged out, headless, on `/games/920587237/Adopt-Me`.\n\n- SourceMonkey: the unmodified copy showed its \"Rolocate Update\" dialog and the SmartSearch navbar box. After the dialog's \"Exit (Refresh)\", the games-page setup ran with no `Roblox is not defined` error: the page's `Roblox.GameLauncher.joinGameInstance` is now the script's async wrapper, and its `_robloxJoinInterceptorInitialized` is true.\n- The server filter buttons still can't be checked logged out: the Servers tab shows \"There are currently no running games.\", as before.\n- Kept `needs-page-globals`: the script still reads the page's `Roblox` without `unsafeWindow`, and passes only because scripts now run in the page world."
       }
     ]
   },
@@ -83082,13 +83318,11 @@
       "version": "1.1"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "1.1"
     },
     "tags": [
-      "needs-page-globals",
       "patches-page-builtins"
     ],
     "notes": [
@@ -83096,6 +83330,11 @@
         "date": "2026-10-11",
         "version": "1.1",
         "text": "GeoGuessr shows \"Sign up to play\" logged out, so no round could be played. The script installed and started on www.geoguessr.com with no errors.\n- Script: same hook as 450253 (same author): patches `XMLHttpRequest.prototype.open` without `unsafeWindow` to read Google Maps metadata responses, then POSTs the coordinates to georesolver.0x978.com for viewing on another device. On first run it stored a `sessionId` and opened `https://georesolver.0x978.com/?id=...` in a new tab (\"GeoGuessr Live Viewer\"), and it pings geoguessrping.0x978.com with its version.\n- SourceMonkey: it runs in the isolated world (it grants `GM_getValue`/`GM_setValue`), so the page's `XMLHttpRequest.prototype.open` stayed native after start while the script's world had the patched one. The page's Maps requests never reach the hook.\n- Tampermonkey patches the page's `XMLHttpRequest` for the same code (checked with 450253 under `--manager tm`).\n- Blame inferred; the send-to-viewer flow wasn't observed (login wall)."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "1.1",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes as far as it can be checked logged out; GeoGuessr still shows \"Sign up to play\", so no round was played.\n- On www.geoguessr.com, `eval --page XMLHttpRequest.prototype.open` is now the script's patched function, so the page's Maps requests reach the hook. It started with no errors, stored its `sessionId` and opened the georesolver.0x978.com viewer tab as before.\n- Kept `patches-page-builtins`. Removed `needs-page-globals`: it reads no page globals (its fetches go through a blank iframe's `fetch`)."
       }
     ]
   },
@@ -83689,9 +83928,8 @@
       "version": "9.3.11"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-12",
       "version": "9.3.11"
     },
     "tags": [
@@ -83702,6 +83940,11 @@
         "date": "2026-10-11",
         "version": "9.3.11",
         "text": "Promises a Stockfish panel that shows (and by default plays) the best move. Tested logged out on `/analysis` and on a guest game against a bot (`/play/computer`), with no other players involved.\n\n- Script: started with no errors and drew its \"SF ENGINE\" panel, but stayed at \"Waiting for analysis...\" and sent no engine requests.\n- SourceMonkey: it grants `GM_*`, so it runs in the isolated world. It reads the board through the element's `game` property (`board.game.getFEN()`, `getTurn()`, `getPlayingAs()`), an expando the page's code sets. From the script's world `board.game` is `undefined`; `eval --page` gives the game object.\n- A copy with `@inject-into page` under SourceMonkey worked on the bot game: it posted to `chess-api.com/v1` (200), showed \"+0.41 Slight Advantage\" and \"Best: c2c4\", and auto-played moves (FEN after a few moves: `rnbqk2r/ppp1bppp/4pn2/8/Q1pP4/5NP1/PP2PPBP/RNB1K2R b`).\n- On `/analysis` `getPlayingAs()` is null, so it never analyzes there in any world.\n- Tampermonkey not checked here; it runs scripts in the page's world by default."
+      },
+      {
+        "date": "2026-10-12",
+        "version": "9.3.11",
+        "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on `/play/computer` as a guest (no account), unmodified, the script read the board through `board.game`, posted to `chess-api.com/v1` (200, many times) and auto-played a whole game against the 250 bot behind the \"Play the bots\" modal, ending in checkmate (\"You Beat Martinfoot\"). Its panel showed \"Best: d1d8\"; final FEN `1n1R1kB1/2N1b1p1/p7/4p2p/1B6/1N5P/PPP2PP1/2K4R b`.\n- Kept `needs-page-globals`: it relies on the page-set `game` expando on the board element, visible now that it runs in the page."
       }
     ]
   },
@@ -83926,9 +84169,8 @@
       "version": "5.1.0"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-02",
+      "status": "pass",
+      "date": "2026-10-11",
       "version": "5.1.0"
     },
     "tags": [
@@ -83939,6 +84181,11 @@
         "date": "2026-10-02",
         "version": "5.1.0",
         "text": "- Page: https://www.youtube.com/watch?v=aqz-KE-bpKQ (qualities up to hd2160), headless temp browser (sm-dev), with the ad, SponsorBlock and quality switches seeded on.\n- Works: the settings panel is built, and SponsorBlock fetches segments (`GM_xmlhttpRequest` to sponsor.ajay.app, 200) and caches them. With a seeded segment at 14-22 s, playback jumped from about 12 s to 22.4 s, the skip counter went to 1 and a \"SB: [sponsor]\" toast showed.\n- SourceMonkey: \"Force 4K\" does nothing. The script grants `GM_*` APIs, so it runs in the isolated world, where `#movie_player.getAvailableQualityLevels` is `undefined`; the player stayed at `large`. Its document-start `Object.prototype.adPlacements` and `ytInitialPlayerResponse` traps are also set in the isolated world, so the page never sees them. Tampermonkey runs such scripts in the page context by default.\n- Script: a copy with `// @inject-into page` switched the player to `hd2160` with a \"Quality: 4K 2160p\" toast."
+      },
+      {
+        "date": "2026-10-11",
+        "version": "5.1.0",
+        "text": "Re-tested after aab036d (granted scripts run in the page's world by default): now passes.\n- Page: https://www.youtube.com/watch?v=aqz-KE-bpKQ, headless temp browser (sm-dev), with `et4_ad`, `et4_sb` and `et4_quality` seeded on.\n- \"Force 4K\" works: the player switched to `hd2160` with a \"Quality: 4K 2160p\" toast (a fresh browser's default there is `large`).\n- Its document-start `Object.prototype.adPlacements` trap is now on the page's `Object.prototype`.\n- SponsorBlock still fetches segments (`GM_xmlhttpRequest` to sponsor.ajay.app, 200) and caches them.\n- Kept `needs-page-globals`: it still calls the player's page-side API without `unsafeWindow`, and works only because it now runs in the page's world."
       }
     ]
   },

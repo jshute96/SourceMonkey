@@ -137,6 +137,8 @@ export interface SmApi {
   // not yet on disk. A page's write reaches the worker a message later,
   // so this is what a test waits on instead of pausing.
   getGmValues(scriptId: string): Promise<Record<string, unknown>>;
+  // The channel key, for a test playing a page that has it.
+  channelKey(): Promise<string>;
   // Resolves once every value write the worker has taken is on disk.
   gmValuesSaved(): Promise<void>;
   // Write values (wire form) as another tab of the script would.

@@ -11,6 +11,7 @@ import path from 'node:path';
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
+import { bridgeSend } from '../fixtures/bridge-forge';
 import { activeTabId, allScripts, waitForTabState } from '../fixtures/sw-api';
 
 test.describe('injection', () => {
@@ -430,15 +431,12 @@ test.describe('injection', () => {
     const tabId = await activeTabId(getServiceWorker);
     await waitForTabState(sm, tabId, (s) => s.rows.includes('Main | OK'), 'Main OK');
     // The report a wrapper sends with no decision, over the page bridge
-    // as a page-world one does. Chrome's own messages end in a period.
-    await page.evaluate((scriptId) => {
-      document.dispatchEvent(new CustomEvent('sourcemonkey-bridge-sync', {
-        detail: JSON.stringify({ payload: {
-          type: 'sm:abandoned', id: scriptId, name: 'Main', reason: 'no-decision',
-          detail: 'Asking SourceMonkey whether to run it failed: Receiving end does not exist.',
-        } }),
-      }));
-    }, id);
+    // as a page-world one does (with the channel key it has). Chrome's
+    // own messages end in a period.
+    await bridgeSend(page, await sm.channelKey(), {
+      type: 'sm:abandoned', id, name: 'Main', reason: 'no-decision',
+      detail: 'Asking SourceMonkey whether to run it failed: Receiving end does not exist.',
+    });
     await waitForTabState(sm, tabId, (s) => s.rows.includes('Main | ERROR'), 'Main ERROR');
     const entry = (await sm.getScriptLog(id)).find((e) => e.message.startsWith('Did not run on this page.'));
     expect(entry).toMatchObject({
@@ -460,7 +458,7 @@ test.describe('injection', () => {
     for (const [file, page] of [['a.user.js', 'target.html'], ['b.user.js', 'other.html']]) {
       scriptsDir.write({
         relativePath: file,
-        meta: { name: file, match: [`${fixtureServer.baseUrl}/${page}`], grant: ['GM_getValue'] },
+        meta: { name: file, match: [`${fixtureServer.baseUrl}/${page}`], grant: ['GM_getValue'], injectInto: 'content' },
         body: `document.documentElement.dataset.gm = String(GM_getValue('k', 'from-runtime'));\n`,
       });
     }

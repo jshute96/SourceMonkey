@@ -36,6 +36,8 @@ test.describe('.tld hosts', () => {
         include: ['https://www.smtest-include.tld/*'],
         exclude: ['https://www.smtest-include.tld/skip*'],
         grant: [grant],
+        // The granted case runs isolated, so it asks directly.
+        ...(grant === 'none' ? {} : { injectInto: 'content' as const }),
         runAt: 'document-end',
       },
       body: `document.getElementById('target').textContent = 'injected';`,

@@ -13,8 +13,9 @@
 //
 // Each registered userscript ships with a js[] array whose entries
 // share an execution world (USER_SCRIPT or MAIN). All entries run in
-// the same realm; they communicate via globals on
-// `self.__smPrelude.*`. The layout per script:
+// the same realm; they communicate through the world's registry
+// (`reg`, which `document.__smGate` hands out for the channel key; see
+// channel.ts). The layout per script:
 //
 //   js[0]  — per-script config {code}. Tiny JSON-literal call into
 //            the prelude (queues it if the prelude hasn't run yet on
@@ -24,14 +25,15 @@
 //            Originally tried as `{file: "userscript-prelude.js"}`
 //            but `{file}` entries load asynchronously in MAIN world
 //            (likely <script src=> under the hood), so subsequent
-//            entries would see `self.__smRun` undefined. The IIFE
+//            entries would see `reg.run` undefined. The IIFE
 //            inside is idempotent — runs once per execution world,
 //            drains any queued configs on each entry so subsequent
 //            scripts in the same world also get initialized.
 //   js[2]  — the whole user program: every `@require` concatenated
 //            ahead of the script's own body, wrapped in
-//            `self.__smRun(id,function(__smE){<gm bindings>…
-//            return(()=>{<source>\n})();})` (the source in a
+//            `reg.run(id,function(__smE){<gm bindings>…
+//            const __smU=()=>{<source>\n};return …callAs(__smU);})`
+//            (the source in a
 //            nested scope; see USER_SCOPE_OPEN), so it runs only after
 //            the prelude's matcher +
 //            check-pending + @run-at gates resolve. Trailing
@@ -89,7 +91,7 @@ import {
   WRAPPER_PRELUDE,
 } from '../generated-wrappers.js';
 import { grantedSubsystems, resolveGrants } from '../gm-api-catalog.js';
-import { resolveScriptWorld, type InjectionWorld } from '../script-world.js';
+import { resolveScriptWorld, runsSandboxed, type InjectionWorld } from '../script-world.js';
 import { scanStorageRows } from './storage-scan.js';
 import { cachedRows, sharedRows } from './row-cache.js';
 import { isScratchUrl, scratchRunOf } from './directories.js';
@@ -98,10 +100,11 @@ import { canonicalMatchPatterns, hostEndsInTld, matchPatternProblem, tldCoarseGl
 import { dlog } from '../debug-log.js';
 import { startPhaseTimer, type PhaseTimer } from '../phase-timing.js';
 import {
-  emitGmBindings, GM_INFO_PASSTHROUGH_TAGS,
+  emitGmBindings, GM_INFO_PASSTHROUGH_TAGS, windowMethodBinding,
   type GmBindingEmit, type GmInfoInput, type GmInfoPassthroughTag, type UserAgentDataSnapshot,
 } from './gm-bindings.js';
 import { iconRefFromHeader } from '../script-icon.js';
+import { channelKey, loadChannelKey, onlyScript, registryExpr, withChannelKey } from './channel.js';
 import {
   buildSourceMap,
   inlineSourceMapComment,
@@ -141,14 +144,13 @@ const COLLECTION_PREFIX = 'collection:';
 export const BRIDGE_SCRIPT_ID = 'sourcemonkey-bridge';
 
 // Reserved registration id for the USER_SCRIPT-world GM_* shared
-// runtime. Registered at document_start so its `window.__SM_GM__`
-// global is in place before any userscript wrapper runs.
+// runtime. Registered at document_start so it is in the world's
+// registry before any userscript wrapper runs.
 export const GM_RUNTIME_SCRIPT_ID = 'sourcemonkey-gm-runtime';
 
 // MAIN-world flavor of the same runtime source. Needed whenever an
-// active MAIN-world script grants a runtime-backed API — which includes
-// every script that asks for `unsafeWindow`, by grant or by reference,
-// since either forces MAIN world. Its SW traffic rides
+// active MAIN-world script grants a runtime-backed API, which is most
+// granted scripts: MAIN is the default world. Its SW traffic rides
 // `wrapper-bridge.js`.
 export const GM_RUNTIME_MAIN_SCRIPT_ID = 'sourcemonkey-gm-runtime-main';
 
@@ -169,7 +171,7 @@ export const NO_PAGE_MATCH = '*://*/__sourcemonkey_no_page__/*';
 export type RegistrationSpec = chrome.userScripts.RegisteredUserScript;
 
 // The patterns one script is registered on, for the scripts whose world
-// needs the shared `__SM_GM__` runtime. The runtime's own registration
+// needs the shared GM runtime. The runtime's own registration
 // takes the union — see `buildGmRuntimeSpecs`.
 export interface GmRuntimePatterns {
   matches: string[];
@@ -183,10 +185,16 @@ export interface GmRuntimeScope {
   includeGlobs: Set<string>;
 }
 
+// The bridge's scope, and whether any MAIN-world script runs in child
+// frames (see `noMainInFrames`).
+interface BridgeScope extends GmRuntimeScope {
+  mainInFrames: boolean;
+}
+
 // What one pass of `collectActiveSpecs` produced.
 export interface ActiveSpecs {
   specs: RegistrationSpec[];
-  // The scripts that need the shared `__SM_GM__` runtime in their
+  // The scripts that need the shared GM runtime in their
   // world, and the patterns each is registered on. See
   // `collectActiveSpecs`.
   gmRuntime: Map<string, GmRuntimePatterns>;
@@ -210,23 +218,11 @@ export function normalizeDeclaredRunAt(value: string | undefined): string {
   return SUPPORTED_RUN_AT.includes(v) ? v : 'document-idle';
 }
 
-// True iff the script's `@grant` lines ask for `unsafeWindow`.
-// `unsafeWindow` is defined as "the page's real window object", which in
-// Chrome is only reachable from MAIN world — an isolated world's
-// `window` is a different realm and no synchronous bridge to the page's
-// can exist. So this grant is a world request, not just a binding
-// request. See docs/injection.md#unsafewindow-forces-main-world.
-export function grantsUnsafeWindow(header: ParsedHeader | null | undefined): boolean {
-  if (!header) return false;
-  const { granted } = resolveGrants(getValues(header, 'grant'));
-  return granted.has('unsafeWindow');
-}
-
-// True iff the script needs the shared `__SM_GM__` runtime registered in
-// its world. `GM_info` is a baked-in literal and `unsafeWindow` is a
-// plain `window` alias, so a script granting only those (or nothing at
-// all) needs no runtime — which is what keeps `window.__SM_GM__` off the
-// page in the overwhelmingly common `@grant none` MAIN-world case.
+// True iff the script needs the shared GM runtime registered in its
+// world. `GM_info` is a baked-in literal and `unsafeWindow` is a plain
+// `window` alias, so a script granting only those (or nothing at all)
+// needs no runtime — which keeps the runtime off the page in the common
+// `@grant none` MAIN-world case.
 export function needsGmRuntime(header: ParsedHeader | null | undefined): boolean {
   for (const subsystem of grantedSubsystems(header)) {
     if (subsystem !== 'info' && subsystem !== 'unsafe-window') return true;
@@ -263,7 +259,7 @@ interface ScriptCfgLiteral {
   loadedAt: number;
   runAt: string;
   needsGmValues: boolean;
-  // Grants something the shared `__SM_GM__` runtime provides
+  // Grants something the shared GM runtime (`__smReg.gm`) provides
   // (`needsGmRuntime`). A `document-start` wrapper that finds no runtime
   // yet asks the worker before running: see `canSkipDecision` in
   // userscript-prelude.js.
@@ -278,10 +274,10 @@ interface ScriptCfgLiteral {
   manualRun?: { gmValues?: Record<string, unknown>; gmSeq?: number };
 }
 
-// Build the per-script config blob. Calls
-// `self.__smPrelude.init(cfg)` directly when the prelude is already
-// loaded in this world, or queues onto `self.__smCfgQueue` so the
-// FIRST script's prelude-file load drains it.
+// Build the per-script config blob. Calls `reg.prelude.init(cfg)`
+// directly when the prelude is already loaded in this world, or queues
+// onto `reg.cfgQueue` so the FIRST script's prelude-file load drains
+// it. `reg` is the world's registry (channel.ts).
 //
 // Stays on one physical line so it doesn't perturb anything visual.
 // Trailing `//# sourceURL=` puts the blob under the script's folder
@@ -309,8 +305,8 @@ export function buildConfigBlob(cfg: ScriptCfgLiteral): string {
     wire.startupLogs = cfg.startupLogs.map((l) => ({ level: l.level, message: l.message }));
   }
   const call =
-    `(function(c){` +
-    `if(self.__smPrelude){self.__smPrelude.init(c);}else{(self.__smCfgQueue=self.__smCfgQueue||[]).push(c);}})(${jsLit(wire)});`;
+    `(function(c,r){` +
+    `if(r.prelude){r.prelude.init(c);}else{(r.cfgQueue=r.cfgQueue||[]).push(c);}})(${jsLit(wire)},${registryExpr()});`;
   return call + `\n//# sourceURL=${buildConfigSourceUrl(cfg.logLabel)}\n`;
 }
 
@@ -326,12 +322,12 @@ export function buildConfigBlob(cfg: ScriptCfgLiteral): string {
 // Why inline (instead of one shared chrome.userScripts registration):
 // per-script entries within one js[] array execute in order;
 // separate registrations DON'T. A separate-prelude design races —
-// the per-script main body's `self.__smRun(...)` call beats the
+// the per-script main body's `reg.run(...)` call beats the
 // prelude's helper installation. Inlining eliminates the race at
 // the cost of shipping ~12KB × N times in the registration
 // payload (negligible at our script counts).
 export function wrapPreludeEntry(): string {
-  return WRAPPER_PRELUDE + `\n//# sourceURL=${PRELUDE_SOURCE_URL}\n`;
+  return withChannelKey(WRAPPER_PRELUDE) + `\n//# sourceURL=${PRELUDE_SOURCE_URL}\n`;
 }
 
 // The nested scope the user program (requires + body) runs in, inside
@@ -348,6 +344,9 @@ export function wrapPreludeEntry(): string {
 //     polyfill or an own `function GM_addStyle` were duplicate-
 //     declaration SyntaxErrors, so the script never ran. All of these
 //     work under TM and VM, whose GM names live in an outer scope too.
+//
+// A sandboxed page-world script's user program runs in a `with` over its
+// sandbox `window` instead; see `SANDBOX_SCOPE_OPEN` below.
 //
 // Why an arrow FUNCTION, not a block:
 //
@@ -380,8 +379,77 @@ export function wrapPreludeEntry(): string {
 // prelude ignores it; unit tests read it). The swap eval is global
 // code, where `return` is illegal; its completion value is the arrow's
 // result anyway.
-const USER_SCOPE_OPEN = '(()=>{';
-const USER_SCOPE_CLOSE = '\n})();';
+//
+// The arrow is called through the prelude's `callAs`, which is strict.
+// V8's stack-trace API (`Error.prepareStackTrace` with
+// `CallSite.getFunction`) hands a page every sloppy-mode function on the
+// stack down to the first strict one, so page code the program calls
+// (or an error it throws) could otherwise reach the wrap function: the
+// script's entry in its `arguments`. A strict frame between stops the
+// walk there. The sandboxed form gets the same from `__smC`.
+//
+// The arrow is declared on the head's line and called on the closing
+// one, as before, so its call frame stays past the end of the script's
+// own lines, where the viewer leaves it plain (a frame on line 1 would
+// read as the script's).
+const USER_SCOPE_OPEN = 'const __smU=()=>{';
+const userScopeClose = (ret: string): string => `\n};${ret}__smReg.prelude.callAs(__smU);`;
+
+// A sandboxed script's user scope (see `runsSandboxed`): the program
+// runs inside `with (__smW)`, the scope over the prelude's sandbox
+// `window` (`__smS`), and as a function called with the sandbox as
+// `this`, as in Tampermonkey and Violentmonkey. See docs/injection.md,
+// "The sandbox window".
+//
+//   - `with` is what makes a bare `$` find the copy a `@require` put on
+//     `window` before the page's, and a bare `window` read as the
+//     sandbox. The wrap and the swap eval are sloppy code, where `with`
+//     is allowed; a `"use strict"` program inside the function is fine.
+//   - A function rather than the arrow, so top-level `this` can be the
+//     sandbox. `callAs` calls it through the prelude's captured
+//     `Reflect.apply`, out of the way of a page that patched
+//     `Function.prototype.call`.
+//   - Top-level `arguments` is then the function's own (empty) list
+//     rather than the wrap's.
+//   - The `__sm*` names live outside the `with`, and the scope never
+//     claims `__sm*` names, so they resolve to these.
+//
+// Same lines as the arrow form: the declaration and opener go on the
+// head line, the closer on the wrap's last line. Like the arrow, the
+// function is defined on the head line (inside the `with`, so the
+// scope is lexically its) and called on the closing one, so its call
+// frame is past the end of the script's own lines.
+const SANDBOX_SCOPE_OPEN = '{const __smU=function(){';
+const sandboxScopeClose = (ret: string): string => `\n};${ret}__smC(__smU,__smS)}`;
+
+// What a sandbox `window` holds of its own: the script's bindings and
+// its granted window-method replacements.
+type SandboxOwn = Pick<GmBindingEmit, 'declared' | 'windowMethods'>;
+
+// Declares the sandbox, holding the script's own bindings, ahead of
+// the `with`.
+function sandboxDeclaration(own: SandboxOwn): string {
+  // `unsafeWindow` is always on the sandbox, binding or not, as in TM
+  // and VM: a script with no `@grant` line that takes it from `window`
+  // (`const { unsafeWindow } = window`) still gets the page. This line
+  // is outside the `with`, so `window` here is the page's.
+  const exposed = own.declared.map((n) => `${n}:${n}`)
+    .concat(own.declared.includes('unsafeWindow') ? [] : ['unsafeWindow:window'])
+    .concat(own.windowMethods.map((m) => `${m}:${windowMethodBinding(m)}`))
+    .join(',');
+  return `const __smP=__smReg.prelude,__smS=__smP.sandbox({${exposed}}),__smW=__smP.scopeOf(__smS),__smC=__smP.callAs;`;
+}
+
+// The user scope's opener, after any `return`, and closer, for a script
+// that is or isn't sandboxed. `declared` is what its bindings declare.
+function userScope(own: SandboxOwn | null, withReturn: boolean): { open: string; close: string } {
+  const ret = withReturn ? 'return' : '';
+  if (!own) return { open: USER_SCOPE_OPEN, close: userScopeClose(ret ? ret + ' ' : '') };
+  return {
+    open: `${sandboxDeclaration(own)}with(__smW)${SANDBOX_SCOPE_OPEN}`,
+    close: sandboxScopeClose(ret ? ret + ' ' : ''),
+  };
+}
 
 // The eval hook key (src/eval-hook.ts) for a script in an sm-dev run's
 // test collection (`scratch:///<run>/...`): its run's. None for any
@@ -402,14 +470,14 @@ function withScriptEvalHook(program: string, mainStart: number, scriptId: string
 // Wrap the whole user program — every `@require` plus the script's own
 // body — as ONE js[] entry. Output shape:
 //
-//   self.__smRun("<id>",function(__smE){<DECL PREAMBLE><GM BINDINGS><GM PRELUDE>return(()=>{
+//   (function(__smReg){__smReg.run("<id>",function(__smE){<DECL PREAMBLE><GM BINDINGS><GM PRELUDE>const __smU=()=>{
 //   // @require <url 1>
 //   <require 1 line 1>
 //   ...
 //   ;
 //   <main body line 1>
 //   ...
-//   })();});
+//   };return __smReg.prelude.callAs(__smU);})})(<registry>);
 //   //# sourceURL=<main url>
 //   //# sourceMappingURL=data:application/json;…   (only when requires exist)
 //
@@ -437,7 +505,7 @@ function withScriptEvalHook(program: string, mainStart: number, scriptId: string
 //     require.
 //
 // The user program runs in its own nested scope (`USER_SCOPE_OPEN` /
-// `USER_SCOPE_CLOSE`), so its top-level declarations shadow ours rather
+// `userScopeClose`), so its top-level declarations shadow ours rather
 // than clashing. See the note on those constants.
 //
 // Line numbers:
@@ -461,6 +529,9 @@ export function wrapCombinedEntry(args: {
   // sm-dev's eval hook (src/eval-hook.ts), under this key. None for the
   // person's own scripts.
   evalHookKey?: string;
+  // What `gmBindings` declares for the sandbox, when the script runs
+  // sandboxed (`runsSandboxed`); absent otherwise.
+  sandboxed?: SandboxOwn;
 }): string {
   const idLit = jsLit(args.scriptId);
   const hooked = (program: string, mainStart = 0): string => withScriptEvalHook(program, mainStart, args.scriptId, args.evalHookKey);
@@ -474,10 +545,17 @@ export function wrapCombinedEntry(args: {
     `var __smName=__smE.cfg.name;` +
     `var __smId=__smE.cfg.id;` +
     `var __smLoadedAt=__smE.cfg.loadedAt;` +
-    `var __smSend=self.__smPrelude.send;`;
+    `var __smSend=__smE.send;`;
   // gmBindings and gmPrelude are already single-line strings (or
   // empty), so the head stays on one physical line.
-  const head = `self.__smRun(${idLit},function(__smE){${declPreamble}${args.gmBindings}${args.gmPrelude}return${USER_SCOPE_OPEN}`;
+  const scope = userScope(args.sandboxed ?? null, true);
+  // The registry comes in as the outer function's parameter, its
+  // expression (which holds the channel key) at the very end of the
+  // entry: so neither the wrap function's source nor any function the
+  // page could reach later holds the key. That outer function runs at
+  // document_start, before any page script.
+  const head = `(function(__smReg){__smReg.run(${idLit},function(__smE){${declPreamble}${args.gmBindings}${args.gmPrelude}${scope.open}`;
+  const tail = `${scope.close}})})(${registryExpr()});`;
 
   if ((args.script.requires ?? []).length === 0) {
     // Nothing to concatenate, so nothing shifts and no map is needed.
@@ -486,7 +564,7 @@ export function wrapCombinedEntry(args: {
     // original line N and lets the viewer pass refs through unmapped.
     // `buildSwapEvalBody` mirrors this exactly — see NO_REQUIRE_LAYOUT
     // in composed-source.ts.
-    return head + hooked(composeRequiredBody(args.script)) + `${USER_SCOPE_CLOSE}});\n//# sourceURL=${args.sourceUrl}\n`;
+    return head + hooked(composeRequiredBody(args.script)) + `${tail}\n//# sourceURL=${args.sourceUrl}\n`;
   }
 
   // Head occupies generated line 0; user source starts below it.
@@ -495,7 +573,7 @@ export function wrapCombinedEntry(args: {
     mainUrl: args.sourceUrl,
     startLine: USER_SOURCE_START_LINE,
   });
-  const code = head + '\n' + hooked(composed.text, composed.mainStart) + `${USER_SCOPE_CLOSE}});\n`;
+  const code = head + '\n' + hooked(composed.text, composed.mainStart) + `${tail}\n`;
   const map = buildSourceMap({
     file: args.sourceUrl,
     segments: composed.segments,
@@ -514,7 +592,7 @@ export function wrapCombinedEntry(args: {
 // registered separately. We tried the separate-singleton approach
 // and hit a real race: chrome.userScripts injection order isn't
 // guaranteed BETWEEN registrations, so a per-script main-body
-// entry could call `self.__smRun(...)` before its world's singleton
+// entry could call `reg.run(...)` before its world's singleton
 // prelude had defined the helper. The synchronous TypeError killed
 // the body before it ran. Within a SINGLE registration's js[],
 // entries run in order, so inlining the prelude eliminates the
@@ -573,15 +651,15 @@ function assembleEntries(parts: {
 // Trailing sentinel entry. Everything the user wrote lives in ONE
 // script now, so a syntax error anywhere in any `@require` — a
 // truncated CDN response, an HTML fragment that squeaked past the
-// content-type gate — makes the whole entry fail to parse. `__smRun`
+// content-type gate — makes the whole entry fail to parse. `reg.run`
 // is then never reached, and without this the script would simply
 // never run: no error, no log entry, no badge.
 //
 // This is a separate js[] entry, so it parses and runs even when the
 // one before it didn't; the prelude reports the failure when it sees
-// that `__smRun` never fired.
+// that `reg.run` never fired.
 export function wrapSealEntry(scriptId: string, logLabel: string): string {
-  return `self.__smSealed(${jsLit(scriptId)});\n//# sourceURL=${buildSealSourceUrl(logLabel)}\n`;
+  return `${registryExpr()}.sealed(${jsLit(scriptId)});\n//# sourceURL=${buildSealSourceUrl(logLabel)}\n`;
 }
 
 // Pure: assemble the GmInfoInput literal we'll bake into GM_info.
@@ -679,8 +757,8 @@ function readUserAgentData(): UserAgentDataSnapshot | null {
 // time (not today; the storage snapshot path runs through the
 // check-pending reply).
 //
-// World-independent. The emitted bodies delegate to
-// `window.__SM_GM__`, and the shared runtime that installs it is
+// World-independent. The emitted bodies delegate to the shared GM
+// runtime (`__smReg.gm`), which is
 // registered in BOTH worlds now (see `buildGmRuntimeSpecs`), with the
 // MAIN-world copy routing its SW traffic over `wrapper-bridge.js`. So
 // a `@grant unsafeWindow` + `@grant GM_setValue` script gets a real
@@ -689,10 +767,11 @@ export async function buildGmBindingsForScript(
   script: StoredScript,
   scriptHandlerVersion: string,
 ): Promise<GmBindingEmit> {
+  await loadChannelKey();
   // No header at all → no GM_info either (we'd have nothing to put
   // in it). Production callers never hit this because validateHeader
   // rejects headerless scripts upstream; the guard is for unit tests.
-  if (!script.header) return { js: '', prelude: '', granted: [], needsValues: false };
+  if (!script.header) return { js: '', prelude: '', granted: [], needsValues: false, declared: [], windowMethods: [] };
   const grants = getValues(script.header, 'grant');
   const resolved = resolveGrants(grants);
   // `@grant none` and no-grants both fall through to emitGmBindings
@@ -702,8 +781,7 @@ export async function buildGmBindingsForScript(
   // reflected here.
   const grantedNames = resolved.hasNone ? [] : [...resolved.granted];
   // A body that names `unsafeWindow` with no grant for it gets the
-  // binding anyway — `resolveScriptWorld` has already put the script in
-  // MAIN world for it, and without the `const` the reference is a
+  // binding anyway: without the `const` the reference is a
   // ReferenceError. TM and VM both expose the name ungranted, so this is
   // what a script written against either already expects.
   //
@@ -714,6 +792,10 @@ export async function buildGmBindingsForScript(
   // bridge gate can be asked for (`grantedSubsystems` is header-derived
   // and unchanged), so this adds no capability, only a `window` alias.
   //
+  // A sandboxed script reaches `unsafeWindow` without the binding too:
+  // the sandbox always carries it (`sandboxDeclaration`). So this
+  // matters for `@grant none` and isolated-world scripts.
+  //
   // A `@require` that declares the name itself needs no special case:
   // the user program runs in a nested scope (see wrapCombinedEntry), so
   // the library's own `const unsafeWindow = …` shadows ours.
@@ -721,7 +803,7 @@ export async function buildGmBindingsForScript(
     && !grantedNames.includes('unsafeWindow')
     ? [...grantedNames, 'unsafeWindow']
     : grantedNames;
-  return emitGmBindings(emittedNames, buildGmInfoInput(script, scriptHandlerVersion, grantedNames));
+  return emitGmBindings(emittedNames, buildGmInfoInput(script, scriptHandlerVersion, grantedNames), runsSandboxed(script));
 }
 
 // Build the body string for the reload-fast-path swap eval. Prepends
@@ -742,7 +824,7 @@ export async function buildGmBindingsForScript(
 // though the registered wrapper never asked for a snapshot.
 //
 // The composed source runs in the same nested scope as the registered
-// entry (`USER_SCOPE_OPEN` / `USER_SCOPE_CLOSE`), so a body redeclaring
+// entry (`USER_SCOPE_OPEN` / `userScopeClose`), so a body redeclaring
 // a binding name shadows it here too. It also keeps the body's
 // top-level `var`s and functions off the page's global object, which
 // a bare indirect eval would otherwise create there.
@@ -764,6 +846,7 @@ export async function buildSwapEvalBody(
   scriptHandlerVersion: string,
   logLabel: string = scriptBasename(script.relativePath),
 ): Promise<SwapEval> {
+  await loadChannelKey();
   // World-independent now: the shared runtime is registered in whichever
   // worlds need it, so a MAIN-world script gets the same bindings.
   const gmEmit = await buildGmBindingsForScript(script, scriptHandlerVersion);
@@ -772,7 +855,10 @@ export async function buildSwapEvalBody(
   // gmEmit.js is single-line and ends with a space (or is empty), so
   // it occupies generated line 0 exactly as `wrapCombinedEntry`'s wrap
   // head does.
-  const head = gmEmit.js + USER_SCOPE_OPEN;
+  const scope = userScope(runsSandboxed(script) ? gmEmit : null, false);
+  // The registry first: the bindings and the scope reach everything
+  // through it. Global code, so the key in it is in no function.
+  const head = `const __smReg=${registryExpr()}; ` + gmEmit.js + scope.open;
   // An sm-dev test collection's script keeps its eval hook when swapped.
   const hookKey = scratchEvalHookKey(script.fileUrl);
   const hooked = (program: string, mainStart = 0): string => withScriptEvalHook(program, mainStart, script.id, hookKey);
@@ -784,7 +870,7 @@ export async function buildSwapEvalBody(
     // every logged stack line for the majority of scripts, which have
     // no `@require` — and with no segments to map by, the viewer
     // could not detect it, let alone correct it.
-    return { body: head + hooked(composeRequiredBody(script)) + USER_SCOPE_CLOSE, needsValues: gmEmit.needsValues };
+    return { body: head + hooked(composeRequiredBody(script)) + scope.close, needsValues: gmEmit.needsValues };
   }
   const composed = composeSource(script, {
     requireUrls: requires.map((r) => buildRequireSourceUrl(logLabel, r.url)),
@@ -803,7 +889,7 @@ export async function buildSwapEvalBody(
     totalLines: 1 + composed.lineCount + 1,
   });
   return {
-    body: head + '\n' + hooked(composed.text, composed.mainStart) + USER_SCOPE_CLOSE + '\n' + inlineSourceMapComment(map),
+    body: head + '\n' + hooked(composed.text, composed.mainStart) + scope.close + '\n' + inlineSourceMapComment(map),
     needsValues: gmEmit.needsValues,
   };
 }
@@ -841,6 +927,7 @@ export async function buildRegistrationSpec(
   logLabel: string = scriptBasename(script.relativePath),
   options: RegistrationSpecOptions = {},
 ): Promise<RegistrationSpec | null> {
+  await loadChannelKey();
   // What Chrome gets is the canonical spelling of each `@match`, not
   // the author's: a scheme-less `*.example.com/*` or a globbed
   // `http*://example.com/*` is a pattern Chrome's parser refuses but
@@ -960,7 +1047,7 @@ export async function buildRegistrationSpec(
   const world = resolveScriptWorld(script);
   // GM_info is implicit in TM/VM — available in every world, with or
   // without an `@grant` line — and the rest of the granted surface is
-  // emitted the same way in both worlds. The shared `__SM_GM__` runtime
+  // emitted the same way in both worlds. The shared GM runtime
   // is registered in whichever worlds need it (`buildGmRuntimeSpecs`),
   // and its MAIN-world copy routes SW traffic over `wrapper-bridge.js`.
   const gmEmit = await buildGmBindingsForScript(script, scriptHandlerVersion);
@@ -998,6 +1085,7 @@ export async function buildRegistrationSpec(
     gmBindings: gmEmit.js,
     gmPrelude: gmEmit.prelude,
     evalHookKey: options.evalHookKey ?? scratchEvalHookKey(script.fileUrl),
+    ...(runsSandboxed(script) ? { sandboxed: gmEmit } : {}),
   });
 
   // Register at document_start regardless of the declared @run-at. The
@@ -1068,7 +1156,7 @@ function isRunnable(script: ScriptMeta, collections: Map<string, StoredCollectio
 // script's `#N` that depends on which rows this sync happened to read
 // would disagree with every other surface that shows the label.
 //
-// `gmRuntime` names the scripts that need the shared `__SM_GM__`
+// `gmRuntime` names the scripts that need the shared GM
 // runtime registered in their world, each carrying the patterns Chrome
 // will inject IT on. Derived from grants, not from the specs, because a
 // `RegistrationSpec` is a plain Chrome type and an extra field on it
@@ -1076,12 +1164,11 @@ function isRunnable(script: ScriptMeta, collections: Map<string, StoredCollectio
 // rather than pre-unioned per world so an incremental sync can keep the
 // answer for the rows it isn't rebuilding.
 //
-// Two things fall out of scoping the runtime this way, both mattering
-// only in MAIN world where `window.__SM_GM__` is visible to the page:
+// Two things fall out of scoping the runtime this way:
 //
 //   - A `@grant none` script never drags the runtime onto its page.
-//   - A script that does need it exposes the global on the pages IT
-//     runs on, not on every page the user visits.
+//   - A script that does need it puts the runtime on the pages IT runs
+//     on, not on every page the user visits.
 //
 // See `buildGmRuntimeSpecs`.
 export async function collectActiveSpecs(
@@ -1092,6 +1179,7 @@ export async function collectActiveSpecs(
     id: s.id, relativePath: s.relativePath,
   }))),
 ): Promise<ActiveSpecs> {
+  await loadChannelKey();
   const eligible: StoredScript[] = [];
   const promises: Array<Promise<RegistrationSpec | null>> = [];
   for (const s of scripts) {
@@ -1130,7 +1218,7 @@ export async function collectActiveSpecs(
 // Why we need this: MAIN-world wrappers can't call
 // chrome.runtime.sendMessage (chrome.runtime is undefined there), so
 // the prelude's send() falls back to dispatching a
-// "sourcemonkey-bridge-sync" DOM event. The bridge runs in USER_SCRIPT
+// "sourcemonkey-sync-<key>" DOM event. The bridge runs in USER_SCRIPT
 // world on the same page, hears the event in the same task, and
 // forwards the payload to the SW.
 //
@@ -1157,6 +1245,7 @@ export function buildBridgeSpec(activeSpecs: RegistrationSpec[]): RegistrationSp
     patterns: patternsOf(spec),
     injectsOn: injectsOnOf(spec),
     gmRuntime: null,
+    allFrames: spec.allFrames === true,
   })));
   return scope ? bridgeSpec(scope) : null;
 }
@@ -1172,10 +1261,11 @@ const HELPER_ALL_FRAMES = true;
 // incremental sync answers that from the whole registration set rather
 // than from one sync's spec list. `scope` is never empty: a MAIN-world
 // script that reached registration had at least one pattern.
-function bridgeSpec(scope: GmRuntimeScope): RegistrationSpec {
+function bridgeSpec(scope: BridgeScope): RegistrationSpec {
+  const code = scope.mainInFrames ? withChannelKey(WRAPPER_BRIDGE) : noMainInFrames(withChannelKey(WRAPPER_BRIDGE));
   const spec: RegistrationSpec = {
     id: BRIDGE_SCRIPT_ID,
-    js: [{ code: WRAPPER_BRIDGE + `\n//# sourceURL=${BRIDGE_SOURCE_URL}\n` }],
+    js: [{ code: code + `\n//# sourceURL=${BRIDGE_SOURCE_URL}\n` }],
     runAt: 'document_start',
     world: 'USER_SCRIPT',
     // In frames too, whether or not its scripts are: see `HELPER_ALL_FRAMES`.
@@ -1183,6 +1273,17 @@ function bridgeSpec(scope: GmRuntimeScope): RegistrationSpec {
   };
   applyScope(spec, scope);
   return spec;
+}
+
+// The bridge's code for a registration set whose MAIN-world scripts are
+// all `@noframes`: in a child frame it then doesn't ask the SW about a
+// sandboxed page (`sm:main-blocked`), since no MAIN-world script would
+// run there anyway, and the ask would wake the worker for each frame.
+const MAIN_IN_FRAMES = 'var SM_MAIN_IN_FRAMES = true;';
+const NO_MAIN_IN_FRAMES = 'var SM_MAIN_IN_FRAMES = false;';
+function noMainInFrames(bridgeCode: string): string {
+  if (!bridgeCode.includes(MAIN_IN_FRAMES)) throw new Error('Internal error: The bridge has no frames flag');
+  return bridgeCode.replace(MAIN_IN_FRAMES, NO_MAIN_IN_FRAMES);
 }
 
 // Put a pattern union on a spec. Chrome refuses a registration with
@@ -1196,7 +1297,7 @@ function applyScope(spec: RegistrationSpec, scope: GmRuntimeScope): void {
 }
 
 
-// Pure: build the registration specs for the shared `__SM_GM__` GM_*
+// Pure: build the registration specs for the shared GM_*
 // runtime — one per world in `scope`. See the module-level comment in
 // src/wrapper-gm-runtime.js for the runtime's design.
 //
@@ -1210,9 +1311,8 @@ function applyScope(spec: RegistrationSpec, scope: GmRuntimeScope): void {
 // namespaces ids globally, not per world.
 //
 // Patterns: the union of the owning scripts' own, NOT `<all_urls>` —
-// the runtime's cost on an unrelated page is a page-visible
-// `window.__SM_GM__` global, a fingerprint and an attack surface, so
-// it goes only where its scripts go (the bridge is scoped the same
+// the runtime's cost on an unrelated page is its load time, so it
+// goes only where its scripts go (the bridge is scoped the same
 // way; see `buildBridgeSpec`). Excludes are deliberately NOT unioned:
 // `@exclude` is per-script, and a runtime present on a page where no
 // script runs is harmless, whereas one missing from a page where a
@@ -1226,7 +1326,7 @@ export function buildGmRuntimeSpecs(
     if (!s) continue;
     const spec: RegistrationSpec = {
       id: gmRuntimeIdFor(world),
-      js: [{ code: WRAPPER_GM_RUNTIME + `\n//# sourceURL=${GM_RUNTIME_SOURCE_URL}\n` }],
+      js: [{ code: withChannelKey(WRAPPER_GM_RUNTIME) + `\n//# sourceURL=${GM_RUNTIME_SOURCE_URL}\n` }],
       runAt: 'document_start',
       world,
       allFrames: HELPER_ALL_FRAMES,
@@ -1265,26 +1365,63 @@ export interface ManualRunInjection {
 //   - The bridge, for a MAIN-world script (its reports and GM calls
 //     reach the worker through it).
 //   - The GM runtime, for a script that needs one.
+// `isolated` runs a MAIN-world script in USER_SCRIPT world instead, for
+// a page that turns off its own script (see `asIsolated`).
 // Null when the script has nothing Chrome could match on.
 export async function buildManualRunInjections(
   script: StoredScript,
   scriptHandlerVersion: string,
   logLabel: string,
   gmSnapshot: { values: Record<string, unknown>; seq: number } | undefined,
+  isolated = false,
 ): Promise<ManualRunInjection[] | null> {
-  const spec = await buildRegistrationSpec(script, scriptHandlerVersion, logLabel, {
+  const spec = await buildRegistrationSpec(isolated ? asIsolated(script) : script, scriptHandlerVersion, logLabel, {
     manualRun: gmSnapshot !== undefined ? { gmValues: gmSnapshot.values, gmSeq: gmSnapshot.seq } : {},
   });
   if (!spec) return null;
   const world = (spec.world ?? 'USER_SCRIPT') as InjectionWorld;
   const out: ManualRunInjection[] = [];
   if (world === 'MAIN') {
-    out.push({ world: 'USER_SCRIPT', js: [{ code: WRAPPER_BRIDGE + `\n//# sourceURL=${BRIDGE_SOURCE_URL}\n` }] });
+    // Relaying only this script's traffic: see `documentKey`.
+    out.push({ world: 'USER_SCRIPT', js: [{ code: onlyScript(withChannelKey(WRAPPER_BRIDGE), script.id) + `\n//# sourceURL=${BRIDGE_SOURCE_URL}\n` }] });
   }
   if (needsGmRuntime(script.header)) {
-    out.push({ world, js: [{ code: WRAPPER_GM_RUNTIME + `\n//# sourceURL=${GM_RUNTIME_SOURCE_URL}\n` }] });
+    out.push({ world, js: [{ code: withChannelKey(WRAPPER_GM_RUNTIME) + `\n//# sourceURL=${GM_RUNTIME_SOURCE_URL}\n` }] });
   }
   out.push({ world, js: spec.js.map((j) => ({ code: (j as { code: string }).code })) });
+  return out;
+}
+
+// `script` as it would be with `@inject-into content` ahead of its own
+// headers, so it builds as an isolated script would. For a page that
+// turns off script in its own world (a CSP `sandbox` without
+// `allow-scripts`), where Chrome injects nothing in MAIN.
+function asIsolated(script: StoredScript): StoredScript {
+  if (!script.header) return script;
+  return {
+    ...script,
+    header: { ...script.header, tags: [{ tag: 'inject-into', value: 'content' }, ...script.header.tags] },
+  };
+}
+
+// What to inject to run MAIN-world script `script` in USER_SCRIPT world
+// instead, on a page that turns off script in its own world
+// (`asIsolated`), with the runtime first (a no-op where present). Null
+// when the script has nothing Chrome could match on. See
+// `runBlockedMainScripts` in background.ts.
+export async function buildIsolatedFallbackInjections(
+  script: StoredScript,
+  scriptHandlerVersion: string,
+  logLabel: string,
+): Promise<ManualRunInjection[] | null> {
+  if (!script.header) return null;
+  const spec = await buildRegistrationSpec(asIsolated(script), scriptHandlerVersion, logLabel);
+  if (!spec) return null;
+  const out: ManualRunInjection[] = [];
+  if (needsGmRuntime(script.header)) {
+    out.push({ world: 'USER_SCRIPT', js: [{ code: withChannelKey(WRAPPER_GM_RUNTIME) + `\n//# sourceURL=${GM_RUNTIME_SOURCE_URL}\n` }] });
+  }
+  out.push({ world: 'USER_SCRIPT', js: spec.js.map((j) => ({ code: (j as { code: string }).code })) });
   return out;
 }
 
@@ -1299,9 +1436,25 @@ interface UserScriptsExecute {
   }): Promise<unknown>;
 }
 
-// Inject a manual run into document `documentId` (the top frame's) of
-// `tabId`. Throws what Chrome says when it can't: a page it won't
-// inject into, or one that's gone (the tab closed or navigated).
+// Whether document `documentId` of `tabId` runs script in its own
+// (MAIN) world. Chrome drops a MAIN-world injection into a page whose
+// sandbox turns that off, with no error, so this asks for a result.
+export async function pageWorldRuns(tabId: number, documentId: string): Promise<boolean> {
+  await ensureWorldConfigured();
+  const api = chrome.userScripts as unknown as UserScriptsExecute;
+  const results = await api.execute({
+    target: { tabId, documentIds: [documentId] },
+    js: [{ code: 'true' }],
+    world: 'MAIN',
+    injectImmediately: true,
+  }) as { result?: unknown }[] | undefined;
+  return results?.[0]?.result === true;
+}
+
+// Inject a manual run (or a sandboxed page's fallback) into document
+// `documentId` of `tabId`. Throws what Chrome says when it can't: a
+// page it won't inject into, or one that's gone (the tab closed or
+// navigated).
 export async function executeManualRun(
   tabId: number,
   documentId: string,
@@ -1424,9 +1577,13 @@ interface Placement {
   // registration set, not just the slice it is rebuilding.
   injectsOn: GmRuntimePatterns;
   // The same patterns when the script's world needs the shared
-  // `__SM_GM__` runtime; null when it doesn't. The runtime's scope is
+  // GM runtime; null when it doesn't. The runtime's scope is
   // the union of these. Always null for our own registrations.
   gmRuntime: GmRuntimePatterns | null;
+  // Whether Chrome injects it into child frames too (no `@noframes`).
+  // The bridge only checks for a sandboxed frame where some MAIN-world
+  // script does. Absent in a record from an older build: taken as true.
+  allFrames?: boolean;
   // A user script's registration as placed, code and settings
   // (`specHash`), so an incremental sync can leave one alone that it
   // rebuilt the same: a row change the registration doesn't show costs
@@ -1635,12 +1792,12 @@ function userPlacements(registered: Map<string, Placement>): Placement[] {
   return [...registered].filter(([id]) => isUserScriptId(id)).map(([, p]) => p);
 }
 
-// Where the shared `__SM_GM__` runtime has to be registered, given what
-// is (or is about to be) placed. A world earns an entry only from a
-// script that actually grants a runtime-backed API — which is what keeps
-// `window.__SM_GM__` off the page on the very common "MAIN world,
-// `@grant none` only" page — and the entry carries the union of those
-// scripts' own patterns, so the global goes only where they go.
+// Where the shared GM runtime has to be registered, given what is (or
+// is about to be) placed. A world earns an entry only from a script
+// that actually grants a runtime-backed API — which keeps the runtime
+// off the very common "MAIN world, `@grant none` only" page — and the
+// entry carries the union of those scripts' own patterns, so the
+// runtime goes only where they go.
 function gmRuntimeScopeOf(placements: Iterable<Placement>): Map<InjectionWorld, GmRuntimeScope> {
   const out = new Map<InjectionWorld, GmRuntimeScope>();
   for (const p of placements) {
@@ -1659,12 +1816,13 @@ function gmRuntimeScopeOf(placements: Iterable<Placement>): Map<InjectionWorld, 
 // script's patterns, or null when there is no MAIN-world script and so
 // no bridge. Every such script counts, whatever it grants — the reload
 // handshake and error reports ride the bridge too.
-function bridgeScopeOf(placements: Iterable<Placement>): GmRuntimeScope | null {
-  let scope: GmRuntimeScope | null = null;
+function bridgeScopeOf(placements: Iterable<Placement>): BridgeScope | null {
+  let scope: BridgeScope | null = null;
   for (const p of placements) {
     if (p.world !== 'MAIN') continue;
-    if (!scope) scope = { matches: new Set(), includeGlobs: new Set() };
+    if (!scope) scope = { matches: new Set(), includeGlobs: new Set(), mainInFrames: false };
     addToScope(scope, p.injectsOn);
+    if (p.allFrames !== false) scope.mainInFrames = true;
   }
   return scope;
 }
@@ -1709,6 +1867,7 @@ function placementsForSpecs(
     patterns: patternsOf(spec),
     injectsOn: injectsOnOf(spec),
     gmRuntime: gmRuntime.get(spec.id) ?? null,
+    allFrames: spec.allFrames === true,
   }));
 }
 
@@ -1730,13 +1889,17 @@ function specHash(spec: RegistrationSpec): string {
   return hash;
 }
 
-// A stable identity for one runtime registration's pattern union, so an
+// A stable identity for one of our registrations' pattern union, so an
 // incremental sync can tell whether the scope moved. Sorted because the
-// union is built from a Set, whose order follows insertion.
+// union is built from a Set, whose order follows insertion. The bridge's
+// frames flag (`noMainInFrames`) counts too, so a script gaining or
+// losing `@noframes` re-registers it.
 function gmRuntimeFingerprint(spec: RegistrationSpec): string {
+  const noFrames = spec.js?.some((js) => js.code?.includes(NO_MAIN_IN_FRAMES) ?? false) ?? false;
   return JSON.stringify([
     [...(spec.matches ?? [])].sort(),
     [...(spec.includeGlobs ?? [])].sort(),
+    ...(noFrames ? ['noMainInFrames'] : []),
   ]);
 }
 
@@ -2052,6 +2215,9 @@ function mergeScopes(a: SyncScope | undefined, b: SyncScope): SyncScope {
 
 interface SyncRecord {
   version: string;
+  // The channel key the registrations were built with (channel.ts):
+  // under another, they'd all have to be placed again.
+  channelKey?: string;
   registered: [string, Placement][];
   gmRuntimeScopes: [string, string][];
   scriptIndex: [string, { relativePath: string; collectionId: string }][];
@@ -2140,6 +2306,7 @@ async function saveRecord(): Promise<void> {
   if (!state || !recordUnsaved) return;
   const record: SyncRecord = {
     version: chrome.runtime.getManifest().version,
+    channelKey: channelKey(),
     registered: [...state.registered],
     gmRuntimeScopes: [...state.gmRuntimeScopes],
     scriptIndex: [...state.scriptIndex],
@@ -2194,7 +2361,8 @@ async function restoreRecord(): Promise<{ state: RegistrationState; scope: SyncS
   const why = !record || !Array.isArray(record.fingerprints) ? 'none saved'
     : got[SYNC_DIRTY_KEY] ? 'may be stale'
       : record.version !== chrome.runtime.getManifest().version ? 'another version'
-        : null;
+        : record.channelKey !== await loadChannelKey() ? 'another channel key'
+          : null;
   timer.mark('read');
   if (why || !record) {
     timer.note(`not taken: ${why}`);
@@ -2245,6 +2413,7 @@ async function restoreRecord(): Promise<{ state: RegistrationState; scope: SyncS
 }
 
 async function runSync(scope: SyncScope | undefined): Promise<void> {
+  await loadChannelKey();
   if (!isUserScriptsAvailable()) {
     // Nothing to register into. Not stored anywhere — the collections
     // page runs its own probe for the banner — but a sync that can't do
@@ -2564,7 +2733,7 @@ async function runIncrementalSync(
   // Our own registrations are normally not re-offered (see
   // `orderWithOwnSpecs`), but their patterns follow the scripts: adding
   // the first script on a new host moves the union, and a skipped
-  // update would leave the bridge or `window.__SM_GM__` absent on
+  // update would leave the bridge or the GM runtime absent on
   // exactly the page that just started needing it. So one whose
   // fingerprint moved counts as not-yet-placed.
   const nextScopes = ownFingerprints(ownSpecs);
@@ -2623,7 +2792,7 @@ async function runIncrementalSync(
 // Prepend our own GM-runtime / bridge specs to the user specs, when
 // they're wanted and not already in place.
 //
-// GM runtimes first (one per world) so each installs window.__SM_GM__
+// GM runtimes first (one per world) so each is in its world's registry
 // ahead of any wrapper in its world that compiles in GM_* bindings.
 // Bridge next so MAIN wrappers have a listener for their requests.
 // Then the user scripts. (Cross-registration ordering isn't guaranteed
@@ -2637,7 +2806,7 @@ async function runIncrementalSync(
 //     MAIN-world GM runtime) hold what it didn't and send it again
 //     when the bridge announces itself (`sourcemonkey-bridge-ready`).
 //   - The GM runtime: the GM_* declarations gm-bindings.ts emits are
-//     lazy, touching `window.__SM_GM__` only when called, but the eager
+//     lazy, touching `__smReg.gm` only when called, but the eager
 //     calls (`storage.init`, `urlchange.enable`) and any GM_* call in
 //     the body's first run need it in place. A `document-start` wrapper
 //     that needs it and finds none asks the SW rather than skip the
@@ -2864,6 +3033,7 @@ export async function retryRejectedRegistrations(
   scriptIds: readonly string[],
   opts: { userInitiated?: boolean } = {},
 ): Promise<void> {
+  await loadChannelKey();
   if (scriptIds.length === 0) return;
   // Nothing to register into. Without this the register call below
   // throws a raw TypeError, which the catch would then write into the
@@ -3331,6 +3501,7 @@ async function applyPlan(plan: RegistrationPlan, timer?: PhaseTimer): Promise<Ap
 // and the Log with whatever Chrome says this time. Caller must hold the
 // registration lock.
 async function reregisterScripts(ids: readonly string[]): Promise<void> {
+  await loadChannelKey();
   // Same precondition as the sync: `configureWorld` must precede
   // `register`. Guarded and idempotent: a retry can run before this
   // worker's first sync has configured it.
@@ -3427,6 +3598,7 @@ function logRecoveries(scriptIds: readonly string[]): void {
 //
 // Caller must hold the registration lock.
 export async function registerWithFallback(specs: RegistrationSpec[]): Promise<number> {
+  await loadChannelKey();
   const applied = await applyPlan({
     specs, removeIds: [], present: new Map(), owned: 'all',
   });

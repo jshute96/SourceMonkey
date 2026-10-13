@@ -7,15 +7,16 @@
 // the page's window.
 //
 // That move only works if the rest of the GM_* surface follows the
-// script into MAIN, which it does: the shared `__SM_GM__` runtime is
+// script into MAIN, which it does: the shared GM runtime is
 // registered in MAIN too and routes its SW traffic over
 // wrapper-bridge.js. These tests cover both halves plus the SW-side
 // gate that keeps the page from abusing the widened bridge.
 //
-// See docs/injection.md#unsafewindow-forces-main-world.
+// See docs/injection.md#unsafewindow-is-the-pages-window.
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
+import { bridgeEvent, bridgeRequest } from '../fixtures/bridge-forge';
 import { waitForGmValues } from '../fixtures/sw-api';
 import { UserscriptServer } from '../fixtures/userscript-server';
 
@@ -27,7 +28,7 @@ test.describe('@grant unsafeWindow', () => {
   test.beforeEach(() => { scriptsDir = ScriptsDir.create(); });
   test.afterEach(() => { scriptsDir.cleanup(); });
 
-  test('reaches real page globals, and window === unsafeWindow in MAIN world', async ({
+  test('reaches real page globals; its own window is a sandbox of the built-ins', async ({
     extensionContext, fixtureServer, sm,
   }) => {
     scriptsDir.write({
@@ -42,9 +43,12 @@ test.describe('@grant unsafeWindow', () => {
         const b = document.body.dataset;
         b.smAppName = String(unsafeWindow.__PAGE_APP__ && unsafeWindow.__PAGE_APP__.name);
         b.smFnResult = String(unsafeWindow.__PAGE_FN__ ? unsafeWindow.__PAGE_FN__('x') : 'no-fn');
-        // In MAIN world the two are the same object. A script that
-        // tests this (several real ones do) must not be misled.
+        // A granted script's own window is a sandbox, so the two
+        // differ, as in Tampermonkey. The sandbox shows only the
+        // browser's built-ins, so the page's globals are reached
+        // through unsafeWindow or by bare name.
         b.smSameAsWindow = String(unsafeWindow === window);
+        b.smViaWindow = String(typeof window.__PAGE_APP__) + ':' + __PAGE_APP__.name;
         // Writes must land where the page can see them.
         unsafeWindow.__FROM_SCRIPT__ = 'hello-page';
       `,
@@ -56,7 +60,8 @@ test.describe('@grant unsafeWindow', () => {
     await page.goto(`${fixtureServer.baseUrl}/${PAGE}`);
     await expect(page.locator('body')).toHaveAttribute('data-sm-app-name', 'page-app');
     await expect(page.locator('body')).toHaveAttribute('data-sm-fn-result', 'page-fn:x');
-    await expect(page.locator('body')).toHaveAttribute('data-sm-same-as-window', 'true');
+    await expect(page.locator('body')).toHaveAttribute('data-sm-same-as-window', 'false');
+    await expect(page.locator('body')).toHaveAttribute('data-sm-via-window', 'undefined:page-app');
 
     // page.evaluate runs in the page's MAIN world, so it sees both the
     // side effect of the page function AND what the script wrote.
@@ -130,7 +135,7 @@ test.describe('@grant unsafeWindow', () => {
       },
       body: `
         const b = document.body.dataset;
-        b.smAppName = String(window.__PAGE_APP__ && window.__PAGE_APP__.name);
+        b.smAppName = String(__PAGE_APP__ && __PAGE_APP__.name);
         const seen = GM_getValue('visits', 0);
         b.smVisits = String(seen);
         GM_setValue('visits', seen + 1);
@@ -253,8 +258,8 @@ test.describe('@grant unsafeWindow', () => {
     }
   });
 
-  test('@grant none MAIN-world scripts do not put __SM_GM__ on the page', async ({
-    extensionContext, fixtureServer, sm,
+  test('@grant none MAIN-world scripts do not bring the GM runtime onto the page', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {
     // The GM runtime is registered per world only when some script in
     // that world grants a runtime-backed API. A `@grant none` script is
@@ -276,10 +281,11 @@ test.describe('@grant unsafeWindow', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/${PAGE}`);
     await expect(page.locator('body')).toHaveAttribute('data-sm-ran', '1');
-    const hasRuntime = await page.evaluate(
-      () => typeof (window as unknown as { __SM_GM__?: unknown }).__SM_GM__,
-    );
-    expect(hasRuntime).toBe('undefined');
+    // Not a page global in any case (it lives in the registry), so
+    // what's checked is that it isn't registered for MAIN world.
+    const sw = await getServiceWorker();
+    const ids = await sw.evaluate(async () => (await chrome.userScripts.getScripts()).map((r) => r.id));
+    expect(ids).not.toContain('sourcemonkey-gm-runtime-main');
     await page.close();
   });
 
@@ -344,7 +350,8 @@ test.describe('@grant unsafeWindow', () => {
         name: 'BroadcastVictim',
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
-        grant: ['GM_setValue', 'GM_getValue'],   // USER_SCRIPT world
+        grant: ['GM_setValue', 'GM_getValue'],
+        injectInto: 'content',
       },
       body: `
         // Tab 2 records what it receives so we can prove the broadcast
@@ -376,14 +383,14 @@ test.describe('@grant unsafeWindow', () => {
     const reader = await extensionContext.newPage();
     await reader.goto(`${fixtureServer.baseUrl}/${PAGE}`);
     await expect(reader.locator('html')).toHaveAttribute('data-sm-main', '1');
-    await reader.evaluate(() => {
+    // Played by a page that has the channel key, so what this checks is
+    // the bridge's own `smWorld` filter behind it.
+    const key = await sm.channelKey();
+    await reader.evaluate((pushEvent) => {
       const seen: unknown[] = [];
       (window as unknown as { __PUSHES__: unknown[] }).__PUSHES__ = seen;
-      window.addEventListener('message', (ev) => {
-        const d = ev.data as { __sm?: string; payload?: unknown };
-        if (ev.source === window && d && d.__sm === 'sourcemonkey-bridge-push') seen.push(d.payload);
-      }, true);
-    });
+      document.addEventListener(pushEvent, (ev) => { seen.push(JSON.parse((ev as CustomEvent<string>).detail)); }, true);
+    }, bridgeEvent('push', key));
 
     // Writer tab triggers the cross-tab broadcast.
     const writer = await extensionContext.newPage();
@@ -410,15 +417,17 @@ test.describe('@grant unsafeWindow', () => {
     // the SW. That channel is page-observable and page-forgeable, so the
     // SW only honors a bridge-relayed, script-scoped request when the
     // named script actually runs in MAIN world on the sending page —
-    // i.e. when the page could already have called its `__SM_GM__`
-    // directly. A USER_SCRIPT-world script is never in that set.
+    // i.e. one the page shares a realm with. A USER_SCRIPT-world script
+    // is never in that set. The channel key keeps the page off the
+    // bridge in the first place; this plays a page that has it.
     scriptsDir.write({
       relativePath: 'victim.user.js',
       meta: {
         name: 'Victim',
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
-        grant: ['GM_setValue', 'GM_getValue'],   // no unsafeWindow → USER_SCRIPT world
+        grant: ['GM_setValue', 'GM_getValue'],
+        injectInto: 'content',
       },
       body: `
         if (GM_getValue('secret', '') === '') GM_setValue('secret', 'original');
@@ -452,32 +461,13 @@ test.describe('@grant unsafeWindow', () => {
     await page.goto(`${fixtureServer.baseUrl}/${PAGE}?n=2`);
     await expect(page.locator('html')).toHaveAttribute('data-sm-main', '1');
 
-    // Forge a storage write as the victim.
-    const reply = await page.evaluate((id) => {
-      return new Promise<unknown>((resolve) => {
-        const rid = 'forge-' + Math.random().toString(36).slice(2);
-        const onMsg = (ev: MessageEvent): void => {
-          const d = ev.data as { __sm?: string; requestId?: string; reply?: unknown };
-          if (ev.source !== window || !d || d.__sm !== 'sourcemonkey-bridge-reply' || d.requestId !== rid) return;
-          window.removeEventListener('message', onMsg, true);
-          resolve(d.reply ?? null);
-        };
-        window.addEventListener('message', onMsg, true);
-        // Page -> SW is a DOM event (replies stay postMessages), and
-        // the page can dispatch it just as freely.
-        document.dispatchEvent(new CustomEvent('sourcemonkey-bridge-sync', {
-          detail: JSON.stringify({
-            requestId: rid,
-            payload: {
-              type: 'sm:gm-batch-write',
-              scriptId: id,
-              writes: [{ key: 'secret', value: 'pwned' }],
-            },
-          }),
-        }));
-        setTimeout(() => { window.removeEventListener('message', onMsg, true); resolve(null); }, 2500);
-      });
-    }, victimId);
+    // Forge a storage write as the victim, as a page with the channel
+    // key could: what this checks is the SW-side gate behind the key.
+    const reply = await bridgeRequest(page, await sm.channelKey(), {
+      type: 'sm:gm-batch-write',
+      scriptId: victimId,
+      writes: [{ key: 'secret', value: 'pwned' }],
+    });
 
     // The bridge relayed it (so we know we tested the real path) and the
     // SW refused.
@@ -533,26 +523,11 @@ test.describe('@grant unsafeWindow', () => {
     await expect(page.locator('html')).toHaveAttribute('data-sm-plain', '1');
     const before = (await extensionContext.pages()).length;
 
-    // Forge a tab open as the @grant none script.
-    const reply = await page.evaluate(({ id, url }) => {
-      return new Promise<unknown>((resolve) => {
-        const rid = 'forge-' + Math.random().toString(36).slice(2);
-        const onMsg = (ev: MessageEvent): void => {
-          const d = ev.data as { __sm?: string; requestId?: string; reply?: unknown };
-          if (ev.source !== window || !d || d.__sm !== 'sourcemonkey-bridge-reply' || d.requestId !== rid) return;
-          window.removeEventListener('message', onMsg, true);
-          resolve(d.reply ?? null);
-        };
-        window.addEventListener('message', onMsg, true);
-        document.dispatchEvent(new CustomEvent('sourcemonkey-bridge-sync', {
-          detail: JSON.stringify({
-            requestId: rid,
-            payload: { type: 'sm:gm-tab-open', scriptId: id, requestId: rid, url, active: false },
-          }),
-        }));
-        setTimeout(() => { window.removeEventListener('message', onMsg, true); resolve(null); }, 2500);
-      });
-    }, { id: plainId, url: `${fixtureServer.baseUrl}/${PAGE}?forged` });
+    // Forge a tab open as the @grant none script, as a page with the
+    // channel key could.
+    const reply = await bridgeRequest(page, await sm.channelKey(), {
+      type: 'sm:gm-tab-open', scriptId: plainId, requestId: 'forged-tab', url: `${fixtureServer.baseUrl}/${PAGE}?forged`, active: false,
+    });
 
     expect(reply, 'bridge should reply to the forged GM call').not.toBeNull();
     expect((reply as { ok?: unknown }).ok).toBe(false);

@@ -264,7 +264,7 @@ test.describe('GM_registerMenuCommand', () => {
   test('two scripts on the same page can share an explicit options.id without callback collisions', async ({
     extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {
-    // Regression for the wrapper-side menu-command table: `__SM_GM__`
+    // Regression for the wrapper-side menu-command table: the GM runtime
     // is a per-document singleton shared across every userscript on
     // the page, so a single-key map (commandId only) would let script
     // B clobber script A's callback for the same explicit id.

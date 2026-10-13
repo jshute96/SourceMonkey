@@ -98,7 +98,7 @@ export function urlChangeTarget(details: UrlChangeDetails): { frameId: number } 
 
 // Fire-and-forget notification to the document that changed. Rejections
 // are expected and swallowed: pages with no active SourceMonkey script
-// have no `__SM_GM__` runtime registered, so there is no receiving end.
+// have no GM runtime registered, so there is no receiving end.
 export function notifyUrlChange(details: UrlChangeDetails): void {
   if (!shouldNotifyUrlChange(details)) return;
   void chrome.tabs

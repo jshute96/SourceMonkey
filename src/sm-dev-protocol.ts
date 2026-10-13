@@ -84,7 +84,14 @@ export const SKIP_REASON_SM_DEV = 'tab controlled by sm-dev';
 // 2.3: `managed.scriptFiles`, a script's `@require` and `@resource`
 //   files as installed.
 // 2.4: `managed.scriptIcons`, a script's `@icon` and its site icons.
-export const SM_DEV_PROTOCOL = { major: 2, minor: 4 } as const;
+// 3.0: every script runs in the page's world unless it asks to be
+//   isolated. sm-dev works out each script's world itself, for
+//   `eval --script` and for whose error a page error could be, so an
+//   older one would look in the wrong world. On a page whose CSP
+//   `sandbox` turns off script in its own world, the page-world scripts
+//   run isolated instead, which sm-dev notes rather than warning that
+//   they can't run.
+export const SM_DEV_PROTOCOL = { major: 3, minor: 0 } as const;
 
 export interface ProtocolVersion {
   major: number;

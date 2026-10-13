@@ -50,11 +50,12 @@ recommends a path.
 - Per-page injection via `chrome.userScripts.register({world,
   matches, runAt, js: [{code}]})`. Chrome owns matching + injection.
 - Two realms in use:
-  - `USER_SCRIPT` world (default for `@grant`-using scripts). An
+  - `MAIN` world (the default). Shares both DOM and globals with the
+    page; any script but a `@grant none` one gets a sandbox `window`
+    showing the browser's built-ins.
+  - `USER_SCRIPT` world (`@inject-into content` / `@sandbox DOM`). An
     isolated world Chrome provides specifically for userscript
     managers. Shares the DOM with the page but has its own globals.
-  - `MAIN` world (default for `@grant none`). Shares both DOM and
-    globals with the page.
 - Each script body is wrapped in an IIFE that already sends
   `sm:start` / `sm:error` / etc. to the SW. USER_SCRIPT world calls
   `chrome.runtime.sendMessage` directly (after
@@ -191,17 +192,19 @@ chrome.runtime, or (b) keep VM's bridge and add a fake "content"
 hop. (a) is invasive across every GM_* body; (b) is wasted
 indirection.
 
-### 3. VM's safe-globals / paranoia is mostly redundant for us
+### 3. VM's safe-globals: we capture only what the page could misuse
 
 VM's PAGE-realm code defends against a hostile page that has
-already poisoned every builtin. Our `@grant`-using scripts run in
-USER_SCRIPT world, where the page **cannot** mutate our prototypes —
-that's the point of the isolated world. We'd be carrying hundreds
-of lines of `safeCall` / `createNullObj` / `setOwnProp` plumbing for
-a threat model we don't have.
+already poisoned every builtin. When this was decided, our
+`@grant`-using scripts ran in USER_SCRIPT world, where the page
+**cannot** mutate our prototypes, so we needed none of it.
 
-(For MAIN-world `@grant none` scripts the threat model returns, but
-those scripts don't use GM_* anyway.)
+- Granted scripts now run in MAIN by default, so the threat applies.
+- Rather than VM's safe built-ins throughout, we guard the paths where
+  the page could gain something (see
+  [Prototype-poisoning defense](#prototype-poisoning-defense-the-vault-question)).
+- Going further is open; see TODO.md, "Follow-ups from the page-world
+  default".
 
 ### 4. VM's MV3 story was incomplete; ours is MV3-only
 
@@ -280,87 +283,48 @@ calls primitives via the captured reference, not the live prototype,
 so a page that has overwritten e.g. `Array.prototype.forEach`
 doesn't break GM_*.
 
-**Do we need this?** Mostly no, with one narrow case worth a small
-local defense.
+**Do we need this?** For the paths where a page could gain something,
+yes; not as a blanket rule.
 
-### Why most of the threat goes away
+### Where our code runs
 
-- TM's vault is load-bearing because all GM_* bodies live in **MAIN
-  world** (`page.js`). MAIN shares prototypes with the page, so
-  page code that runs before a GM_* call can poison anything the
-  implementation touches.
-- VM's safe-globals are load-bearing because PAGE-realm scripts run
-  in MAIN. (CONTENT-realm scripts get partial isolation; even there
-  VM defends against userscripts running in the same realm.)
-- **Our GM_* implementations live in USER_SCRIPT world.** Chrome
-  guarantees that USER_SCRIPT world is isolated from the page —
-  the page literally cannot reach into our prototypes. The whole
-  reason this world exists is to remove this threat. That's the
-  same primitive cross-realm safety TM and VM are trying to
-  reconstruct, and we get it from the browser.
+- **The GM runtime and prelude run in MAIN** for page-world scripts
+  (the default), sharing prototypes with the page. A page that runs
+  before a GM_* call can hook what the implementation touches.
+- **The bridge and the isolated scripts run in USER_SCRIPT world**,
+  which the page can't reach. That world is shared by every isolated
+  script on the page, so one userscript can still change the
+  built-ins another (and our code there) sees. That's the user's own
+  code, so a mistake rather than an attack.
 
-So for the page-as-attacker model that motivates TM/VM's vaults:
-nothing to do.
+### What we do
 
-### What USER_SCRIPT world does not protect against
+Details are in [injection.md](injection.md#the-channel-key).
 
-USER_SCRIPT world is **one realm per extension per document** —
-shared across all userscripts SourceMonkey injects on the same page.
-That means:
-
-- Userscript A can mutate `Array.prototype.forEach`, and userscript
-  B (and our GM_* shim) running in the same document will see the
-  mutated version.
-- The mutator is the user's own code, run on the user's own
-  trusted collections. So it's a "didn't mean to break things"
-  scenario, not a "hostile actor" one.
-
-VM's vault does protect against this case (the snapshot is taken
-before *any* userscript runs). TM's vault, ditto.
-
-### What's also unaffected: MAIN-world `@grant none` scripts
-
-`@grant none` scripts run in MAIN and we don't give them any GM_*
-surface — so there's nothing to vault. Our wrapper itself runs
-there, but it only uses `chrome.runtime` (unreachable in MAIN, so
-we fall back to a DOM event), `setTimeout`, `addEventListener`,
-and `String.indexOf`. All of those touch prototypes the page could
-have poisoned by `document_start`-after-first-inline-script time.
-That's an existing concern with the current `userscript-prelude.js`,
-unchanged by GM_* work. (Discussion of hardening that lives in
-[injection.md](injection.md), not here.)
-
-### Recommendation: a tiny "shim cache", not a full vault
-
-At the top of our USER_SCRIPT-world GM_* bootstrap (runs once per
-document, before any userscript body), capture local references
-to the small set of primitives our GM_* implementations rely on,
-e.g.:
-
-```ts
-const _Promise = Promise;
-const _JSONstringify = JSON.stringify;
-const _JSONparse = JSON.parse;
-const _ArrayIsArray = Array.isArray;
-const _Object_keys = Object.keys;
-const _sendMessage = chrome.runtime.sendMessage.bind(chrome.runtime);
-// ...maybe 6–10 entries total
-```
-
-…and use those references inside the GM_* bodies. This is one short
-module, no Babel transform, no `obj::method()` syntax. It protects
-the GM_* shim from a sibling userscript that monkey-patches
-builtins — without the cost or readability hit of a full vault.
+- **The channel key** keeps the page off the bridge and out of our
+  MAIN-world code, so it can't call a script's GM APIs or forge or
+  read the traffic.
+- **Built-ins captured at `document_start`** (the runtime's shim
+  cache), before page scripts run, for the runtime's own plumbing and
+  the sandbox `window`. A page replacing `Object.create`, say, can't
+  take a script's GM functions.
+- **`GM_xmlhttpRequest`'s request and response** go only through
+  captured built-ins and objects with no prototype. Its response can
+  be another site's, with the user's cookies, which the page could
+  never read itself.
+- **What's left:** storage values through the codec, `GM_addElement`'s
+  DOM calls and the other messages can still be seen by a page that
+  targets SourceMonkey (TODO.md). TM's page mode is in the same
+  position, and such a page can as easily hook what the script's own
+  code calls on the same values.
 
 What we **do not** do:
 
 - No safe-bind Babel transform (we're not Webpack-ing).
-- No `createNullObj` / `setOwnProp` style — plain TypeScript.
-- No `cloneInto` / `exportFunction` (those are Firefox primitives;
-  we're Chrome MV3-only).
-- No defensive copy of every Array / String / RegExp method. The
-  trade-off above ("hostile other userscript" is low-stakes) makes
-  going further not worth the readability cost.
+- No defensive copy of every Array / String / RegExp method across
+  the runtime.
+- No real `cloneInto` / `exportFunction` (those are Firefox primitives;
+  we're Chrome MV3-only). Scripts get pass-through stand-ins, as in VM.
 
 ## Options
 
@@ -629,7 +593,7 @@ Not a commitment, just shape. Driven by the design decisions above.
    `GM_xmlhttpRequest`). All later phases reference this catalog.
 2. **Compile-in surface.** Extend the wrap emitter so that for each
    granted name on a script, an inline `const GM_X = function(...) {...}`
-   is spliced into the main-body wrap function's locals. SYNC names delegate to a shared `__SM_GM__` global (set up
+   is spliced into the main-body wrap function's locals. SYNC names delegate to a shared runtime (`reg.gm` now, set up
    by a USER_SCRIPT-world helper registered alongside); ASYNC names
    `chrome.runtime.sendMessage` to the SW. Start with all bodies
    stubbed to throw "not implemented yet".

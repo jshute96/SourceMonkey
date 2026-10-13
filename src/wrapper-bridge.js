@@ -7,8 +7,11 @@
    in USER_SCRIPT world on the same page, listens for it, and forwards
    the payload to the SW.
 
-   Directions and their carriers:
-     - page -> SW: a CustomEvent named "sourcemonkey-bridge-sync"
+   Directions and their carriers. Every event but the two bare
+   announcements is named with the channel key (SM_KEY, swapped in when
+   this file is registered; see src/extension/channel.ts), so the page
+   can neither send nor hear them:
+     - page -> SW: a CustomEvent named "sourcemonkey-sync-<key>"
        dispatched on `document`, carrying {requestId, payload} as a
        JSON string in `detail` (objects don't cross realms). Event
        dispatch runs every world's listeners in the DISPATCHING task,
@@ -19,10 +22,10 @@
        `location.href = ...` used to lose the write. It also saves a
        task hop on sm:check-pending, which every MAIN-world script
        waits on at document_start.
-     - SW -> page: window.postMessage, both for replies and for pushes.
-       No durability concern (the document is alive, since it just
-       asked), and the bridge originates them in USER_SCRIPT world
-       where postMessage is the only channel for data into MAIN.
+     - SW -> page: a CustomEvent on `document` for each reply
+       ("sourcemonkey-reply-<key>", {requestId, reply}) and push
+       ("sourcemonkey-push-<key>", the message), JSON in `detail`. Not a
+       postMessage, which the page can read.
      - bridge -> page, once: a bare "sourcemonkey-bridge-ready"
        CustomEvent on `window` when its listener is in (see Timing,
        below).
@@ -35,15 +38,15 @@
      - Request/reply, used by sm:check-pending and by every GM_* call
        the MAIN-world copy of wrapper-gm-runtime.js makes. The sender
        attaches a requestId; the bridge forwards to the SW, awaits the
-       reply, and posts it back as a "sourcemonkey-bridge-reply"
-       message keyed on the same requestId. The sender's listener
+       reply, and sends it back as a REPLY_EVENT keyed on the same
+       requestId. The sender's listener
        matches on requestId and resolves its awaiter. The presence of
        `requestId` — not the payload type — is what selects this path.
      - SW-originated pushes (the PUSHED and PUSHED_ANY_WORLD lists
        below: value updates, XHR / download / notification / tab
        events, menu fires). Those arrive on chrome.runtime.onMessage, which MAIN world
-       can't listen on, so we re-post them into the page as
-       "sourcemonkey-bridge-push" for the MAIN runtime to dispatch.
+       can't listen on, so we re-send them into the page as a
+       PUSH_EVENT for the MAIN runtime to dispatch.
 
    Build rules match userscript-prelude.js — only /* block * /
    comments, strings must not start a line with //, the build minifies
@@ -66,76 +69,74 @@
    We still emit the bridge spec ahead of the wrapper specs (see
    buildBridgeSpec in injector.ts), so usually nothing is held.
 
-   Trust model. Everything here is observable by the page and
-   forgeable by it: MAIN world can dispatch our event as easily as it
-   could post a message, and it can read the replies and pushes we
-   post. What we do check is the payload type, against a small
-   allowlist per direction. Cross-frame relay isn't a concern on the
-   request side at all — a DOM event on `document` only reaches
-   listeners in that same document, so a frame can only ever reach the
-   bridge instance injected into it, and that one is already scoped to
-   the frame's own URL. (The MAIN-world receivers of our replies and
-   pushes do check event.source === window; see
-   installBridgeListener in wrapper-gm-runtime.js.) None of this stops
-   the host page from sending fakes. Active attacks the page can mount
-   once the bridge is in place:
-     - forge `sm:start` to flip a script's badge from MISSING to OK,
-     - forge `sm:error` with an attacker-chosen `message`, which the
-       SW logs via console.info (kept out of chrome://extensions/?errors),
-     - drive a small amount of chrome.storage.session write
-       amplification per fake report,
-     - forge a `sourcemonkey-bridge-reply` with a known requestId to
-       hand a MAIN wrapper an attacker-supplied body to eval. The
-       page already runs arbitrary code in MAIN world, so this is no
-       privilege gain — the cost is attribution (errors blamed on our
-       script's sourceURL) and a one-navigation delay for the real
-       update.
-     - forge `sm:focus`, making the SW re-check this tab's local
-       scripts for edits. Bounded by the updater's own 10s-per-script
-       interval, reads nothing back to the page, and does the same work
-       a navigation on the tab already does.
-     - forge a script-scoped request (`sm:check-pending` with
-       `needsValues:true`, or any `sm:gm-*` call) carrying another
-       script's id, to read that script's GM_setValue snapshot back out
-       of the reply or to act as it. This is bounded, not open: every
-       message the bridge forwards is stamped `__viaBridge:true` (see
-       `stamp` below), and the SW honors a `__viaBridge` script-scoped
-       request ONLY for a script that runs in MAIN world on the sending
-       page AND granted the API being exercised (see `bridgeMayActAs`
-       in background.ts). Such a script's GM surface is reachable from
-       the page anyway — its `window.__SM_GM__` is a global in the
-       page's own realm — so the gate hands out nothing the page
-       couldn't already take, while still refusing every
-       USER_SCRIPT-world script, every MAIN-world script that doesn't
-       match this page, and every API a matching script never granted
-       (a `@grant none` script has no GM surface to reach).
-       The stamp is trustworthy because the page CANNOT call
-       chrome.runtime.sendMessage itself (no chrome.runtime in MAIN
-       world), so the only way a page-influenced message reaches the SW
-       is through here — and we set the marker last, ignoring any
-       page-supplied copy. USER_SCRIPT-world scripts talk to the SW over
-       their own direct chrome.runtime path (never this bridge), so they
-       carry no `__viaBridge` and are never gated.
-     - forge a `sourcemonkey-bridge-push` into MAIN world, faking an
-       XHR load / menu fire / value update for a MAIN-world script.
-       Same footing: the page shares the realm with that script and can
-       already call its callbacks directly.
-   None grant script execution or SW privilege beyond what the page
-   already has. The receipt (Timing, above) is as forgeable: a page
-   listener can cancel our event to make a request look taken, or stop
-   it reaching us so it stays held. That only loses or delays the
-   page's own scripts' traffic, so nothing may rely on it for safety. */
+   Trust model. The channel key keeps the page out: it can't send our
+   events or hear them, since it doesn't know their names. What it can
+   still do:
+     - send the two bare announcements: READY_MARKER, which makes a
+       waiting MAIN-world wrapper or GM runtime send what it holds (what
+       is held is held because no bridge took it, so this sends nothing
+       new), and MAIN_READY, which only keeps the sandboxed-page fallback
+       off.
+     - hook the built-ins our MAIN-world code touches after
+       document_start (an `Object.prototype` getter, a `toJSON`), which
+       a page that targets SourceMonkey specifically could use to see
+       some of what passes. The MAIN-world side captures what it can at
+       document_start (the event's `detail` getter, JSON, dispatch).
+   It can't cancel our sync events either, to make a request look taken
+   (the receipt, see Timing above), since it can't name them.
+   We still check the payload type against a small allowlist per
+   direction, and stamp every relayed message `__viaBridge:true` (see
+   `stamp` below), set last so nothing can pre-set it false. The SW
+   honors a `__viaBridge` script-scoped request (`sm:check-pending` with
+   `needsValues:true`, any `sm:gm-*` call) only for a script that runs
+   in MAIN world on the sending page and granted the API being
+   exercised (`bridgeMayActAs` in background.ts): a backstop should the
+   key ever leak. USER_SCRIPT-world scripts talk to the SW over their
+   own direct chrome.runtime path (never this bridge), so they carry no
+   `__viaBridge` and are never gated.
+
+   Cross-frame relay isn't a concern on the request side: a DOM event on
+   `document` only reaches listeners in that same document, so a frame
+   can only ever reach the bridge instance injected into it, already
+   scoped to the frame's own URL. */
 (function () {
   "use strict";
-  var REPLY_MARKER = "sourcemonkey-bridge-reply";
-  var PUSH_MARKER = "sourcemonkey-bridge-push";
+  /* The channel key, swapped in when we register this file. */
+  var SM_KEY = "__SM_KEY__";
+  /* For a manual run's bridge, the run's script id, swapped in when the
+     run is injected; else this stand-in. A run's bridge carries its
+     document's own key (`documentKey` in src/extension/channel.ts),
+     which its late-loaded page-world code may lose to the page, so it
+     relays only that script's requests and pushes. */
+  var SM_ONLY = "__SM_ONLY__";
+  var ONLY = SM_ONLY === "_" + "_SM_ONLY__" ? null : SM_ONLY;
+  /* Whether `id`, a message's script, is one this bridge relays: any,
+     but for a manual run's bridge, only the run's. A message that
+     names no script (an abort by request id) is let through. */
+  function ours(id) {
+    return ONLY === null || typeof id !== "string" || id === ONLY;
+  }
+  /* The script a page -> SW message is about: a GM call names it
+     `scriptId` (its `id`, when it has one, is the call's own: an XHR's);
+     the wrapper's reports and check-pending name it `id`. */
+  function scriptOf(payload) {
+    return payload.type.indexOf("sm:gm-") === 0 ? payload.scriptId : payload.id;
+  }
+  var REPLY_EVENT = "sourcemonkey-reply-" + SM_KEY;
+  var PUSH_EVENT = "sourcemonkey-push-" + SM_KEY;
   /* The page -> SW path: see the header. Named "sync" for the property
      it is chosen for — our sendMessage runs inside the dispatch, before
      the caller returns. */
-  var SYNC_MARKER = "sourcemonkey-bridge-sync";
+  var SYNC_EVENT = "sourcemonkey-sync-" + SM_KEY;
   /* Fired once our listener is in, for a wrapper that asked too early
      (see Timing, above). userscript-prelude.js names it too. */
   var READY_MARKER = "sourcemonkey-bridge-ready";
+  /* GM_addStyle / GM_addElement's insert from MAIN world (`insertNode`
+     in wrapper-gm-runtime.js). */
+  var INSERT_EVENT = "sourcemonkey-insert-" + SM_KEY;
+  /* A MAIN-world prelude saying our scripts run in this document (see
+     the fallback at the end). userscript-prelude.js names it too. */
+  var MAIN_READY = "sourcemonkey-main-ready";
   /* Payload types we relay page -> SW. Telemetry + the reload
      fast-path handshake, plus the SW-backed half of the GM_* surface
      that the MAIN-world runtime needs. Anything not listed is dropped,
@@ -177,12 +178,16 @@
      leaks nothing the page doesn't already have. */
   var PUSHED_ANY_WORLD = ["sm:gm-resync-hint", "sm:url-change"];
   if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.sendMessage) return;
-  /* Once per document. A manual script's run injects the bridge again
-     (docs/manual-scripts.md), and a second copy would forward every
-     message twice. This world's globals are out of the page's reach,
-     so the page can't set the flag to keep the bridge out. */
-  if (window.__smBridgeInstalled) return;
-  window.__smBridgeInstalled = true;
+  /* Once per document and key. A manual script's run injects the
+     bridge again (docs/manual-scripts.md), and a second copy would
+     forward every message twice. A run carries its document's own key,
+     not the install's (`documentKey` in src/extension/channel.ts), so
+     its bridge installs beside a registered one, each on its own
+     events. This world's globals are out of the page's reach, so the
+     page can't set the flag to keep the bridge out. */
+  var installed = "__smBridgeInstalled_" + SM_KEY;
+  if (window[installed]) return;
+  window[installed] = true;
   /* Copy the page-supplied payload and stamp __viaBridge:true LAST so
      the page can't pre-set it false. The SW treats __viaBridge as
      "this request may be page-forged" and refuses to act on behalf of
@@ -214,6 +219,7 @@
   function relay(payload, requestId) {
     if (!payload || typeof payload !== "object") return;
     if (ALLOWED.indexOf(payload.type) === -1) return;
+    if (!ours(scriptOf(payload))) return;
     if (typeof requestId !== "string") {
       var p = chrome.runtime.sendMessage(stamp(payload));
       if (p && typeof p.catch === "function") p.catch(function () {});
@@ -221,7 +227,7 @@
     }
     var post = function (reply) {
       try {
-        window.postMessage({ __sm: REPLY_MARKER, requestId: requestId, reply: reply || { bridgeError: "SourceMonkey gave no answer" } }, "*");
+        toPage(REPLY_EVENT, { requestId: requestId, reply: reply || { bridgeError: "SourceMonkey gave no answer" } });
       } catch (_e1) {}
     };
     var failed = function (err) {
@@ -237,7 +243,13 @@
     } catch (_e2) { failed(_e2); }
   }
 
-  document.addEventListener(SYNC_MARKER, function (ev) {
+  /* Into MAIN world, as an event the page can't hear (see the header).
+     Dispatched from this world, whose built-ins the page can't touch. */
+  function toPage(type, data) {
+    document.dispatchEvent(new CustomEvent(type, { detail: JSON.stringify(data) }));
+  }
+
+  document.addEventListener(SYNC_EVENT, function (ev) {
     try {
       /* The receipt: the sender holds and resends what nobody cancelled
          (see Timing, above). Every event, whatever its type, so the
@@ -248,6 +260,32 @@
       var env = JSON.parse(ev.detail);
       if (!env || typeof env !== "object") return;
       relay(env.payload, env.requestId);
+    } catch (_e) {}
+  }, true);
+
+  /* GM_addStyle / GM_addElement's insert, for a MAIN-world script.
+     Appended from this world, the element is checked against this
+     world's CSP instead of the page's, so a strict page CSP doesn't
+     drop the style, as in TM. The event's target is the parent and its
+     `relatedTarget` the new element; cancelling it tells the runtime
+     we did the insert. This world's `appendChild` is out of the page's
+     reach, and the event's name carries the channel key, so the page
+     can't send it to get the same exemption for an element of its own.
+
+     On `window`, capturing: the first stop of any dispatch in the
+     document. */
+  var appendChild = null;
+  try { appendChild = Node.prototype.appendChild; } catch (_ne) {}
+  if (appendChild) window.addEventListener(INSERT_EVENT, function (ev) {
+    try {
+      var el = ev.relatedTarget;
+      /* Composed, so a parent in a shadow root reaches us too; the
+         path's first entry is it, where `target` is its host. */
+      var parent = ev.composedPath()[0];
+      if (!(el instanceof Element) || !(parent instanceof Node)) return;
+      appendChild.call(parent, el);
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
     } catch (_e) {}
   }, true);
 
@@ -282,8 +320,9 @@
           if (PUSHED_ANY_WORLD.indexOf(msg.type) === -1) {
             if (PUSHED.indexOf(msg.type) === -1) return;
             if (msg.smWorld !== "MAIN") return;
+            if (!ours(msg.smScript)) return;
           }
-          window.postMessage({ __sm: PUSH_MARKER, payload: msg }, "*");
+          toPage(PUSH_EVENT, msg);
         } catch (_e3) {}
       });
     }
@@ -293,5 +332,44 @@
      nothing, and sends it again on this. A page can fire it too, which
      sends nothing new: what is held is held because no bridge took it,
      and stays held while there is none. */
+  var mainSeen = false;
+  try { window.addEventListener(MAIN_READY, function () { mainSeen = true; }, true); } catch (_e6) {}
   try { window.dispatchEvent(new CustomEvent(READY_MARKER)); } catch (_e5) {}
+
+  /* Fallback for a sandboxed page. A CSP `sandbox` directive (or an
+     `<iframe sandbox>`) without `allow-scripts` turns off script in the
+     document's own world, and with it every MAIN-world script: Chrome
+     injects none there, while this world still runs. So where no
+     MAIN-world prelude announces itself (MAIN_READY, now or in answer
+     to our ready event above), we ask the SW to run this document's
+     MAIN-world scripts here instead, as Violentmonkey falls back to its
+     content world.
+
+     - The check waits one task: every document_start registration is
+       in by then, so a prelude injected after us has announced too.
+     - No announcement also happens on ordinary pages: when Chrome
+       hasn't registered a script yet (a sync in progress), and where
+       our patterns match but no MAIN-world script runs (a frame where
+       all are @noframes, a page one @excludes). The SW finds the
+       scripts first, then runs a bare `true` in this document's own
+       world (`pageWorldRuns`), and falls back only if it doesn't run.
+     - The page can send MAIN_READY too, which only keeps the fallback
+       off.
+     - A child frame doesn't ask when every MAIN-world script is
+       `@noframes`, so a page full of iframes doesn't wake the SW for
+       each. */
+  /* False when every MAIN-world script is `@noframes` (swapped in at
+     registration, `noMainInFrames` in src/extension/injector.ts): in a
+     child frame none would run, so there is nothing to ask about. */
+  var SM_MAIN_IN_FRAMES = true;
+  var mainCanRun = SM_MAIN_IN_FRAMES || window === window.top;
+  if (!mainSeen && mainCanRun) {
+    setTimeout(function () {
+      if (mainSeen) return;
+      try {
+        var p = chrome.runtime.sendMessage({ type: "sm:main-blocked" });
+        if (p && typeof p.catch === "function") p.catch(function () {});
+      } catch (_e8) {}
+    }, 0);
+  }
 })();

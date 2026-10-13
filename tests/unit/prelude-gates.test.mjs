@@ -15,6 +15,7 @@ import vm from 'node:vm';
 
 import { WRAPPER_PRELUDE } from '../../dist/generated-wrappers.js';
 import { SM_DEV_MARKERS } from '../../dist/sm-dev-protocol.js';
+import { eventName, registryOf } from './channel-helpers.mjs';
 
 const SCRIPT_ID = 'script-1';
 const SOURCE_URL = 'sourcemonkey://SourceMonkey/Demo/demo.user.js';
@@ -46,7 +47,8 @@ function makeEnv({ readyState = 'loading', firstLoad = false, markers = [], page
 
   const sandbox = {
     setTimeout: (fn, ms) => {
-      if (ms !== sandbox.__smPrelude?.decisionTimeoutMs) return setTimeout(fn, ms);
+      const reg = sandbox.document.__smGate ? registryOf(sandbox.document) : {};
+      if (ms !== reg.prelude?.decisionTimeoutMs) return setTimeout(fn, ms);
       decisionTimeout = fn;
       return -1;
     },
@@ -54,6 +56,7 @@ function makeEnv({ readyState = 'loading', firstLoad = false, markers = [], page
       if (id === -1) decisionTimeout = null;
       else clearTimeout(id);
     },
+    queueMicrotask,
     console: { log() {}, info(...args) { infos.push(args.join(' ')); } },
     location: { href: 'https://example.com/page' },
     document: {
@@ -99,16 +102,20 @@ function makeEnv({ readyState = 'loading', firstLoad = false, markers = [], page
   let bridgeIn = false;
   if (pageWorld) {
     delete sandbox.chrome;
+    // `detail` is a getter, as on a real CustomEvent: the prelude reads
+    // it through the one it captured.
     sandbox.CustomEvent = class {
       constructor(type, init = {}) {
         this.type = type;
-        this.detail = init.detail;
+        this._detail = init.detail;
         this.cancelable = !!init.cancelable;
         this.defaultPrevented = false;
       }
+
+      get detail() { return this._detail; }
     };
     sandbox.document.dispatchEvent = (ev) => {
-      if (ev.type !== 'sourcemonkey-bridge-sync' || !bridgeIn) return true;
+      if (ev.type !== eventName('sync') || !bridgeIn) return true;
       assert.equal(ev.cancelable, true);
       taken.push(JSON.parse(ev.detail));
       return false;
@@ -157,9 +164,8 @@ function makeEnv({ readyState = 'loading', firstLoad = false, markers = [], page
     ready() { fire(winListeners, 'sourcemonkey-bridge-ready'); },
     // The bridge's reply to a request it took.
     reply(requestId, reply) {
-      for (const fn of winListeners.get('message') ?? []) {
-        fn({ source: sandbox.window, data: { __sm: 'sourcemonkey-bridge-reply', requestId, reply } });
-      }
+      const ev = new sandbox.CustomEvent(eventName('reply'), { detail: JSON.stringify({ requestId, reply }) });
+      for (const fn of docListeners.get(eventName('reply')) ?? []) fn(ev);
     },
   };
 }
@@ -181,8 +187,9 @@ function makeCfg(runAt, extra) {
 // `ran` box the test asserts on.
 function install(env, runAt, extra = {}) {
   const ran = { count: 0 };
-  env.sandbox.__smPrelude.init(makeCfg(runAt, extra));
-  env.sandbox.__smRun(SCRIPT_ID, () => { ran.count += 1; });
+  const reg = registryOf(env.sandbox.document);
+  reg.prelude.init(makeCfg(runAt, extra));
+  reg.run(SCRIPT_ID, () => { ran.count += 1; });
   return ran;
 }
 
@@ -259,7 +266,7 @@ for (const [label, runtimeIn, asks] of [
 ]) {
   test(`document-start: ${label}`, async () => {
     const env = makeEnv({ firstLoad: true });
-    if (runtimeIn) env.sandbox.window.__SM_GM__ = {};
+    if (runtimeIn) registryOf(env.sandbox.document).gm = {};
     const ran = install(env, 'document-start', { needsGmRuntime: true });
     await settle();
     assert.equal(env.sentTypes().includes('sm:check-pending'), asks);

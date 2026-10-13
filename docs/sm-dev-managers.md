@@ -367,7 +367,7 @@ added to or removed.
 ### Saving a script's files
 
 `script print --file` and `script save` read the files as installed,
-through `managed.scriptFiles` (protocol 2.3). No refetch: they are what
+through `managed.scriptFiles`. No refetch: they are what
 runs now.
 
 - **Picking a file (`--file <name>`)**: a `@resource`'s name, exactly,
@@ -401,8 +401,8 @@ runs now.
 
 ### Icons
 
-A script's `@icon` and its site icons come through `managed.scriptIcons`
-(protocol 2.4), from the same lookup and cache the collections page uses
+A script's `@icon` and its site icons come through `managed.scriptIcons`,
+from the same lookup and cache the collections page uses
 ([site-icons.md](site-icons.md)).
 
 - **The `@icon`** is resolved as the page resolves it, against the

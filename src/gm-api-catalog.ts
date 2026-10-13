@@ -19,7 +19,7 @@
 //   - The canonical `GM_x` name and the GM4-style `GM.x` alias (if
 //     any). Scripts can @grant either form and we honor both.
 //   - Whether the call resolves in-page (`sync`) — runs in
-//     USER_SCRIPT world via the shared __SM_GM__ runtime — or makes a
+//     USER_SCRIPT world via the shared GM runtime — or makes a
 //     SW round-trip (`async`).
 //   - The subsystem the body delegates to. Drives both the wrapper-side
 //     stub and the SW-side message routing.
@@ -78,7 +78,7 @@ export interface GmApiSpec {
   // as plain `const` bindings — `unsafeWindow` (a passthrough
   // binding), `window.onurlchange` (an event surface installed on the
   // world's `window`), and `window.close` / `window.focus` (methods
-  // replaced on the world's `window`). The emitter dispatches on
+  // replaced on the script's `window`). The emitter dispatches on
   // `subsystem` for those.
   kind: ApiKind;
   // Used by the GM4 `GM.` alias: when truthy, the dot form returns a
@@ -105,16 +105,16 @@ export const GM_APIS: readonly GmApiSpec[] = Object.freeze([
   // ----- Non-GM_* window features (TM's `@grant window.x` family) -----
   // `window.onurlchange` is not a callable and not a valid JS
   // identifier, so it emits no `const` binding at all. What the grant
-  // buys is an eager `__SM_GM__.urlchange.enable(scriptId)` call that
+  // buys is an eager `__smReg.gm.urlchange.enable(scriptId)` call that
   // installs the `urlchange` event surface on the world's `window`.
   // See docs/GM-APIs.md#windowonurlchange.
   { name: 'window.onurlchange', kind: 'sync', subsystem: 'url-change' },
   // `window.close` / `window.focus` are callables, but `window.close`
   // is not a legal binding name either — so, like the grant above,
-  // they emit no `const`. The grant's effect is an eager
-  // `__SM_GM__.windowControl.enable(scriptId, "close" | "focus")` that
-  // REPLACES the method on the world's `window` with one that routes
-  // through the SW (`chrome.tabs.remove` / `chrome.windows.update`),
+  // they emit no `GM_*`-style binding. The grant's effect is an eager
+  // `__smReg.gm.windowControl` call that REPLACES the method the script
+  // sees (on its sandbox `window` in the page's world, on the world's
+  // `window` when isolated) with one that routes through the SW (`chrome.tabs.remove` / `chrome.windows.update`),
   // which is what lets it work where the page's own call is a no-op.
   // `async` for that SW round-trip; the script still sees the void,
   // synchronous return TM gives it. See docs/GM-APIs.md#windowclose--windowfocus.

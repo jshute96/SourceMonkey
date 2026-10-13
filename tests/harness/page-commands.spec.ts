@@ -305,18 +305,25 @@ test('eval --script reaches a MAIN-world script and a script\'s IIFE, keeps stri
   // Inside the script's IIFE, with its GM_* bindings still in reach.
   expect(await run('eval --script=Iife hidden + " " + typeof GM_log')).toEqual(['"inside function"']);
   // Other didn't match the page: selected, a bare eval runs in the
-  // page, and --script in the shared world; named, that's a failure.
+  // page; with --script, bare or named, that's a failure.
   ctx.current = other;
   expect(await run('eval typeof count')).toEqual([
     '[sm-dev] Other hasn\'t run on this page, so this ran in the page',
     '"undefined"',
   ]);
-  expect(await run('eval --script document.title')).toEqual([
-    '[sm-dev] Other hasn\'t run on this page, so this ran in the scripts\' shared world',
-    '"target"',
-  ]);
+  expect(await run('eval --script document.title')).toEqual(['[sm-dev] Other hasn\'t run on this page, so its scope can\'t be reached. Load a page it matches, or reload this one.']);
+  expect(await runConsoleCommand('eval --script 1', ctx)).toBe(false);
   expect(await run('eval --script=Other 1')).toEqual(['[sm-dev] Other hasn\'t run on this page, so its scope can\'t be reached. Load a page it matches, or reload this one.']);
   expect(await runConsoleCommand('eval --script=Other 1', ctx)).toBe(false);
+  // No run script at all: a bare eval runs in the page, and --script
+  // has none to run in.
+  const noScripts: ConsoleContext = { ...ctx, scripts: [], current: undefined };
+  lines.length = 0;
+  expect(await runConsoleCommand('eval document.title', noScripts)).not.toBe(false);
+  expect(lines).toEqual(['"target"']);
+  lines.length = 0;
+  expect(await runConsoleCommand('eval --script 1', noScripts)).toBe(false);
+  expect(lines).toEqual(['[sm-dev] ERROR: No script of this run is selected, so `eval --script` has none to run in. Name one with --script=<script>, or use --page.']);
 });
 
 test('eval --script reaches a page-world script on a page whose CSP forbids eval', async ({ page, fixtureServer, host, attachment, loadScript }) => {
@@ -632,4 +639,22 @@ test('click and hover say when the mouse can\'t reach the point', async ({ page,
   expect(await run('click #panel --at 10,20')).toEqual(['[sm-dev] The click command failed: The point 10,20 in the element is outside the 800x600 window, at -140,40, so pick a point in the element\'s visible part']);
   // Playwright's own reason stands when it gives one.
   expect(await run('hover #gone')).toEqual(['[sm-dev] The hover command failed: The element stayed outside the viewport for 5 seconds, where it can\'t be scrolled to']);
+});
+
+test('eval --script reaches a page-world script that runs isolated on a sandboxed page', async ({ page, fixtureServer, host, attachment, loadScript }) => {
+  // A CSP `sandbox` turns off script in the page's own world, so the
+  // extension runs the script isolated there (docs/injection.md#csp-sandbox-pages).
+  const script = await loadScript({
+    relativePath: 'sandboxed.user.js',
+    meta: { name: 'Sandboxed', match: ['*://*/__sandbox/target.html'], grant: ['none'] },
+    body: `const marker = 'ran'; document.documentElement.dataset.ran = marker;`,
+  });
+  const dialogs = await DialogTracker.attach(page, () => undefined, { visible: false, commandsComing: true });
+  await page.goto(`${fixtureServer.baseUrl}/__sandbox/target.html`);
+  await expect(page.locator('html')).toHaveAttribute('data-ran', 'ran');
+  const lines: string[] = [];
+  const tabs = [{ n: 1, page, link: attachment, dialogs, targetId: 'ABCDEF0123456789' }];
+  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(plainLine(l)), stop: () => undefined, logs: new RunLog() };
+  await runConsoleCommand('eval --script marker', ctx, {});
+  expect(lines).toEqual(['"ran"']);
 });

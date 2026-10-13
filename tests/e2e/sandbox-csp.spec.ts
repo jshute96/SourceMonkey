@@ -1,10 +1,11 @@
 // Pages served with a `Content-Security-Policy: sandbox` header (no
 // `allow-scripts`). Sites serving user uploads send it to stop XSS, and
 // with it Chrome turns off script in the page's own world: a MAIN-world
-// userscript (`@grant none`) is silently never injected, while a
-// USER_SCRIPT-world one still runs. SourceMonkey's badge shows MISSING,
-// and after the load the script's Log gets a warning saying why
-// (src/extension/missing-scripts.ts).
+// userscript (`@grant none`) is never injected, while a USER_SCRIPT-world
+// one still runs. The bridge notices and has the worker run the MAIN-world
+// script in USER_SCRIPT world instead (`runBlockedMainScripts` in
+// background.ts). Where that fails, the badge shows MISSING and the
+// script's Log says why (src/extension/missing-scripts.ts, unit-tested).
 //
 // The header has to come from a real response (`sandbox` is ignored in
 // a <meta> CSP), so each page is served with `page.route`.
@@ -13,7 +14,7 @@ import type { Page } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 import {
-  waitFor, waitForTabState, activeTabId, type SmApi, type TabStateSnapshot,
+  waitForTabState, activeTabId, allScripts, type TabStateSnapshot,
 } from '../fixtures/sw-api';
 
 // A 1x1 transparent PNG, for the standalone-image-document case.
@@ -46,7 +47,8 @@ function writeMarkerScripts(dir: ScriptsDir, baseUrl: string): void {
   dir.write({
     relativePath: 'main-world.user.js',
     meta: { name: 'MainWorld', match: [`${baseUrl}/*`], grant: ['none'], runAt: 'document-start' },
-    body: `document.documentElement.setAttribute('data-main-ran', '1');`,
+    // Counted, so a script run both ways would show.
+    body: `const h = document.documentElement; h.setAttribute('data-main-ran', String(+(h.getAttribute('data-main-ran') || 0) + 1));`,
   });
   dir.write({
     relativePath: 'content-world.user.js',
@@ -66,25 +68,13 @@ function scriptIdsByName(snap: TabStateSnapshot): Record<string, string> {
   return Object.fromEntries(doc.matches.map((m) => [m.name, m.id]));
 }
 
-// The worker writes it 11s after the load: its grace period for late
-// starters (MISSING_SCRIPT_GRACE_MS) outlasts the wrapper's 10s wait
-// for a run decision.
-async function waitForWarning(sm: SmApi, scriptId: string): Promise<string> {
-  const log = await waitFor(
-    () => sm.getScriptLog(scriptId),
-    (entries) => entries.some((e) => e.level === 'warning'),
-    { timeoutMs: 20_000, label: 'never-started warning' },
-  );
-  return log.find((e) => e.level === 'warning')!.message;
-}
-
 test.describe('CSP sandbox pages', () => {
   let scriptsDir: ScriptsDir;
   test.beforeEach(() => { scriptsDir = ScriptsDir.create(); });
   test.afterEach(() => { scriptsDir.cleanup(); });
 
   for (const kind of ['html', 'png'] as const) {
-    test(`${kind}: MAIN-world script is not injected, USER_SCRIPT-world one runs`, async ({
+    test(`${kind}: the MAIN-world script runs isolated instead, beside the USER_SCRIPT-world one`, async ({
       extensionContext, fixtureServer, sm, getServiceWorker,
     }) => {
       writeMarkerScripts(scriptsDir, fixtureServer.baseUrl);
@@ -100,35 +90,30 @@ test.describe('CSP sandbox pages', () => {
       const snap = await waitForTabState(
         sm,
         tabId,
-        (s) => s.rows.includes('ContentWorld | OK') && s.rows.includes('MainWorld | MISSING'),
-        'ContentWorld OK + MainWorld MISSING',
+        (s) => s.rows.includes('ContentWorld | OK') && s.rows.includes('MainWorld | OK'),
+        'both OK',
       );
-      expect(snap.rows).toContain('MainWorld | MISSING');
-
       const html = page.locator('html');
       await expect(html).toHaveAttribute('data-content-ran', '1');
-      expect(await html.getAttribute('data-main-ran')).toBeNull();
-
-      // After the load, the missing script's Log says why: ContentWorld's
-      // report told the worker the page is sandboxed.
+      await expect(html).toHaveAttribute('data-main-ran', '1');
       const ids = scriptIdsByName(snap);
-      const warning = await waitForWarning(sm, ids.MainWorld);
-      expect(warning).toContain(`Matched ${url} but never started there. This page is sandboxed`);
-      expect(warning).toContain('@inject-into content');
-      expect((await sm.getScriptLog(ids.ContentWorld)).some((e) => e.level === 'warning')).toBe(false);
+      const log = await sm.getScriptLog(ids.MainWorld);
+      expect(log.some((e) => e.level === 'warning')).toBe(false);
+      expect(log.some((e) => e.source === 'sandbox-fallback' && e.level === 'info')).toBe(true);
+      expect((await sm.getScriptLog(ids.ContentWorld)).some((e) => e.source === 'sandbox-fallback')).toBe(false);
       await page.close();
     });
   }
 
-  test('only a MAIN-world script: the warning says the page may be blocking it', async ({
+  test('only a MAIN-world script: it runs isolated too', async ({
     extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {
-    // No other script runs here to report the opaque origin, so the
-    // worker can only name the likely cause.
+    // The bridge is there for the MAIN-world script alone, and its own
+    // origin check is what spots the sandbox.
     scriptsDir.write({
       relativePath: 'main-world.user.js',
-      meta: { name: 'MainWorld', match: [`${fixtureServer.baseUrl}/*`], grant: ['none'], runAt: 'document-start' },
-      body: `document.documentElement.setAttribute('data-main-ran', '1');`,
+      meta: { name: 'MainWorld', match: [`${fixtureServer.baseUrl}/*`], grant: ['GM_setValue', 'GM_getValue'], runAt: 'document-end' },
+      body: `GM_setValue('k', 'v'); document.documentElement.setAttribute('data-main-ran', GM_getValue('k'));`,
     });
     await sm.addCollection(scriptsDir.path);
     await sm.syncNow();
@@ -138,10 +123,115 @@ test.describe('CSP sandbox pages', () => {
     await serveWithCsp(page, url, 'sandbox', 'html');
     await page.goto(url);
     const tabId = await activeTabId(getServiceWorker);
-    const snap = await waitForTabState(sm, tabId, (s) => s.rows.includes('MainWorld | MISSING'), 'MainWorld MISSING');
+    await waitForTabState(sm, tabId, (s) => s.rows.includes('MainWorld | OK'), 'MainWorld OK');
+    await expect(page.locator('html')).toHaveAttribute('data-main-ran', 'v');
+    await page.close();
+  });
 
-    const warning = await waitForWarning(sm, scriptIdsByName(snap).MainWorld);
-    expect(warning).toContain('The page may be blocking scripts in its own context');
+  test('an <iframe sandbox> without allow-scripts: the MAIN-world script runs isolated in it', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'main-world.user.js',
+      meta: { name: 'MainWorld', match: [`${fixtureServer.baseUrl}/sandboxed-child.html`], grant: ['none'], runAt: 'document-end' },
+      body: `document.documentElement.setAttribute('data-main-ran', '1');`,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    const parentUrl = `${fixtureServer.baseUrl}/sandbox-parent.html`;
+    await page.route(parentUrl, (route) => route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      body: '<!doctype html><iframe sandbox src="sandboxed-child.html"></iframe>',
+    }));
+    await page.route(`${fixtureServer.baseUrl}/sandboxed-child.html`, (route) => route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      body: HTML,
+    }));
+    await page.goto(parentUrl);
+    const child = page.frames().find((f) => f.url().endsWith('/sandboxed-child.html'))!;
+    await expect(child.locator('html')).toHaveAttribute('data-main-ran', '1');
+    await page.close();
+  });
+
+  test('sandbox allow-same-origin keeps the real origin, and still runs the MAIN-world script isolated', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    writeMarkerScripts(scriptsDir, fixtureServer.baseUrl);
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    const url = `${fixtureServer.baseUrl}/sandboxed-same-origin.html`;
+    await serveWithCsp(page, url, 'sandbox allow-same-origin', 'html');
+    await page.goto(url);
+    const tabId = await activeTabId(getServiceWorker);
+    await waitForTabState(
+      sm,
+      tabId,
+      (s) => s.rows.includes('ContentWorld | OK') && s.rows.includes('MainWorld | OK'),
+      'both OK',
+    );
+    await expect(page.locator('html')).toHaveAttribute('data-main-ran', '1');
+    const ids = scriptIdsByName(await sm.getTabState(tabId));
+    expect((await sm.getScriptLog(ids.MainWorld)).some((e) => e.source === 'sandbox-fallback')).toBe(true);
+    await page.close();
+  });
+
+  test('an <iframe sandbox="allow-same-origin">: the MAIN-world script runs isolated in it', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'main-world.user.js',
+      meta: { name: 'MainWorld', match: [`${fixtureServer.baseUrl}/same-origin-child.html`], grant: ['none'], runAt: 'document-end' },
+      body: `document.documentElement.setAttribute('data-main-ran', '1');`,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    const parentUrl = `${fixtureServer.baseUrl}/same-origin-parent.html`;
+    await page.route(parentUrl, (route) => route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      body: '<!doctype html><iframe sandbox="allow-same-origin" src="same-origin-child.html"></iframe>',
+    }));
+    await page.route(`${fixtureServer.baseUrl}/same-origin-child.html`, (route) => route.fulfill({
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      body: HTML,
+    }));
+    await page.goto(parentUrl);
+    const child = page.frames().find((f) => f.url().endsWith('/same-origin-child.html'))!;
+    await expect(child.locator('html')).toHaveAttribute('data-main-ran', '1');
+    await page.close();
+  });
+
+  test('a page-world manual script runs isolated when run', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'manual.user.js',
+      meta: { name: 'Manual', match: [`${fixtureServer.baseUrl}/*`], grant: ['GM_setValue', 'GM_getValue'], runAt: 'context-menu' },
+      body: `GM_setValue('k', 'v'); document.documentElement.setAttribute('data-manual-ran', GM_getValue('k'));`,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+    const id = (await allScripts(sm)).find((s) => s.relativePath === 'manual.user.js')!.id;
+
+    const page = await extensionContext.newPage();
+    const url = `${fixtureServer.baseUrl}/sandboxed-manual.html`;
+    await serveWithCsp(page, url, 'sandbox', 'html');
+    await page.goto(url);
+    const tabId = await activeTabId(getServiceWorker);
+    expect(await sm.runManualScript(tabId, id)).toEqual({ ok: true });
+    await expect(page.locator('html')).toHaveAttribute('data-manual-ran', 'v');
+    await expect.poll(async () => (await sm.getPopupView(tabId)).manual[0]?.rows[0]?.status).toBe('OK');
+    // Its Log says why it ran isolated.
+    expect((await sm.getScriptLog(id)).some((e) => e.source === 'sandbox-fallback')).toBe(true);
     await page.close();
   });
 
@@ -164,6 +254,10 @@ test.describe('CSP sandbox pages', () => {
       (s) => s.rows.includes('ContentWorld | OK') && s.rows.includes('MainWorld | OK'),
       'both OK',
     );
+    // Once: the page's own world runs it, so the bridge asks for no
+    // fallback.
+    await expect(page.locator('html')).toHaveAttribute('data-main-ran', '1');
+    await page.waitForTimeout(500);
     await expect(page.locator('html')).toHaveAttribute('data-main-ran', '1');
     await page.close();
   });

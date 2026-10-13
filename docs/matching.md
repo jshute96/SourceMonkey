@@ -562,15 +562,19 @@ why (`src/extension/missing-scripts.ts`):
   - Else an opaque origin on an http(s) page → the page is sandboxed.
     A CSP `sandbox` header without `allow-scripts` turns off script in
     the page's own world, so Chrome silently skips MAIN-world
-    registrations there. Suggests `@inject-into content`.
+    registrations there. SourceMonkey then runs them isolated (see
+    [injection.md](injection.md#csp-sandbox-pages)), so this is for one
+    that fallback didn't start. Suggests `@inject-into content`.
   - Else nothing to go on → names the possibility and what header to
     check. Left off on file:// pages, which have no headers.
 - **For a USER_SCRIPT-world script**, it only notes whether other
   USER_SCRIPT-world scripts started.
-- No probing: the extension doesn't refetch the page or inject test
-  code to find out more. sm-dev, which sees the response headers, says
+- No probing for the hint: it doesn't refetch the page or inject test
+  code to find out more (the sandboxed-page fallback runs its own
+  check, `pageWorldRuns`, but only to decide whether to fall back). sm-dev, which sees the response headers, says
   it directly (see `docs/sm-dev-design.md`).
-- Pinned by `tests/e2e/sandbox-csp.spec.ts`.
+- The hints are pinned by `tests/unit/missing-scripts.test.mjs`, and
+  the sandboxed-page fallback by `tests/e2e/sandbox-csp.spec.ts`.
 
 ### documentId is the lifecycle key
 

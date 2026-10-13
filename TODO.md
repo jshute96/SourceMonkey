@@ -339,55 +339,44 @@ Gaps that made corpus scripts fail on their live sites (see
 the scripts). Comparisons are against Violentmonkey's source; Tampermonkey
 wasn't checked.
 
-- **`GM` is frozen** (`gm-frozen`: 30766, 19993, 437569).
-  - `src/extension/gm-bindings.ts` emits `const GM = Object.freeze({...})`.
-  - GM_config's polyfill sets `GM.getValue` when only `GM_getValue` is
-    granted, and the assignment is silently dropped, so 30766 never
-    starts. 19993 adds a `GM.cookie` stub, which throws.
-  - 437569 wraps `GM` in a `Proxy` whose `get` returns bound copies,
-    which breaks the Proxy invariant for a frozen target and throws.
-  - VM builds `GM` as a plain writable object. Fix: drop the freeze,
-    or freeze only the API properties and leave the object extensible.
 - **Granted `GM_*` names are `const`** (`gm-reassign`: 2129, 2128,
   419798, 438053, 2130).
   - A shim like `GM_xmlhttpRequest = GM.xmlHttpRequest;` throws
     "Assignment to constant variable" at startup.
   - VM resolves names through `with(this)` over a wrapper, so the
-    assignment works. Fix: declare them with `let`.
+    assignment works. Granted scripts now do too, since they run in
+    the page with a sandbox `window` holding the names; this is left
+    for scripts that ask to be isolated. Fix there: declare them with
+    `let`.
   - About 50 corpus files assign to a `GM_*` name; some are guarded.
-- **No `cloneInto` / `exportFunction` / `createObjectIn`**
-  (`needs-cloneinto`: 19993).
-  - Older scripts call these Firefox helpers unchecked and throw
-    `cloneInto is not defined`.
-  - VM defines pass-through stand-ins on Chrome (`makeComponentUtils`
-    in `src/injected/web/util.js`). Cheap to copy.
-- **Granted scripts run in the isolated world** (`needs-page-globals`:
-  561432, 382030, 485608, 395461, 37314, 382359, 386908, 387955,
-  432423, and earlier ones; `needs-custom-elements`: 397848).
-  - Scripts that read the page's globals without `unsafeWindow` (the
-    YouTube player API, the page's `$`, `customElements`, which is null
-    in the USER_SCRIPT world) fail. `@inject-into page` copies work.
-  - TM ran 386908 (which hooks the page's event APIs) in the page,
-    where SourceMonkey's isolated copy had no effect.
-  - The same goes for scripts that patch built-ins
-    (`patches-page-builtins`: 450253, 455252, 478080, 373903, 546581,
-    495177): `XMLHttpRequest.prototype.open`, `Object.prototype`
-    setters, `performance.now` or the EME APIs change only the
-    isolated world's copies, so the page's own calls never reach the
-    hook. Under TM the page's `XMLHttpRequest.prototype.open` and
-    `Object.prototype` showed the patches; `@inject-into page` copies
-    work.
-  - The sharpest case: a script whose only `@grant` lines are unknown
-    names (27929's `@grant aoh72931`, 432423's `@grant Math.mod`,
-    437552's `@grant noneT`) gets no APIs at all, yet runs isolated
-    (`resolveWorld` in `src/script-world.ts`). TM gave 27929 the
-    page's globals, and `@grant none` copies of 27929 and 432423
-    work. Treating unknown-only grants like no grants would fix
-    these alone.
-  - VM runs these in the page by default (TM reportedly too, through
-    its `@sandbox` default). Worth deciding whether to pick the page
-    world automatically, rather than only for `@inject-into page` and
-    `@grant unsafeWindow` (see docs/injection.md).
+- **Follow-ups from the page-world default** (docs/injection.md, "Costs
+  of running in MAIN"):
+  - The channel key keeps the page off the bridge and away from our
+    runtime, but a page that targets SourceMonkey can still hook
+    built-ins we haven't captured, and methods on a script's own values
+    (a `toJSON`, an `Array.prototype` method the storage codec calls),
+    and see values passing through (docs/injection.md, "What it doesn't
+    stop").
+    - `GM_xmlhttpRequest`'s request and response are covered (the one
+      path where the page could see what it couldn't read itself).
+    - The rest: storage values through the codec, `GM_addElement`'s
+      DOM calls, the transport's other messages (their payloads still
+      inherit `Object.prototype`, so its `toJSON` sees them), menu and
+      notification plumbing.
+    - Closing it fully means VM-style safe built-ins throughout the
+      MAIN-world runtime and prelude (docs/GM-API-strategy.md, section
+      3). Low priority: a page that does this can as easily hook the
+      built-ins a script's own code calls on the same values, which
+      scripts don't guard against either.
+  - Any installed userscript reaches the registry (`__smReg` is in its
+    scope), so a page-world script can call the runtime as a sibling
+    script on the same page. Per-script keys would stop that.
+  - No CSP exemption for a MAIN-world `GM_addStyle` / `GM_addElement`
+    into a closed shadow root, another frame's document or a detached
+    parent; the runtime inserts those itself (docs/GM-APIs.md).
+  - Page code can tamper with the built-ins a granted page-world
+    script uses itself (docs/GM-API-strategy.md, section 3, decided
+    against VM's safe-builtins when granted scripts ran isolated).
 - **`GM_cookie`** (463802) is the whole failure for a Reddit script.
   See "GM_* APIs not yet in the catalog".
 
@@ -411,17 +400,6 @@ Violentmonkey 2.49.0 with a throwaway `tests/examples/` probe script
     also wrong after a redirect for error and timeout); consider
     delivering `onabort` asynchronously, which contradicts the comment
     at the local abort dispatch.
-- **Undeclared `exports`, `module` and `define` throw**
-  (`needs-module-globals`: 30954).
-  - Webpack and UMD bundles pass or test these names; in SourceMonkey
-    that's `ReferenceError: exports is not defined` before anything
-    runs.
-  - TM and VM both give `undefined` for these three names only (other
-    undeclared names still throw). VM wraps each script in
-    `(define,module,exports)=>{...}` called with no arguments
-    (`background/utils/preinject-prepare.js`).
-  - Fix: declare them as undefined parameters or locals in the script
-    wrapper.
 - **`GM_setClipboard` ignores its callback** (`setclipboard-callback`:
   483847).
   - TM documents `GM_setClipboard(data, info, cb)`; the binding in
@@ -446,38 +424,16 @@ against Tampermonkey with `sm-dev --manager tm` probes (2026-10-05).
     corrupt.
   - Fix: honor the option's charset when building `responseText` (for
     `x-user-defined`, map each byte to one character).
-- **`@require` libraries land on the page's `window` in MAIN world**
-  (`require-clobbers-page`: 722).
-  - A script that names `unsafeWindow` runs in the page, so its
-    `@require`d jQuery 1.10.2 replaced ja.wikipedia's 3.7.1, and
-    Wikipedia's own code threw (`mwCollapsibleSetup`).
-  - Under TM the page kept 3.7.1: TM runs the require in its sandbox
-    and hands out a wrapper for `unsafeWindow`.
-  - Fix ideas: run requires with a scope object as `this`/`window`
-    for MAIN-world scripts, or snapshot and restore the page globals a
-    require overwrites. Both are partial; needs a design.
-  - The script's own writes to `window` reach the page the same way
-    (`window-writes-reach-page`: 475153). Its `window.setTimeout = fn
-    => fn()` and `window.setInterval = ...` replaced moomoo.io's, and
-    the game overflowed its stack. Under TM the page's timers stayed
-    native and it loaded; an `@inject-into content` copy works.
-- **`unsafeWindow` and `GM_*` aren't properties of `window`/`self`**
-  (`unsafewindow-on-window`: 593, 4881, 4882, 455261, 455855;
-  `gm-on-window`: 456077, 455261, 455855).
+- **`unsafeWindow` and `GM_*` aren't properties of `window`/`self`
+  in the isolated world** (`unsafewindow-on-window`: 593, 4881, 4882,
+  455261, 455855; `gm-on-window`: 456077, 455261, 455855).
   - Greasemonkey-era scripts test `if (this.unsafeWindow)` to pick
-    their GM code path. TM and VM: `true`; SourceMonkey: `false`,
-    since `unsafeWindow` is a local binding and `window` is the page's
-    own. 4881 and 4882 fail on it; copies adding
-    `this.unsafeWindow = unsafeWindow;` work.
-  - Newer scripts test `!!self.GM_registerMenuCommand` (the Xbox Cloud
-    Gaming family, 455261 and 455855, which then skip their menus), and
+    their GM code path, newer ones `!!self.GM_registerMenuCommand`, and
     vite-plugin-monkey builds read every grant off `window` (456077
-    throws `GM_getValue is not a function`). TM passes both checks
-    (`--manager tm`); a copy of 456077 reading from an object of the
-    granted functions works.
-  - Fixing it means setting properties on the `window` the script
-    sees. In the isolated world that's private to the script; in the
-    page world the page can see them, so it needs a design.
+    throws `GM_getValue is not a function`). TM passes all of these.
+  - Page-world scripts get them on their sandbox `window`, and these
+    scripts now work (re-tested 2026-10-11); this is left for scripts
+    that ask to be isolated.
 
 The next items came from testing the 300 and then 400 oldest corpus
 scripts, checked against Tampermonkey 5.5 with `sm-dev --manager tm`
@@ -678,6 +634,14 @@ Adding any of these is a catalog entry + a body — nothing structural.
 
 ### GM_* implementation follow-ups
 
+- **A throw in a `GM_xmlhttpRequest` callback never reaches the Log.**
+  `callXhrCallback` (`src/wrapper-gm-runtime.js`) catches it and only
+  logs `console.info("[SourceMonkey] XHR callback threw:", e)` to the
+  page console, so it isn't an `sm:error`, the script's Log doesn't
+  show it, and sm-dev shows it only under `logs --log-source all`. TM
+  and VM let it surface as the script's uncaught error. Report it as
+  the script's error (and check the other runtime callbacks: value
+  listeners, menu commands, notifications, downloads).
 - **Value sequence numbers after a backward clock step.** The value
   store starts its counter from `Date.now()` (`src/extension/value-store.ts`).
   If the clock steps back by more than an earlier worker's lifetime,
@@ -685,11 +649,6 @@ Adding any of these is a catalog entry + a body — nothing structural.
   updates for those keys until they navigate (resync can't repair
   it either). Fix: keep a high-water mark in `chrome.storage.session`
   and start from the larger of the two.
-- **Cap incoming value sequence numbers in MAIN world.** A page can
-  post a forged `sm:gm-value-update` with a huge `seq`, after which
-  every real broadcast for that key looks old. Low impact (the page
-  can already write the MAIN-world store), but capping `seq` near
-  `Date.now() * 1000` in `applyRemoteUpdate` would be cheap.
 - **A value write can race a wipe.** `wipeValues` lists a script's
   rows, then removes them; a write landing in between saves a key that
   the removal then deletes from disk, while the store's map keeps it.
@@ -734,7 +693,8 @@ Adding any of these is a catalog entry + a body — nothing structural.
   `reasons` array in `parse-check.ts`, which is fixed at creation
   time.
 - **`window.close` / `window.focus` failures are filed under the
-  first granting script.** The override closes over the scriptId of
+  first granting script** in the isolated world (a page-world script
+  has its own override). The override closes over the scriptId of
   whichever script installed it, so a sibling script's refused close
   lands on the wrong Log tab. Cosmetic, and it disappears with
   per-script worlds (below).
@@ -742,21 +702,18 @@ Adding any of these is a catalog entry + a body — nothing structural.
   script on a page grants `window.onurlchange`, the `urlchange`
   surface exists on that world's shared `window`, so a sibling script
   in the same world that did NOT grant it can also feature-detect and
-  subscribe. `@grant window.close` / `window.focus` leak the same way
-  — their overrides replace the methods on that same shared `window`.
-  TM sandboxes each script's `window` and gets exact per-script
-  gating. Same shared-realm root cause as the storage-spoofing entry
-  below; a real fix needs per-script worlds.
+  subscribe. In the isolated world, `@grant window.close` /
+  `window.focus` leak the same way: their overrides replace the
+  methods on that same shared `window`. (A page-world script's
+  overrides go on its own sandbox `window`, as TM does.) Same
+  shared-realm root cause as the storage-spoofing entry below; a real
+  fix needs per-script worlds.
   - In MAIN world the shared `window` is the **page's**, so the page
-    sees these too: it can subscribe to `urlchange`, and its own
-    `window.close()` reaches our override. The override is
-    scriptId-scoped SW-side (`bridgeMayActAs`), so the page gets no
-    more than the MAIN-world script it shares a realm with already
-    had — but "the page can close its own tab" is a behavior change
-    worth knowing about. TM has the same exposure in its page-context
-    mode.
+    sees `urlchange` too: it can subscribe to it. It could go on the
+    sandbox `window`, where the `window.close` override is.
 - **`window.*` reload-fast-path coverage.** The stated reason the
-  `urlchange.enable` and `windowControl.enable` calls live in the
+  `urlchange.enable` and `windowControl.enable` / `.make` calls live
+  in the
   emitter's `js` (rather than `prelude`) is that a hot-swapped body
   still needs the surface. Only the emitted string's position is
   asserted today; an e2e driving the run-new swap with these grants
@@ -764,17 +721,6 @@ Adding any of these is a catalog entry + a body — nothing structural.
   for the same reason and now has that e2e
   (`reload-fast-path.spec.ts`), so these are the eager calls whose
   swap behaviour is unasserted.
-- **CSP-exempt DOM injection for MAIN-world scripts.** `GM_addStyle` /
-  `GM_addElement` bypass page CSP from USER_SCRIPT world but not from
-  MAIN, so a `@grant unsafeWindow` script on a site with a strict
-  `style-src` inserts a `<style>` whose rules never apply. The block
-  is detected (`el.sheet === null` once connected) and reported as a
-  Log warning; the fallback would be an async bridge request asking
-  the USER_SCRIPT-world runtime to insert a CSP-exempt copy, at the
-  cost of the returned element no longer being the live one, and of
-  registering that runtime on pages that otherwise don't need it.
-  TM/VM have the same limitation today. Build it when a real site
-  shows up where the style matters.
 - **Send the remaining GM pushes to the requesting frame.** Scripts run
   in frames now, but `sm:gm-tab-closed` and `sm:gm-notification-event`
   still go to the whole tab (`chrome.tabs.sendMessage` with no frame;
@@ -1145,6 +1091,13 @@ See [docs/harness-design.md](docs/harness-design.md).
 
 ## sm-dev runs: follow-ups
 
+- **A page's stackless error is labeled `[script error]`.** A
+  `SyntaxError` from the page's own `eval` has no stack frames, and
+  `pageErrorSource` (`src/harness/page-output.ts`) gives a frameless
+  error to the scripts unless `stacklessIsScripts` (`run.ts`) can tell
+  otherwise. Seen on www.la7.it with a `@grant none` script that does
+  nothing: "Function statements require a function name", before the
+  script started. Same on `main`.
 - `settleWrites` waits 250 ms after firing a menu command, sized for
   the old 150 ms value-write debounce
   (`src/harness/console-commands.ts`). Writes now reach the worker a
@@ -1311,8 +1264,7 @@ Set aside while moving every write into the service worker
     `https://a.com/*`) still changes the set.
   - Options: per-origin patterns, so a second script on a covered site
     changes nothing; or `<all_urls>`, which `buildGmRuntimeSpecs`
-    argues against (a page-visible `window.__SM_GM__` on every site is a
-    fingerprint and an attack surface).
+    argues against (the runtime's load on every site).
 - **Minify the injected helpers properly.** The build only strips
   comments and whitespace (`minifyForInjection`): the GM runtime goes
   from 131 KB to 55 KB. A real minifier (esbuild or terser) might reach

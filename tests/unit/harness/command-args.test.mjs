@@ -186,7 +186,7 @@ test('a form can name what it acts on before its keyword, or leave it out', () =
 
 test('each subcommand takes its own flags and the command\'s shared ones, and no other\'s', () => {
   assert.deepEqual(typed('script', 'save /tmp/x --file xx'), {
-    error: 'The `script save` command has no `--file` flag. It takes `--only`, `--flat`, `--force`, `--json`, `--nojson`. The `--file` flag is for `script print`.', flag: '--file',
+    error: 'The `script save` command has no `--file` flag. It takes `--include`, `--flat`, `--force`, `--json`, `--nojson`. The `--file` flag is for `script print`.', flag: '--file',
   });
   // Given before the subcommand, it is checked once the subcommand is known.
   assert.equal(typed('script', '--out x enable').error, 'The `script enable` command has no `--out` flag. It takes `--json`, `--nojson`. The `--out` flag is for `script print`.');

@@ -4,10 +4,13 @@
 // isolated world the page can't read. But the SW attaches that
 // script's value snapshot (`gmValues`) to the `sm:check-pending`
 // reply, and the MAIN-world bridge (wrapper-bridge.js) forwards
-// `sm:check-pending` postMessages from the page. So a hostile page
+// `sm:check-pending` requests from the page's world. So a hostile page
 // could forge a check-pending with the victim's scriptId +
-// `needsValues:true`, and read the snapshot back out of the reply the
-// bridge posts to the page.
+// `needsValues:true`, and read the snapshot back out of the reply.
+//
+// The channel key now keeps the page off the bridge entirely (the
+// second test). The first plays a page that has the key anyway, to
+// check the SW-side gate behind it.
 //
 // Fix: the bridge stamps `__viaBridge:true` on everything it relays
 // (the page can't strip a marker added in USER_SCRIPT world, and the
@@ -24,6 +27,7 @@
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 import { waitFor } from '../fixtures/sw-api';
+import { bridgeRequest } from '../fixtures/bridge-forge';
 
 const SECRET = 'leak-canary-9d3f';
 
@@ -36,7 +40,7 @@ test.describe('GM storage cross-script read leak', () => {
   test('a page-forged bridge check-pending cannot read another script\'s GM values', async ({
     extensionContext, fixtureServer, sm,
   }) => {
-    // Victim: USER_SCRIPT-world (real @grant → isolated world) storage
+    // Victim: USER_SCRIPT-world (`@inject-into content`) storage
     // script. Seeds a secret value on its first run and echoes whatever
     // it reads so the test can confirm the value really is in the SW
     // snapshot via the legitimate direct path.
@@ -47,6 +51,7 @@ test.describe('GM storage cross-script read leak', () => {
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
         grant: ['GM_setValue', 'GM_getValue'],
+        injectInto: 'content',
       },
       body: `
         if (GM_getValue('secret', '') === '') GM_setValue('secret', '${SECRET}');
@@ -98,37 +103,19 @@ test.describe('GM storage cross-script read leak', () => {
     await expect(page.locator('body')).toHaveAttribute('data-sm-victim', SECRET);
 
     // Now the attack: forge a bridge check-pending for the victim's id
-    // with needsValues:true and read whatever the bridge posts back.
-    const reply = await page.evaluate((id) => {
-      return new Promise<unknown>((resolve) => {
-        const rid = 'forge-' + Math.random().toString(36).slice(2);
-        const onMsg = (ev: MessageEvent): void => {
-          const d = ev.data as { __sm?: string; requestId?: string; reply?: unknown };
-          if (ev.source !== window || !d || d.__sm !== 'sourcemonkey-bridge-reply' || d.requestId !== rid) return;
-          window.removeEventListener('message', onMsg, true);
-          resolve(d.reply ?? null);
-        };
-        window.addEventListener('message', onMsg, true);
-        // The page -> SW direction is a DOM event; replies still come
-        // back as a postMessage. A page can dispatch the event as
-        // easily as it could post the message, which is the point of
-        // the SW-side gate this test exercises.
-        document.dispatchEvent(new CustomEvent('sourcemonkey-bridge-sync', {
-          detail: JSON.stringify({
-            requestId: rid,
-            payload: {
-              type: 'sm:check-pending',
-              id,
-              name: 'Victim',
-              loadedAt: 0,
-              url: location.href,
-              needsValues: true,
-            },
-          }),
-        }));
-        setTimeout(() => { window.removeEventListener('message', onMsg, true); resolve(null); }, 2500);
-      });
-    }, victimId);
+    // with needsValues:true and read whatever the bridge sends back.
+    // Played by a page that has the channel key: one without it can't
+    // even name the bridge's events (see the test below), so what this
+    // exercises is the SW-side gate behind the key.
+    const key = await sm.channelKey();
+    const reply = await bridgeRequest(page, key, {
+      type: 'sm:check-pending',
+      id: victimId,
+      name: 'Victim',
+      loadedAt: 0,
+      url: `${fixtureServer.baseUrl}/target.html?n=2`,
+      needsValues: true,
+    });
 
     // We must actually have gotten a reply (proves the bridge relayed
     // and replied — i.e. the forgery channel is live and we're testing
@@ -138,6 +125,50 @@ test.describe('GM storage cross-script read leak', () => {
     expect((reply as { gmValues?: unknown }).gmValues).toBeUndefined();
     expect(JSON.stringify(reply)).not.toContain(SECRET);
 
+    await page.close();
+  });
+
+  test('a page without the channel key gets no reply from the bridge, and finds no runtime', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // A granted MAIN-world storage script, so both the bridge and the
+    // MAIN-world GM runtime are on the page.
+    scriptsDir.write({
+      relativePath: 'main.user.js',
+      meta: {
+        name: 'Main',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_setValue', 'GM_getValue'],
+      },
+      body: `GM_setValue('k', 'v'); document.body.dataset.smMain = GM_getValue('k');`,
+    });
+    const added = await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+    const id = (await sm.getCollectionWithScripts(added!.id))!.scripts[0].id;
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-main', 'v');
+
+    // The old public names and a wrong key both reach nothing.
+    for (const key of ['bridge', 'not-the-key']) {
+      const reply = await bridgeRequest(page, key, { type: 'sm:check-pending', id, name: 'Main', loadedAt: 0, url: page.url(), needsValues: true }, 800);
+      expect(reply).toBeNull();
+    }
+    // None of our pieces are page globals, and the gate hands ours only
+    // to the key: a guess gets an empty registry of its own.
+    const seen = await page.evaluate(() => {
+      const w = window as unknown as Record<string, unknown>;
+      const d = document as unknown as Record<string, unknown>;
+      const gate = d.__smGate as (k: string) => Record<string, unknown>;
+      return {
+        globals: ['__SM_GM__', '__smPrelude', '__smRun', '__smSealed', '__smCfgQueue', '__smGate'].filter((n) => n in w),
+        guessed: ['prelude', 'run', 'gm'].filter((n) => n in gate('__SM_KEY__')),
+        replaced: (() => { try { d.__smGate = () => ({}); } catch { /* strict */ } return d.__smGate === gate; })(),
+      };
+    });
+    expect(seen).toEqual({ globals: [], guessed: [], replaced: true });
     await page.close();
   });
 });

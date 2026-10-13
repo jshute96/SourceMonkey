@@ -457,16 +457,16 @@ test('script save --include all,site-icons saves the @icon and the site icons, l
   }
 });
 
-test('script show leaves icons out when the extension is too old for them', async () => {
+test('script show leaves icons out when reading them fails', async () => {
   const details = {
     ...scripts[0], match: ['https://example.org/*'], include: [], exclude: [], excludeMatch: [], grants: [], requires: [], resources: [],
   };
-  const old = {
+  const failing = {
     ...withFiles,
     scriptDetails: async () => details,
-    scriptIcons: async () => { throw new Error('Reading a script\'s icons needs a newer SourceMonkey in this browser'); },
+    scriptIcons: async () => { throw new Error('The icon lookup failed'); },
   };
-  const { ok, out } = await verb('show', [], {}, { control: old });
+  const { ok, out } = await verb('show', [], {}, { control: failing });
   assert.equal(ok, true);
   assert.equal(out[0], 'E4: Dark mode 2.1');
   assert.equal(out.some((l) => /icon/i.test(l)), false);

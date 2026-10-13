@@ -6,7 +6,9 @@
 // `opaqueOrigin` on TabMatchState). The main case it names:
 //   - A CSP `sandbox` header without `allow-scripts` turns off script
 //     in the page's own world, so Chrome silently skips MAIN-world
-//     scripts there, while USER_SCRIPT-world ones still run.
+//     scripts there, while USER_SCRIPT-world ones still run. The
+//     bridge then has them run isolated (`runBlockedMainScripts` in
+//     background.ts), so this hint matters only when that didn't run.
 //   - Such a page gets an opaque origin, which any wrapper that did run
 //     there reports.
 // See docs/matching.md#scripts-that-never-start.

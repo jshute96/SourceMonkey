@@ -166,7 +166,7 @@ for (const entry of await readdir(src, { withFileTypes: true, recursive: true })
 // { file: "..." } entries are loaded asynchronously in MAIN world
 // (likely via a <script src=> element under the hood), so the next
 // js[] entry runs before the file has parsed. Per-script entries
-// that depend on the prelude's helpers (self.__smRun, self.__smSealed)
+// that depend on the prelude's helpers (the registry's run and sealed)
 // would then see "is not a function" on the first call.
 // USER_SCRIPT world appears to load { file } synchronously, but using
 // {code} unconditionally avoids relying on that distinction and keeps

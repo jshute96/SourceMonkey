@@ -25,8 +25,15 @@ export function cspBlocksPageScripts(header: string): boolean {
   return false;
 }
 
+// sm-dev's note for such a page under a SourceMonkey that runs the
+// run's MAIN-world scripts there isolated instead, naming them.
+export function sandboxedPageNote(scripts: readonly string[]): string {
+  return 'This page\'s Content-Security-Policy header sandboxes it without allow-scripts, ' +
+    `so SourceMonkey runs these scripts in the isolated context instead: ${scripts.join(', ')}.`;
+}
+
 // sm-dev's warning for such a page, naming the run's MAIN-world scripts
-// that match it.
+// that match it, under a manager that doesn't run them there.
 export function sandboxedPageWarning(scripts: readonly string[]): string {
   return 'This page\'s Content-Security-Policy header sandboxes it without allow-scripts. ' +
     `${SANDBOX_BLOCKS_PAGE_CONTEXT}, so these scripts can't run here: ` +

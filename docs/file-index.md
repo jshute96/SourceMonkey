@@ -89,10 +89,11 @@ and `lib/`.
 | `src/public-suffixes.ts` | Generated: the ICANN public suffix rules that `.tld` host patterns match, one per line |
 | `src/unsafe-window-use.ts` | Text scan for an ungranted `unsafeWindow` reference, ignoring a source that declares the name itself |
 | `src/runtime-messages.ts` | The `sm:*` report types injected scripts send the service worker, plus its `sm:manual` for sm-dev |
-| `src/script-world.ts` | Picks the injection world (page or isolated) from a script's `@grant` and `@inject-into` lines |
+| `src/script-world.ts` | Picks the injection world (page or isolated) and whether a page-world script is sandboxed, from its header |
 | `src/eval-hook.ts` | The statement sm-dev's scripts get so `eval` runs in their scope (and their IIFE's), after any `"use strict"` |
 | `src/composed-source.ts` | Concatenates `@require` bodies ahead of the script body; owns the injected entry's line layout and the parse check's source, for stack and error mapping |
-| `src/sandboxed-page.ts` | Detects a CSP `sandbox` that blocks page-world scripts; the wording the Log warning and sm-dev share |
+| `src/channel-placeholder.ts` | The stand-in for the channel key in the static wrapper files, shared with the harness |
+| `src/sandboxed-page.ts` | Detects a CSP `sandbox` that blocks page-world scripts; the wording the Log warning and sm-dev's note share |
 | `src/debug-log.ts` | Debug-logging gate for verbose lifecycle messages; off by default, toggled via `chrome.storage.local.smDebugLogging` |
 | `src/phase-timing.ts` | Debug-gated timers behind the refresh / registration / enable paths: per-sequence phases plus cumulative fan-out totals |
 | `src/bytes.ts` | Shared byte helpers: `sha256Hex` (content/file hashes) plus chunked `bytesToBase64` / `base64ToBytes` for message-hop and `@resource` transport |
@@ -128,9 +129,9 @@ stay directly in `src/` so the extension's URLs have no folder in them.
 | `src/debug/icons.html` | Debug icons page markup: common header bar with Delete All action and cached-icons inspection table |
 | `src/glyph-sprite.svg` | The one copy of every inline SVG glyph, inlined into each page at `<!--#include glyph-sprite-->` by the build |
 | `src/styles.css` | Cross-page shared stylesheet linked by every extension page: the header bar and page column, the button surface, collection bubble + scheme chip, display-name, warning banner, modal dialog shell, install-target select, tab strip, site favicons |
-| `src/userscript-prelude.js` | Static per-world prelude (matcher, check-pending round-trip, @run-at gate, async-error listeners, focus signal); minified to WRAPPER_PRELUDE and spliced into each script's js[] as a `{code}` entry |
-| `src/wrapper-bridge.js` | USER_SCRIPT-world bridge relaying sm:* + GM_* traffic between MAIN-world wrappers and the SW, both directions |
-| `src/wrapper-gm-runtime.js` | Shared per-world `GM_*` runtime — installs `window.__SM_GM__` (shim cache, dual transport, storage cache + stored-value codec + batched writes) |
+| `src/userscript-prelude.js` | Per-world prelude spliced into each script: run decision, @run-at gate, error capture, sandbox `window` |
+| `src/wrapper-bridge.js` | USER_SCRIPT-world bridge for MAIN-world scripts: relays sm:* + GM_* traffic, does GM DOM inserts, spots sandboxed pages |
+| `src/wrapper-gm-runtime.js` | Shared per-world `GM_*` runtime — puts itself in the world's registry (shim cache, dual transport, storage cache + stored-value codec + batched writes) |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons (placeholder) |
 
 ### Extension modules (`src/extension/`)
@@ -197,6 +198,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/script-sites.ts` | Rewrites a script's URL into the hosting site's listing page (Greasy Fork, Sleazy Fork, OpenUserJS, gists) and decides the viewer's row |
 | `src/extension/script-url-hash.ts` | Pure `parseHash` / `buildHash` for the viewer's `#<filename>[:<line>[:<col>]]` / `#Log` URL fragment |
 | `src/extension/match-index.ts` | In-memory cache of scripts' matching info, world and local-ness, synced with storage; invalid ones only for the popup |
+| `src/extension/channel.ts` | The per-install channel key: made and stored, swapped into wrappers, the registry gate expression, a document's key |
 | `src/extension/injector.ts` | Incrementally syncs the enabled script set into `chrome.userScripts`, re-checking unverified rows first, and wraps each body with an activation/error shim |
 | `src/extension/tab-status.ts` | Pure helpers for per-tab script status (expected ∪ actual, runs in frames), badge colors, and per-tab document LRU |
 | `src/extension/toolbar-summary.ts` | Pure: the toolbar badge's count and color and its tooltip's status lines, from the popup's view |
@@ -314,6 +316,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/fixtures/viewer-selectors.ts` | Userscript-viewer selectors shared by several specs, where the right element isn't the obvious one |
 | `tests/fixtures/extension-id.ts` | Computes Chrome's deterministic unpacked-extension ID from an absolute path |
 | `tests/fixtures/bad-script-cases.mjs` | Expected status / message / error line for every `tests/bad-examples/` file, shared by the e2e spec and the CLI test |
+| `tests/fixtures/bridge-forge.ts` | Sends the bridge's events as a page holding the channel key would, for tests of the SW-side gate |
 | `tests/fixtures/scripts-dir.ts` | Tmp-dir helper that writes real `*.user.js` files on disk for the production scan/fetch pipeline to ingest |
 | `tests/fixtures/userscript-server.ts` | Per-test HTTP server with mutable userscript / manifest routes, conditional-GET handling, and a request-arrival wait |
 | `tests/fixtures/sw-api.ts` | Typed wrapper over the `self.SourceMonkey` SW test surface plus the shared `waitFor` / tab-id / badge-colour / all-scripts helpers |
@@ -329,7 +332,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/fixtures/pages/page-globals.html` | Fixture page defining page-realm globals, so MAIN-vs-isolated world access can be asserted |
 | `tests/fixtures/pages/wide-icon.svg` | A red 2:1 SVG sized only by its viewBox, the site icon the favicon-badge tests draw under the badge |
 | `tests/fixtures/pages/stopped.html` | Fixture page that stops its own load with `window.stop()`, so it never fires `load` |
-| `tests/fixtures/pages/strict-csp.html` | Fixture page with `style-src 'none'`, for the MAIN-world CSP-blocked-style report |
+| `tests/fixtures/pages/strict-csp.html` | Fixture page with `style-src 'none'`, for the CSP exemption of `GM_addStyle` / `GM_addElement` |
 | `tests/fixtures/pages/strict-script-csp.html` | Fixture page with `script-src 'self'`, for which CSP governs userscript-inserted scripts |
 | `tests/fixtures/pages/set-page-global.js` | Script that sets a page global, loaded as an external `<script src>` by the CSP tests |
 | `tests/e2e/smoke.spec.ts` | Smoke test: SW loads, collections page renders, fixture server responds |
@@ -341,7 +344,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/late-bridge.spec.ts` | Page-world scripts injected before the bridge or GM runtime: start, errors and `GM_*` calls still reach the worker |
 | `tests/e2e/sync-window.spec.ts` | A navigation racing a registration sync still gets injected, and the set never empties mid-sync |
 | `tests/e2e/badge.spec.ts` | Per-tab badge and tooltip: green/red/orange/purple, MISSING, RELOAD, disabled since load, warnings |
-| `tests/e2e/sandbox-csp.spec.ts` | Pages sent with a CSP `sandbox` header: MAIN-world scripts skipped, USER_SCRIPT-world ones run, the Log hint |
+| `tests/e2e/sandbox-csp.spec.ts` | Pages sent with a CSP `sandbox` header or in an `<iframe sandbox>`: MAIN-world scripts run isolated instead |
 | `tests/e2e/reload-without-scripts.spec.ts` | "Reload page with no userscripts" and its per-script forms: one-shot skips, grey NOT_LOADED badge, info Log entries |
 | `tests/e2e/popup.spec.ts` | The toolbar popup: rows by collection, toggles, removed scripts and the reload banner, exclusive checkbox and shown copy, collection menu, menu commands, single vs double click |
 | `tests/e2e/body-reads.spec.ts` | Which reads load script bodies: enable toggles read none, unchanged refreshes one copy; full syncs skip held code |
@@ -450,6 +453,8 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/stack-lines.spec.ts` | The service worker's stack layout, which `sm-dev` maps with, sends a logged throw to the `@require` and script lines |
 | `tests/e2e/sticky-numbers.spec.ts` | Collection numbers: the service worker keeps them as collections come and go, and holds a dropped one's back |
 | `tests/e2e/log-export.spec.ts` | Log tab's Save / Copy buttons: save dialog, cancel + write-failure reporting, download fallback, clipboard text, empty-log disable |
+| `tests/unit/channel.test.mjs` | Unit tests for the channel key's registry gate, its document keys, and that our pieces meet only there |
+| `tests/unit/channel-helpers.mjs` | Test helpers for the channel key: the registry, event names, a gate over a test's stub |
 | `tests/unit/injector.test.mjs` | Unit tests for the injector: spec build, active-spec collection, refusal logging, retry limits, sync serialization and scoping |
 | `tests/unit/generated-wrappers.test.mjs` | Guard test: each minified wrapper (`WRAPPER_*`) is a single line of valid JS with load-bearing tokens intact |
 | `tests/unit/source-layout.test.mjs` | Checks the `src/` split: what `lib/` and `dist/` compile, and that shared modules are shared |
@@ -460,7 +465,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/source-map.test.mjs` | Unit tests for VLQ encoding, line-level mappings, and inline-map encoding |
 | `tests/unit/gm-api-catalog.test.mjs` | Unit tests for the GM_* / GM.* catalog: lookup, alias resolution, `@grant` canonicalization, `none` precedence |
 | `tests/unit/gm-bindings.test.mjs` | Unit tests for the per-script GM_* / GM.* binding emitter — granted output, sync stub routing, async sendMessage envelope, GM4 alias shape |
-| `tests/unit/unsafe-window.test.mjs` | Unit tests for `unsafeWindow` — world resolution (granted and ungranted), per-world GM runtime need, isolated-world warning, bridge wire markers |
+| `tests/unit/unsafe-window.test.mjs` | Unit tests for `unsafeWindow`: world resolution, the ungranted binding, per-world GM runtime need, isolated-world warning, bridge wire markers |
 | `tests/unit/unsafe-window-use.test.mjs` | Unit tests for the ungranted-`unsafeWindow` source scan: comments, strings, templates, declarations, limits |
 | `tests/unit/gm-value-codec.test.mjs` | Unit tests for the page-side stored-value codec — type fidelity, raw storage of JSON-clean values, legacy-row decoding |
 | `tests/unit/gm-runtime-transport.test.mjs` | Unit tests for the runtime's transport choice — direct channel only with `chrome.runtime.id`, bridge on an `externally_connectable` page, held until the bridge is in |
@@ -475,7 +480,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/compare.spec.ts` | E2E tests for the compare page: fields table, per-file tabs and chips, view controls, swap, preview side, missing copy |
 | `tests/e2e/other-versions.spec.ts` | E2E tests for the other-versions panel: absolute-URL matching across collection kinds, per-row toggle, Refresh all, removing the copy on screen, the preview's callout / banner / install-offer section, the heading fold |
 | `tests/e2e/user-script-world-csp.spec.ts` | E2E tests for userscript-inserted `<script>` elements (inline and `src`) under the world CSP and a strict page CSP |
-| `tests/e2e/gm-dom.spec.ts` | E2E tests for `GM_addStyle` / `GM_addElement` — CSS application, tag-aware default parent (head/body), explicit-parent form, GM4 alias, permission gating, the MAIN-world CSP-blocked report |
+| `tests/e2e/gm-dom.spec.ts` | E2E tests for `GM_addStyle` / `GM_addElement`: parents, gating, and CSP exemption and reports |
 | `tests/e2e/gm-clipboard.spec.ts` | E2E tests for `GM_setClipboard` via `navigator.clipboard.writeText` — text round-trip, GM4 alias, permission gating |
 | `tests/e2e/gm-value-ordering.spec.ts` | E2E: two tabs churning the same GM value keys end up agreeing with the worker |
 | `tests/e2e/gm-storage-quota.spec.ts` | E2E: a GM value save refused for a full storage quota logs one error on the script |
@@ -484,14 +489,17 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/gm-storage-types.spec.ts` | E2E: `Date`/`Map`/`Set`/`NaN`/binary/`Error` survive a reload, plain values stay untagged, pre-codec rows still read |
 | `tests/e2e/gm-storage-freshness.spec.ts` | E2E: fresh documents see the latest `GM_setValue` (same-tab nav, fresh tab, write-then-navigate race) |
 | `tests/e2e/gm-storage-teardown-main.spec.ts` | E2E: a MAIN-world `GM_setValue` right before a script-driven navigation or a tab close still reaches the next document |
-| `tests/e2e/gm-storage-read-leak.spec.ts` | E2E: a page-forged bridge `sm:check-pending` can't read another script's `GM_setValue` snapshot (`__viaBridge` gate) |
+| `tests/e2e/channel-key.spec.ts` | E2E: a page that hooks the usual built-ins never sees the channel key, on a load and a reload swap |
+| `tests/e2e/gm-storage-read-leak.spec.ts` | E2E: a page without the channel key reaches neither bridge nor runtime; with it, the `__viaBridge` gate still refuses another script's values |
 | `tests/e2e/gm-main-world-surface.spec.ts` | E2E: the GM_* surfaces that only ran isolated before — `window.onurlchange`, `window.close`/`focus`, value-change listeners, menu fires, `GM_openInTab` onclose — working from MAIN world |
 | `tests/e2e/gm-unsafe-window.spec.ts` | E2E: `@grant unsafeWindow` reaches real page globals, GM_* works over the MAIN-world bridge (also for `@inject-into page`), and forged bridge calls are refused per world and per grant |
 | `tests/e2e/wrapper-scope.spec.ts` | E2E: the user program runs in a scope nested in the wrap, so redeclaring `window`, `unsafeWindow` or `GM_*` shadows ours |
+| `tests/e2e/sandbox-window.spec.ts` | E2E: a page-world script's sandbox `window`: built-ins only, own writes and `@require`s kept off the page |
 | `tests/e2e/gm-unsafe-window-implicit.spec.ts` | E2E: `unsafeWindow` used without granting it — MAIN world, binding, startup log, and the cases we leave alone |
 | `tests/e2e/gm-value-listeners.spec.ts` | E2E tests for `GM_addValueChangeListener` / `GM_removeValueChangeListener` — local fire with remote=false, delete fire, remove-by-id, cross-tab remote=true, permission gating |
 | `tests/e2e/gm-xhr.spec.ts` | E2E tests for `GM_xmlhttpRequest` text path — GET text, JSON, POST body, HTTP errors firing onload, network failure → onerror, abort, permission gating |
 | `tests/e2e/gm-xhr-stream.spec.ts` | E2E tests for `GM_xmlhttpRequest` streaming: a body past 64 MiB, progress callbacks and their order, multi-piece blobs, `responseType: 'stream'` |
+| `tests/e2e/gm-xhr-hostile-page.spec.ts` | E2E: a page hooking the built-ins `GM_xmlhttpRequest` uses sees neither its request nor its response |
 | `tests/e2e/gm-xhr-credentials.spec.ts` | E2E tests for `GM_xmlhttpRequest` cookies — credentialed by default, withheld by a truthy `anonymous` |
 | `tests/e2e/gm-xhr-headers.spec.ts` | E2E tests for `GM_xmlhttpRequest` header surgery — overrides reach the wire, URL tag stays inside the browser, rule torn down after |
 | `tests/e2e/gm-xhr-binary.spec.ts` | E2E tests for `GM_xmlhttpRequest` binary path — arraybuffer/blob/document via base64 wire reconstruction |

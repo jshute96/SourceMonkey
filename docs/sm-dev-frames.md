@@ -65,8 +65,6 @@ the output in `console-commands.ts`.
       stands, rather than every frame showing no scripts.
     - A frame matched before keeps its match while its URL is between
       two (mid-navigation).
-  - An extension before protocol 2.1 reports nothing from frames.
-    sm-dev lists the frames with no scripts, and says to update it.
 - **Other managers (`--manager tm|vm`)** report nothing per script, so
   each frame's scripts are predicted from its URL, as for the top
   frame, leaving out `@noframes` scripts.
@@ -193,8 +191,7 @@ T1: http://localhost:8765/frames/frames.html
   - a script's start, skip or error, and its menu commands: the
     reporting document, on the extension's event;
   - `GM_xmlhttpRequest`, `GM_setValue`, `GM_download` and a shown
-    `GM_notification`: the sending document, on the event from
-    protocol 2.2;
+    `GM_notification`: the sending document, on the event;
   - console lines and page errors: the JavaScript context they came
     from, over the frame's own session (see
     [Frame sessions](#frame-sessions));
@@ -258,10 +255,10 @@ inside a tab's iframes.
 
 - `eval --frame F2` runs in that iframe, in the same world it would in
   the top frame: the selected script's scope there, a named one's
-  (`--script=2`), the scripts' shared world, or the page's (`--page`).
+  (`--script=2`), or the page's (`--page`).
   - The worlds are found among the frame's session's contexts: its
     default one is the page's, and one with the extension's origin
-    the scripts'.
+    the isolated scripts'.
   - A frame between documents is looked for again until
     `--timeout-seconds`, as for the top frame.
 - `click`, `hover`, `type`, `snapshot`, `screenshot`, `probe` and

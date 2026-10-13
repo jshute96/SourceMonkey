@@ -28,3 +28,8 @@ export const SM_GM_DOM_BLOCKED_MSG = 'sm:gm-dom-blocked';
 // miss the case that matters most — see
 // docs/updates.md#focus-triggered-refresh.
 export const SM_FOCUS_MSG = 'sm:focus';
+// The bridge reporting a sandboxed document where no MAIN-world script
+// could run, so the SW runs them in USER_SCRIPT world instead. Sent by
+// the bridge itself, never relayed for the page. See
+// `runBlockedMainScripts` in background.ts.
+export const SM_MAIN_BLOCKED_MSG = 'sm:main-blocked';

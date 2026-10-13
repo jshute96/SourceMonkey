@@ -165,8 +165,9 @@ Runtime — always carries a `tabId`, so these render as `tab 17 · …`:
 | Source | Emitted by | Means |
 | --- | --- | --- |
 | `script-wrapper` | the `sm:*` handlers in `background.ts` | Start, reload-swap, abandon, and uncaught script errors. Also `logMissingScripts`: a script that matched a page but never started there, with a hint at why ([matching.md](matching.md#scripts-that-never-start)). |
+| `sandbox-fallback` | `logSandboxFallback` in `background.ts` | A page-world script ran isolated, because the page's CSP `sandbox` turns off its own script ([injection.md](injection.md#csp-sandbox-pages)). Info, once per run. |
 | `gm-log` | the `SM_GM_LOG_MSG` handler | A `GM_log()` call from the script itself. |
-| `gm-dom` | the `SM_GM_DOM_BLOCKED_MSG` handler | The page's CSP refused a style `GM_addStyle` / `GM_addElement` added — only possible for a script running in the page (MAIN world). Once per script per document. |
+| `gm-dom` | the `SM_GM_DOM_BLOCKED_MSG` handler | The page's CSP refused a style `GM_addStyle` / `GM_addElement` added — only possible for a script running in the page (MAIN world), for an element added inside a closed shadow root or another frame's document, or before the bridge loaded; the line says which. Once per script per document. |
 | `gm-download` | `sendDownloadEvent` in `background.ts` | A `GM_download()` call that was refused, interrupted, or timed out. Successful downloads are not logged — a batch downloader would flood the capped log. |
 | `gm-xhr` | `connect-prompt.ts` | The connection prompt for a host the script's `@connect` lines don't cover: info as it opens; the answer (info for an allowance, a warning for Deny, Cancel or closing); and a warning when a kept denial blocks a request, once per site per page. |
 | `gm-window` | `handleWindowControl` in `background.ts` | A granted `window.close()` / `window.focus()` the browser refused. A successful close takes the page (and its console) with it, so only failures land here. |
@@ -633,7 +634,7 @@ tracked in `TODO.md`.
   - Raw frames never carry that require URL; see **Stack refs are
     source-mapped first** below.
   - Line 1 IS linkable, but its column-accent bar is suppressed —
-    the wrap prefix (the `self.__smRun(id, function(__smE){…`
+    the wrap prefix (the registry's `run(id, function(__smE){…`
     + GM bindings + declaration preamble emitted by `wrapCombinedEntry`)
     shares that physical line, so the reported column points into
     the wrap, not user code.

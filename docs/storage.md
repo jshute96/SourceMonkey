@@ -35,6 +35,7 @@ Key spaces in `chrome.storage.local`:
 | `"connectGrants:<scid>"` | `ConnectGrants` | The hosts the user allowed (or "all sites") or denied a script's `GM_xmlhttpRequest` beyond its `@connect` rules (see [connect-permissions.md](connect-permissions.md)). Removed with the script. |
 | `"enablementTimes"`    | `Record<scid, EnablementTimes>` | When each script last became active and went inactive (see [script-enablement.md](script-enablement.md#active-times)). One key, not fields on the rows, so a collection toggle doesn't rewrite every row. |
 | `"collectionNumbers"`  | `StickyNumbers`     | Each collection's number, and the removed collections' numbers held back from reuse (see [Sticky numbers](#sticky-numbers)). |
+| `"channelKey"`         | `{ key, version }`  | The random key our page-world code's events are named with, made again for each extension version (see [injection.md](injection.md#the-channel-key)). |
 
 Key spaces in `chrome.storage.session` — everything here is dropped on
 browser shutdown, which is the point: each row describes the *current*
@@ -462,7 +463,7 @@ keys would look like a wiped profile.
   before the field existed — `backfillUsesUnsafeWindow` fills those in
   on the next `onInstalled`, since an unchanged script's row is never
   rebuilt. See
-  [injection.md](injection.md#unsafewindow-forces-main-world).
+  [injection.md](injection.md#unsafewindow-is-the-pages-window).
 - `versionProbes?` — what the script's `@updateURL` / `@downloadURL`
   last claimed, as `{kinds, url, version?, error?, checkedAt}` rows.
   Written only by `setVersionProbes`, never by the load pipeline —

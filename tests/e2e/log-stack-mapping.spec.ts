@@ -483,6 +483,8 @@ test.describe('log stack mapping', () => {
         name: 'PlainThrow',
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
+        // No sandbox: the user program is called on the wrap's last line.
+        grant: ['none'],
       },
       body: 'throw new Error("plain-boom");',
     });
@@ -512,6 +514,42 @@ test.describe('log stack mapping', () => {
     await expect(row).toContainText(`plain.user.js:${lineCount + 1}:`);
     await expect(row.locator('.log-stack-link')).toHaveCount(1);
 
+    await page.close();
+  });
+
+  test('a sandboxed script with no @require is left alone too', async ({
+    extensionContext, extensionId, fixtureServer, sm,
+  }) => {
+    // A sandboxed script's user program is called on the wrap's
+    // closing line, past the end of the file, as an unwrapped one's is.
+    // That frame is ours, so it must not become a link (it once landed
+    // on the wrap's first line, which linked to the script's header).
+    scriptsDir.write({
+      relativePath: 'plain.user.js',
+      meta: {
+        name: 'PlainThrowSandboxed',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+      },
+      body: 'throw new Error("plain-boom");',
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+    const collections = await sm.getCollections();
+    const scriptId = collections.flatMap((s) => s.scriptIds)[0];
+
+    const target = await extensionContext.newPage();
+    await target.goto(`${fixtureServer.baseUrl}/target.html`);
+    await waitForThrowLogged(sm, scriptId, /plain-boom/);
+    await target.close();
+
+    const page = await openLogTab(extensionContext, extensionId, scriptId);
+    const row = page.locator('#log-pane td.log-msg', { hasText: 'plain-boom' }).first();
+    await expect(row.locator('.log-stack-link')).toHaveCount(1);
+    const text = await row.locator('.log-stack-link').first().textContent();
+    const line = Number(/plain\.user\.js:(\d+):/.exec(text ?? '')?.[1]);
+    const stored = fs.readFileSync(path.join(scriptsDir.path, 'plain.user.js'), 'utf8');
+    expect(stored.split('\n')[line - 1]).toContain('plain-boom');
     await page.close();
   });
 });

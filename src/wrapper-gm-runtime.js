@@ -7,11 +7,12 @@
 
    Per-script wrappers compile in `const GM_X = function(...) { ... }`
    for every API the script @grants. Two delegation modes:
-     - SYNC API bodies call into methods on `window.__SM_GM__` defined
+     - SYNC API bodies call into methods on `reg.gm` (this runtime,
+       in the world's registry; see `reg` below) defined
        here. The runtime is shared across all userscripts in this
        document and world (each world is one realm per document), so
        per-script state lives in keyed sub-objects.
-     - ASYNC API bodies route through `__SM_GM__.sendAsync`, which
+     - ASYNC API bodies route through `reg.gm.sendAsync`, which
        reaches the SW directly in USER_SCRIPT world and via
        wrapper-bridge.js in MAIN.
 
@@ -26,18 +27,42 @@
    USER_SCRIPT world that is the whole threat, since the page can't
    reach in. In MAIN world the page CAN — but this runs at
    document_start, before any page script, so the captures are still
-   pristine natives. What the cache does not (and cannot) buy in MAIN
-   is protection from a page that calls `window.__SM_GM__` itself; see
-   the transport section's trust note. */
+   pristine natives. The runtime itself isn't a page global: it lives
+   in the world's registry, which only code holding the channel key
+   can get. See the transport section's trust note. */
 (function () {
   "use strict";
   if (typeof window === "undefined") return;
-  if (window.__SM_GM__) return;
+
+  /* The channel key and the world's registry: the same code as in
+     userscript-prelude.js (see there, and src/extension/channel.ts). */
+  var SM_KEY = "__SM_KEY__";
+  var reg = (function (k) {
+    var g = document.__smGate;
+    if (typeof g !== "function") {
+      var m = Object.create(null), c = Object.create, a = Reflect.apply, p = Promise;
+      var i = console.info.bind(console);
+      var rs = function (v) { return new p(function (y) { y(v); }); };
+      var rj = function (e) { return new p(function (y, n) { n(e); }); };
+      g = function (x) {
+        if (typeof x !== "string") return void 0;
+        var r = m[x];
+        if (!r) { r = c(null); r.apply = a; r.resolve = rs; r.reject = rj; r.info = i; m[x] = r; }
+        return r;
+      };
+      var d = c(null);
+      d.value = g;
+      Object.defineProperty(document, "__smGate", d);
+    }
+    return g(k);
+  })(SM_KEY);
+  if (reg.gm) return;
 
   var _Promise = Promise;
   var _Error = Error;
   var _now = Date.now.bind(Date);
-  var _queueMicrotask = (typeof queueMicrotask === "function") ? queueMicrotask.bind(window) : null;
+  var _numToString = Number.prototype.toString;
+  var _random = Math.random;
   var _JSONStringify = JSON.stringify;
   var _ObjectKeys = Object.keys;
   var _isArray = Array.isArray;
@@ -127,6 +152,18 @@
   /* Captured for the window.onurlchange surface, which defines an
      accessor on the world's own `window`. */
   var _ObjectDefineProperty = Object.defineProperty;
+  /* Captured functions are called through this, not `fn.call(...)`:
+     `Function.prototype.call` is the page's to replace in MAIN world,
+     and would be handed what we pass (a script's value cache, the
+     channel-keyed insert event). */
+  var _ReflectApply = Reflect.apply;
+  /* Timers and microtasks, likewise: a page function we called while
+     handling one of the bridge's events could read `window.event`,
+     whose type carries the channel key. */
+  var _setTimeout = setTimeout;
+  var _clearTimeout = clearTimeout;
+  var _queueMicrotask = queueMicrotask;
+  var _ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
   var _hasOwn = Object.prototype.hasOwnProperty;
   /* DOM-shim cache. Captured at runtime-init time so a sibling
      userscript that later reassigns `document.createElement` (or any
@@ -193,7 +230,7 @@
                       wrapper-bridge.js (USER_SCRIPT world, same
                       document) hears and forwards, keyed on a per-call
                       requestId nonce so concurrent calls don't cross
-                      replies. The reply comes back as a postMessage.
+                      replies. The reply comes back as an event too.
                       An event, not a postMessage, because every
                       world's listeners run in the DISPATCHING task:
                       the bridge's sendMessage happens before we
@@ -205,24 +242,30 @@
                           notification / menu callbacks).
          USER_SCRIPT: chrome.runtime.onMessage, filtered to messages
                       from our own SW.
-         MAIN:        the bridge re-posts those same messages into the
-                      page with a push marker; we read them here.
+         MAIN:        the bridge re-sends those same messages into the
+                      page as a push event; we read them here.
 
-     Why MAIN world needs this at all: `@grant unsafeWindow` forces a
-     script into MAIN (only there is `window` the page's window), and
-     such scripts routinely also @grant storage / XHR / menus. Without
-     a MAIN transport, fixing unsafeWindow would break everything else
-     they use.
+     Why MAIN world needs this at all: scripts run there by default,
+     as in TM and VM, and most grant storage / XHR / menus, none of
+     which `chrome.runtime` reaches from the page's world.
 
-     Trust: in MAIN world the page can both READ our messages and
-     FORGE both directions. That is inherent — the page shares the realm
-     with the script and with this runtime. The SW-side gate is what
-     bounds the damage: it honors bridge-relayed, script-scoped requests
-     only for scripts that actually run in MAIN world on the sending
-     page. See docs/injection.md#gm_-in-main-world. */
-  var BRIDGE_REPLY_MARKER = "sourcemonkey-bridge-reply";
-  var BRIDGE_PUSH_MARKER = "sourcemonkey-bridge-push";
-  var BRIDGE_SYNC_MARKER = "sourcemonkey-bridge-sync";
+     Trust: in MAIN world the page shares the realm with the script and
+     with this runtime, so what keeps it out is the channel key. Every
+     event in either direction is named with it, so the page can neither
+     send one nor hear one, and this runtime is reachable only through
+     the registry. What the page can still do is hook the built-ins our
+     code touches after document_start (an `Object.prototype` getter, a
+     `toJSON`), which a page that targets us specifically could use to
+     see some of what passes. The SW-side gate stays as a backstop: it
+     honors bridge-relayed, script-scoped requests only for scripts that
+     actually run in MAIN world on the sending page. See
+     docs/injection.md#the-channel-key. */
+  var BRIDGE_REPLY_EVENT = "sourcemonkey-reply-" + SM_KEY;
+  var BRIDGE_PUSH_EVENT = "sourcemonkey-push-" + SM_KEY;
+  var BRIDGE_SYNC_EVENT = "sourcemonkey-sync-" + SM_KEY;
+  /* GM_addStyle / GM_addElement's insert, done by the bridge; see
+     `insertNode`. wrapper-bridge.js names it too. */
+  var BRIDGE_INSERT_EVENT = "sourcemonkey-insert-" + SM_KEY;
   /* How long a MAIN-world request waits for the bridge before we give
      up and reject. The bridge always replies (even when the SW call
      fails), so hitting this means the bridge never registered — a
@@ -238,29 +281,55 @@
     }
   }
 
-  /* One window listener serves both the reply and push paths in MAIN
-     world, so a page with many in-flight GM calls doesn't accumulate
-     listeners. Installed only in MAIN — in USER_SCRIPT world we have
-     the real chrome.runtime channels. */
+  /* One listener each for replies and pushes in MAIN world, so a page
+     with many in-flight GM calls doesn't accumulate listeners.
+     Installed only in MAIN — in USER_SCRIPT world we have the real
+     chrome.runtime channels. The bridge sends both as JSON in a
+     CustomEvent's detail, read through the getter captured here, called
+     with the captured Reflect.apply, so a page that patched either
+     can't see it. */
+  var _JSONParse = JSON.parse;
+  var _detailOf = null;
+  try { _detailOf = Object.getOwnPropertyDescriptor(CustomEvent.prototype, "detail").get; } catch (_dtE) {}
+  /* With no prototype at the top, so reading a field the message lacks
+     can't hand it to a getter the page put on `Object.prototype`.
+     Shallow: what's inside (a script's values, a response) is the
+     script's to read. */
+  function bare(o) {
+    if (!o || typeof o !== "object") return o;
+    var b = _ObjectCreate(null);
+    var ks = _ObjectKeys(o);
+    for (var j = 0; j < ks.length; j++) b[ks[j]] = o[ks[j]];
+    return b;
+  }
+  function detailOf(ev) {
+    return bare(_JSONParse(_ReflectApply(_detailOf, ev, [])));
+  }
   function installBridgeListener() {
     var pending = _ObjectCreate(null);
     try {
-      window.addEventListener("message", function (ev) {
+      /* Each listener only reads the event; what it carries is handled
+         in a microtask, once the dispatch is over. While it runs,
+         `window.event` is the event, whose type carries the channel
+         key, and handling it calls into the script's callbacks (and
+         they, into the page). */
+      document.addEventListener(BRIDGE_PUSH_EVENT, function (ev) {
         try {
-          if (!ev || ev.source !== window) return;
-          var d = ev.data;
-          if (!d) return;
-          if (d.__sm === BRIDGE_PUSH_MARKER) {
-            if (d.payload && typeof d.payload === "object") dispatchPush(d.payload);
-            return;
-          }
-          if (d.__sm !== BRIDGE_REPLY_MARKER) return;
-          if (typeof d.requestId !== "string") return;
-          var entry = pending[d.requestId];
-          if (!entry) return;
-          delete pending[d.requestId];
-          try { clearTimeout(entry.timer); } catch (_tE) {}
-          entry.resolve(d.reply);
+          var d = detailOf(ev);
+          if (d && typeof d === "object") _queueMicrotask(function () { dispatchPush(d); });
+        } catch (_e) {}
+      }, true);
+      document.addEventListener(BRIDGE_REPLY_EVENT, function (ev) {
+        try {
+          var d = detailOf(ev);
+          if (!d || typeof d.requestId !== "string") return;
+          _queueMicrotask(function () {
+            var entry = pending[d.requestId];
+            if (!entry) return;
+            delete pending[d.requestId];
+            try { _clearTimeout(entry.timer); } catch (_tE) {}
+            entry.resolve(bare(d.reply));
+          });
         } catch (_e) {}
       }, true);
     } catch (_lE) {
@@ -300,7 +369,11 @@
     }
     var detail;
     try {
-      detail = _JSONStringify({ requestId: requestId, payload: payload });
+      /* No prototype: see `setOwn` (GM_xmlhttpRequest). */
+      var wire = _ObjectCreate(null);
+      wire.requestId = requestId;
+      wire.payload = payload;
+      detail = _JSONStringify(wire);
     } catch (_jE) {
       /* Circular structures, BigInt, a getter that throws. The raw V8
          text ("Converting circular structure to JSON --> ...") ends up
@@ -329,15 +402,23 @@
      caller times out (`dropHeld`), so a late bridge doesn't start an
      XHR or register a menu command nobody is waiting on any more.
      The one fire-and-forget send is the teardown flush, so the list
-     can't grow without bound and needs no cap. */
+     can't grow without bound and needs no cap.
+
+     The list is added to with `setOwnBare`, not `push`, so a page's
+     `Array.prototype` hook doesn't see what it holds. */
   var BRIDGE_READY_MARKER = "sourcemonkey-bridge-ready";
   var _bridgeHeld = [];   /* [{detail, requestId}] */
   var _bridgeReadyListening = false;
   function dispatchToBridge(detail) {
-    return !_dispatchEvent(new _CustomEvent(BRIDGE_SYNC_MARKER, { detail: detail, cancelable: true }));
+    /* No prototype, so a page getter on `Object.prototype` can't read
+       the detail while the event reads its options. */
+    var init = _ObjectCreate(null);
+    init.detail = detail;
+    init.cancelable = true;
+    return !_dispatchEvent(new _CustomEvent(BRIDGE_SYNC_EVENT, init));
   }
   function holdForBridge(detail, requestId) {
-    _bridgeHeld.push({ detail: detail, requestId: requestId });
+    setOwnBare(_bridgeHeld, _bridgeHeld.length, { detail: detail, requestId: requestId });
     if (_bridgeReadyListening) return;
     _bridgeReadyListening = true;
     try { window.addEventListener(BRIDGE_READY_MARKER, resendHeld, true); } catch (_rlE) {}
@@ -345,7 +426,7 @@
   function dropHeld(requestId) {
     var kept = [];
     for (var i = 0; i < _bridgeHeld.length; i++) {
-      if (_bridgeHeld[i].requestId !== requestId) kept.push(_bridgeHeld[i]);
+      if (_bridgeHeld[i].requestId !== requestId) setOwnBare(kept, kept.length, _bridgeHeld[i]);
     }
     _bridgeHeld = kept;
   }
@@ -356,7 +437,7 @@
     _bridgeHeld = [];
     for (var i = 0; i < held.length; i++) {
       try {
-        if (!dispatchToBridge(held[i].detail)) _bridgeHeld.push(held[i]);
+        if (!dispatchToBridge(held[i].detail)) setOwnBare(_bridgeHeld, _bridgeHeld.length, held[i]);
       } catch (_rsE) {}
     }
   }
@@ -365,9 +446,9 @@
     if (!_bridgePending) {
       return _Promise.reject(new _Error("[SourceMonkey] GM bridge unavailable"));
     }
-    var requestId = "gm-" + (_bridgeSeq++) + "-" + Math.random().toString(36).slice(2, 10);
+    var requestId = "gm-" + (_bridgeSeq++) + "-" + randomPart();
     return new _Promise(function (resolve, reject) {
-      var timer = setTimeout(function () {
+      var timer = _setTimeout(function () {
         delete _bridgePending[requestId];
         dropHeld(requestId);
         reject(new _Error("[SourceMonkey] GM bridge timed out after " + BRIDGE_TIMEOUT_MS + "ms"));
@@ -380,7 +461,7 @@
         bridgeDispatch(payload, requestId);
       } catch (e) {
         delete _bridgePending[requestId];
-        try { clearTimeout(timer); } catch (_tE2) {}
+        try { _clearTimeout(timer); } catch (_tE2) {}
         reject(e);
       }
     });
@@ -401,6 +482,37 @@
   }
 
   /* The single send primitive every subsystem uses. */
+  /* `p` with its own `then` and `catch`, the ones of document_start,
+     and the same for every promise they return. Our chains start at
+     transportSend, so they never reach `Promise.prototype.then`, which
+     a page could replace to see replies (a script's values) or forge
+     them. */
+  var _PromiseThen = _Promise.prototype.then;
+  function guarded(p) {
+    /* Defined outright, so no accessor a page put on
+       `Promise.prototype` sees the promise. And an own `constructor` of
+       undefined, so `then` makes its next promise with the real
+       `Promise` rather than asking `Promise.prototype.constructor` (or
+       its `Symbol.species`), which a page could replace to see what
+       resolves it. */
+    setOwnBare(p, "then", guardedThen);
+    setOwnBare(p, "catch", guardedCatch);
+    setOwnBare(p, "constructor", undefined);
+    return p;
+  }
+  /* `setOwn` (GM_xmlhttpRequest), here for the transport, which loads
+     ahead of it. */
+  function setOwnBare(o, k, v) {
+    var d = _ObjectCreate(null);
+    d.value = v;
+    d.writable = true;
+    d.enumerable = false;
+    d.configurable = true;
+    _ObjectDefineProperty(o, k, d);
+  }
+  function guardedThen(onOk, onErr) { return guarded(_ReflectApply(_PromiseThen, this, [onOk, onErr])); }
+  function guardedCatch(onErr) { return guarded(_ReflectApply(_PromiseThen, this, [undefined, onErr])); }
+
   function transportSend(payload) {
     if (_sendMessage) {
       try {
@@ -411,7 +523,7 @@
         return _Promise.reject(e);
       }
     }
-    return bridgeSend(payload);
+    return guarded(bridgeSend(payload));
   }
 
   /* Register a handler for SW-originated pushes. */
@@ -457,7 +569,9 @@
 
      The runtime is shared across scripts in the same document, so
      stores are keyed by scriptId. */
-  var stores = {};
+  /* No prototype, like the other tables keyed by script id: a lookup
+     that misses can't reach a getter the page put on `Object.prototype`. */
+  var stores = _ObjectCreate(null);
   /* Deletion sentinel — paired with the SW-side gm-values.ts
      DELETED_SENTINEL. Compared by reference. */
   var DELETED_SENTINEL = {};
@@ -528,7 +642,7 @@
   function bytesToBase64(bytes) {
     var parts = [];
     for (var i = 0; i < bytes.length; i += B64_CHUNK) {
-      parts.push(_fromCharCode.apply(null, bytes.subarray(i, i + B64_CHUNK)));
+      parts.push(_ReflectApply(_fromCharCode, null, bytes.subarray(i, i + B64_CHUNK)));
     }
     return _btoa(parts.join(""));
   }
@@ -554,18 +668,18 @@
      throw here as "not actually that type" — see the call site.
      Sets `state.plain` on a hit; the caller undoes that on a miss. */
   function encodeBranded(value, seen, state) {
-    var brand = _objToString.call(value);
+    var brand = _ReflectApply(_objToString, value, []);
     if (brand === "[object Date]") {
       state.plain = false;
-      var ms = _DateGetTime.call(value);
+      var ms = _ReflectApply(_DateGetTime, value, []);
       /* An Invalid Date's time is NaN, which JSON can't carry —
          send the marker string and rebuild it on the way back. */
       return ["d", ms === ms ? ms : "nan"];
     }
     if (brand === "[object RegExp]" && _RegExpSourceGet && _RegExpFlagsGet) {
       /* These throw for anything that only claims to be a RegExp. */
-      var reSource = _RegExpSourceGet.call(value);
-      var reFlags = _RegExpFlagsGet.call(value);
+      var reSource = _ReflectApply(_RegExpSourceGet, value, []);
+      var reFlags = _ReflectApply(_RegExpFlagsGet, value, []);
       state.plain = false;
       return ["re", String(reSource), String(reFlags)];
     }
@@ -573,12 +687,12 @@
       /* `new Uint8Array(notABuffer)` quietly yields an EMPTY array
          rather than throwing, so the impostor has to be rejected
          before we read any bytes. */
-      _ArrayBufferByteLengthGet.call(value);
+      _ReflectApply(_ArrayBufferByteLengthGet, value, []);
       state.plain = false;
       return ["ab", bytesToBase64(new _Uint8Array(value))];
     }
     if (canEncodeBinary && brand === "[object DataView]") {
-      _DataViewByteLengthGet.call(value);
+      _ReflectApply(_DataViewByteLengthGet, value, []);
       state.plain = false;
       return ["dv", bytesToBase64(new _Uint8Array(value.buffer, value.byteOffset, value.byteLength))];
     }
@@ -587,8 +701,8 @@
          wearing that tag fails on `.buffer` and the caller falls
          through to the object walk. */
       var taName = brand.slice(8, brand.length - 1);
-      if (_hasOwn.call(TYPED_ARRAYS, taName)) {
-        _TypedArrayLengthGet.call(value);
+      if (_ReflectApply(_hasOwn, TYPED_ARRAYS, [taName])) {
+        _ReflectApply(_TypedArrayLengthGet, value, []);
         state.plain = false;
         return ["ta", taName, bytesToBase64(new _Uint8Array(value.buffer, value.byteOffset, value.byteLength))];
       }
@@ -621,22 +735,22 @@
     if (_Map && brand === "[object Map]") {
       state.plain = false;
       var mEntries = [];
-      _MapForEach.call(value, function (mv, mk) {
+      _ReflectApply(_MapForEach, value, [function (mv, mk) {
         var kn = encodeNode(mk, seen, state);
         var vn = encodeNode(mv, seen, state);
         /* A Map key or value JSON would drop still has to occupy
            its slot — dropping the entry would change the size. */
         mEntries.push([kn === OMIT ? ["u"] : kn, vn === OMIT ? ["u"] : vn]);
-      });
+      }]);
       return ["m", mEntries];
     }
     if (_Set && brand === "[object Set]") {
       state.plain = false;
       var sItems = [];
-      _SetForEach.call(value, function (sv) {
+      _ReflectApply(_SetForEach, value, [function (sv) {
         var sn = encodeNode(sv, seen, state);
         sItems.push(sn === OMIT ? ["u"] : sn);
-      });
+      }]);
       return ["s", sItems];
     }
 
@@ -775,11 +889,11 @@
         /* An unknown constructor name means this row was written by a
            build (or browser) that had a typed array this one doesn't.
            Hand back the raw bytes rather than nothing. */
-        if (!_hasOwn.call(TYPED_ARRAYS, n[1])) return bytes;
+        if (!_ReflectApply(_hasOwn, TYPED_ARRAYS, [n[1]])) return bytes;
         return new TYPED_ARRAYS[n[1]](bytes.buffer);
       }
       case "err": {
-        var Ctor = _hasOwn.call(ERROR_TYPES, n[1]) ? ERROR_TYPES[n[1]] : _Error;
+        var Ctor = _ReflectApply(_hasOwn, ERROR_TYPES, [n[1]]) ? ERROR_TYPES[n[1]] : _Error;
         var err = new Ctor(n[2]);
         /* A subclass name (or AggregateError) has no constructor in
            the table; preserve the name on a plain Error instead. */
@@ -825,7 +939,7 @@
      than throw inside its GM_getValue. */
   function decodeValue(value) {
     if (!value || typeof value !== "object" || _isArray(value)) return value;
-    if (!_hasOwn.call(value, VALUE_ENVELOPE)) return value;
+    if (!_ReflectApply(_hasOwn, value, [VALUE_ENVELOPE])) return value;
     if (value[VALUE_ENVELOPE] !== VALUE_FORMAT) return value;
     try {
       return decodeNode(value.v);
@@ -867,14 +981,14 @@
   }
 
   function knownSeq(s, key) {
-    return _hasOwn.call(s.seqByKey, key) ? s.seqByKey[key] : s.snapSeq;
+    return _ReflectApply(_hasOwn, s.seqByKey, [key]) ? s.seqByKey[key] : s.snapSeq;
   }
 
   /* Before a snapshot raises `snapSeq`: a key it skipped keeps the
      number it had, since the document didn't take the snapshot's
      value for it. */
   function pinKnownSeq(s, key) {
-    if (!_hasOwn.call(s.seqByKey, key)) s.seqByKey[key] = s.snapSeq;
+    if (!_ReflectApply(_hasOwn, s.seqByKey, [key])) s.seqByKey[key] = s.snapSeq;
   }
 
   /* After a snapshot current to `seq`: every key it spoke for now has
@@ -891,7 +1005,7 @@
   }
 
   function hasUnanswered(s, key) {
-    return _hasOwn.call(s.unanswered, key) && s.unanswered[key] > 0;
+    return _ReflectApply(_hasOwn, s.unanswered, [key]) && s.unanswered[key] > 0;
   }
 
   /* Fire value-change listeners for one (scriptId, key) transition.
@@ -1012,7 +1126,7 @@
     }
     for (var j = 0; j < touched.length; j++) {
       var k = touched[j];
-      if (hasUnanswered(s, k) || !_hasOwn.call(s.held, k)) continue;
+      if (hasUnanswered(s, k) || !_ReflectApply(_hasOwn, s.held, [k])) continue;
       var h = s.held[k];
       delete s.held[k];
       applyRemoteWrite(scriptId, s, h.write, h.seq);
@@ -1079,12 +1193,12 @@
       if (!h || h.seq <= seq) s.held[key] = { write: w, seq: seq };
       return;
     }
-    var own = _hasOwn.call(s.seqByKey, key);
+    var own = _ReflectApply(_hasOwn, s.seqByKey, [key]);
     if (own ? seq < s.seqByKey[key] : seq <= s.snapSeq) return;
     s.seqByKey[key] = seq;
-    var oldValue = _hasOwn.call(s.cache, key) ? s.cache[key] : undefined;
+    var oldValue = _ReflectApply(_hasOwn, s.cache, [key]) ? s.cache[key] : undefined;
     if (w.deleted) {
-      if (!_hasOwn.call(s.cache, key)) return;
+      if (!_ReflectApply(_hasOwn, s.cache, [key])) return;
       delete s.cache[key];
       fireListeners(scriptId, key, oldValue, undefined, true);
     } else {
@@ -1156,7 +1270,7 @@
       var k = keys[i];
       inSnapshot[k] = true;
       if (stale(k)) continue;
-      var had = _hasOwn.call(s.cache, k);
+      var had = _ReflectApply(_hasOwn, s.cache, [k]);
       var oldValue = had ? s.cache[k] : undefined;
       /* `values[k]` is already wire form; encode the cached side to
          match rather than decoding the snapshot for every key.
@@ -1304,7 +1418,7 @@
         }
         for (var d = 0; d < keys.length; d++) {
           var dk = keys[d];
-          if (_hasOwn.call(s.cache, dk)) continue;
+          if (_ReflectApply(_hasOwn, s.cache, [dk])) continue;
           if (keep(dk)) delete copy[dk];
         }
       }
@@ -1318,7 +1432,7 @@
       /* Use the captured _hasOwn so a sibling userscript that
          reassigned Object.prototype.hasOwnProperty can't make every
          get return the default. */
-      if (_hasOwn.call(s.cache, key)) return s.cache[key];
+      if (_ReflectApply(_hasOwn, s.cache, [key])) return s.cache[key];
       return defaultValue;
     },
     /* Sync API: returns undefined, queues the write. Fires
@@ -1338,7 +1452,7 @@
          — see sameStoredValue — and which of the two behaviours you
          get now depends on the value's type. */
       var encoded = encodeValue(value);
-      var oldValue = _hasOwn.call(s.cache, key) ? s.cache[key] : undefined;
+      var oldValue = _ReflectApply(_hasOwn, s.cache, [key]) ? s.cache[key] : undefined;
       s.cache[key] = value;
       s.unanswered[key] = (hasUnanswered(s, key) ? s.unanswered[key] : 0) + 1;
       s.pending.push({ key: key, value: encoded });
@@ -1347,7 +1461,7 @@
     },
     del: function (scriptId, key) {
       var s = ensureStore(scriptId);
-      var oldValue = _hasOwn.call(s.cache, key) ? s.cache[key] : undefined;
+      var oldValue = _ReflectApply(_hasOwn, s.cache, [key]) ? s.cache[key] : undefined;
       delete s.cache[key];
       s.unanswered[key] = (hasUnanswered(s, key) ? s.unanswered[key] : 0) + 1;
       s.pending.push({ key: key, value: DELETED_SENTINEL });
@@ -1389,7 +1503,7 @@
       var s = stores[scriptId];
       if (!s || !s.listeners) return;
       var key = String(listenerId);
-      if (_hasOwn.call(s.listeners, key)) delete s.listeners[key];
+      if (_ReflectApply(_hasOwn, s.listeners, [key])) delete s.listeners[key];
     },
   };
 
@@ -1402,13 +1516,20 @@
      github.com / google.com can still inject styles and scripts that
      the page itself couldn't.
 
-     In MAIN world there is no exemption: the page's CSP applies to
-     what the script inserts, so a strict `style-src` accepts the
-     <style> element and silently ignores its rules. TM and VM have
-     the same limitation in page context. We can't work around it
-     here, but we can say so: a <style> whose `.sheet` is still null
-     after it's in the document was blocked, and that is reported
-     once per script as a warning in its Log (see `reportBlockedStyle`).
+     In MAIN world, what the script inserts itself is the page's, under
+     the page's CSP: a strict `style-src` accepts the <style> element
+     and silently ignores its rules. So these two hand their insert to
+     the bridge in USER_SCRIPT world (`insertNode`), which gets the same
+     exemption, as Tampermonkey's GM_addElement does. Where that can't
+     happen we insert here, under the page's CSP:
+       - a parent in a closed shadow root (see `inClosedShadowRoot`),
+       - a parent in another frame's document,
+       - a detached parent: the element is checked when the script
+         later attaches it, from this world.
+     When the element is in the document after that, we can at least
+     say so: a <style> whose `.sheet` is still null was blocked, and
+     that is reported once per script as a warning in its Log (see
+     `reportBlockedStyle`). A detached parent gets no report.
 
      Both helpers return the created element so userscripts can hold a
      reference and tweak it later. */
@@ -1453,26 +1574,100 @@
     if (value === false) return; /* boolean-attr: omit */
     var stringValue = (value === true) ? "" : String(value);
     if (_Element_setAttribute) {
-      _Element_setAttribute.call(el, name, stringValue);
+      _ReflectApply(_Element_setAttribute, el, [name, stringValue]);
     } else {
       el.setAttribute(name, stringValue);
     }
   }
 
+  /* Hand `el` to the bridge to append to `parent` from USER_SCRIPT
+     world, in MAIN world. The event is dispatched on `parent`, and the
+     element rides in a MouseEvent's `relatedTarget`, the event field
+     that can carry a second node across worlds. The bridge's listener
+     runs inside the dispatch and cancels the event to say it did the
+     insert, so this is synchronous and the caller's element is in the
+     document when we return. Natives captured at document_start, like
+     the rest of the transport. Returns whether the bridge did it. */
+  var _MouseEvent = null;
+  var _EventTarget_dispatchEvent = null;
+  var _Node_getRootNode = null;
+  var _Node_parentNode = null;
+  var _Node_ownerDocument = null;
+  var _ShadowRoot_host = null;
+  var _ShadowRoot_mode = null;
+  var _ShadowRoot = null;
+  try {
+    _MouseEvent = MouseEvent;
+    _EventTarget_dispatchEvent = EventTarget.prototype.dispatchEvent;
+    _Node_getRootNode = Node.prototype.getRootNode;
+    _Node_parentNode = _ObjectGetOwnPropertyDescriptor(Node.prototype, "parentNode").get;
+    _Node_ownerDocument = _ObjectGetOwnPropertyDescriptor(Node.prototype, "ownerDocument").get;
+    _ShadowRoot_host = _ObjectGetOwnPropertyDescriptor(ShadowRoot.prototype, "host").get;
+    _ShadowRoot_mode = _ObjectGetOwnPropertyDescriptor(ShadowRoot.prototype, "mode").get;
+    _ShadowRoot = ShadowRoot;
+  } catch (_meE) {}
+  /* Whether `node` is in a closed shadow root, at any depth. The
+     bridge's listener sees such a node's host as the event's parent
+     (a closed tree is left out of `composedPath()` outside it), so it
+     would insert in the wrong place. */
+  function inClosedShadowRoot(node) {
+    for (var i = 0; i < 64; i++) {
+      var root = _ReflectApply(_Node_getRootNode, node, []);
+      if (!(root instanceof _ShadowRoot)) return false;
+      if (_ReflectApply(_ShadowRoot_mode, root, []) === "closed") return true;
+      node = _ReflectApply(_ShadowRoot_host, root, []);
+    }
+    return true;
+  }
+  /* Inserts `el` through the bridge. Null when it did, else why not,
+     for the Log line if the page's CSP then blocks it
+     (`cspBlockedStyleMessage` in background.ts): "closed-shadow-root",
+     "other-document" (another frame's, whose own bridge didn't take
+     it), or "no-bridge" (not loaded in this document yet). */
+  function insertViaBridge(parent, el) {
+    if (_sendMessage || !_MouseEvent || !_EventTarget_dispatchEvent || !_ShadowRoot_mode) return "no-bridge";
+    try {
+      if (inClosedShadowRoot(parent)) return "closed-shadow-root";
+      var init = _ObjectCreate(null);
+      init.relatedTarget = el;
+      init.cancelable = true;
+      init.composed = true;
+      var ev = new _MouseEvent(BRIDGE_INSERT_EVENT, init);
+      var taken = _ReflectApply(_EventTarget_dispatchEvent, parent, [ev]) === false && _ReflectApply(_Node_parentNode, el, []) === parent;
+      if (taken) return null;
+      return (_ReflectApply(_Node_ownerDocument, parent, []) || parent) === document ? "no-bridge" : "other-document";
+    } catch (_ie) {
+      return "no-bridge";
+    }
+  }
+  /* Returns why the bridge didn't insert it, as `insertViaBridge`. */
+  function insertNode(parent, el) {
+    var notRelayed = insertViaBridge(parent, el);
+    if (notRelayed === null) return null;
+    if (_Node_appendChild) _ReflectApply(_Node_appendChild, parent, [el]);
+    else parent.appendChild(el);
+    return notRelayed;
+  }
+
   /* Once per script per document: a page with a strict CSP blocks
      every style the script adds, and one line says it. */
-  var blockedStyleReported = {};
-  function reportBlockedStyle(scriptId, api) {
+  var blockedStyleReported = _ObjectCreate(null);
+  function reportBlockedStyle(scriptId, api, why) {
     if (blockedStyleReported[scriptId]) return;
     blockedStyleReported[scriptId] = true;
     /* Same wording the SW puts in the Log (`cspBlockedStyleMessage` in
        background.ts); the SW words its own line rather than trusting
        a page-reachable string. */
+    var cause = why === "closed-shadow-root"
+      ? "SourceMonkey can't exempt a style added inside a closed shadow root."
+      : why === "other-document"
+        ? "SourceMonkey can't exempt a style added to another frame's document."
+        : "SourceMonkey couldn't exempt it: its isolated-world helper wasn't loaded in this document yet.";
     var text = "The page's Content Security Policy blocked the style " + api +
-      " added, so its rules don't apply. A script running in the page (unsafeWindow," +
-      " @inject-into page, or @grant none) gets no CSP exemption; only an isolated script does.";
+      " added, so its rules don't apply. " + cause + " Add @inject-into content to run" +
+      " the script isolated from the page, where all its styles are exempt.";
     try { console.info("[SourceMonkey:" + scriptId + "] " + text); } catch (_e) {}
-    transportSend({ type: "sm:gm-dom-blocked", scriptId: scriptId, api: api }).catch(function () {});
+    transportSend({ type: "sm:gm-dom-blocked", scriptId: scriptId, api: api, why: why }).catch(function () {});
   }
   /* A <style> that is in the document but has no sheet was refused by
      CSP: the parser builds the sheet synchronously on insertion, so a
@@ -1496,9 +1691,8 @@
       el.textContent = String(css == null ? "" : css);
       var parent = defaultParent();
       if (parent) {
-        if (_Node_appendChild) _Node_appendChild.call(parent, el);
-        else parent.appendChild(el);
-        if (styleWasBlocked(el)) reportBlockedStyle(scriptId, "GM_addStyle");
+        var why = insertNode(parent, el);
+        if (why !== null && styleWasBlocked(el)) reportBlockedStyle(scriptId, "GM_addStyle", why);
       }
       return el;
     },
@@ -1544,10 +1738,9 @@
         }
       }
       if (parent) {
-        if (_Node_appendChild) _Node_appendChild.call(parent, el);
-        else parent.appendChild(el);
-        if (String(tagName).toUpperCase() === "STYLE" && styleWasBlocked(el)) {
-          reportBlockedStyle(scriptId, "GM_addElement");
+        var notRelayed = insertNode(parent, el);
+        if (notRelayed !== null && String(tagName).toUpperCase() === "STYLE" && styleWasBlocked(el)) {
+          reportBlockedStyle(scriptId, "GM_addElement", notRelayed);
         }
       }
       return el;
@@ -1568,7 +1761,7 @@
      The blob: URL is alive for the document's lifetime; we don't
      URL.revokeObjectURL on bfcache since the wrapper runtime itself
      stays around. */
-  var resourceBoxes = {};  /* scriptId -> { byName, textCache, urlCache } */
+  var resourceBoxes = _ObjectCreate(null);  /* scriptId -> { byName, textCache, urlCache } */
   function ensureResourceBox(scriptId) {
     var b = resourceBoxes[scriptId];
     if (b) return b;
@@ -1623,8 +1816,8 @@
       var b = resourceBoxes[scriptId];
       if (!b) return undefined;
       var key = String(name);
-      if (_hasOwn.call(b.textCache, key)) return b.textCache[key];
-      if (!_hasOwn.call(b.byName, key)) return undefined;
+      if (_ReflectApply(_hasOwn, b.textCache, [key])) return b.textCache[key];
+      if (!_ReflectApply(_hasOwn, b.byName, [key])) return undefined;
       var bytes = _resDecodeBase64(b.byName[key].b64);
       var text;
       try {
@@ -1644,8 +1837,8 @@
       var b = resourceBoxes[scriptId];
       if (!b) return undefined;
       var key = String(name);
-      if (_hasOwn.call(b.urlCache, key)) return b.urlCache[key];
-      if (!_hasOwn.call(b.byName, key)) return undefined;
+      if (_ReflectApply(_hasOwn, b.urlCache, [key])) return b.urlCache[key];
+      if (!_ReflectApply(_hasOwn, b.byName, [key])) return undefined;
       if (!_Blob || !_URL_createObjectURL) return undefined;
       var entry = b.byName[key];
       var bytes = _resDecodeBase64(entry.b64);
@@ -1677,12 +1870,101 @@
   var activeRequests = _ObjectCreate(null);
   var _xhrNextId = 1;
 
+  /* What a request and its response pass through, captured now, at
+     document_start, and called with the captured Reflect.apply. In the
+     page's world a page could otherwise replace one (`TextDecoder.
+     prototype.decode`, `Array.prototype.push`, an `Object.prototype`
+     setter or `toJSON`) and see a cross-origin response the script
+     fetched, or the request's headers and body, or alter them. The
+     objects we build for it have no prototype, or own fields defined
+     outright (`setOwn`), for the same reason. See docs/injection.md,
+     "What it doesn't stop". */
+  var _TextDecoder = (typeof TextDecoder === "function") ? TextDecoder : null;
+  var _tdDecode = _TextDecoder ? _TextDecoder.prototype.decode : null;
+  var _fromBase64 = (_Uint8Array && typeof _Uint8Array.fromBase64 === "function") ? _Uint8Array.fromBase64 : null;
+  var _charCodeAt = String.prototype.charCodeAt;
+  var _strIndexOf = String.prototype.indexOf;
+  var _symIterator = Symbol.iterator;
+  var _DOMParser = (typeof DOMParser === "function") ? DOMParser : null;
+  var _parseFromString = _DOMParser ? _DOMParser.prototype.parseFromString : null;
+  var _URLCtor = (typeof URL === "function") ? URL : null;
+  var _taSet = null;
+  var _taBufferGet = null;
+  var _taByteLengthGet = null;
+  var _urlHrefGet = null;
+  var _baseURIGet = null;
+  var _rsEnqueue = null;
+  var _rsClose = null;
+  var _rsError = null;
+  (function () {
+    function getter(obj, name) {
+      var d = _ObjectGetOwnPropertyDescriptor(obj, name);
+      return (d && typeof d.get === "function") ? d.get : null;
+    }
+    try {
+      var ta = _ObjectGetPrototypeOf(_Uint8Array.prototype);
+      _taSet = ta.set;
+      _taBufferGet = getter(ta, "buffer");
+      _taByteLengthGet = getter(ta, "byteLength");
+    } catch (_taE) {}
+    try { _urlHrefGet = getter(_URLCtor.prototype, "href"); } catch (_uE) {}
+    try { _baseURIGet = getter(Node.prototype, "baseURI"); } catch (_bE) {}
+    try {
+      var rc = ReadableStreamDefaultController.prototype;
+      _rsEnqueue = rc.enqueue;
+      _rsClose = rc.close;
+      _rsError = rc.error;
+    } catch (_rE) {}
+  })();
+
+  /* Define `o[k]` as an own data property, so no setter on a prototype
+     (a page's `Object.prototype` one) sees the value. The descriptor has
+     no prototype either, as `defineProperty` reads `get` / `set` off it. */
+  function setOwn(o, k, v) {
+    var d = _ObjectCreate(null);
+    d.value = v;
+    d.writable = true;
+    d.enumerable = true;
+    d.configurable = true;
+    _ObjectDefineProperty(o, k, d);
+  }
+
+  /* A plain object (the script gets it, and may call its methods) with
+     `src`'s own fields defined outright. */
+  function plainCopy(src) {
+    var out = {};
+    var ks = _ObjectKeys(src);
+    for (var i = 0; i < ks.length; i++) setOwn(out, ks[i], src[ks[i]]);
+    return out;
+  }
+
+  /* `arr` with an iterator of its own, so `new Blob(arr)` doesn't walk
+     it with `Array.prototype[Symbol.iterator]`, which a page could
+     replace. */
+  function ownIterable(arr) {
+    setOwn(arr, _symIterator, function () {
+      var i = 0;
+      return {
+        next: function () {
+          return i < arr.length ? { value: arr[i++], done: false } : { value: undefined, done: true };
+        },
+      };
+    });
+    return arr;
+  }
+
+  /* The part of a request id that keeps two runtimes' ids apart. */
+  function randomPart() {
+    return _ReflectApply(_numToString, (_random() * 4294967296) >>> 0, [36]);
+  }
+
   /* Decode one base64 piece of the body into raw bytes. */
   function decodeBase64(b64) {
-    var binary = atob(b64);
+    if (_fromBase64) return _ReflectApply(_fromBase64, _Uint8Array, [b64]);
+    var binary = _atob(b64);
     var len = binary.length;
-    var bytes = new Uint8Array(len);
-    for (var i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+    var bytes = new _Uint8Array(len);
+    for (var i = 0; i < len; i++) bytes[i] = _ReflectApply(_charCodeAt, binary, [i]);
     return bytes;
   }
 
@@ -1701,15 +1983,18 @@
      Cancelling the stream gives up on the request, as cancelling a
      fetch body does: the worker stops, and the request ends as aborted. */
   function xhrBodyStream(id, entry) {
-    return new _ReadableStream({
-      start: function (controller) { entry.streamController = controller; },
-      cancel: function () {
-        entry.streamController = null;
-        if (activeRequests[id] !== entry) return;
-        stopXhrInWorker(id);
-        dispatchXhrEvent(id, { kind: "abort" });
-      },
-    });
+    /* No prototype: the stream reads `pull` and `type` off it, and a
+       page's `Object.prototype` getter could hand it a `pull` that gets
+       the controller. */
+    var source = _ObjectCreate(null);
+    source.start = function (controller) { entry.streamController = controller; };
+    source.cancel = function () {
+      entry.streamController = null;
+      if (activeRequests[id] !== entry) return;
+      stopXhrInWorker(id);
+      dispatchXhrEvent(id, bare({ kind: "abort" }));
+    };
+    return new _ReadableStream(source);
   }
 
   /* What a callback gets while the request is under way: the state so
@@ -1762,11 +2047,11 @@
     }
     var bytes = decodeBase64(event.data);
     try {
-      if (entry.decoder) entry.text += entry.decoder.decode(bytes, { stream: true });
+      if (entry.decoder) entry.text += _ReflectApply(_tdDecode, entry.decoder, [bytes, { stream: true }]);
       else if (entry.stream) {
         /* No controller: the script cancelled, which ended the request. */
-        if (entry.streamController) entry.streamController.enqueue(bytes);
-      } else entry.pieces.push(bytes);
+        if (entry.streamController) _ReflectApply(_rsEnqueue, entry.streamController, [bytes]);
+      } else setOwn(entry.pieces, entry.pieces.length, bytes);
     } catch (e) {
       /* Past what the page can hold (a string's length limit, say). */
       failXhrBody(id, e);
@@ -1776,9 +2061,9 @@
     if (entry.readyState < 3) setReadyState(entry, 3);
     if (!live()) return;
     var progress = xhrState(entry);
-    progress.lengthComputable = entry.total !== null;
-    progress.loaded = entry.loaded;
-    progress.total = entry.total !== null ? entry.total : 0;
+    setOwn(progress, "lengthComputable", entry.total !== null);
+    setOwn(progress, "loaded", entry.loaded);
+    setOwn(progress, "total", entry.total !== null ? entry.total : 0);
     callXhrCallback(entry.onprogress, progress);
   }
 
@@ -1803,45 +2088,52 @@
     var rt = entry.responseType;
     var mime = response.responseMimeType || "";
     if (entry.stream) {
-      response.responseText = "";
-      response.response = entry.stream;
+      setOwn(response, "responseText", "");
+      setOwn(response, "response", entry.stream);
       if (entry.streamController) {
-        try { entry.streamController.close(); } catch (_ce) {}
+        try { _ReflectApply(_rsClose, entry.streamController, []); } catch (_ce) {}
       }
       return;
     }
     if (!entry.decoder) {
-      response.responseText = "";
+      setOwn(response, "responseText", "");
       if (rt === "blob") {
-        response.response = new Blob(entry.pieces, { type: mime });
+        var opts = _ObjectCreate(null);
+        opts.type = mime;
+        setOwn(response, "response", new _Blob(ownIterable(entry.pieces), opts));
       } else {
         var size = 0;
-        for (var i = 0; i < entry.pieces.length; i++) size += entry.pieces[i].byteLength;
-        var all = new Uint8Array(size);
+        for (var i = 0; i < entry.pieces.length; i++) size += _ReflectApply(_taByteLengthGet, entry.pieces[i], []);
+        var all = new _Uint8Array(size);
         var at = 0;
-        for (var j = 0; j < entry.pieces.length; j++) { all.set(entry.pieces[j], at); at += entry.pieces[j].byteLength; }
-        response.response = all.buffer;
+        for (var j = 0; j < entry.pieces.length; j++) {
+          _ReflectApply(_taSet, all, [entry.pieces[j], at]);
+          at += _ReflectApply(_taByteLengthGet, entry.pieces[j], []);
+        }
+        setOwn(response, "response", _ReflectApply(_taBufferGet, all, []));
       }
       entry.pieces = [];
       return;
     }
     /* TextDecoder's default, like Response.text(): UTF-8 whatever the
        charset says, a leading BOM dropped. */
-    var text = entry.text + entry.decoder.decode();
-    response.responseText = text;
+    var text = entry.text + _ReflectApply(_tdDecode, entry.decoder, []);
+    setOwn(response, "responseText", text);
+    var body;
     if (rt === "json") {
       /* A malformed body gives null; `responseText` still has it. */
-      try { response.response = JSON.parse(text); } catch (_je) { response.response = null; }
+      try { body = _JSONParse(text); } catch (_je) { body = null; }
     } else if (rt === "document") {
-      var parseType = mime.indexOf("xml") !== -1 ? "application/xml" : "text/html";
+      var parseType = _ReflectApply(_strIndexOf, mime, ["xml"]) !== -1 ? "application/xml" : "text/html";
       try {
-        response.response = new DOMParser().parseFromString(text, parseType);
+        body = _ReflectApply(_parseFromString, new _DOMParser(), [text, parseType]);
       } catch (_pe) {
-        response.response = null;
+        body = null;
       }
     } else {
-      response.response = text;
+      body = text;
     }
+    setOwn(response, "response", body);
   }
 
   function dispatchXhrEvent(id, event) {
@@ -1853,7 +2145,7 @@
        request and free the slot here. */
     delete activeRequests[id];
     if (entry.ttlTimer) {
-      try { clearTimeout(entry.ttlTimer); } catch (_te) {}
+      try { _clearTimeout(entry.ttlTimer); } catch (_te) {}
     }
     entry.readyState = 4;
     /* Every terminal event leaves the request DONE, so the object each
@@ -1868,31 +2160,33 @@
     var kind = event.kind;
     if (kind === "load" && event.response && typeof event.response === "object") {
       try {
-        finishXhrBody(entry, event.response);
-        payload = event.response;
-        payload.readyState = 4;
+        /* Read from a copy with no prototype, into an object of our
+           own: see `setOwn`. */
+        payload = plainCopy(bare(event.response));
+        finishXhrBody(entry, payload);
+        setOwn(payload, "readyState", 4);
       } catch (e) {
         /* Too big to build: an error instead, as nothing else will
            settle the request now. */
         kind = "error";
         payload = emptyXhrResponse(entry);
-        payload.error = tooLargeMessage(e);
+        setOwn(payload, "error", tooLargeMessage(e));
       }
     } else {
       payload = emptyXhrResponse(entry);
-      if (kind === "error") payload.error = event.message;
+      if (kind === "error") setOwn(payload, "error", event.message);
       if (entry.stream) {
         /* A stream the script is reading fails with the request, as a
            fetch body's does: the error's message, or an AbortError /
            TimeoutError. It stays the response, errored. */
-        payload.response = entry.stream;
+        setOwn(payload, "response", entry.stream);
         if (entry.streamController) {
           var streamErr = kind === "error"
             ? new _Error(event.message || "[SourceMonkey] GM_xmlhttpRequest: The request failed")
             : new _DOMException(
               kind === "timeout" ? "[SourceMonkey] GM_xmlhttpRequest: The request timed out" : "[SourceMonkey] GM_xmlhttpRequest: The request was aborted",
               kind === "timeout" ? "TimeoutError" : "AbortError");
-          try { entry.streamController.error(streamErr); } catch (_se) {}
+          try { _ReflectApply(_rsError, entry.streamController, [streamErr]); } catch (_se) {}
           entry.streamController = null;
         }
       }
@@ -1940,9 +2234,9 @@
   var XHR_PAGE_SIDE_TTL_MS = 5 * 60 * 1000; /* 5 minutes */
   function armXhrTtl(id, entry) {
     if (entry.ttlTimer) {
-      try { clearTimeout(entry.ttlTimer); } catch (_te) {}
+      try { _clearTimeout(entry.ttlTimer); } catch (_te) {}
     }
-    entry.ttlTimer = setTimeout(function () {
+    entry.ttlTimer = _setTimeout(function () {
       /* Minutes, not the raw millisecond count — a six-digit number
          is not something a reader can weigh. The worker is told to
          stop too, if it's still there: the body could be long. */
@@ -1956,9 +2250,12 @@
   }
   onPush(function (msg) {
     if (msg.type !== "sm:gm-xhr-event") return;
-    if (typeof msg.id !== "string" || !msg.event) return;
-    if (msg.event.kind === "headers" || msg.event.kind === "progress") streamXhrEvent(msg.id, msg.event);
-    else dispatchXhrEvent(msg.id, msg.event);
+    if (typeof msg.id !== "string" || !msg.event || typeof msg.event !== "object") return;
+    /* No prototype, so reading a field the event lacks (`total`) can't
+       hand it to a page's `Object.prototype` getter. */
+    var ev = bare(msg.event);
+    if (ev.kind === "headers" || ev.kind === "progress") streamXhrEvent(msg.id, ev);
+    else dispatchXhrEvent(msg.id, ev);
   });
 
   /* A URL argument as a string. Scripts pass `URL` objects too (and
@@ -1967,7 +2264,11 @@
      own: that's GM_download's details object. Anything else is left
      as it is, for the caller's "url required" check. */
   function urlArg(v) {
-    return v !== null && typeof v === "object" && typeof v.href === "string" && !("url" in v) ? v.href : v;
+    if (v === null || typeof v !== "object") return v;
+    /* A real URL: its href through the captured getter (see `setOwn`),
+       which refuses anything else. */
+    try { return _ReflectApply(_urlHrefGet, v, []); } catch (_ue) {}
+    return typeof v.href === "string" && !("url" in v) ? v.href : v;
   }
 
   var xhr = {
@@ -1980,12 +2281,16 @@
       if (!details || typeof details !== "object") {
         throw new _Error("[SourceMonkey] GM_xmlhttpRequest: details object required");
       }
+      /* Its own fields, in an object with no prototype: reading one the
+         script left out (`method`, `ontimeout`) would otherwise reach a
+         page getter on `Object.prototype`, handing it `details`. */
+      details = bare(details);
       var url = urlArg(details.url);
       if (typeof url !== "string" || !url) {
         throw new _Error("[SourceMonkey] GM_xmlhttpRequest: url required");
       }
       url = resolvePageUrl(url);
-      var id = "xhr-" + (_xhrNextId++) + "-" + Math.random().toString(36).slice(2, 10);
+      var id = "xhr-" + (_xhrNextId++) + "-" + randomPart();
       var responseType = typeof details.responseType === "string" ? details.responseType : "";
       var entry = {
         onloadstart: details.onloadstart,
@@ -2006,7 +2311,7 @@
         loaded: 0,
         /* The body so far: text through a streaming decoder, or byte
            pieces for blob/arraybuffer. */
-        decoder: isTextResponseType(responseType) ? new TextDecoder() : null,
+        decoder: isTextResponseType(responseType) ? new _TextDecoder() : null,
         text: "",
         pieces: [],
         stream: null,
@@ -2020,25 +2325,26 @@
       armXhrTtl(id, entry);
       /* Build the serializable request payload — strip callbacks
          and other non-cloneable fields. */
-      var request = {
-        method: typeof details.method === "string" ? details.method : "GET",
-        url: url,
-        headers: (details.headers && typeof details.headers === "object") ? details.headers : undefined,
-        data: details.data,
-        timeout: typeof details.timeout === "number" ? details.timeout : undefined,
-        responseType: typeof details.responseType === "string" ? details.responseType : undefined,
-        /* Truthy, not `=== true`: TM/VM both treat `anonymous` as a
-           truthy flag, and a privacy opt-out has to fail toward
-           omitting credentials — reading `anonymous: 1` as "send my
-           cookies anyway" is the wrong direction to get it wrong. */
-        anonymous: details.anonymous ? true : undefined,
-      };
-      api.sendAsync({
-        type: "sm:gm-xhr-start",
-        id: id,
-        scriptId: scriptId,
-        request: request,
-      }).then(function (reply) {
+      /* With no prototype, nor the headers' copy, so serializing them
+         doesn't look up a `toJSON` a page put on `Object.prototype`. */
+      var request = _ObjectCreate(null);
+      request.method = typeof details.method === "string" ? details.method : "GET";
+      request.url = url;
+      request.headers = plainHeaders(details.headers);
+      request.data = details.data;
+      request.timeout = typeof details.timeout === "number" ? details.timeout : undefined;
+      request.responseType = typeof details.responseType === "string" ? details.responseType : undefined;
+      /* Truthy, not `=== true`: TM/VM both treat `anonymous` as a
+         truthy flag, and a privacy opt-out has to fail toward
+         omitting credentials — reading `anonymous: 1` as "send my
+         cookies anyway" is the wrong direction to get it wrong. */
+      request.anonymous = details.anonymous ? true : undefined;
+      var startMsg = _ObjectCreate(null);
+      startMsg.type = "sm:gm-xhr-start";
+      startMsg.id = id;
+      startMsg.scriptId = scriptId;
+      startMsg.request = request;
+      api.sendAsync(startMsg).then(function (reply) {
         /* Anything but an explicit ack is a refusal — the SW's bridge
            gate replies `{ok:false, error}`, and the bridge's own
            fallback when the SW is unreachable carries no `ok` at all.
@@ -2132,18 +2438,16 @@
       if (_consoleLog) {
         var arr = ["[SourceMonkey:" + scriptId + "]"];
         for (var i = 0; i < args.length; i++) arr.push(args[i]);
-        try { _consoleLog.apply(null, arr); } catch (_e) {}
+        try { _ReflectApply(_consoleLog, null, arr); } catch (_e) {}
       }
-      /* SW fan-out (text-only). __SM_GM__.sendAsync is the
+      /* SW fan-out (text-only). transportSend is the
          chrome.runtime.sendMessage / bridge-event helper the
          async APIs use; here we fire-and-forget so the script's GM_log
          call stays sync. */
       try {
         var text = _renderArgs(args);
-        if (window.__SM_GM__ && typeof window.__SM_GM__.sendAsync === "function") {
-          var p = window.__SM_GM__.sendAsync({ type: "sm:gm-log", scriptId: scriptId, message: text });
-          if (p && typeof p.catch === "function") p.catch(function () {});
-        }
+        var p = transportSend({ type: "sm:gm-log", scriptId: scriptId, message: text });
+        if (p && typeof p.catch === "function") p.catch(function () {});
       } catch (_eS) {}
     },
   };
@@ -2415,7 +2719,11 @@
      that won't parse is left for the worker to refuse by name. */
   function resolvePageUrl(url) {
     try {
-      return new URL(url, document.baseURI || location.href).href;
+      /* The captured constructor and getters: see `setOwn`. `location`
+         and its `href` are the window's own, which a page can't
+         replace. */
+      var base = (_baseURIGet && _ReflectApply(_baseURIGet, document, [])) || location.href;
+      return _ReflectApply(_urlHrefGet, new _URLCtor(url, base), []);
     } catch (_re) {
       return url;
     }
@@ -2432,9 +2740,24 @@
     var keys = _ObjectKeys(headers);
     for (var i = 0; i < keys.length; i++) {
       var v = headers[keys[i]];
-      if (typeof v === "function" || (v !== null && typeof v === "object")) continue;
-      if (!out) out = {};
-      out[keys[i]] = String(v);
+      /* As fetch would have taken them: `undefined` leaves the header
+         out, an array is its items joined with commas, and other
+         objects are dropped (they'd only send "[object Object]").
+         Joined by hand and with `+ ""`, not the page's `String` or
+         `Array.prototype.join`, so it reaches no page code. */
+      if (_isArray(v)) {
+        var joined = "";
+        for (var j = 0; j < v.length; j++) {
+          var item = v[j];
+          if (item !== null && (typeof item === "object" || typeof item === "function" || typeof item === "symbol")) { joined = null; break; }
+          joined += (j ? "," : "") + (item === undefined || item === null ? "" : item);
+        }
+        if (joined === null) continue;
+        v = joined;
+      }
+      if (v === undefined || typeof v === "function" || typeof v === "symbol" || (v !== null && typeof v === "object")) continue;
+      if (!out) out = _ObjectCreate(null);
+      out[keys[i]] = "" + v;
     }
     return out || undefined;
   }
@@ -2463,7 +2786,7 @@
       a.style.display = "none";
       var parent = document.body || document.documentElement;
       if (!parent) return "no document to append the download anchor to";
-      if (_Node_appendChild) _Node_appendChild.call(parent, a);
+      if (_Node_appendChild) _ReflectApply(_Node_appendChild, parent, [a]);
       else parent.appendChild(a);
       try { a.click(); } finally {
         try { parent.removeChild(a); } catch (_re2) {}
@@ -2496,7 +2819,7 @@
              caller has the control object, breaking the common
              `var ctl = GM_download({onerror: function () { ctl.abort(); }})`
              shape. Every other path here settles asynchronously. */
-          setTimeout(function () {
+          _setTimeout(function () {
             dispatchDownloadEvent(requestId, {
               kind: "error",
               error: "not_succeeded",
@@ -2504,7 +2827,7 @@
             });
           }, 0);
         } else {
-          setTimeout(function () {
+          _setTimeout(function () {
             /* The anchor path has no completion signal — the browser
                owns the transfer from the click on. We report `load`
                once the click has been handed off. Documented
@@ -2617,7 +2940,7 @@
 
   /* ---------- GM_registerMenuCommand / GM_unregisterMenuCommand ----------
 
-     `__SM_GM__` is a singleton per document — every userscript on the
+     This runtime is a singleton per document — every userscript on the
      page shares this runtime. So the callback table MUST be keyed by
      (scriptId, commandId), not commandId alone: two scripts using the
      same explicit `{id: 'foo'}` (the documented TM/VM update-in-place
@@ -2665,7 +2988,7 @@
     unregister: function (scriptId, commandId) {
       var key = String(commandId);
       var bucket = menuCommandsByScript[scriptId];
-      if (bucket && _hasOwn.call(bucket, key)) delete bucket[key];
+      if (bucket && _ReflectApply(_hasOwn, bucket, [key])) delete bucket[key];
       api.sendAsync({
         type: "sm:gm-menu-unregister",
         scriptId: scriptId,
@@ -2832,7 +3155,7 @@
      script to grant the API should restore it rather than leaving the
      feature test lying for the rest of the document. */
   function ensureUrlChangeProperty() {
-    if (_hasOwn.call(window, "onurlchange")) return;
+    if (_ReflectApply(_hasOwn, window, ["onurlchange"])) return;
     try {
       _ObjectDefineProperty(window, "onurlchange", {
         get: function () { return urlChangeOnProp; },
@@ -2889,14 +3212,14 @@
           addUrlChangeHandler(listener);
           return undefined;
         }
-        return _origAddEventListener.apply(this == null ? window : this, arguments);
+        return _ReflectApply(_origAddEventListener, this == null ? window : this, arguments);
       };
       window.removeEventListener = function (type, listener) {
         if (isUrlChangeType(type)) {
           removeUrlChangeHandler(listener);
           return undefined;
         }
-        return _origRemoveEventListener.apply(this == null ? window : this, arguments);
+        return _ReflectApply(_origRemoveEventListener, this == null ? window : this, arguments);
       };
       _origAddEventListener = origAdd;
       _origRemoveEventListener = origRemove;
@@ -2927,6 +3250,16 @@
     if (!ensureUrlChangePatch()) return;
     urlChangeEnabled = true;
     ensureUrlChangeProperty();
+    /* A sandbox `window` shows the window's built-ins as they were at
+       document_start, so it would miss these; it reads the names
+       listed here live instead (`isLiveName` in the prelude). */
+    if (!reg.liveWindowNames) {
+      var live = _ObjectCreate(null);
+      live.onurlchange = true;
+      live.addEventListener = true;
+      live.removeEventListener = true;
+      reg.liveWindowNames = live;
+    }
   }
 
   var urlchange = {
@@ -2953,15 +3286,20 @@
      is a no-op. Chrome refuses `window.close()` for a tab the script
      didn't open with `window.open`, and it ignores `window.focus()`
      for a background tab. The extension is not bound by either rule,
-     so the grant REPLACES the method on this world's `window` with one
-     that asks the SW to do it (`chrome.tabs.remove` /
+     so the grant REPLACES the method the script sees with one that
+     asks the SW to do it (`chrome.tabs.remove` /
      `chrome.windows.update`).
 
      Notes:
-       - The replacement lives on the USER_SCRIPT world's `window`, so
-         the page's own `window.close` is untouched. Sibling scripts in
-         this world do see it — the same per-document grant caveat as
-         window.onurlchange; see docs/GM-APIs.md.
+       - Where the replacement goes depends on the script's world:
+         - Isolated (`@inject-into content`): on that world's `window`,
+           so the page's own `window.close` is untouched. Sibling
+           scripts in this world do see it, the same per-document
+           grant caveat as window.onurlchange; see docs/GM-APIs.md.
+         - The page's world: on the granting script's sandbox `window`
+           only (`make` below, which the bindings hand to the sandbox).
+           Put on the page's `window`, the page and every other script
+           could close or focus the tab with it.
        - The call returns `undefined` synchronously, as TM's does. The
          SW round-trip is fire-and-forget: nothing useful can be
          reported to a caller whose tab is about to disappear, and a
@@ -2976,23 +3314,16 @@
     try { return window.top === window.self; } catch (_te) { return false; }
   }
 
-  /* Replace one method. Idempotent per name: a second granting script
-     (or a re-registration inside the same document) reuses the
-     override that's already there.
-
-     A failure to install is swallowed — the script keeps the page's
-     native method, which is the same thing it would have without the
-     grant. There is no feature test to keep honest here (unlike
-     window.onurlchange, `window.close` exists either way), so
-     degrading quietly is the whole story. */
-  function installWindowControl(scriptId, method) {
-    if (windowControlInstalled[method]) return;
+  /* The replacement for `method`, calling on behalf of `scriptId`, or
+     undefined where the script keeps the page's own method. */
+  function makeWindowControl(scriptId, method) {
+    if (method !== "close" && method !== "focus") return undefined;
     /* As in TM: a frame keeps the page's own `close`, which is a no-op
        there. The override closes the whole tab, which a frame's
        `window.close()` never does (docs/frames.md). */
-    if (method === "close" && !isTopFrame()) return;
+    if (method === "close" && !isTopFrame()) return undefined;
     var msgType = (method === "close") ? "sm:gm-window-close" : "sm:gm-window-focus";
-    var replacement = function () {
+    return function () {
       try {
         var p = api.sendAsync({ type: msgType, scriptId: scriptId });
         if (p && typeof p.then === "function") {
@@ -3009,6 +3340,21 @@
       }
       return undefined;
     };
+  }
+
+  /* Replace one method on this world's `window`. Idempotent per name: a
+     second granting script (or a re-registration inside the same
+     document) reuses the override that's already there.
+
+     A failure to install is swallowed — the script keeps the page's
+     native method, which is the same thing it would have without the
+     grant. There is no feature test to keep honest here (unlike
+     window.onurlchange, `window.close` exists either way), so
+     degrading quietly is the whole story. */
+  function installWindowControl(scriptId, method) {
+    if (windowControlInstalled[method]) return;
+    var replacement = makeWindowControl(scriptId, method);
+    if (!replacement) return;
     try {
       _ObjectDefineProperty(window, method, {
         value: replacement,
@@ -3028,18 +3374,22 @@
   }
 
   var windowControl = {
-    /* Called from the compile-in bindings of every script that granted
-       `window.close` / `window.focus`, ahead of the script body.
-       `method` is the bare name ("close" / "focus"). The scriptId is
-       used only to attribute SW-side failures to a script in its Log
-       tab — the override itself is world-wide, not per-script, so the
-       FIRST granting script's id is the one every later failure is
-       filed under. Same per-document grant scope as window.onurlchange
-       (docs/GM-APIs.md); exact attribution needs per-script worlds. */
+    /* For an isolated-world script that granted `window.close` /
+       `window.focus`, from its compile-in bindings ahead of the script
+       body. `method` is the bare name ("close" / "focus"). The
+       scriptId is used only to attribute SW-side failures to a script
+       in its Log tab; the override is world-wide, so the FIRST
+       granting script's id is the one every later failure is filed
+       under. */
     enable: function (scriptId, method) {
       if (method !== "close" && method !== "focus") return;
       installWindowControl(scriptId, method);
     },
+    /* For a page-world script: the replacement itself, which its
+       bindings put on its sandbox `window` (see `windowMethods` in
+       gm-bindings.ts). Each script gets its own, so failures are filed
+       under the right script. */
+    make: makeWindowControl,
   };
 
   /* Wire the SW-originated tab-close, notification-event, menu-fire,
@@ -3117,25 +3467,12 @@
     },
   };
 
-  /* Object.defineProperty with writable:false + configurable:false so
-     neither a sibling userscript nor (in MAIN world) the page can
-     replace the runtime out from under other scripts after init.
-     We don't try to HIDE the global: in USER_SCRIPT world the page
-     can't see it anyway, and in MAIN world there is nowhere to hide it
-     — separate chrome.userScripts registrations can only hand each
-     other references through a shared global, and any secret baked
-     into MAIN-world source is readable by the page. Bounding what a
-     page can do with it is the SW-side gate's job instead. */
+  /* Into the world's registry, where only code holding the channel key
+     finds it. Non-writable, so a script that got the registry can't
+     swap the runtime out from under the others. */
   try {
-    Object.defineProperty(window, "__SM_GM__", {
-      value: api,
-      writable: false,
-      configurable: false,
-      enumerable: false,
-    });
+    Object.defineProperty(reg, "gm", { value: api, enumerable: true });
   } catch (_e2) {
-    /* If something already pinned the slot, fall back to a plain
-       assignment so we still expose the API. */
-    window.__SM_GM__ = api;
+    reg.gm = api;
   }
 })();

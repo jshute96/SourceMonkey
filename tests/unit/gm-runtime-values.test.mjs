@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { WRAPPER_GM_RUNTIME } from '../../dist/generated-wrappers.js';
+import { registryOf } from './channel-helpers.mjs';
 
 const EXT_ID = 'abcdefghijklmnopabcdefghijklmnop';
 
@@ -26,7 +27,7 @@ function loadRuntime() {
   window.postMessage = () => {};
   const document = { visibilityState: 'visible', addEventListener: () => {}, dispatchEvent: () => true };
   new Function('window', 'document', 'chrome', WRAPPER_GM_RUNTIME)(window, document, chrome);
-  const storage = window.__SM_GM__.storage;
+  const storage = registryOf(document).gm.storage;
   return {
     storage,
     // Messages of one type sent so far, oldest first.

@@ -225,9 +225,6 @@ export class ExtensionHost extends HarnessHost {
     const tabId = this.tabsByPage.get(page);
     const state = tabId === undefined ? undefined : this.tabs.get(tabId);
     if (tabId === undefined || !state) return null;
-    // Before protocol 2.1, the extension ran no scripts in iframes, and
-    // its reports say nothing of frames.
-    this.link.requireMinor(1, 'Showing which scripts run in iframes');
     return this.matchFrames(tabId, state);
   }
 
@@ -451,8 +448,8 @@ export class ExtensionHost extends HarnessHost {
     const runId = this.runIds.get(event.scriptId);
     if (!runId || !this.tabs.has(event.tabId!)) return;
     // What came from an iframe names its frame. A report or menu event
-    // says whether it did; the others name their document (from
-    // protocol 2.2), which may be the top frame's. Looked up only for
+    // says whether it did; the others name their document, which may
+    // be the top frame's. Looked up only for
     // what's recorded, after the events that are dropped.
     const documentId = 'documentId' in event ? event.documentId : undefined;
     const inFrame = (event.kind === 'report' || event.kind === 'menu') ? event.topFrame === false

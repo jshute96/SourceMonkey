@@ -6,6 +6,7 @@
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir, renderUserscript } from '../fixtures/scripts-dir';
+import { bridgeSend } from '../fixtures/bridge-forge';
 import { activeTabId, allScripts, hasBadgeColor, waitForTabState, type SmApi } from '../fixtures/sw-api';
 
 const GREY = '#757575';
@@ -254,12 +255,9 @@ test.describe('sm-dev tab claims', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     const tabId = await activeTabId(getServiceWorker);
     await waitForTabState(sm, tabId, (s) => s.rows.includes('Main | OK'), 'Main OK');
-    // As the page could, forging a report for a script it made up.
-    await page.evaluate(() => {
-      document.dispatchEvent(new CustomEvent('sourcemonkey-bridge-sync', {
-        detail: JSON.stringify({ payload: { type: 'sm:start', id: 'harness-stranger', name: 'Stranger' } }),
-      }));
-    });
+    // As a page with the channel key could, forging a report for a
+    // script it made up.
+    await bridgeSend(page, await sm.channelKey(), { type: 'sm:start', id: 'harness-stranger', name: 'Stranger' });
     await page.waitForTimeout(300);
     expect((await sm.getTabState(tabId)).rows.join('\n')).not.toContain('Stranger');
   });

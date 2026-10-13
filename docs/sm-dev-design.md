@@ -981,9 +981,13 @@ response, so it says so directly.
 
 - Watches each tab's main-frame navigation responses, skipping
   redirects, whose headers don't apply to the page.
-- Warns on each load of such a page that the run's MAIN-world scripts
-  match, naming them. The check and the wording live in
-  `src/sandboxed-page.ts`, shared with the extension's Log hint.
+- On each load of such a page that the run's MAIN-world scripts
+  match, names them:
+  - As a note that they run isolated instead, with SourceMonkey (see
+    [injection.md](injection.md#csp-sandbox-pages)).
+  - As a warning that they can't run, with another manager.
+- The check and the wording live in `src/sandboxed-page.ts`, shared
+  with the extension's Log hint.
 
 ### Applying script changes
 
@@ -1684,9 +1688,10 @@ The run commands that drive and read a tab's page (`click`, `type`,
   - No hook in the document means the script hasn't run there. Then,
     and with no run script selected, a bare `eval` runs in the page,
     so the page's globals aren't silently out of reach.
-    - With `--script` it falls back to the scripts' shared world.
-    - It says so for a selected script, except in a `--noscript` tab;
-      a named one is an error.
+    - For a selected script it says so, except in a `--noscript` tab.
+    - With `--script`, bare or naming one, it's an error: the script
+      was asked for, and no other world has its scope. `--script` with
+      no run script selected is an error too.
 - `cdp` opens a fresh CDP session on the tab (`newCDPSession`) for each
   command and detaches it after.
   - Settings the calls make (like `Emulation.*` overrides) end when

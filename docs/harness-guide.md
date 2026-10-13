@@ -803,10 +803,10 @@ requests) to bury the script's.
 - `attach --log-source ...` picks the sources for that sm-dev alone.
 - `logs` reads them back, the page's too with `--log-source all`.
 - A page whose `Content-Security-Policy` header sandboxes it without
-  `allow-scripts` blocks scripts in the page's own context (`@grant
-  none`, `@inject-into page`). On each load of such a page, the run
-  names the loaded scripts that this blocks and suggests
-  `@inject-into content`.
+  `allow-scripts` blocks scripts in the page's own context.
+  SourceMonkey runs them in the isolated context there instead, and on
+  each load of such a page the run names them. Under another manager,
+  it names them as blocked and suggests `@inject-into content`.
 
 ## Sending commands
 
@@ -1582,8 +1582,8 @@ current one.
   - With no script selected, `eval` runs in the page.
   - A selected script that hasn't run on the page (it doesn't match,
     or hasn't reached its `@run-at` yet) runs the code in the page
-    too, and says so. With `--script` that is the scripts' shared world
-    instead. A named one is an error.
+    too, and says so. With `--script`, or `--script=<script>`, that's
+    an error instead.
   - How it works: sm-dev's scripts carry a small eval hook in their
     wrapper (see [injection.md](injection.md#sm-devs-eval-hook)).
 
@@ -2206,9 +2206,8 @@ that, since the answer is a function.
 - When Chrome restarts SourceMonkey's service worker (its background
   script) during a run, what the scripts did meanwhile may be missing
   from the run's output. The run says when this happens.
-- A log line from an iframe can lack its frame prefix: an event from a
-  SourceMonkey before protocol 2.2, or a console line logged before
-  sm-dev reached the frame's process.
+- A log line from an iframe can lack its frame prefix: a console line
+  logged before sm-dev reached the frame's process.
 - `--lang` doesn't reach `GM_xmlhttpRequest` and `GM_download` in a
   connected browser (see [`start` options in detail](#start-options-in-detail)).
 - In specs, a worker's tests share the browser's context (see
@@ -2227,8 +2226,8 @@ that, since the answer is a function.
 - **`GM_getValue is not defined`**: the script uses an API it did not
   `@grant`.
 - **The script sees `undefined` for a page global**: it is in the
-  isolated world. Reading page globals needs `@grant none` or
-  `unsafeWindow`.
+  isolated world (`@inject-into content` or `@sandbox DOM`). Remove
+  that line.
 - **A `@require` fails to load**: sm-dev resolves it the way the
   extension does, including local overrides. The message names the URL
   and the reason.

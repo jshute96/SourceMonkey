@@ -403,8 +403,8 @@ fetch via the SW). Highlights:
   `@grant window.focus`: a granted `window.close()` really removes the
   tab, an ungranted one hits Chrome's refusal and leaves it open, each
   grant installs only its own override, and the page's MAIN-world
-  `window.close` / `.focus` stay native. `window.focus` is asserted by
-  its tab-selection half (a second tab is opened, then the script is
+  `window.close` / `.focus` stay native, as do a page-world sibling's.
+  `window.focus` is asserted by its tab-selection half (a second tab is opened, then the script is
   cued through the DOM to call `focus()`, and the active tab flips
   back) — the window-raising half isn't observable headlessly, since a
   headless browser reports every window as focused. Unit tests cover
@@ -413,15 +413,16 @@ fetch via the SW). Highlights:
   sibling script in the same document gets the working override.
 - `tests/e2e/gm-unsafe-window.spec.ts` — `@grant unsafeWindow` reads,
   calls, and writes real page globals; storage and XHR keep working
-  from MAIN world over the bridge; `@grant none` pages stay free of
-  `__SM_GM__`; `@inject-into content` is isolated and warns; a
-  page-forged bridge GM call for a USER_SCRIPT-world script is
-  refused; and an isolated script's cross-tab value broadcast is not
-  relayed into the page.
+  from MAIN world over the bridge; `@grant none` pages get no GM
+  runtime; `@inject-into content` is isolated and warns; a bridge GM
+  call forged for a USER_SCRIPT-world script (by a test page given the
+  channel key, `tests/fixtures/bridge-forge.ts`) is refused; and an
+  isolated script's cross-tab value broadcast is not relayed into the
+  page.
 - `tests/e2e/gm-unsafe-window-implicit.spec.ts` — `unsafeWindow` used
   with no `@grant` line for it: a `GM_*`-granting script reaches page
   globals and keeps its storage, a grant-free script gets the binding
-  without pulling `__SM_GM__` onto the page, a mention in a comment or
+  without pulling the GM runtime onto the page, a mention in a comment or
   a string leaves the script isolated, a script that declares the name
   itself installs `ok` and stays where its grants put it, and
   `@inject-into content` still wins and warns.
@@ -430,14 +431,18 @@ fetch via the SW). Highlights:
   `__sm*` names and a library's own `unsafeWindow` all run; a leading
   `"use strict"` applies, at run time and in the install-time syntax
   check; the reload swap gets the same scope.
-- `tests/e2e/gm-main-world-surface.spec.ts` — the rest of the GM_*
-  surface from MAIN world, which every other spec exercises only in
-  USER_SCRIPT world. Two reasons a surface is in here:
-  - **It installs itself on the world's `window`**, which in MAIN is the
-    *page's*: `window.onurlchange` (the `=== null` feature test has to
-    hold, and the page can see the accessor too — pinned deliberately,
-    see TODO.md) and `window.close` / `window.focus` (the override
-    replaces the page's method, and the tab really closes).
+- `tests/e2e/sandbox-window.spec.ts` — a page-world script's sandbox
+  `window` (granted or no `@grant` line): built-ins only, page globals
+  by bare name, `in` checks, own writes and `@require` globals kept off
+  the page, bound window methods, the reload swap, and
+  the default world (`@sandbox DOM` isolates).
+- `tests/e2e/gm-main-world-surface.spec.ts` — GM_* surfaces from MAIN
+  world where the world matters. Two reasons a surface is in here:
+  - **It installs itself on a `window`**: `window.onurlchange` on the
+    *page's* (the `=== null` feature test has to hold, and the page can
+    see the accessor too — pinned deliberately, see TODO.md) and
+    `window.close` / `window.focus` on the script's sandbox (the tab
+    really closes).
   - **It depends on an unprompted SW push**, which MAIN world can only
     receive via `wrapper-bridge.js` re-posting it: `sm:url-change`,
     `sm:gm-value-update` (cross-tab listener), `sm:gm-menu-fire`,
@@ -448,7 +453,7 @@ fetch via the SW). Highlights:
     and `sm:gm-download-event` (needs a real download).
 
 The other direction — page→SW requests, which ride a
-`sourcemonkey-bridge-sync` DOM event — is pinned in two places:
+`sourcemonkey-sync-<key>` DOM event — is pinned in two places:
 
 - `tests/unit/injector.test.mjs` drives the bridge source in a fake DOM
   and covers the reply path (the SW's answer relayed back on the

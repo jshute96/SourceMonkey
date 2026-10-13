@@ -141,21 +141,16 @@ stays enforced in an SM-only spec.
 - **`unsafe-window/`** (`unsafeWindow === window`, and the
   `@inject-into content` variant) — measured under TM 5.5.0 and VM
   2.48.0.
-  - **Identity is SM-only.** SM answers `true`: it satisfies the grant
-    by running the script in MAIN world and binding
-    `unsafeWindow = window`, with nothing in between. TM and VM both
-    answer `false` on Chrome — each hands out its sandbox's wrapper
-    rather than the raw window. VM answers `false` in its isolated mode
-    too: `unsafeWindow` there is neither this script's own `window` nor a
-    way into the page, since its `isolated-read` still came back
-    `undefined`.
-    - This corrects an earlier assumption in our docs that only Firefox
-      managers wrap. Both Chrome managers wrap; SM is the one that
-      doesn't.
+  - **Identity: all three answer `false` on Chrome.** Each hands out a
+    sandbox wrapper rather than the raw window (SM's: docs/injection.md,
+    "The sandbox window"). VM answers `false` in its
+    isolated mode too: `unsafeWindow` there is neither this script's own
+    `window` nor a way into the page, since its `isolated-read` still
+    came back `undefined`.
     - All three reach the page's own variables under the plain grant,
       which is the contract, so the read / call / write assertions are
       unconditional. The identity row is only required to *exist* under
-      TM and VM — what it says there is a report.
+      TM and VM; what it says there is a report.
   - **The isolated variant under TM.** Same cause as
     `headers-inject-into/` below: TM has no `@inject-into`, so it
     honours the `@grant unsafeWindow` and runs `isolated.user.js` in the
@@ -170,7 +165,7 @@ stays enforced in an SM-only spec.
     it, and its assertions are unconditional: every manager here is
     expected to define the name and reach the page through it. This is
     the premise SourceMonkey's own implicit handling rests on (see
-    [injection.md](injection.md#unsafewindow-forces-main-world)), so it
+    [injection.md](injection.md#unsafewindow-is-the-pages-window)), so it
     is measured rather than assumed.
     - **Both confirm it** (TM 5.5.0, VM 2.49.0): `typeof unsafeWindow` is
       `object` with no `@grant` line for it, and the read reaches the

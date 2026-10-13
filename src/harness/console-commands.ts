@@ -1137,10 +1137,12 @@ function selectedScript(ctx: ConsoleContext): PreparedScript | undefined {
  * `--script=<script>` names; in the page with `--page`.
  * - With no run script selected (none loaded, or an `E` script picked,
  *   which has no eval hook), a bare `eval` runs in the page, and
- *   `--script` in the scripts' shared world.
- * - The same goes for a selected script that hasn't run on the page.
- *   The page by default, so its globals aren't silently out of reach.
- * Null, said why, when the name picks none or the flags clash.
+ *   `--script` is an error.
+ * - A selected script that hasn't run on the page: a bare `eval` runs
+ *   in the page, so its globals aren't silently out of reach. With
+ *   `--script` that's a failure, as the script was asked for.
+ * Null, said why, when the name picks none, `--script` has no script,
+ * or the flags clash.
  */
 function evalScope(ctx: ConsoleContext, flag: string | true | undefined, page: boolean): EvalIn | null {
   if (page) {
@@ -1148,15 +1150,18 @@ function evalScope(ctx: ConsoleContext, flag: string | true | undefined, page: b
     ctx.out(`${MISTAKE_PREFIX}The ${quoted('eval')} command takes ${quoted('--page')} or ${quoted('--script')}, not both`);
     return null;
   }
-  const fallback = flag === undefined ? 'page' : 'scripts';
   const script = flag === undefined || flag === true ? selectedScript(ctx) : pickScript(ctx, flag);
-  if (!script) return typeof flag === 'string' ? null : fallback;
+  if (!script) {
+    if (flag === undefined) return 'page';
+    if (flag === true) ctx.out(`${MISTAKE_PREFIX}No script of this run is selected, so ${quoted('eval --script')} has none to run in. Name one with ${quoted('--script=<script>')}, or use ${quoted('--page')}.`);
+    return null;
+  }
   // No hook: not pushed into the extension, so it hasn't run anywhere.
   const hook = script.id ? ctx.host.evalHook(script.id) : null;
   // Another manager reports nothing, so a missed scope there says
   // nothing about whether the script ran.
   const manager = ctx.managerName && ctx.managerName !== DEFAULT_MANAGER ? MANAGERS[ctx.managerName].label : undefined;
-  return { scope: hook && { world: script.world, ...hook }, name: preparedScriptName(script), named: typeof flag === 'string', fallback, manager };
+  return { scope: hook && { world: script.world, ...hook }, name: preparedScriptName(script), inPageIfMissing: flag === undefined, manager };
 }
 
 /**
