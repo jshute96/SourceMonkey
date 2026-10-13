@@ -52,10 +52,13 @@ test.describe('examples / frames', () => {
     await expect(frames['nested']!.locator('#log')).toContainText('Ran in nested (a frame)');
 
     // A count in one frame shows in every document, cross-origin
-    // included, through the value-change listener.
+    // included, through the value-change listener. One more than it
+    // was: TM's and VM's profiles keep the value from earlier runs.
+    await expect(frames['top']!.locator('#count')).toHaveText(/^\d+$/);
+    const before = Number(await frames['top']!.locator('#count').textContent());
     await frames['frame-a']!.locator('#btn-count').click();
     for (const name of Object.keys(want)) {
-      await expect(frames[name]!.locator('#count'), `count in ${name}`).toHaveText('1');
+      await expect(frames[name]!.locator('#count'), `count in ${name}`).toHaveText(String(before + 1));
     }
 
     await page.close();
