@@ -341,6 +341,12 @@ Command marks:
 - Who gets markup:
   - The run sends it only to clients whose hello asks; `run()` callers
     get plain text unless they pass `markup: true`.
+  - The client reads line by line, so output spanning lines (a stack
+    trace in one error) goes as lines that each stand alone
+    (`markupLines`): a role open at a break is closed there and opened
+    again on the next line. A plain prefix (`[sm-dev] `) stays at the
+    start of the first line, and a `--json` stderr tag goes on every
+    line.
   - The run's process never colors (it is started with
     `FORCE_COLOR=0`), so the log file stays plain.
   - `start` relays a new run's first lines from that log, so they are

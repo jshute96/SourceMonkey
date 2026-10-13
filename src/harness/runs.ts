@@ -16,7 +16,8 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
-import { err as errorLine, escapeMarkup, heading, id as idRole, plainLine, quoted, roleCell, tableLines, textCell, url, type Cell } from './output-style.js';
+import { STDERR_LINE } from './json-output.js';
+import { err as errorLine, escapeMarkup, heading, id as idRole, markupLines, plainLine, quoted, roleCell, tableLines, textCell, url, type Cell } from './output-style.js';
 import { LOG_SOURCES, type LogSource } from './run-logs.js';
 import { DEFAULT_MANAGER, MANAGERS, type ManagerName } from './managers.js';
 
@@ -284,7 +285,14 @@ export class RunControl {
     // From the hello: whether the client paints markup itself.
     let markup = false;
     const reply = (line: string): void => {
-      if (!socket.destroyed && socket.writable) socket.write((markup ? line : plainLine(line)) + '\n');
+      if (!socket.destroyed && socket.writable) {
+        // The client reads line by line, so markup goes as lines that each
+        // stand alone, each keeping a `--json` stderr tag the whole had.
+        const tag = line.startsWith(STDERR_LINE) ? STDERR_LINE : '';
+        const body = line.slice(tag.length);
+        const lines = (markup ? markupLines(body) : plainLine(body).split('\n')).map((l) => tag + l);
+        socket.write(lines.join('\n') + '\n');
+      }
     };
     let unfollow: (() => void) | null = null;
     socket.on('close', () => {

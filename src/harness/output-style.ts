@@ -275,6 +275,53 @@ function paintMarkup(markup: string, color: boolean): string {
   return out + cmdText + (color && roles.length > 0 ? '\x1b[0m' : '');
 }
 
+/**
+ * Output that may span lines (a stack trace in one error) as lines that
+ * each stand alone, for a reader that paints line by line. A role open
+ * at a line break is closed there and opened again on the next line, so
+ * every line is markup of its own; without that, the lines after the
+ * first would show their tags and escapes as text.
+ * - Plain text before the markup stays as it is at the start of its
+ *   line, where readers look for a prefix (`[sm-dev] `).
+ * - Plain text with no markup is just split: each line is read on its
+ *   own, by its own prefix.
+ */
+export function markupLines(line: string): string[] {
+  if (!line.includes('\n')) return [line];
+  const at = line.indexOf(MARKUP);
+  if (at < 0) return line.split('\n');
+  const headLines = line.slice(0, at).split('\n');
+  const out = headLines.slice(0, -1);
+  const markup = line.slice(at + MARKUP.length).replaceAll(MARKUP, '');
+  const open: Role[] = [];
+  let current = '';
+  let prefix = headLines[headLines.length - 1];
+  const reopen = (): string => open.map((r) => `<${r}>`).join('');
+  const close = (): string => [...open].reverse().map((r) => `</${r}>`).join('');
+  for (const piece of pieces(markup)) {
+    if ('open' in piece) {
+      open.push(piece.open);
+      current += `<${piece.open}>`;
+    } else if ('close' in piece) {
+      const i = open.lastIndexOf(piece.close);
+      if (i >= 0) open.splice(i, 1);
+      current += `</${piece.close}>`;
+    } else {
+      const parts = piece.text.split('\n');
+      parts.forEach((part, i) => {
+        if (i > 0) {
+          out.push(prefix + MARKUP + current + close());
+          prefix = '';
+          current = reopen();
+        }
+        current += escapeMarkup(part);
+      });
+    }
+  }
+  out.push(prefix + MARKUP + current);
+  return out;
+}
+
 /** A line as plain text: for the log file, and for clients that didn't ask for markup. */
 export function plainLine(line: string): string {
   return paintOutput(line, false);

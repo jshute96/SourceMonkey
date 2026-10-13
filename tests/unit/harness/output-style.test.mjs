@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  MARKUP, asError, cmd, echoLine, err, id, message, paintOutput, plainLine, quoted, ui, url, warn,
+  MARKUP, asError, cmd, echoLine, err, id, markupLines, message, paintOutput, plainLine, quoted, ui, url, warn,
 } from '../../../lib/harness/output-style.js';
 
 const RED = '\x1b[1m\x1b[31m';
@@ -85,4 +85,31 @@ test('quoted() puts text holding a backtick in double ones, and messages read it
   // Plain, the selector keeps its own backtick; in color it is one command.
   assert.equal(plainLine(`ERROR: No element matches ${quoted('#no`pe')}`), 'ERROR: No element matches #no`pe');
   assert.match(paintOutput(`ERROR: Use ${quoted('a `b` c')} now`, true), new RegExp(`${CYAN.replace('[', '\\[')}a \`b\` c`));
+});
+
+test('markupLines: each line of multi-line markup stands alone', () => {
+  // A stack trace in one error, read by a client line by line: the
+  // lines after the first must not show tags or escapes as text.
+  const line = ui`[script error] ${asError('TypeError: x\n    at Array.<anonymous> (a.user.js:1:2)\n    at b (a.user.js:3:4)')}`;
+  const lines = markupLines(line);
+  assert.equal(lines.length, 3);
+  assert.deepEqual(lines.map((l) => paintOutput(l, false)), [
+    '[script error] TypeError: x',
+    '    at Array.<anonymous> (a.user.js:1:2)',
+    '    at b (a.user.js:3:4)',
+  ]);
+  // Still an error on every line, in color.
+  for (const l of lines) assert.match(paintOutput(l, true), /\x1b\[1m\x1b\[31m/);
+  // A plain prefix stays at the start of the first line, where readers
+  // look for it (`--json` sends `[sm-dev] ` lines to stderr).
+  const prefixed = markupLines('[sm-dev] ' + err('Locator failed\nCall log:\n  - waiting'));
+  assert.ok(prefixed[0].startsWith('[sm-dev] '));
+  assert.deepEqual(prefixed.map((l) => paintOutput(l, false)), ['[sm-dev] Locator failed', 'Call log:', '  - waiting']);
+  // Nested roles reopen on the next line.
+  const across = markupLines(MARKUP + '<warn>a <id>T1\nT2</id> b</warn>');
+  assert.deepEqual(across, [MARKUP + '<warn>a <id>T1</id></warn>', MARKUP + '<warn><id>T2</id> b</warn>']);
+  // Plain text is split, each line read by its own prefix.
+  assert.deepEqual(markupLines('plain\ntwo'), ['plain', 'two']);
+  assert.deepEqual(markupLines('[sm-dev] note\nERROR: bad').map((l) => paintOutput(l, true).includes('\x1b[31m')), [false, true]);
+  assert.deepEqual(markupLines(line.split('\n')[0]), [line.split('\n')[0]]);
 });

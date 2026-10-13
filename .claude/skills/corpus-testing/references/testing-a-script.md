@@ -32,9 +32,9 @@ with its script IDs and a run name prefix.
        that looks low-risk.
    - Many big sites block headless: Google (`/sorry`), Reddit, Amazon,
      IMDb (403), Codeforces and other Cloudflare sites, DuckDuckGo (empty
-     results), Metacritic (its `GM_xmlhttpRequest` too), YouTube live chat
-     and captions. Use `--headed` for those, a visible
-     browser of your own (muted too).
+     results), YouTube live chat and captions. Use `--headed` for those
+     (it goes before the command: `--headed start`, not `start --headed`),
+     a visible browser of your own (muted too).
    - A bot check that stops the headed browser too (a captcha, a
      Cloudflare checkbox, a firewall's "Access Blocked") makes the script
      `n/a --reason bot-blocked`, unless the script can still be judged

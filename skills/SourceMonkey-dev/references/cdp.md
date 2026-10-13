@@ -94,6 +94,9 @@ const send = (method, params = {}) => new Promise((r) => {
   `context.newCDPSession(page)`) has the `targetId`. Connect with
   `noDefaults: true`, or Playwright changes the person's browser
   (focus emulation, color scheme, downloads).
+- Put a script that imports the repo's own dependencies (Playwright)
+  inside the repo, in a git-ignored folder: Node looks for imports
+  from the script's own directory, so one in `/tmp` can't find them.
 - A `Runtime.evaluate` that navigates the page never gets its reply
   (the document is gone). Use `Page.navigate`, or `$R open`.
 

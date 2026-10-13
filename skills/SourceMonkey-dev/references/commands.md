@@ -275,6 +275,9 @@ old) or DOM changes for 200ms. Timers aren't waited for.
   top-level `return` works too (the code runs as a function body).
   Its `const`/`let` then stay in that function, not kept for later
   evals.
+- In the page (`--page`), a top-level `const` or `let` can clash with
+  a name the page's own scripts declare ("Identifier 'a' has already
+  been declared"). Wrap the code in `{ ... }`.
 - `eval --file probe.js` runs a file's JavaScript, with no shell
   quoting: handy for a probe you run more than once.
 - Several lines, on stdin or at a prompt:

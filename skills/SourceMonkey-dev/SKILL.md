@@ -66,8 +66,9 @@ Where to look:
   For anything later, wait for the signal itself: `wait log <text>`,
   `wait selector <css>`, `wait selector-gone <css>`.
   - Waits give up after 5 seconds (page loads: 30). Pass
-    `--timeout-seconds S` to any command that waits, for a slow site,
-    and keep S under your shell tool's own time limit.
+    `--timeout-seconds S` to any command that waits, after the command
+    name (`wait selector .x --timeout-seconds 20`), for a slow site, and keep
+    S under your shell tool's own time limit.
   - With no signal to wait for (sampling something over time), use
     `wait 2s`, not `sleep`.
 - **Don't use `--stop-after-seconds`.** A run that expires mid-test leaves pages
@@ -103,7 +104,8 @@ A line picks one browser mode:
   browser for that run, on a random port, closed when the run ends,
   with SourceMonkey loaded and ready. Good for pages with no login. Its
   profile is empty. Hidden, unless the line goes to a prompt;
-  `--headed` or `--headless` says outright.
+  `--headed` or `--headless` says outright. Like the other browser
+  options, they go before the command: `pnpm sm-dev --headed start ...`.
 - `pnpm sm-dev --open-browser`: a visible browser on port 9233 (or
   `--browser PORT`) that stays open, with a kept profile, so sign-ins
   persist. Use it for sites that need a login; ask the person to sign
@@ -552,6 +554,8 @@ $R savehtml pages/some-page.html              # the DOM, with the URL recorded
 - `closetab` closes the current tab; `closetab T2 T3` or `closetab all`
   close others. A page that asks first ("Leave site?") shows its
   dialog, answered with `accept` or `dismiss`; `--force` skips it.
+  - In a temp browser, closing the last tab quits it, which ends the
+    run. Use `stop` there instead of `closetab all`.
 - `tabs` lists them with their `targetId`s, for your own CDP clients.
   In a script: `$R --json tabs | jq -r '.tabs[] | select(.id == "T2") | .targetId'`.
 - `reload all` reloads every tab; `wait all` waits for every tab to
