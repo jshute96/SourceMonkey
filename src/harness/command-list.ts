@@ -806,9 +806,12 @@ export const HELP_SECTIONS: HelpSection[] = [
           {
             usage: 'script [script] print',
             syntax: NONE,
-            about: 'Print a script\'s installed text, or one of its `@require` or `@resource` files.',
+            about: 'Print a script\'s installed text, or one of its `@require`, `@resource` or icon files.',
             options: [
-              { term: '--file <name>', about: 'The file to print: part of one `@require` or `@resource` file\'s URL, a `@resource`\'s name, or `script`.' },
+              {
+                term: '--file <name>',
+                about: 'The file to print: part of one file\'s URL, a `@resource`\'s name, `script` or `icon`.',
+              },
               { term: '--out <file>', about: 'Write it to a file instead. A file that isn\'t text must use `--out`.' },
             ],
           },
@@ -816,11 +819,14 @@ export const HELP_SECTIONS: HelpSection[] = [
             usage: 'script [script] save <dir>',
             syntax: { args: 'words', max: 1 },
             about: [
-              'Save a script and its `@require` and `@resource` files into a directory, which is created if necessary.',
+              'Save a script and its `@require`, `@resource` and `@icon` files into a directory, which is created if necessary.',
               'By default, each file is saved in directories matching its URL (`cdn.example.com/lib/x.js`).',
             ],
             options: [
-              { term: '--only <parts>', about: 'A comma-separated list of items to save, e.g. `--only script,requires,resources`.' },
+              {
+                term: '--include <parts>',
+                about: 'A comma-separated list of items to save: `script`, `requires`, `resources`, `icon`, `site-icons`, or `all`, for all but `site-icons`. (Default: `all`)',
+              },
               { term: '--flat', about: 'Save all files in the target directory.' },
               { term: '--force', about: 'Overwrite files that already exist.' },
             ],

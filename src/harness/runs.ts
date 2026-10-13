@@ -366,8 +366,16 @@ async function claimNamedId(server: net.Server, id: string): Promise<string> {
   throw new Error(`Run ${quoted(id)} is running already`);
 }
 
+// The longest socket path the system takes, in bytes, with room for
+// the NUL: `sun_path` is 108 bytes on Linux and 104 on macOS.
+const MAX_SOCKET_PATH = process.platform === 'linux' ? 107 : 103;
+
 // Listens on `where`: false when something already holds it.
 async function listenOn(server: net.Server, where: string): Promise<boolean> {
+  // Too long, it would be cut short, and fail as though it were taken.
+  if (process.platform !== 'win32' && Buffer.byteLength(where) > MAX_SOCKET_PATH) {
+    throw new Error(`A run's socket path can have at most ${MAX_SOCKET_PATH} bytes, and ${where} is longer. Set ${quoted('SM_DEV_RUNS_DIR')} to a shorter directory.`);
+  }
   try {
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject);

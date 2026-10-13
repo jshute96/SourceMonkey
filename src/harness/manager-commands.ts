@@ -18,7 +18,7 @@ import { pathToFileURL } from 'node:url';
 import {
   LISTED_BY_LOCATION, RUN_COLLECTION_LOCKED,
   type CollectionRefresh, type ManagedCollection, type ManagedFile, type ManagedFileContent, type ManagedOnDisk, type ManagedScript,
-  type ManagedScriptDetails, type ScriptEnable, type ScriptInstall, type ScriptRefresh,
+  type ManagedScriptDetails, type ManagedScriptIcons, type ManagedSiteIcon, type ScriptEnable, type ScriptIconsLoad, type ScriptInstall, type ScriptRefresh,
 } from '../sm-dev-protocol.js';
 import { pendingSummary } from '../script-display.js';
 import {
@@ -59,6 +59,8 @@ export interface ManagerControl {
   scriptText(id: string): Promise<string | null>;
   /** A script's `@require` and `@resource` files as installed; null for no script. Absent when the manager doesn't give them. */
   scriptFiles?(id: string): Promise<ManagedFileContent[] | null>;
+  /** A script's `@icon` and site icons; null for no script. Absent when the manager doesn't give them. */
+  scriptIcons?(id: string, load: ScriptIconsLoad): Promise<ManagedScriptIcons | null>;
 }
 
 /**
@@ -637,7 +639,12 @@ class MarkedFailure extends Error {
 
 // Said when the manager doesn't give sm-dev the files.
 function noFilesUnder(label: string): string {
-  return `${label} doesn't give sm-dev its scripts' @require and @resource files, so only the script itself can be printed or saved`;
+  return `${label} doesn't give sm-dev its scripts' @require, @resource and @icon files, so only the script itself can be printed or saved`;
+}
+
+// Said when the manager doesn't look up site icons.
+function noSiteIconsUnder(label: string): string {
+  return `Site icons are SourceMonkey's own, so ${label} doesn't give them`;
 }
 
 // The script's `@require` and `@resource` files as installed.
@@ -646,6 +653,14 @@ async function filesOf(ctx: ManagerContext, script: ManagedScript): Promise<Mana
   const files = await ctx.manager.scriptFiles(script.id);
   if (files === null) throw new Error(noSuchScript(scriptShown(script, ctx.run)));
   return files;
+}
+
+// The script's icons, reading or looking up what `load` names.
+async function iconsOf(ctx: ManagerContext, script: ManagedScript, load: ScriptIconsLoad): Promise<ManagedScriptIcons> {
+  if (!ctx.manager.scriptIcons) throw new Error(load.sites ? noSiteIconsUnder(ctx.manager.label) : noFilesUnder(ctx.manager.label));
+  const icons = await ctx.manager.scriptIcons(script.id, load);
+  if (icons === null) throw new Error(noSuchScript(scriptShown(script, ctx.run)));
+  return icons;
 }
 
 // The installed text.
@@ -657,7 +672,7 @@ async function textOf(ctx: ManagerContext, script: ManagedScript): Promise<strin
 
 // A file's URL as shown: a `data:` URL by its type alone, since it
 // holds the whole file.
-function fileUrlShown(f: ManagedFileContent): string {
+function fileUrlShown(f: { url: string }): string {
   return f.url.startsWith('data:') ? `${f.url.split(',')[0]},...` : f.url;
 }
 
@@ -666,23 +681,119 @@ function fileMarked(f: ManagedFileContent): string {
   return ui`@${f.kind} ${f.name !== undefined ? ui`${code(f.name)} ` : ''}${url(fileUrlShown(f))}`;
 }
 
+// Image types' file extensions, for the icons `script save` names.
+const ICON_EXTENSIONS: Record<string, string> = {
+  'image/png': 'png', 'image/svg+xml': 'svg', 'image/x-icon': 'ico', 'image/vnd.microsoft.icon': 'ico',
+  'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif', 'image/bmp': 'bmp',
+};
+
+function iconExtension(contentType: string | undefined): string {
+  const type = (contentType ?? '').split(';')[0].trim().toLowerCase();
+  return ICON_EXTENSIONS[type] ?? (type.split('/')[1]?.replace(/^x-/, '').replace(/\W.*$/, '') || 'img');
+}
+
+// The `@icon` as a file: none when it couldn't be read. A `data:` one
+// is saved as `icon.<ext>`.
+function iconFile(icons: ManagedScriptIcons): ManagedFileContent | undefined {
+  const icon = icons.icon;
+  if (icon?.base64 === undefined) return undefined;
+  const path = icon.path ?? (icon.url.startsWith('data:') ? `icon.${iconExtension(icon.contentType)}` : undefined);
+  return { kind: 'icon', url: icon.url, ...(path ? { path } : {}), base64: icon.base64, ...(icon.contentType ? { contentType: icon.contentType } : {}) };
+}
+
+// Where `script save` writes a file, relative to its directory: a
+// `file:` one beside the script as it is there, else by its URL.
+// Undefined for none.
+function savedPath(f: { url: string; path?: string }, script: ManagedScript, flat: boolean): string | undefined {
+  const kept = f.url.startsWith('file:') ? besideScript(f.url, script) ?? f.path : f.path;
+  return kept === undefined ? undefined : flat ? path.posix.basename(kept) : kept;
+}
+
+// The `@icon`'s path as `script show` gives it, read or not.
+function iconPath(icons: ManagedScriptIcons, script: ManagedScript): string | undefined {
+  const icon = icons.icon!;
+  const dataType = /^data:([^;,]*)/.exec(icon.url)?.[1];
+  return savedPath({ url: icon.url, path: icon.path ?? (dataType !== undefined ? `icon.${iconExtension(dataType)}` : undefined) }, script, false);
+}
+
+/** A site icon as sm-dev gives it: `path` absent for the globe. */
+interface SiteIconFile {
+  path?: string;
+  source?: ManagedSiteIcon['source'];
+  sites: string[];
+  bytes?: Buffer;
+}
+
+// The site icons as files, in `site-icons/`, or with `flat` at the top
+// with `_` for the `/` in a page's path.
+function siteIconFiles(icons: readonly ManagedSiteIcon[], flat: boolean): SiteIconFile[] {
+  return icons.map((icon) => {
+    if (icon.base64 === undefined) return { sites: icon.sites };
+    const name = `${flat ? icon.name.replaceAll('/', '_') : `site-icons/${icon.name}`}.${iconExtension(icon.contentType)}`;
+    return { path: name, ...(icon.source ? { source: icon.source } : {}), sites: icon.sites, bytes: Buffer.from(icon.base64, 'base64') };
+  });
+}
+
+function siteIconJson(f: SiteIconFile): J.SiteIcon {
+  return { ...(f.path !== undefined ? { path: f.path } : {}), ...(f.source ? { source: f.source } : {}), sites: f.sites };
+}
+
+// A site as a site icon's line shows it: `npmjs.com/package/`, without
+// the scheme or `www.`, and `github.com` without a lone `/`.
+function siteShown(linkUrl: string): string {
+  return linkUrl.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').replace(/^www\./, '').replace(/^([^/]*)\/$/, '$1');
+}
+
+// A site icon's lines: its file (or `No icon`) and the sites it stands
+// for, in columns. `shown`: a path as shown.
+function siteIconLines(files: readonly SiteIconFile[], shown: (relative: string) => string): string[] {
+  const left = files.map((f) => (f.path !== undefined ? shown(f.path) : 'No icon'));
+  const width = Math.max(...left.map((l) => l.length)) + 2;
+  return files.map((f, i) => {
+    const sites = f.sites.map(siteShown).join(', ');
+    const pad = ' '.repeat(width - left[i].length);
+    return f.path !== undefined ? ui`${url(left[i])}${pad}${sites}` : ui`${left[i]}${pad}${sites}`;
+  });
+}
+
 /**
  * The file of `files` that `name` names: a `@resource`'s name, exactly,
- * or a part of its URL only it has; or `script` for the script itself.
- * For none or several, throws a failure listing them. `shown`: the
- * script, marked up.
+ * or a part of its URL only it has; `script` for the script itself;
+ * `icon` for the `@icon`. For none or multiple, throws a failure
+ * listing them. `shown`: the script, marked up.
  */
 export function pickScriptFile(files: readonly ManagedFileContent[], name: string, shown: string): ManagedFileContent | 'script' {
   const named = files.filter((f) => f.name === name);
   if (named.length === 1) return named[0];
   if (name === 'script') return 'script';
+  const icon = files.find((f) => f.kind === 'icon');
+  if (name === 'icon' && icon) return icon;
   const lower = name.toLowerCase();
   const found = files.filter((f) => f.url.toLowerCase().includes(lower));
   if (found.length === 1) return found[0];
-  if (files.length === 0) throw new MarkedFailure([ui`${shown} has no @require or @resource files`]);
+  if (files.length === 0) throw new MarkedFailure([ui`${shown} has no @require, @resource or @icon files`]);
   const listed = (these: readonly ManagedFileContent[]): string[] => these.map((f) => ui`  ${fileMarked(f)}`);
   if (found.length === 0) throw new MarkedFailure([ui`No file of ${shown} matches ${cmd(name)}. Its files:`, ...listed(files)]);
   throw new MarkedFailure([ui`The name ${cmd(name)} matches multiple files of ${shown}. Give more of the URL, or a @resource's name:`, ...listed(found)]);
+}
+
+/**
+ * The site icon that `name` (`site-icons/github.com`) names: the one
+ * whose name has the part after `site-icons/`. For none or multiple,
+ * throws a failure listing them.
+ */
+export function pickSiteIcon(files: readonly SiteIconFile[], name: string, shown: string): SiteIconFile & { path: string; bytes: Buffer } {
+  const icons = files.filter((f): f is SiteIconFile & { path: string; bytes: Buffer } => f.path !== undefined && f.bytes !== undefined);
+  // Compared after `site-icons/`, which they all have.
+  const part = (p: string): string => p.toLowerCase().replace(/^site-icons\/?/, '');
+  const wanted = part(name);
+  const exact = icons.filter((f) => part(f.path) === wanted || part(f.path).replace(/\.[^./]*$/, '') === wanted);
+  const found = exact.length === 1 ? exact : icons.filter((f) => part(f.path).includes(wanted));
+  if (found.length === 1) return found[0];
+  if (icons.length === 0) throw new MarkedFailure([ui`${shown} has no site icons`]);
+  const listed = (these: readonly SiteIconFile[]): string[] => siteIconLines(these, (p) => p).map((line) => ui`  ${line}`);
+  if (found.length === 0) throw new MarkedFailure([ui`No site icon of ${shown} matches ${cmd(name)}. Its site icons:`, ...listed(icons)]);
+  throw new MarkedFailure([ui`The name ${cmd(name)} matches multiple site icons of ${shown}. Give more of it:`, ...listed(found)]);
 }
 
 // Bytes as text, or null for bytes that aren't text: not UTF-8, or with a NUL.
@@ -709,31 +820,69 @@ async function writing(shown: string, work: () => Promise<unknown>): Promise<voi
   }
 }
 
+// What `print` prints: its bytes, how JSON names it, and how text
+// does (marked up), or none for the script.
+interface Printed {
+  bytes: Buffer;
+  file?: NonNullable<J.ScriptPrintData['file']>;
+  marked?: string;
+  contentType?: string;
+}
+
+// What `print --file <name>` names.
+async function printedFile(ctx: ManagerContext, script: ManagedScript, name: string): Promise<Printed | 'script'> {
+  const shown = scriptMarked(script, ctx.run);
+  if (/^site-icons(\/|$)/i.test(name)) {
+    const icons = await iconsOf(ctx, script, { sites: true });
+    const f = pickSiteIcon(siteIconFiles(icons.siteIcons ?? [], false), name, shown);
+    return { bytes: f.bytes, file: { kind: 'site-icon', path: f.path, sites: f.sites }, marked: ui`The site icon ${url(f.path)}` };
+  }
+  const files = await filesOf(ctx, script);
+  // The `@icon` too, by its URL, where the manager gives it. Asked for
+  // by name, it has to. Read only once picked.
+  const byName = name === 'icon' && !files.some((f) => f.name === name);
+  const icons = byName ? await iconsOf(ctx, script, {}) : await iconsOf(ctx, script, {}).catch(() => undefined);
+  if (byName && !icons?.icon) throw new MarkedFailure([ui`${shown} has no @icon`]);
+  const declared: ManagedFileContent[] = icons?.icon ? [{ kind: 'icon', url: icons.icon.url, base64: '' }] : [];
+  let picked = pickScriptFile([...files, ...declared], name, shown);
+  if (picked === 'script') return 'script';
+  if (picked.kind === 'icon') {
+    const read = iconFile(await iconsOf(ctx, script, { icon: true }));
+    if (!read) throw new MarkedFailure([ui`Could not read the @icon of ${shown}, ${url(fileUrlShown(picked))}`]);
+    picked = read;
+  }
+  return {
+    bytes: Buffer.from(picked.base64, 'base64'),
+    file: { kind: picked.kind, url: picked.url, ...(picked.name !== undefined ? { name: picked.name } : {}) },
+    marked: fileMarked(picked),
+    ...(picked.contentType ? { contentType: picked.contentType } : {}),
+  };
+}
+
 // `script [script] print [--file <name>] [--out <file>]`.
 async function scriptPrint(ctx: ManagerContext, script: ManagedScript, flags: Record<string, string | true>): Promise<boolean> {
   const view = ctx.run;
-  const which = typeof flags['--file'] === 'string' ? pickScriptFile(await filesOf(ctx, script), flags['--file'], scriptMarked(script, view)) : 'script';
-  const file = which === 'script' ? undefined : which;
-  const bytes = file ? Buffer.from(file.base64, 'base64') : Buffer.from(await textOf(ctx, script));
+  const which = typeof flags['--file'] === 'string' ? await printedFile(ctx, script, flags['--file']) : 'script';
+  const printed: Printed = which === 'script' ? { bytes: Buffer.from(await textOf(ctx, script)) } : which;
   const id = scriptLabel(script, view);
   const about = {
     ...(id !== undefined ? { script: id } : {}),
     name: script.name,
-    ...(file ? { file: { kind: file.kind, url: file.url, ...(file.name !== undefined ? { name: file.name } : {}) } } : {}),
+    ...(printed.file ? { file: printed.file } : {}),
   };
   const outFile = flags['--out'];
   if (typeof outFile === 'string') {
     const target = path.resolve(ctx.cwd, outFile);
     const shown = shownPath(target, ctx.cwd);
-    await writing(shown, () => writeFile(target, bytes));
+    await writing(shown, () => writeFile(target, printed.bytes));
     if (ctx.json) ctx.out(jsonResult('script print', { ...about, out: target } satisfies J.ScriptPrintData));
-    else ctx.out(ui`Wrote ${url(shown)} (${count(bytes.length, 'byte')})`);
+    else ctx.out(ui`Wrote ${url(shown)} (${count(printed.bytes.length, 'byte')})`);
     return true;
   }
-  const text = asText(bytes);
+  const text = asText(printed.bytes);
   if (text === null) {
     throw new MarkedFailure([
-      ui`${fileMarked(file!)} is not text${file!.contentType ? ` (${file!.contentType})` : ''}, so it can't be printed. Use ${cmd('--out <file>')} to write it to a file.`,
+      ui`${printed.marked!} is not text${printed.contentType ? ` (${printed.contentType})` : ''}, so it can't be printed. Use ${cmd('--out <file>')} to write it to a file.`,
     ]);
   }
   if (ctx.json) ctx.out(jsonResult('script print', { ...about, text } satisfies J.ScriptPrintData));
@@ -741,9 +890,16 @@ async function scriptPrint(ctx: ManagerContext, script: ManagedScript, flags: Re
   return true;
 }
 
-/** What `script save --only` takes. */
-const SAVE_PARTS = ['script', 'requires', 'resources'] as const;
+/** What `script save --include` takes, besides `all`. */
+const SAVE_PARTS = ['script', 'requires', 'resources', 'icon', 'site-icons'] as const;
 type SavePart = typeof SAVE_PARTS[number];
+/** What `script save` saves without `--include`, and what `all` stands for. */
+const SAVE_ALL: readonly SavePart[] = ['script', 'requires', 'resources', 'icon'];
+
+// What each part is, for saying there was none.
+const SAVE_PART_NAMES: Record<SavePart, string> = {
+  'script': 'script', 'requires': '@require', 'resources': '@resource', 'icon': '@icon', 'site-icons': 'site icon',
+};
 
 // The file name a saved script takes: its own, when that's a
 // `.user.js`, else its name made one.
@@ -777,7 +933,7 @@ function besideScript(fileUrl: string, script: ManagedScript): string | undefine
 
 // One file `script save` writes.
 interface SavedFile {
-  kind: 'script' | 'require' | 'resource';
+  kind: 'script' | 'require' | 'resource' | 'icon' | 'site-icon';
   url?: string;
   name?: string;
   /** Relative to the directory, with `/`. */
@@ -785,19 +941,27 @@ interface SavedFile {
   bytes: Buffer;
 }
 
-// `script [script] save <dir> [--only <parts>] [--flat] [--force]`.
+// `--include`'s parts, or a mistake to show.
+function saveParts(given: string): Set<SavePart> | string {
+  const words = given.split(',').map((p) => p.trim()).filter(Boolean);
+  const unknown = words.find((p) => p !== 'all' && !(SAVE_PARTS as readonly string[]).includes(p));
+  if (unknown === undefined && words.length > 0) return new Set(words.flatMap((p) => (p === 'all' ? SAVE_ALL : [p as SavePart])));
+  return `The ${quoted('--include')} flag takes ${[...SAVE_PARTS, 'all'].map((p) => quoted(p)).join(', ')}, comma-separated${unknown !== undefined ? `, and not ${quoted(unknown)}` : ''}`;
+}
+
+// `script [script] save <dir> [--include <parts>] [--flat] [--force]`.
 async function scriptSave(ctx: ManagerContext, script: ManagedScript, dirGiven: string, flags: Record<string, string | true>): Promise<boolean> {
   const view = ctx.run;
   const shown = scriptMarked(script, view);
-  let parts: Set<SavePart> = new Set(SAVE_PARTS);
-  if (typeof flags['--only'] === 'string') {
-    const given = flags['--only'].split(',').map((p) => p.trim()).filter(Boolean);
-    const unknown = given.find((p) => !(SAVE_PARTS as readonly string[]).includes(p));
-    if (unknown !== undefined || given.length === 0) {
-      ctx.out(`${MISTAKE_PREFIX}The ${quoted('--only')} flag takes ${SAVE_PARTS.map((p) => quoted(p)).join(', ')}, comma-separated${unknown !== undefined ? `, and not ${quoted(unknown)}` : ''}`);
+  const included = typeof flags['--include'] === 'string';
+  let parts: Set<SavePart> = new Set(SAVE_ALL);
+  if (included) {
+    const given = saveParts(flags['--include'] as string);
+    if (typeof given === 'string') {
+      ctx.out(`${MISTAKE_PREFIX}${given}`);
       return false;
     }
-    parts = new Set(given as SavePart[]);
+    parts = given;
   }
   const flat = flags['--flat'] === true;
   const dir = path.resolve(ctx.cwd, dirGiven);
@@ -807,22 +971,47 @@ async function scriptSave(ctx: ManagerContext, script: ManagedScript, dirGiven: 
   const note = (marked: string): void => {
     notes.push({ plain: plainLine(marked), marked });
   };
+  // Not one that would land outside the directory.
+  const inside = (where: string | undefined): where is string => where !== undefined && path.resolve(dir, where).startsWith(dir + path.sep);
   if (parts.has('script')) files.push({ kind: 'script', path: scriptFileName(script), bytes: Buffer.from(await textOf(ctx, script)) });
-  if (parts.has('requires') || parts.has('resources')) {
-    // Without `--only`, under a manager that doesn't give them, the script alone.
-    if (!ctx.manager.scriptFiles && typeof flags['--only'] !== 'string') note(ui`${noFilesUnder(ctx.manager.label)}`);
-    else {
-      for (const f of await filesOf(ctx, script)) {
-        if (!parts.has(`${f.kind}s` as SavePart)) continue;
-        const kept = f.url.startsWith('file:') ? besideScript(f.url, script) ?? f.path : f.path;
-        const where = kept === undefined ? undefined : flat ? path.posix.basename(kept) : kept;
-        // Not one that would land outside the directory.
-        if (where === undefined || !path.resolve(dir, where).startsWith(dir + path.sep)) {
-          note(ui`Skipped ${fileMarked(f)}: It has no file name to save it as`);
-          continue;
-        }
-        files.push({ kind: f.kind, url: f.url, ...(f.name !== undefined ? { name: f.name } : {}), path: where, bytes: Buffer.from(f.base64, 'base64') });
-      }
+  // Without `--include`, under a manager that doesn't give them, the script alone.
+  const filesGiven = included || ctx.manager.scriptFiles !== undefined;
+  if (!filesGiven && (parts.has('requires') || parts.has('resources'))) note(ui`${noFilesUnder(ctx.manager.label)}`);
+  const addFile = (f: ManagedFileContent): void => {
+    const where = savedPath(f, script, flat);
+    if (!inside(where)) {
+      note(ui`Skipped ${fileMarked(f)}: It has no file name to save it as`);
+      return;
+    }
+    files.push({ kind: f.kind, url: f.url, ...(f.name !== undefined ? { name: f.name } : {}), path: where, bytes: Buffer.from(f.base64, 'base64') });
+  };
+  if (filesGiven && (parts.has('requires') || parts.has('resources'))) {
+    for (const f of await filesOf(ctx, script)) if (parts.has(`${f.kind}s` as SavePart)) addFile(f);
+  }
+  let icons: ManagedScriptIcons | undefined;
+  if (parts.has('site-icons') || (parts.has('icon') && (included || ctx.manager.scriptIcons !== undefined))) {
+    const load = { icon: parts.has('icon'), sites: parts.has('site-icons') };
+    try {
+      icons = await iconsOf(ctx, script, load);
+    } catch (err) {
+      // Not asked for by name: the rest is saved without it.
+      if (included) throw err;
+      note(ui`Skipped its @icon: ${errorSentence(err)}`);
+    }
+  }
+  if (parts.has('icon') && icons?.icon) {
+    const icon = iconFile(icons);
+    if (icon) addFile(icon);
+    else note(ui`Skipped its @icon ${url(fileUrlShown(icons.icon))}: It could not be read`);
+  }
+  let siteIcons: SiteIconFile[] | undefined;
+  if (parts.has('site-icons') && icons) {
+    siteIcons = siteIconFiles(icons.siteIcons ?? [], flat);
+    if (siteIcons.length === 0) note(ui`${shown} names no sites to show icons for`);
+    for (const f of siteIcons) {
+      if (f.path === undefined || f.bytes === undefined) continue;
+      if (!inside(f.path)) note(ui`Skipped the site icon of ${f.sites.map(siteShown).join(', ')}: It has no file name to save it as`);
+      else files.push({ kind: 'site-icon', path: f.path, bytes: f.bytes });
     }
   }
   // One URL declared twice writes one file; two files with one name can't be.
@@ -842,7 +1031,7 @@ async function scriptSave(ctx: ManagerContext, script: ManagedScript, dirGiven: 
   }
   const saving = [...byPath.values()];
   if (saving.length === 0) {
-    const what = [...parts].map((p) => `@${p.slice(0, -1)}`).join(' or ');
+    const what = [...parts].map((p) => SAVE_PART_NAMES[p]).join(' or ');
     throw new MarkedFailure([ui`${shown} has no ${what} files to save`, ...notes.map((n) => ui`  ${n.marked}`)]);
   }
   const existing = saving.filter((f) => existsSync(path.join(dir, f.path)));
@@ -865,21 +1054,32 @@ async function scriptSave(ctx: ManagerContext, script: ManagedScript, dirGiven: 
     });
   }
   const id = scriptLabel(script, view);
+  const plainFiles = saving.filter((f): f is SavedFile & { kind: Exclude<SavedFile['kind'], 'site-icon'> } => f.kind !== 'site-icon');
   if (ctx.json) {
     ctx.out(jsonResult('script save', {
       ...(id !== undefined ? { script: id } : {}),
       name: script.name,
       dir,
-      files: saving.map((f) => ({
-        kind: f.kind, ...(f.url !== undefined ? { url: f.url } : {}), ...(f.name !== undefined ? { name: f.name } : {}), path: path.join(dir, f.path),
+      files: plainFiles.map((f) => ({
+        kind: f.kind, ...(f.url !== undefined ? { url: f.url } : {}), ...(f.name !== undefined ? { name: f.name } : {}), path: f.path,
       })),
+      ...(siteIcons ? { siteIcons: siteIcons.map(siteIconJson) } : {}),
       ...(notes.length > 0 ? { notes: notes.map((n) => n.plain) } : {}),
     } satisfies J.ScriptSaveData));
     return true;
   }
-  ctx.out(ui`Saved ${shown} to ${url(dirShown)}: ${count(saving.length, 'file')}`);
-  for (const f of saving) ctx.out(ui`  ${url(shownFile(f.path))}`);
+  const iconCount = saving.length - plainFiles.length;
+  const counted = [
+    ...(plainFiles.length > 0 ? [count(plainFiles.length, 'file')] : []),
+    ...(iconCount > 0 ? [count(iconCount, 'site icon')] : []),
+  ].join(' and ');
+  ctx.out(ui`Saved ${shown} to ${url(dirShown)}: ${counted}`);
+  for (const f of plainFiles) ctx.out(ui`  ${url(shownFile(f.path))}`);
   for (const n of notes) ctx.out(ui`  ${n.marked}`);
+  if (siteIcons && siteIcons.length > 0) {
+    ctx.out('Site icons, in page order:');
+    for (const line of siteIconLines(siteIcons, shownFile)) ctx.out(ui`  ${line}`);
+  }
   return true;
 }
 
@@ -985,8 +1185,16 @@ function fileText(f: ManagedFile): string {
 
 // `script show`: one script in full.
 async function scriptShow(ctx: ManagerContext, picked: ManagedScript, collection: ManagedCollection | undefined): Promise<void> {
-  const [details, disk] = await Promise.all([ctx.manager.scriptDetails(picked.id), ctx.manager.onDisk()]);
+  const [details, disk, icons] = await Promise.all([
+    ctx.manager.scriptDetails(picked.id),
+    ctx.manager.onDisk(),
+    // What it has at hand: none under a manager or an extension that
+    // doesn't give them, which `show` does without.
+    ctx.manager.scriptIcons?.(picked.id, {}).catch(() => null) ?? null,
+  ]);
   if (!details) throw new Error(noSuchScript(scriptShown(picked, ctx.run)));
+  const iconAt = icons?.icon ? { url: icons.icon.url, path: iconPath(icons, picked), local: icons.icon.local } : undefined;
+  const siteIcons = icons?.siteIcons ? siteIconFiles(icons.siteIcons, false) : undefined;
   const onDisk = disk?.scripts[details.id];
   const label = scriptLabel(details, ctx.run);
   const tabs = ctx.run ? await ctx.run.tabsOf(details, label) : [];
@@ -1002,6 +1210,8 @@ async function scriptShow(ctx: ManagerContext, picked: ManagedScript, collection
         grants: details.grants,
         requires: details.requires.map(fileJson),
         resources: details.resources.map((f) => ({ ...fileJson(f), name: f.name ?? '' })),
+        ...(iconAt ? { icon: { url: iconAt.url, ...(iconAt.path !== undefined ? { path: iconAt.path } : {}), ...(iconAt.local !== undefined ? { local: iconAt.local } : {}) } } : {}),
+        ...(siteIcons ? { siteIcons: siteIcons.map(siteIconJson) } : {}),
         ...(ctx.run ? { tabs: tabs.map((t) => t.activity) } : {}),
         ...(details.valueCount !== undefined ? { valueCount: details.valueCount } : {}),
       },
@@ -1036,6 +1246,9 @@ async function scriptShow(ctx: ManagerContext, picked: ManagedScript, collection
   add('@grant', details.grants.length > 0 ? details.grants.map((g) => code(g)).join(', ') : undefined);
   add('@require', details.requires.map(fileText));
   add('@resource', details.resources.map(fileText));
+  add('@icon', iconAt ? ui`${url(fileUrlShown(iconAt))}${iconAt.local !== undefined ? ui` (read from ${url(iconAt.local)})` : ''}` : undefined);
+  // Only once looked up, which a page showing them does too.
+  add('Site icons', siteIcons ? siteIconLines(siteIcons, (p) => p) : undefined);
   if (ctx.run) add('Tabs', tabs.length > 0 ? tabs.map((t) => ui`${idRole(t.activity.tab)}: ${t.text}`) : 'None open');
   if (details.valueCount !== undefined) {
     add('Values', details.valueCount === 0 ? 'None' : ui`${details.valueCount} stored${ctx.run && label !== undefined ? ui` (${cmd(`values ${label}`)} to see them)` : ''}`);

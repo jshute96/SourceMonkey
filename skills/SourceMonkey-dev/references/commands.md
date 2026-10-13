@@ -141,8 +141,8 @@ test a script under VM or TM:
 | `collection list` (or `collections`) | SourceMonkey's collections (C1, ...), with kind, script count, enabled. No run needed |
 | `script list [collection]` | Every installed script (E1, ...) under its collection, or one collection's. No run needed |
 | `script [script] show`, `script [script] print` | One script in full (rules, status, files, values count, and in a run its state on each tab); its installed text. No run needed |
-| `script [script] print --file <name> [--out <file>]` | One of its `@require` / `@resource` files as installed, by a `@resource`'s name or part of its URL; `--out` writes it to a file |
-| `script [script] save <dir> [--only script,requires,resources] [--flat] [--force]` | Save the script and its files as installed into a directory, in folders by URL (`--flat`: all in one). `--force` replaces existing files |
+| `script [script] print --file <name> [--out <file>]` | One of its `@require` / `@resource` / `@icon` files as installed, by a `@resource`'s name, part of its URL, or `icon`. `--out` writes it to a file |
+| `script [script] save <dir> [--include <parts>] [--flat] [--force]` | Save the script and its files as installed into a directory, in folders by URL (`--flat`: all in one). `--force` replaces existing files |
 | `collection <collection> show` | One collection and its scripts. No run needed |
 
 ### Changing what's installed

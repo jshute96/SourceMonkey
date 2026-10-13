@@ -217,7 +217,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/script-log.ts` | Per-script event log store: chrome.storage.session keyed by script ID, serialized appends with a fixed cap, a sibling `loglevel:` sentinel, and a page→worker write relay kept as a guard |
 | `src/extension/log-format.ts` | Log cell formatting (time, status/level, source, message) shared by the viewer's table and its CSV export, plus the export's filename |
 | `src/extension/script-rejection.ts` | Session-storage record of registrations `chrome.userScripts` refused, plus the one sentence every surface reports it with |
-| `src/extension/site-icon.ts` | Site-favicon discovery, `@icon`-header override (incl. local file stand-ins), fetch-and-cache (in the worker, a few at a time), and the one-icon-per-site slot renderer |
+| `src/extension/site-icon.ts` | Site-favicon discovery, `@icon`-header override (incl. local file stand-ins), fetch-and-cache (in the worker, a few at a time), the one-icon-per-site slot renderer, and its icons for sm-dev |
 | `src/extension/gm-bindings.ts` | Per-script `GM_*` / `GM.*` binding emitter — generates compile-in `const GM_X = ...` source spliced into the wrapper |
 | `src/extension/gm-values.ts` | Row layer for `GM_*` values: `gmval:<scriptId>:<key>` rows in `chrome.storage.local`, used only by the value store |
 | `src/extension/value-store.ts` | The worker's one store for `GM_*` values: in-memory maps, numbered writes, saving to disk behind them |

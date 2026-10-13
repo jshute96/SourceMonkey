@@ -120,6 +120,9 @@ Serves `sm-dev list`, `stop`, `attach` and the commands sent to a run.
 - Both live in a per-user temp directory, `sm-dev-runs-<user>` (by user
   name, or uid where there is none). `SM_DEV_RUNS_DIR` moves it, for
   tests.
+- A socket path has a length limit (107 bytes on Linux, 103 on macOS),
+  so a runs directory too long for one is refused with a message,
+  rather than every id failing to listen as though it were taken.
 - Stale records:
   - A record is deleted when listed if its pid is gone, or its socket
     refuses connections (the pid may have been reused).

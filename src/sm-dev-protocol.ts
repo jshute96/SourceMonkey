@@ -83,7 +83,8 @@ export const SKIP_REASON_SM_DEV = 'tab controlled by sm-dev';
 //   carry the sending document's `documentId`, which says which frame.
 // 2.3: `managed.scriptFiles`, a script's `@require` and `@resource`
 //   files as installed.
-export const SM_DEV_PROTOCOL = { major: 2, minor: 3 } as const;
+// 2.4: `managed.scriptIcons`, a script's `@icon` and its site icons.
+export const SM_DEV_PROTOCOL = { major: 2, minor: 4 } as const;
 
 export interface ProtocolVersion {
   major: number;
@@ -156,10 +157,11 @@ export interface ManagedFile {
 
 /**
  * A `@require` or `@resource` file's installed contents, for `script
- * print --file` and `script save` (`managed.scriptFiles`).
+ * print --file` and `script save` (`managed.scriptFiles`). sm-dev puts
+ * a script's `@icon` in this shape too.
  */
 export interface ManagedFileContent {
-  kind: 'require' | 'resource';
+  kind: 'require' | 'resource' | 'icon';
   /** Its URL, resolved. */
   url: string;
   /** `@resource`'s name. */
@@ -172,6 +174,56 @@ export interface ManagedFileContent {
   path?: string;
   /** Its bytes. */
   base64: string;
+  contentType?: string;
+}
+
+/** A script's icons, for `script show`, `print` and `save` (`managed.scriptIcons`). */
+export interface ManagedScriptIcons {
+  /** Its own `@icon` (or an alias); absent for none. */
+  icon?: {
+    /** Resolved against the script's own location. */
+    url: string;
+    /** Where `script save` writes it, as `ManagedFileContent.path`. */
+    path?: string;
+    /** The local file that stands in for it, as for a `@require`. */
+    local?: string;
+    /** Its bytes, when asked to load them and they could be read. */
+    base64?: string;
+    contentType?: string;
+  };
+  /**
+   * The site icons a page heading shows for it, merged and in order.
+   * Absent when not all were in the cache and it wasn't asked to load
+   * them.
+   */
+  siteIcons?: ManagedSiteIcon[];
+}
+
+/** What `managed.scriptIcons` reads or looks up, beyond what it has at hand. */
+export interface ScriptIconsLoad {
+  icon?: boolean;
+  sites?: boolean;
+}
+
+/**
+ * Where a discovered site icon came from: Chrome's `/_favicon/` DB, the
+ * page's `<link rel="icon">`, the site's `/favicon.ico`, or Google S2.
+ */
+export type IconSource = 'favicon-store' | 'page' | 'favicon.ico' | 'google';
+
+/** One of a script's site icons: absent bytes for the globe (none found). */
+export interface ManagedSiteIcon {
+  /** The sites it stands for, by the URL its icon links to, its own first. */
+  sites: string[];
+  /**
+   * What `script save` names it, without the extension: its site's
+   * host (`github.com`), with the page's path when the icon is that
+   * page's own (`npmjs.com/package`).
+   */
+  name: string;
+  /** Where it came from; absent for an icon cached before that was kept. */
+  source?: IconSource;
+  base64?: string;
   contentType?: string;
 }
 
