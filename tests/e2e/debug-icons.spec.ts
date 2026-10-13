@@ -7,7 +7,11 @@ test.describe('/debug/icons.html page', () => {
   test('renders cached icons, per-row refresh & delete, and Delete All', async ({
     extensionContext,
     extensionId,
+    sm,
   }) => {
+    // Requested for its reset-before-each-test: an icon an earlier test
+    // cached (example.com, say) would otherwise be an extra row here.
+    void sm;
     const page = await extensionContext.newPage();
 
     // Seed three cached icon rows (origin, path, and @icon url) in storage.

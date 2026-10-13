@@ -22,7 +22,8 @@ look up the missing ones the same way a page would; `show` doesn't. See
 
 - `/debug/icons.html` ([`src/debug/icons.html`](../src/debug/icons.html) +
   [`src/extension/debug/icons.ts`](../src/extension/debug/icons.ts)) inspects and manages cached
-  icons in `chrome.storage.local`.
+  icons in `chrome.storage.local`. Linked from the Options page's
+  storage section.
 - Displays a table of all cached rows (`siteIcon:*`, `pathIcon:*`, and
   `iconUrl:*`) with icon preview, target site/URL, scope chip,
   MIME/byte-size details, schema version, freshness status, and

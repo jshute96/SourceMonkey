@@ -1041,6 +1041,57 @@ and size, so a later version could skip the blobs:
 - **Stored bodies**: the real cost of all `blob:` rows, from `getKeys`
   and `getBytesInUse` on those keys, which read no values.
 
+### Storage debug page
+
+`/debug/storage.html` (`src/debug/storage.html` +
+`src/extension/debug/storage.ts`) shows where the storage goes, in more
+detail than the Options table. Linked from under that table. The
+breakdown is built by `src/extension/storage-breakdown.ts`, which sizes
+rows the same way as `storage-usage.ts`.
+
+- **Views**, picked at the top and kept in the URL fragment (`#file`,
+  `#values`):
+  - **By script**: a total per script, with its parts under it.
+  - **By file**: each stored file once, with the scripts that use it.
+    Mostly `blob:` rows, but a body stored elsewhere (sm-dev's rows, a
+    format 1 row's inline body) is listed as a file of its own.
+  - **Stored values**: GM values per script, only for scripts that
+    have some.
+- **A script's parts**:
+  - `script`: its body. `@require` and `@resource`: each file.
+  - `metadata`: the `script:<id>` row without any body.
+  - For a script sm-dev pushed: sm-dev's copy of its text (with the
+    `scratchSource:` row) and each file it pushed from disk.
+  - A format 1 body still inline in the row counts as its own file,
+    taken out of the metadata.
+- **Shared copies**: how many uses there are of the same stored file
+  (`blob:` row), across all scripts and kinds. Blank when only one.
+  - By script counts a shared file in full under each script, so its
+    totals add up to more than is stored. By file counts it once.
+- **By file headings** name what every use agrees on:
+  - The kind, when all uses are the same kind. Then the `@resource`
+    name and the location, each where all uses agree on it.
+  - Otherwise "multiple locations", with each use's line giving what
+    the heading leaves out.
+  - Mixed kinds: "Multiple locations", with kind and location per line.
+- **Not used by any script**, listed last in By file: blobs no script
+  points at, and sm-dev rows whose script is gone.
+- **Missing from storage**: a blob a script points at that isn't
+  there is marked so, sized from the script's ref, and left out of
+  the stored total.
+- **Sorting**: clicking a heading sorts by collection, script, size,
+  shared copies or value count; again reverses it.
+  - Numbers start largest first, names A to Z. Ties go to collection
+    name, then script name. The default is size, largest first.
+  - A group sorts as a unit. A script's parts are listed largest first.
+  - By file sorts only by size or shared copies, since a file has no
+    one collection or script. Ties go to the other of the two, then
+    the first use's collection and script.
+- **Sizes** in whole KB, `< 1 KB` for a size that rounds to 0; the
+  tooltip gives the exact bytes.
+- **Repaint** on any storage change, at most once a second, like the
+  Options table.
+
 ### Write failure during an install: take the seed back out
 
 `installScript` commits a placeholder row (`Not loaded yet`, no

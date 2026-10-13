@@ -290,6 +290,7 @@ import {
   resetConnectPromptsForTests,
   pendingConnectPrompts,
 } from './connect-prompt.js';
+import { resetIconFetchesForTests } from './site-icon.js';
 import {
   CONNECT_ANSWER_MESSAGE,
   CONNECT_PROMPT_ALIVE_MESSAGE,
@@ -1000,6 +1001,9 @@ const api: SourceMonkeyApi = {
     // The connection prompts' module state: a prompt a test left open
     // would keep its window (and the worker) up into the next test.
     resetConnectPromptsForTests();
+    // An icon fetch an earlier test started would otherwise store its
+    // row after the clears below, in the middle of the next test.
+    resetIconFetchesForTests();
     // Cancel any pending debounced sync first — clear() below will
     // schedule another one via onCacheChanged, so leaving the old
     // timer armed risks two syncs firing back-to-back and racing the

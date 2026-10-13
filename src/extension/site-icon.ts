@@ -206,16 +206,30 @@ export function usableCacheHit(
 
 // ---------- Favicon fetch ----------
 
+// Bumped by `resetIconFetchesForTests`. A fetch started before the bump
+// returns its icon but doesn't store it: a test's reset would otherwise
+// be followed by an icon an earlier test asked for, landing in storage
+// partway through the next test.
+let fetchEpoch = 0;
+
+// For the e2e reset (`resetAllState` in background.ts): fetches already
+// running won't store what they find, and later lookups start their own.
+export function resetIconFetchesForTests(): void {
+  fetchEpoch++;
+  inflight.clear();
+}
+
 // Discover an icon for `pageUrl` specifically (Chrome's `/_favicon/` DB
 // first, then HTML discovery at `pageUrl`). Cached under
 // `pathIcon:<pageUrl>` so each deep-targeted script gets its own entry.
 // A null result means "no usable icon on this page"; callers fall back
 // to the origin-level cache rather than retrying.
 async function fetchAndCachePathIcon(pageUrl: string): Promise<string | null> {
+  const epoch = fetchEpoch;
   const found =
     from('favicon-store', await fetchChromeFavicon(pageUrl, { exactPage: true })) ??
     from('page', await tryDiscoverIconViaHtml(pageUrl));
-  await storePathIcon(pageUrl, foundEntry(found));
+  if (epoch === fetchEpoch) await storePathIcon(pageUrl, foundEntry(found));
   return found?.dataUrl ?? null;
 }
 
@@ -233,8 +247,9 @@ function foundEntry(found: Found): SiteIconEntry {
 // the host — the path-scoped lookup hits this when its own probe came
 // up empty.
 async function fetchAndCacheOriginIcon(origin: string): Promise<string | null> {
+  const epoch = fetchEpoch;
   const found = await fetchOriginFallback(origin);
-  await storeSiteIcon(origin, foundEntry(found));
+  if (epoch === fetchEpoch) await storeSiteIcon(origin, foundEntry(found));
   return found?.dataUrl ?? null;
 }
 
@@ -242,8 +257,9 @@ async function fetchAndCacheOriginIcon(origin: string): Promise<string | null> {
 // `iconUrl:<url>`. No discovery, no redirect policy: the script author
 // named this URL, so wherever it lands is what they asked for.
 async function fetchAndCacheUrlIcon(url: string): Promise<string | null> {
+  const epoch = fetchEpoch;
   const dataUrl = await fetchIconAt(url);
-  await storeUrlIcon(url, { dataUrl, fetchedAt: Date.now() });
+  if (epoch === fetchEpoch) await storeUrlIcon(url, { dataUrl, fetchedAt: Date.now() });
   return dataUrl;
 }
 

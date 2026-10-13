@@ -60,8 +60,13 @@ details live in the topic-specific docs linked below.
   Reached via the Options link at the top of the collections page.
 - **Debug icons page** (`src/debug/icons.html` + `src/extension/debug/icons.ts`) —
   inspects the cached site icons in `chrome.storage.local`, with per-row
-  refresh / delete. Not linked from the UI; open it by URL. See
+  refresh / delete. Linked from the Options page's storage section. See
   [site-icons.md](site-icons.md#debug-page).
+- **Debug storage page** (`src/debug/storage.html` + `src/extension/debug/storage.ts`) —
+  where `chrome.storage.local` goes: by script, by stored file (with
+  shared copies), and GM values per script. Linked from the Options
+  page's storage section. See
+  [storage.md](storage.md#storage-debug-page).
 - **Install capture** (`src/extension/install-capture.ts`) — turns a navigation
   to a `.user.js` URL (`http(s)://` or `file://`) into the userscript
   viewer's preview mode

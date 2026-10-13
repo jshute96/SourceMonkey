@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>SourceMonkey | Debug | Storage</title>
+    <link rel="stylesheet" href="../styles.css" />
+    <style>
+      /* No `--page-width`: the table takes the full window width, for its wide columns. */
+      body { font: 14px system-ui, sans-serif; margin: 0; color: #222; }
+      .toolbar { display: flex; align-items: center; gap: 16px; margin: 14px 0 10px; }
+      .summary { color: #555; font-size: 0.92em; margin: 0; }
+      .views { display: inline-flex; border: 1px solid #ccc; border-radius: 6px; overflow: hidden; flex: none; }
+      .views button {
+        font: inherit; font-size: 13px; padding: 3px 12px; border: 0; background: #fff;
+        color: inherit; cursor: pointer; border-left: 1px solid #ccc;
+      }
+      .views button:first-child { border-left: 0; }
+      .views button[aria-pressed="true"] { background: #e8f0fe; color: #1967d2; font-weight: 600; }
+      .empty-state {
+        margin: 24px 0;
+        padding: 18px;
+        border: 1px dashed #ccc;
+        border-radius: 6px;
+        color: #666;
+        text-align: center;
+      }
+      /* Fixed layout: long collection and script names wrap in their
+         columns instead of squeezing the rest. */
+      table.storage-table {
+        width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed;
+      }
+      table.storage-table th, table.storage-table td {
+        padding: 4px 8px; text-align: left; vertical-align: top; overflow-wrap: anywhere;
+      }
+      table.storage-table th {
+        font-weight: 600; color: #444; border-bottom: 2px solid #ddd; white-space: nowrap;
+      }
+      col.col-collection { width: 15%; }
+      col.col-name { width: 22%; }
+      col.col-values-name { width: 35%; }
+      col.col-size { width: 80px; }
+      col.col-shared { width: 110px; }
+      col.col-count { width: 90px; }
+      th.sortable { cursor: pointer; user-select: none; }
+      th.sortable:hover { color: #0969da; }
+      th .sort-arrow { color: #0969da; font-size: 10px; margin-left: 3px; }
+      th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+      tbody.group { border-top: 1px solid #e3e3e3; }
+      tr.group-head td { font-weight: 600; padding-top: 7px; }
+      tr.group-item td { color: #444; padding-top: 1px; padding-bottom: 1px; }
+      td.item { padding-left: 24px; }
+      /* A use's names on a file's heading line aren't part of the heading. */
+      tr.group-head td.use { font-weight: normal; }
+      tbody.group > tr:last-child td { padding-bottom: 7px; }
+      table.storage-table a { color: #0969da; text-decoration: none; }
+      table.storage-table a:hover { text-decoration: underline; }
+      .kind { color: #666; font-family: ui-monospace, monospace; font-size: 12px; white-space: nowrap; }
+      .loc { font-family: ui-monospace, monospace; font-size: 12px; }
+      .muted { color: #888; font-style: italic; }
+    </style>
+  </head>
+  <body>
+    <!--#include glyph-sprite-->
+    <header class="page-header">
+      <div class="page-header-inner">
+        <a class="page-home page-icon-link" href="../collections.html" target="_blank"
+           rel="noopener" tabindex="-1" aria-hidden="true">
+          <img class="page-icon" src="../icons/icon-48.png" alt="" />
+        </a>
+        <h1><a class="page-home brand" href="../collections.html" target="_blank" rel="noopener"
+             title="Open the collections page">SourceMonkey</a><span class="brand"> |</span> Debug <span class="brand">|</span> Storage</h1>
+      </div>
+    </header>
+
+    <div class="page-body">
+      <div class="toolbar">
+        <div class="views" role="group" aria-label="View">
+          <button type="button" data-view="script" aria-pressed="true">By script</button>
+          <button type="button" data-view="file" aria-pressed="false">By file</button>
+          <button type="button" data-view="values" aria-pressed="false">Stored values</button>
+        </div>
+        <p id="storage-summary" class="summary"></p>
+      </div>
+      <div id="storage-empty" class="empty-state" hidden></div>
+      <table id="storage-table" class="storage-table" hidden></table>
+    </div>
+
+    <script src="../extension/debug/storage.js" type="module"></script>
+  </body>
+</html>
