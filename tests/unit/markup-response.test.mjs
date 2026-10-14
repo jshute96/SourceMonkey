@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 const {
   MarkupResponseError,
   isMarkupContentType,
+  isMarkupResponseMessage,
   looksLikeMarkup,
   markupResponseMessage,
 } = await import('../../dist/markup-response.js');
@@ -106,4 +107,11 @@ test('MarkupResponseError is distinguishable without matching wording', () => {
   assert.ok(err instanceof Error);
   assert.equal(err.name, 'MarkupResponseError');
   assert.ok(!(new Error('same words') instanceof MarkupResponseError));
+});
+
+test('isMarkupResponseMessage recognizes each form markupResponseMessage writes', () => {
+  assert.equal(isMarkupResponseMessage(markupResponseMessage()), true);
+  assert.equal(isMarkupResponseMessage(markupResponseMessage({ contentType: 'text/html' })), true);
+  assert.equal(isMarkupResponseMessage(markupResponseMessage({ localUrl: 'file:///s/lib.js' })), true);
+  assert.equal(isMarkupResponseMessage('The server returned HTTP 404'), false);
 });

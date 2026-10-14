@@ -38,8 +38,20 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { NO_MATCH_OR_INCLUDE, NO_NAME, SYNTAX_ERROR_PREFIX } from '../../lib/script-build.js';
 import { resolveScriptResource } from '../../lib/file-loader.js';
-import { distillRequires, distillResources, isFetchFailureMessage } from '../../lib/external-files.js';
-import { getValue, NO_METADATA_BLOCK, UNTERMINATED_METADATA_BLOCK } from '../../lib/userscript-header.js';
+import {
+  DATA_URL_NOT_SUPPORTED,
+  describeFetchFailure,
+  distillRequires,
+  distillResources,
+  isFetchFailureMessage,
+} from '../../lib/external-files.js';
+import { isMarkupResponseMessage } from '../../lib/markup-response.js';
+import {
+  getValue,
+  NO_METADATA_BLOCK,
+  UNTERMINATED_METADATA_BLOCK,
+  USERSTYLE_NOT_SUPPORTED,
+} from '../../lib/userscript-header.js';
 import { unusableMatchGroupKey } from '../../lib/url-match.js';
 import { prepareScript } from '../../lib/harness/prepare.js';
 // The offline tree's layout (percent-encoded segments, truncated long
@@ -220,13 +232,17 @@ function classify(prepared) {
   return { category: 'ok' };
 }
 
+// Each invalid script also gets a `reason`: a short slug for why it
+// failed, which `record-results.mjs validate` records as an
+// `invalid:<reason>` tag. Coarser than `detail` (a 404 and a timeout
+// are both a dead link) so the tags stay few enough to filter by.
 function classifyInvalid(script) {
   const message = script.errorMessage ?? '(no message)';
 
   if (message.startsWith(SYNTAX_ERROR_PREFIX)) {
     // The location travels in `errorLocation`, so the bare message is
     // what groups.
-    return { category: 'syntax error', detail: message.slice(SYNTAX_ERROR_PREFIX.length) };
+    return { category: 'syntax error', detail: message.slice(SYNTAX_ERROR_PREFIX.length), reason: 'syntax-error' };
   }
 
   const dep = /^@(require|resource) (.*?): ([\s\S]*)$/.exec(message);
@@ -237,30 +253,54 @@ function classifyInvalid(script) {
     const url = depUrl(script, kind, subject);
     if (isFetchFailureMessage(reason)) {
       // No log entry: the pipeline's own message is already specific.
-      return { category: `@${kind}`, detail: OFFLINE_REASON_TEXT[fetchLog.get(url)] ?? reason, url };
+      return {
+        category: `@${kind}`,
+        detail: OFFLINE_REASON_TEXT[fetchLog.get(url)] ?? reason,
+        url,
+        reason: `${kind}-${reason === OVERSIZE_TEXT ? 'too-large' : 'dead-link'}`,
+      };
     }
     // Strip embedded content-type values so near-identical failures
     // group together.
-    return { category: `@${kind}`, detail: reason.replace(/"[^"]*"/g, '"…"'), url };
+    return {
+      category: `@${kind}`,
+      detail: reason.replace(/"[^"]*"/g, '"…"'),
+      url,
+      reason: `${kind}-${dependencyReason(reason)}`,
+    };
   }
 
   // A header failure naming the offending `@match`; its module elides
   // the pattern so every script making that mistake lands in one row.
   const unusableMatch = unusableMatchGroupKey(message);
-  if (unusableMatch) return { category: 'header', detail: unusableMatch };
+  if (unusableMatch) return { category: 'header', detail: unusableMatch, reason: 'bad-match' };
 
-  if (HEADER_MESSAGES.has(message)) return { category: 'header', detail: message };
+  const headerReason = HEADER_MESSAGES.get(message);
+  if (headerReason) return { category: 'header', detail: message, reason: headerReason };
   // A message nothing here recognizes. Folding it into `header` would
   // hide a new failure shape inside a familiar count.
-  return { category: 'other', detail: message };
+  return { category: 'other', detail: message, reason: 'other' };
 }
 
-// The fixed messages `buildScriptFromText` can produce.
-const HEADER_MESSAGES = new Set([
-  NO_METADATA_BLOCK,
-  UNTERMINATED_METADATA_BLOCK,
-  NO_NAME,
-  NO_MATCH_OR_INCLUDE,
+const OVERSIZE_TEXT = describeFetchFailure({ reason: 'oversize' });
+
+// A dependency failure that isn't a fetch failure.
+function dependencyReason(reason) {
+  // An HTML page where a script was expected is almost always a dead
+  // link that now serves an error or login page.
+  if (isMarkupResponseMessage(reason)) return 'dead-link';
+  if (reason === DATA_URL_NOT_SUPPORTED) return 'data-url';
+  return 'other';
+}
+
+// The fixed messages `buildScriptFromText` can produce, with each one's
+// `reason`.
+const HEADER_MESSAGES = new Map([
+  [NO_METADATA_BLOCK, 'no-metadata-block'],
+  [UNTERMINATED_METADATA_BLOCK, 'unterminated-metadata-block'],
+  [USERSTYLE_NOT_SUPPORTED, 'user-style'],
+  [NO_NAME, 'no-name'],
+  [NO_MATCH_OR_INCLUDE, 'no-match'],
 ]);
 
 // The URL behind a failing dependency line. `@require` names its ref
@@ -351,6 +391,8 @@ function record(name, prepared) {
   }
   const version = script.header ? getValue(script.header, 'version') : undefined;
   if (version) out.version = version.trim();
+  const iconProblem = classifyIcon(script.iconCheck);
+  if (iconProblem) out.iconProblem = iconProblem;
   // The load-time diagnostics the Log tab shows. They don't change the
   // verdict, so they only reach the JSON, not the report.
   if (prepared.startupLogs.length) {
@@ -361,6 +403,15 @@ function record(name, prepared) {
     }));
   }
   return out;
+}
+
+// Why the `@icon` can't be shown, as a short slug that
+// `record-results.mjs validate` records as an `icon-<slug>` tag. Only
+// download failures: a ref that doesn't resolve, or a file that isn't
+// an image, is too rare to tag.
+function classifyIcon(check) {
+  if (!check?.failure || check.failure === 'wrong-content-type') return undefined;
+  return check.failure === 'oversize' ? 'too-large' : 'dead-link';
 }
 
 // ---------- Main ----------

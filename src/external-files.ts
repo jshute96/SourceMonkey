@@ -8,9 +8,11 @@
 //     (the registered userScript carries the concatenated source so
 //     no runtime fetch is needed at injection time — Chrome's
 //     userScripts API can't fetch on its own).
-//   - `.js` suffix gate on the resolved URL; strict UTF-8 decode on
-//     the fetched bytes — non-UTF-8 fails the script outright. We
-//     never inject binary as JS.
+//   - Any URL, with or without a `.js` suffix (CDN shorthands like
+//     `cdn.jsdelivr.net/npm/sweetalert2@11` have none, and TM and VM
+//     don't gate on it). Strict UTF-8 decode on the fetched bytes —
+//     non-UTF-8 fails the script outright. We never inject binary as
+//     JS.
 //
 // `@resource`:
 //   - Arbitrary bytes (any media type). Stored as base64 so the
@@ -36,7 +38,6 @@
 import {
   fetchResourceBytes,
   isNotModified,
-  isJsResourceUrl,
   resolveScriptResourceDetailed,
   type FetchFailure,
   type ResolveFailure,
@@ -58,11 +59,12 @@ import {
   markupResponseMessage,
 } from './markup-response.js';
 
-// Per-file limit. Big enough for jQuery (~90 KB) and most chunky
-// userscript libraries; small enough to keep a runaway from draining
-// the 10 MB chrome.storage.local quota in one row. Applies to both
-// @require and @resource — split caps possible later if pain shows up.
-export const MAX_FILE_BYTES = 1024 * 1024;
+// Per-file limit. Big enough for jQuery (~90 KB) and the 1-2 MB
+// libraries scripts pin (MathJax, video.js, babel-standalone, the
+// stockfish engines); small enough to keep a runaway from draining the
+// 10 MB chrome.storage.local quota in one row. Applies to both
+// @require and @resource.
+export const MAX_FILE_BYTES = 2 * 1024 * 1024;
 
 // Rendered in whole MB when the cap divides evenly, so messages say
 // "1 MB" rather than "1024 KB".
@@ -71,6 +73,10 @@ function byteLimitText(maxBytes: number): string {
     ? `${maxBytes / (1024 * 1024)} MB`
     : `${Math.round(maxBytes / 1024)} KB`;
 }
+
+// Why a `data:` URL dependency won't load. Exported so the corpus
+// validator can recognize it without matching the wording.
+export const DATA_URL_NOT_SUPPORTED = 'URLs with the data: scheme are not supported';
 
 // Split out so `isFetchFailureMessage` can recognize the one message
 // whose text isn't fixed at module load, without either side spelling
@@ -547,6 +553,10 @@ export interface IconCheck {
   // Why the icon can't be shown, as a load-time warning. Absent when
   // it can.
   message?: string;
+  // Which download failure it was, when the download is what failed.
+  // For a caller that sorts failures (the corpus validator's tags)
+  // without reading `message`.
+  failure?: FetchFailure['reason'];
   // Set when the failure may pass on its own (no response, a timeout),
   // so a background refresh looks again rather than keeping it.
   retry?: true;
@@ -619,7 +629,12 @@ export async function checkScriptIcon(args: CheckIconArgs): Promise<IconCheck | 
   });
   if ('failed' in res) {
     const transient = res.reason === 'no-response' || res.reason === 'timeout';
-    return { ...problem(describeFetchFailure(res, MAX_ICON_BYTES)), url, ...(transient ? { retry: true as const } : {}) };
+    return {
+      ...problem(describeFetchFailure(res, MAX_ICON_BYTES)),
+      url,
+      failure: res.reason,
+      ...(transient ? { retry: true as const } : {}),
+    };
   }
   return { ref, url };
 }
@@ -832,7 +847,7 @@ function resolveRef(ref: string, scriptFileUrl: string, pushed: PushedFile | und
   if (pushed) return { url: pushed.url };
   const resolved = resolveScriptResourceDetailed(ref, scriptFileUrl);
   if ('failed' in resolved) return { failure: describeResolveFailure(resolved) };
-  if (resolved.kind === 'data') return { failure: 'URLs with the data: scheme are not supported' };
+  if (resolved.kind === 'data') return { failure: DATA_URL_NOT_SUPPORTED };
   return { url: resolved.url };
 }
 
@@ -840,9 +855,6 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
   const resolved = resolveRef(args.ref, args.scriptFileUrl, args.pushed);
   if ('failure' in resolved) {
     return { errorMessage: `@require ${args.ref}: ${resolved.failure}` };
-  }
-  if (!isJsResourceUrl(resolved.url)) {
-    return { errorMessage: `@require ${args.ref}: The filename must end in .js` };
   }
   if (args.seenUrls.has(resolved.url)) return {};
   args.seenUrls.add(resolved.url);
@@ -1036,8 +1048,8 @@ async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredRe
   if ('failure' in resolved) {
     return { errorMessage: `${subject}: ${resolved.failure}` };
   }
-  // No suffix gate — resources can be any media type.
-  // No URL-level dedup either: two `@resource` lines with different
+  // Resources can be any media type.
+  // No URL-level dedup: two `@resource` lines with different
   // names pointing at the same URL are intentional — we want two
   // distinct StoredResource entries so each name resolves to its own
   // GM_getResource* lookup. The shared FileFetchCache still ensures

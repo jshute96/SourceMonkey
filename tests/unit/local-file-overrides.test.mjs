@@ -659,24 +659,6 @@ test('attachFiles: @resource takes stand-ins under the same rule', async () => {
   assert.equal(r.resources[0].localUrl, `${SCRIPT_DIR}style.css`);
 });
 
-// The `.js` gate runs on the DECLARED URL, before any stand-in is
-// considered, so a local file can't sneak past it.
-test('attachFiles: a non-.js @require is rejected before any stand-in is tried', async () => {
-  const cache = new Map();
-  cache.set(`${SCRIPT_DIR}lib.json`, Promise.resolve(fakeFetched('{}')));
-  const r = await attachFiles({
-    scriptFileUrl: SCRIPT_URL,
-    header: header(['require', 'https://cdn.example.com/lib.json']),
-    priorRequires: new Map(),
-    priorResources: new Map(),
-    recheck: 'all',
-    fetchCache: cache,
-    now: 1,
-    localRoots: [SCRIPT_DIR],
-  });
-  assert.match(r.errorMessage ?? '', /must end in \.js/);
-});
-
 // Without roots the pipeline behaves exactly as it did before this
 // feature existed — the seeded local file is never even looked at.
 test('attachFiles: no localRoots means no substitution', async () => {

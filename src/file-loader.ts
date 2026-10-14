@@ -564,19 +564,3 @@ export async function fetchResourceText(
     return null;
   }
 }
-
-// Strict `.js`-suffix check used by the `@require` gate: the pathname
-// (sans query/fragment) must end in `.js`. So `jquery.js?v=3` and
-// `lib.user.js` both pass; `lib.js.txt`, `foo.json`, and `foo.js/` do
-// not. Comparison is case-insensitive — `lib.JS` is common on
-// Windows-origin and some CDNs, and TM/VM don't gate on suffix at all,
-// so being permissive about case keeps us interoperable. Returns
-// false for malformed URLs.
-export function isJsResourceUrl(url: string): boolean {
-  try {
-    return new URL(url).pathname.toLowerCase().endsWith('.js');
-  } catch {
-    return false;
-  }
-}
-

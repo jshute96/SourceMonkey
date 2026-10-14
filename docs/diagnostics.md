@@ -34,6 +34,7 @@ it, shared with the header diagnostics.
 | syntax error (parse check) | the offending token, in the file it was written in |
 | "The … metadata block is never closed" | the `// ==UserScript==` line that opened it |
 | "No `// ==UserScript==` metadata block" | the file, with no line — there is nothing to point at |
+| "This is a user style …" (no userscript block, but a `/* ==UserStyle==` one) | the file, with no line |
 | "No `@name`" / "No `@match` or `@include`" | the `// ==UserScript==` marker |
 | unknown `@grant` (a warning) | the first offending `@grant` line |
 | a `@match` Chrome's grammar refuses (a warning) | the `@match` line that declared it |
@@ -45,7 +46,7 @@ so a rewording can't quietly stop matching what compares against them:
 
 | Constant | Module |
 |----------|--------|
-| `UNTERMINATED_METADATA_BLOCK`, `NO_METADATA_BLOCK` | `userscript-header.ts` |
+| `UNTERMINATED_METADATA_BLOCK`, `NO_METADATA_BLOCK`, `USERSTYLE_NOT_SUPPORTED` | `userscript-header.ts` |
 | `NO_NAME`, `NO_MATCH_OR_INCLUDE`, `SYNTAX_ERROR_PREFIX` | `script-build.ts` |
 | `ignoredMatchMessage`, `unusableMatchMessage` | `url-match.ts` |
 

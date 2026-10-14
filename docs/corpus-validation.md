@@ -100,6 +100,12 @@ message, the structured `location` when there is one, and the
 dependency `url` when one failed. It also carries:
 
 - `errorMessage`, the message without its location.
+- `reason`, for an invalid script: a short slug for why
+  (`require-dead-link`, `bad-match`, `user-style`, ...), which
+  `record-results.mjs validate` records as an `invalid:<reason>` tag.
+- `iconProblem`, when the `@icon` didn't download: `too-large` when
+  it's over the icon size limit, `dead-link` for any other download
+  failure. Recorded as an `icon-<problem>` tag.
 - `version`, the script's `@version`.
 - `warnings`, the load-time diagnostics the viewer's Log tab would show,
   each as `{ level, message, location? }`.

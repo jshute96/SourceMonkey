@@ -43,7 +43,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getValue, getValues, parseHeader } from '../../dist/userscript-header.js';
+import { getValue, getValues, parseHeader, unsupportedRunAt } from '../../dist/userscript-header.js';
 import { resolveGrants } from '../../dist/gm-api-catalog.js';
 import { describeDiagnostic } from '../../dist/diagnostic-location.js';
 import { matchPatternProblem } from '../../dist/url-match.js';
@@ -170,6 +170,8 @@ function headerTags(source) {
   // A `@match` Chrome would refuse is dropped at registration, so the script
   // may never run on some of the pages it was written for.
   if (getValues(header, 'match').some((m) => matchPatternProblem(m))) tags.push('ignored-match');
+  // Runs at document-idle instead, which can be too late for it.
+  if (unsupportedRunAt(header)) tags.push('unsupported-run-at');
   for (const name of IGNORED_HEADERS) {
     if (header.tags.some((t) => t.tag === name && !t.locale)) tags.push(`ignored-header:@${name}`);
   }
@@ -214,6 +216,10 @@ async function importValidation(opts, results, unchecked = []) {
     if (warnings.length) valid.warnings = warnings;
     const source = await readFile(file, 'utf8');
     const tags = headerTags(source);
+    // Why it's invalid, as the validator classified it.
+    if (result.status === 'invalid' && result.reason) tags.push(`invalid:${result.reason}`);
+    // Why the `@icon` can't be shown, as the validator classified it.
+    if (result.iconProblem) tags.push(`icon-${result.iconProblem}`);
     if (tags.length) valid.tags = tags;
     valid.date = date;
     if (result.version) valid.version = result.version;

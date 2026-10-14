@@ -165,6 +165,32 @@ test('offline mode resolves @require URLs out of the tree', async (t) => {
   );
 });
 
+test('offline mode reports why an @icon did not download', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sm-offline-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const withIcon = (icon) => [
+    OFFLINE_SCRIPT_HEADER,
+    `// @icon        ${icon}`,
+    '// ==/UserScript==',
+    'console.log(1);',
+  ].join('\n');
+  writeOfflineTree(root, {
+    'example.com/img/ok.png': 'png',
+    'example.com/img/big.png': 'x'.repeat(200 * 1024),
+    'example.com/scripts/icon-ok.user.js': withIcon('https://example.com/img/ok.png'),
+    'example.com/scripts/icon-big.user.js': withIcon('https://example.com/img/big.png'),
+    'example.com/scripts/icon-dead.user.js': withIcon('https://example.com/img/absent.png'),
+  });
+
+  const got = byBasename((await runValidator(['--offline-root', root, root])).records);
+  // An icon never makes the script invalid.
+  for (const r of got.values()) assert.equal(r.status, 'ok', r.name);
+  assert.equal(got.get('icon-ok.user.js').iconProblem, undefined);
+  assert.equal(got.get('icon-big.user.js').iconProblem, 'too-large');
+  assert.equal(got.get('icon-dead.user.js').iconProblem, 'dead-link');
+});
+
 test('offline mode rejects a root that does not exist', async () => {
   await assert.rejects(
     runValidator(['--offline-root', path.join(os.tmpdir(), 'sm-no-such-root'), 'tests/bad-examples']),

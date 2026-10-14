@@ -32,11 +32,12 @@ develop it locally, write the
 absolute URL and let a file on disk stand in for it — see
 [local-file-overrides.md](local-file-overrides.md).
 
-## `.js` suffix gate
+## No suffix gate
 
-The resolved URL's pathname (sans query / fragment) must end in `.js`.
-So `https://cdn.example.com/jquery.js?v=3` is fine; `lib.json` or
-`bundle.txt` is rejected with a "must end in .js" error.
+Any URL is accepted, with or without `.js`, as in TM and VM. CDN
+shorthands like `https://cdn.jsdelivr.net/npm/sweetalert2@11` name a
+package rather than a file. The checks on the fetched response (UTF-8,
+no HTML page) are what keep non-JavaScript out.
 
 ## Storage
 
@@ -142,9 +143,9 @@ Any of these is a dependency failure, named by the offending URL:
   fetch, not as part of it, and by two tests: the `Content-Type` and
   the bytes.
 - `data:` URLs (resolution accepts them; the require gate rejects).
-- **Non-UTF-8 response body** (strict decode fails). A `.js` URL that
-  serves binary slips past the suffix gate and the content-type
-  predicate but gets caught here, so the user sees "not valid UTF-8"
+- **Non-UTF-8 response body** (strict decode fails). A URL that
+  serves binary slips past the content-type predicate but gets caught
+  here, so the user sees "not valid UTF-8"
   rather than a confusing `SyntaxError` at eval.
 
 ### Markup gate
@@ -345,7 +346,7 @@ buys most of it back:
 
 ## Limits
 
-- Per-require body: **1 MB**. Big enough for jQuery / chunky libraries;
+- Per-require body: **2 MB**. Big enough for jQuery / chunky libraries;
   small enough that a runaway can't drain the 10 MB
   `chrome.storage.local` quota in one row.
 - Per-fetch timeout: 5 s (file-loader default).

@@ -245,11 +245,9 @@ Traversal is closed:
   offered.
 - A root is therefore a floor, not a starting point for climbing.
 
-Existing gates still run on the **declared** URL, before any stand-in is
-considered — so a local file can't launder a ref past them:
-
-- the `@require` `.js` suffix gate;
-- `resolveScriptResource`'s scheme and containment rules.
+`resolveScriptResource`'s scheme and containment rules still run on the
+**declared** URL, before any stand-in is considered, so a local file
+can't launder a ref past them.
 
 ## Every file a script declares is treated alike
 

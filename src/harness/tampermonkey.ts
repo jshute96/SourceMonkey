@@ -325,8 +325,9 @@ export function rewrittenText(code: string, url: string): string {
     // Without a CRLF file's `\r`, which goes back after.
     const cr = lines[i]!.endsWith('\r') ? '\r' : '';
     const line = lines[i]!.slice(0, lines[i]!.length - cr.length);
-    if (/^\s*\/\/\s*==UserScript==/.test(line)) inHeader = true;
-    else if (/^\s*\/\/\s*==\/UserScript==/.test(line)) break;
+    // The same loose markers `userscript-header.ts` accepts.
+    if (/\/\/[ \t]*==UserScript==/.test(line)) inHeader = true;
+    else if (/\/\/[ \t]*==\/UserScript==/.test(line)) break;
     if (!inHeader) continue;
     const tag = /^(\s*\/\/\s*@(require|resource)\s+)(\S+\s+)?(\S+)(.*)$/.exec(line);
     if (!tag) continue;

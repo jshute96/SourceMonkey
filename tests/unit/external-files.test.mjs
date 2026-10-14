@@ -18,6 +18,7 @@ import {
   distillRequires,
   distillResources,
   isFetchFailureMessage,
+  MAX_FILE_BYTES,
 } from '../../dist/external-files.js';
 import { MAX_ICON_BYTES } from '../../dist/script-icon.js';
 
@@ -191,18 +192,21 @@ test('attachFiles: recheck=preserve reuses prior @require entries without fetchi
   assert.equal(r.requires[0].source, 'old collection');
 });
 
-test('attachFiles: rejects @require non-.js suffix', async () => {
+// CDN shorthands name a package, not a file, so the URL has no `.js`.
+test('attachFiles: loads a @require whose URL has no .js suffix', async () => {
+  const url = 'https://cdn.jsdelivr.net/npm/sweetalert2@11';
+  const fetchCache = new Map([[url, Promise.resolve(fakeFetched('window.Swal = {};'))]]);
   const r = await attachFiles({
     scriptFileUrl: SCRIPT_URL,
-    header: header(['require', 'https://cdn.example.com/lib.json']),
+    header: header(['require', url]),
     priorRequires: new Map(),
     priorResources: new Map(),
     recheck: 'all',
-    fetchCache: new Map(),
+    fetchCache,
     now: 2000,
   });
-  assert.match(r.errorMessage, /must end in \.js/);
-  assert.deepEqual(r.requires, []);
+  assert.equal(r.errorMessage, undefined);
+  assert.equal(r.requires[0].source, 'window.Swal = {};');
 });
 
 test('attachFiles: rejects @require traversal-bearing ref', async () => {
@@ -777,7 +781,7 @@ test('attachFiles: an http dependency that 404s reports the status, through the 
 
 test('attachFiles: an oversize dependency names the limit, not a generic failure', async () => {
   const realFetch = globalThis.fetch;
-  globalThis.fetch = async () => new Response(new Uint8Array(2 * 1024 * 1024).buffer, {
+  globalThis.fetch = async () => new Response(new Uint8Array(MAX_FILE_BYTES + 1).buffer, {
     status: 200,
     headers: { 'content-type': 'application/javascript' },
   });
@@ -853,6 +857,7 @@ test('checkScriptIcon: an icon over the limit names the icon limit', async () =>
     ref: 'big.png',
     url: 'https://example.com/scripts/big.png',
     message: '@icon big.png: The file is larger than the 128 KB limit',
+    failure: 'oversize',
   });
 });
 

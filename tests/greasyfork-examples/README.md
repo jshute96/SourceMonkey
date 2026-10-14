@@ -398,14 +398,21 @@ node tests/greasyfork-examples/serve-results.mjs   # then open http://localhost:
 
 ### Derived tags
 
-`validate` replaces `valid.tags` each run with features the script uses that
-SourceMonkey doesn't support but that don't make it invalid:
+`validate` replaces `valid.tags` each run. An invalid script gets
+`invalid:<reason>` saying why (`require-dead-link`, `require-too-large`,
+`bad-match`, `user-style`, ...; the list is `HELP.tag` in `results.html`).
+Any script also gets tags for features it uses that SourceMonkey doesn't
+support but that don't make it invalid:
 
 - `unsupported-grant:<name>`: an API-shaped `@grant` not in the catalog
   ([supported-GM-APIs.md](../../docs/supported-GM-APIs.md)).
 - `malformed-grant`: a `@grant` line that isn't an API name at all (some
   scripts use them as comments).
 - `ignored-match`: a `@match` Chrome would refuse, which SourceMonkey drops.
+- `unsupported-run-at`: a `@run-at` value SourceMonkey doesn't support, so the
+  script runs at `document-idle` instead.
+- `icon-dead-link`, `icon-too-large`: an `@icon` that won't download, or is
+  over the icon size limit.
 - `ignored-header:@<tag>`: a header another manager acts on and SourceMonkey
   ignores ([supported-headers.md](../../docs/supported-headers.md)).
 

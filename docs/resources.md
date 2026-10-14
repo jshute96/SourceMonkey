@@ -64,7 +64,7 @@ Per-entry fields:
 Storage cost:
 
 - Base64 encoding adds ~33% to the raw byte size.
-- Per-file cap: 1 MB. `chrome.storage.local` quota: 10 MB.
+- Per-file cap: 2 MB. `chrome.storage.local` quota: 10 MB.
 - SourceMonkey doesn't declare `unlimitedStorage`, so users who push
   past 10 MB total stored will see refresh failures.
 
@@ -102,7 +102,7 @@ The runtime keeps a per-script box of:
 - The minted blob URL is valid for the document's lifetime — we
   don't `URL.revokeObjectURL` since the runtime stays around.
 - Memory cost is ≈ 2× the resource size per document in the worst
-  case (base64 in `byName` + Blob bytes copy). Gated by the 1 MB
+  case (base64 in `byName` + Blob bytes copy). Gated by the 2 MB
   per-file cap.
 
 ## Failure handling
@@ -141,7 +141,7 @@ pass share one byte fetch — the typed assembly (`StoredRequire` vs
 
 ## Limits
 
-- Per-resource body: **1 MB** (shared cap with `@require`).
+- Per-resource body: **2 MB** (shared cap with `@require`).
 - Per-fetch timeout: 5 s (file-loader default).
 - Empty bodies rejected.
 

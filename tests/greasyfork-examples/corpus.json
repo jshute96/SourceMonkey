@@ -537,6 +537,9 @@
       "warnings": [
         "@icon https://eugenox.appspot.com/blob/yays/yays.icon.png: The server returned HTTP 404 (in the script, line 18)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1.15.1"
     },
@@ -671,7 +674,8 @@
         "@icon http://cncopt.com/favicon.ico: The server returned HTTP 404 (in the script, line 5)"
       ],
       "tags": [
-        "unsupported-grant:GM_updatingEnabled"
+        "unsupported-grant:GM_updatingEnabled",
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "1.7.7"
@@ -880,6 +884,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://kabam1-a.akamaihd.net/kingdomsofcamelot/fb/e2/src/img/throne/icons/70/briton_chair_normal_1.png: The server returned HTTP 404 (in the script, line 11)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "20140209a"
@@ -1148,6 +1155,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require http://code.highcharts.com/highcharts.js: The server returned HTTP 404 (in the script, line 16)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1.9.6.2"
     }
@@ -1378,6 +1388,9 @@
     "valid": {
       "status": "invalid",
       "error": "@resource translations (https://yeppha.github.io/downloads/translations.json): The server returned HTTP 404 (in the script, line 82)",
+      "tags": [
+        "invalid:resource-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "2.1.7"
     }
@@ -1774,6 +1787,10 @@
       "warnings": [
         "@icon http://s1.directupload.net/images/140711/eshmcqzu.png: The server returned HTTP 404 (in the script, line 7)"
       ],
+      "tags": [
+        "invalid:resource-dead-link",
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "2.59.00"
     }
@@ -1880,6 +1897,9 @@
       "status": "ok",
       "warnings": [
         "@icon http://s7.directupload.net/images/140128/vqchpigi.gif: The server returned HTTP 404 (in the script, line 12)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "3.07"
@@ -2236,6 +2256,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://prodgame13.alliances.commandandconquer.com/146/favicon.ico: The server returned HTTP 404 (in the script, line 7)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "0.6.1"
@@ -2856,6 +2879,9 @@
       "warnings": [
         "@icon https://kabam1-a.akamaihd.net/kingdomsofcamelot/fb/e2/src/img/throne/icons/70/briton_chair_normal_1.png: The server returned HTTP 404 (in the script, line 11)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "20140327b"
     },
@@ -2897,6 +2923,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://kabam1-a.akamaihd.net/kingdomsofcamelot/fb/e2/src/img/throne/icons/70/briton_chair_normal_1.png: The server returned HTTP 404 (in the script, line 11)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "20140519a"
@@ -3356,6 +3385,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://cdn.staticfile.org/jquery/1.11.1/jquery.min.js: The server returned HTTP 404 (in the script, line 6)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1.0.4"
     }
@@ -4222,6 +4254,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require http://code.highcharts.com/highcharts.js: The server returned HTTP 404 (in the script, line 9)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1.6"
     }
@@ -4603,6 +4638,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://greasyfork.org/scripts/3622-ikariam-developer-tools-v0-5-0/code/Ikariam Developer Tools V050+.user.js: The server returned HTTP 404 (in the script, line 14)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.29"
     }
@@ -4873,6 +4911,9 @@
     "valid": {
       "status": "invalid",
       "error": "@resource datatab (https://greasyfork.org/scripts/4258-datatables-css-cdn-with-images/code/Datatables%20CSS%20CDN%20with%20Images.js?version=13654): The server returned HTTP 404 (in the script, line 11)",
+      "tags": [
+        "invalid:resource-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.3b"
     }
@@ -6046,6 +6087,9 @@
       "warnings": [
         "@icon http://s3.amazonaws.com/uso_ss/icon/153190/large.png: The server returned HTTP 404 (in the script, line 46)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "5.00.22y"
     },
@@ -6090,6 +6134,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://github.com/sindresorhus/quora-unblocker-userscript/raw/master/icon.png: The server returned HTTP 404 (in the script, line 10)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "1.1.0"
@@ -6661,6 +6708,9 @@
       "warnings": [
         "@icon https://raw.githubusercontent.com/Odyseus/GreasemonkeyScripts/master/GoogleTranslatorTooltipExpandedFork/g-translate-logo.png: The server returned HTTP 404 (in the script, line 4)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1.12"
     },
@@ -7192,6 +7242,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require http://openuserjs.org/src/libs/TimidScript/TSL_-_jsColorGM.js: The server returned HTTP 404 (in the script, line 9)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "2.019"
     }
@@ -7440,6 +7493,9 @@
       "status": "ok",
       "warnings": [
         "@run-at window-load is not supported. The script runs at document-idle instead. (in the script, line 8)"
+      ],
+      "tags": [
+        "unsupported-run-at"
       ],
       "date": "2026-10-13",
       "version": "0.1"
@@ -8933,6 +8989,10 @@
       "warnings": [
         "@icon http://images2.wikia.nocookie.net/__cb20130827014914/cookieclicker/images/5/5a/PerfectCookie.png: The server returned HTTP 404 (in the script, line 9)"
       ],
+      "tags": [
+        "invalid:require-dead-link",
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "2.0"
     }
@@ -8997,6 +9057,9 @@
       "status": "ok",
       "warnings": [
         "@icon http://diveintohtml5.info/favicon.ico: The server returned HTTP 404 (in the script, line 6)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "1.2.0"
@@ -10175,6 +10238,10 @@
       "warnings": [
         "@icon http://www.mediafire.com/convkey/6b10/64gmr1m4qul6xalzg.jpg?size_id=2: The server returned HTTP 404 (in the script, line 6)"
       ],
+      "tags": [
+        "invalid:resource-dead-link",
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "5.1"
     }
@@ -10926,6 +10993,9 @@
       "status": "ok",
       "warnings": [
         "@icon http://www.mturkgrind.com/data/avatars/l/1/1084.jpg?1432698290: The server returned HTTP 404 (in the script, line 7)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "1.9.1"
@@ -11927,6 +11997,9 @@
       "warnings": [
         "@icon http://gkplugins.com/extensions/userscript/icon128.png: The server returned HTTP 404 (in the script, line 6)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.1"
     },
@@ -11968,6 +12041,9 @@
       "status": "ok",
       "warnings": [
         "@icon http://kadauchi.com/avatar3.gif: The server returned HTTP 404 (in the script, line 7)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "2.0.0"
@@ -12090,6 +12166,10 @@
       "warnings": [
         "@icon https://scontent.fhan3-1.fna.fbcdn.net/v/t1.0-9/12745629_1731761047052278_7588513378801632516_n.png?oh=4fc68353984cac9fd3d6f2f39708eb70&oe=5A2334FB: The server returned HTTP 404 (in the script, line 5)"
       ],
+      "tags": [
+        "invalid:require-dead-link",
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "3.3.9"
     }
@@ -12201,6 +12281,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://greasyfork.org/system/screenshots/screenshots/000/002/575/original/Google_Favicon_%282012_-_2015%29.png?1447968978: The server returned HTTP 404 (in the script, line 7)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "3.25"
@@ -12996,7 +13079,8 @@
       "status": "invalid",
       "error": "@match //*.facebook.com/ doesn't start with a scheme and \"://\", so this script would never run on any page; start it with \"*://\" for http and https (in the script, line 5)",
       "tags": [
-        "ignored-match"
+        "ignored-match",
+        "invalid:bad-match"
       ],
       "date": "2026-10-13",
       "version": "0.0.3.1"
@@ -13519,6 +13603,9 @@
       "warnings": [
         "@icon http://dcdn.heroeswm.ru/avatars/30/nc-5/30547.gif: The server returned HTTP 404 (in the script, line 8)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "2.17"
     },
@@ -13648,6 +13735,9 @@
     "valid": {
       "status": "invalid",
       "error": "@resource baiduLiteStyle (https://gitcode.net/-/snippets/1906/raw/master/LiteStyle.css?inline=false): The server returned HTTP 404 (in the script, line 129)",
+      "tags": [
+        "invalid:resource-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "27.20"
     }
@@ -13676,6 +13766,10 @@
       "error": "@require https://greasyfork.org/scripts/10783-md5/code/md5.js?version=60242: The server returned HTTP 404 (in the script, line 10)",
       "warnings": [
         "@icon https://gitee.com/remixAC/GM_script/raw/master/images/head.jpg: The server returned HTTP 404 (in the script, line 9)"
+      ],
+      "tags": [
+        "invalid:require-dead-link",
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "2.6"
@@ -13976,7 +14070,8 @@
       "status": "invalid",
       "error": "@match https?:\\/\\/weibo.com/p/* names the invalid host \"https?:\\\", so this script would never run on any page; use a host name like example.com, \"*\" for any host, or \"*.example.com\" for a domain and its subdomains (in the script, line 7)",
       "tags": [
-        "ignored-match"
+        "ignored-match",
+        "invalid:bad-match"
       ],
       "date": "2026-10-13",
       "version": "0.2.0"
@@ -14207,6 +14302,9 @@
       "status": "ok",
       "warnings": [
         "@run-at document_end is not supported. The script runs at document-idle instead. (in the script, line 27)"
+      ],
+      "tags": [
+        "unsupported-run-at"
       ],
       "date": "2026-10-13",
       "version": "1.5.2.00"
@@ -14497,6 +14595,9 @@
       "status": "ok",
       "warnings": [
         "@icon http://twm.pf-control.de/favicon.ico: The server returned HTTP 404 (in the script, line 11)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "4.170"
@@ -15084,8 +15185,7 @@
       "*"
     ],
     "valid": {
-      "status": "invalid",
-      "error": "@require https://cdn.jsdelivr.net/combine/npm/@violentmonkey/dom@2,npm/@violentmonkey/ui@0.7: The filename must end in .js (in the script, line 11)",
+      "status": "ok",
       "date": "2026-10-13",
       "version": "0.2.0"
     }
@@ -15891,6 +15991,9 @@
       "warnings": [
         "@icon https://coding.net/u/zb227/p/zbImg/git/raw/master/img0/icon.jpg: The server returned HTTP 404 (in the script, line 10)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "5.0"
     },
@@ -16277,6 +16380,9 @@
       "warnings": [
         "@icon https://coding.net/u/zb227/p/zbImg/git/raw/master/img0/icon.jpg: The server returned HTTP 404 (in the script, line 9)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.5.6"
     },
@@ -16358,6 +16464,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://www.gstatic.com/recaptcha/admin/favicon.ico: The server returned HTTP 404 (in the script, line 3)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "1.1.4"
@@ -17328,6 +17437,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://www.gitcdn.xyz/repo/FlandreDaisuki/zip_player/ecf3751317079fcabef70af4bd0e92411288303d/dist/zip_player.iife.min.js: The server returned HTTP 404 (in the script, line 18)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "4.2.4"
     }
@@ -17954,6 +18066,9 @@
       "warnings": [
         "@icon https://rycamelot1-a.akamaihd.net/fb/e2/src/img/items/70/911.jpg: The server returned HTTP 404 (in the script, line 5)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "3.4"
     },
@@ -17997,6 +18112,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://greasyfork.org/scripts/28186-element-constructor/code/Element%20constructor.js?version=181746: The server returned HTTP 404 (in the script, line 17)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "2.4.1"
     }
@@ -19042,6 +19160,9 @@
       "warnings": [
         "@icon https://raw.githubusercontent.com/LV/UnblurScribd-Userscript/master/icon.png: The server returned HTTP 404 (in the script, line 8)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1.0.5"
     },
@@ -19821,7 +19942,10 @@
     ],
     "valid": {
       "status": "invalid",
-      "error": "@resource pinyinTree (https://hoothin.github.io/UserScripts/Switch%20Traditional%20Chinese%20and%20Simplified%20Chinese/pinyinTree.json): The file is larger than the 1 MB limit (in the script, line 35)",
+      "error": "@resource pinyinTree (https://hoothin.github.io/UserScripts/Switch%20Traditional%20Chinese%20and%20Simplified%20Chinese/pinyinTree.json): The file is larger than the 2 MB limit (in the script, line 35)",
+      "tags": [
+        "invalid:resource-too-large"
+      ],
       "date": "2026-10-13",
       "version": "1.2.7.12"
     }
@@ -20665,6 +20789,9 @@
       "warnings": [
         "@icon http://kissanime.ru/Content/images/favicon.ico: The server returned HTTP 404 (in the script, line 7)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.65"
     },
@@ -21180,6 +21307,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://cdn.staticfile.org/keymaster/1.6.1/keymaster.min.js: The server returned HTTP 404 (in the script, line 19)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1.1.2"
     }
@@ -23499,6 +23629,9 @@
       "warnings": [
         "@run-at document_start is not supported. The script runs at document-idle instead. (in the script, line 9)"
       ],
+      "tags": [
+        "unsupported-run-at"
+      ],
       "date": "2026-10-13",
       "version": "0.3.2"
     },
@@ -23644,6 +23777,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://www.annuaire-telechargement.com/templates/Default/images/favicon.ico: The server returned HTTP 404 (in the script, line 9)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "3.04"
@@ -23907,6 +24043,9 @@
       "warnings": [
         "@icon https://www.converto.io/img/favicons/apple-touch-icon.png: The server returned HTTP 404 (in the script, line 13)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "3.0.3"
     },
@@ -23954,6 +24093,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://s17.postimg.org/8ekofml9r/logo.png: The server returned HTTP 404 (in the script, line 5)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "1.0"
@@ -24437,7 +24579,10 @@
     ],
     "valid": {
       "status": "invalid",
-      "error": "@resource accents (https://raw.githubusercontent.com/mifunetoshiro/kanjium/94473cd69598abf54cc338a0b89f190a6c02a01c/data/source_files/raw/accents.txt): The file is larger than the 1 MB limit (in the script, line 12)",
+      "error": "@resource accents (https://raw.githubusercontent.com/mifunetoshiro/kanjium/94473cd69598abf54cc338a0b89f190a6c02a01c/data/source_files/raw/accents.txt): The file is larger than the 2 MB limit (in the script, line 12)",
+      "tags": [
+        "invalid:resource-too-large"
+      ],
       "date": "2026-10-13",
       "version": "0.84"
     }
@@ -25424,8 +25569,7 @@
       "www.crunchyroll.com"
     ],
     "valid": {
-      "status": "invalid",
-      "error": "@require https://cdnjs.cloudflare.com/ajax/libs/video.js/7.1.0/video.js: The file is larger than the 1 MB limit (in the script, line 7)",
+      "status": "ok",
       "date": "2026-10-13",
       "version": "2.1.3"
     }
@@ -25531,6 +25675,9 @@
       "warnings": [
         "@run-at document-ready is not supported. The script runs at document-idle instead. (in the script, line 7)"
       ],
+      "tags": [
+        "unsupported-run-at"
+      ],
       "date": "2026-10-13",
       "version": "1.0.7.2"
     },
@@ -25570,6 +25717,9 @@
       "status": "ok",
       "warnings": [
         "@icon http://convert2mp3.net/favicon.ico: The server returned HTTP 404 (in the script, line 13)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "1.0"
@@ -26103,8 +26253,7 @@
       "www.mturk.com"
     ],
     "valid": {
-      "status": "invalid",
-      "error": "@require https://cdn.rawgit.com/Anveio/mturk-engine/c6a7856f53b2fde7fd1838db210e1f0ff91b17fd/build/mturk-engine.latest.raw.user.js?raw=true: The file is larger than the 1 MB limit (in the script, line 10)",
+      "status": "ok",
       "date": "2026-10-13",
       "version": "1.8.3"
     }
@@ -26999,6 +27148,9 @@
       "warnings": [
         "@icon https://ls12.me/favicon.ico: The server returned HTTP 404 (in the script, line 9)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.2"
     },
@@ -27632,6 +27784,9 @@
       "status": "ok",
       "warnings": [
         "@icon http://panhriq.yihaojingling.com/steam.green.ico: The server returned HTTP 404 (in the script, line 16)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "3.16.20260718"
@@ -28418,6 +28573,9 @@
       "warnings": [
         "@icon https://cdn.discordapp.com/attachments/359595961980420097/386420015458549770/Galahad.png: The server returned HTTP 404 (in the script, line 14)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.1"
     },
@@ -29105,6 +29263,9 @@
     "valid": {
       "status": "invalid",
       "error": "@resource datatab (https://greasyfork.org/scripts/4258-datatables-css-cdn-with-images/code/Datatables%20CSS%20CDN%20with%20Images.js?version=13654): The server returned HTTP 404 (in the script, line 14)",
+      "tags": [
+        "invalid:resource-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.53"
     }
@@ -30924,6 +31085,9 @@
       "warnings": [
         "@icon http://kissanime.ru/Content/images/favicon.ico: The server returned HTTP 404 (in the script, line 6)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "2019.4.3"
     },
@@ -31210,6 +31374,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://cdn.discordapp.com/avatars/459369695519178773/d4ba99e72010e782441f050d63bd8670.png?size=1024: The server returned HTTP 404 (in the script, line 10)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "1.0"
@@ -32088,8 +32255,7 @@
       "pixiv.net"
     ],
     "valid": {
-      "status": "invalid",
-      "error": "@require https://ppixiv.org/builds/r257/ppixiv-main.user.js#sha256=37791646521c80a0de71447fcb5fed79f4c0c420d00d91260e6b2217065b23ac: The file is larger than the 1 MB limit (in the script, line 23)",
+      "status": "ok",
       "date": "2026-10-13",
       "version": "257"
     }
@@ -32267,6 +32433,9 @@
     "valid": {
       "status": "invalid",
       "error": "@resource up_button_icon (https://coding.net/u/mofiter/p/public_files/git/raw/master/back_to_top_button.png): The server returned HTTP 404 (in the script, line 11)",
+      "tags": [
+        "invalid:resource-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.3"
     }
@@ -32454,6 +32623,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://vignette.wikia.nocookie.net/moom/images/7/7a/Cacti.PNG/revision/latest?cb=20170524094943: The server returned HTTP 404 (in the script, line 11)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "1.0"
@@ -33128,6 +33300,9 @@
       "warnings": [
         "@icon https://www.instagram.com/favicon.ico: The file is larger than the 128 KB limit (in the script, line 7)"
       ],
+      "tags": [
+        "icon-too-large"
+      ],
       "date": "2026-10-13",
       "version": "1.5.2"
     },
@@ -33513,6 +33688,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://ajax.googleapis.com/ajax/libs/jquery/latest/jquery.min.js: The server returned HTTP 404 (in the script, line 7)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.4 alpha"
     }
@@ -34269,6 +34447,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://greasyfork.org/scripts/410512-sci-js-from-ksw2-center/code/scijs%20(from%20ksw2-center).js: The server returned HTTP 404 (in the script, line 46)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "13"
     }
@@ -34474,6 +34655,9 @@
       "warnings": [
         "@icon https://vignette.wikia.nocookie.net/diepio/images/7/7f/New_Piskel_%281%29.gif/revision/latest?cb=20161221002456: The server returned HTTP 404 (in the script, line 7)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "3.14159265359"
     },
@@ -34515,7 +34699,8 @@
         "@icon https://www.vevioz.com/images/icon.png: The server returned HTTP 404 (in the script, line 4)"
       ],
       "tags": [
-        "ignored-header:@unwrap"
+        "ignored-header:@unwrap",
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "2.7"
@@ -34869,6 +35054,9 @@
       "warnings": [
         "@icon https://w1w.zone-telechargement1.org/templates/Default/images/favicon.ico: The server returned HTTP 404 (in the script, line 9)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "2.042"
     },
@@ -34995,7 +35183,8 @@
         "@icon https://proxy.duckduckgo.com/iu/?u=https%3A%2F%2Fwww.gala-global.org%2Fsites%2Fdefault%2Ffiles%2Fcompany_logo%2FTilde_DirectoryLogo.gif&f=1: The server returned HTTP 404 (in the script, line 10)"
       ],
       "tags": [
-        "ignored-match"
+        "ignored-match",
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "3.2"
@@ -35274,7 +35463,8 @@
       "status": "invalid",
       "error": "@match *://agma.io* uses \"*\" inside its host, so this script would never run on any page; \"*\" has to be the whole host or its first label, as in *.example.com (in the script, line 7)",
       "tags": [
-        "ignored-match"
+        "ignored-match",
+        "invalid:bad-match"
       ],
       "date": "2026-10-13",
       "version": "0.1"
@@ -35386,6 +35576,9 @@
       "status": "ok",
       "warnings": [
         "@run-at document-ready is not supported. The script runs at document-idle instead. (in the script, line 7)"
+      ],
+      "tags": [
+        "unsupported-run-at"
       ],
       "date": "2026-10-13",
       "version": "2.5"
@@ -36288,11 +36481,22 @@
       "created_date": "2019-03-15",
       "updated_date": "2020-09-27"
     },
+    "version": "1.0.0.1",
     "file": "update.greasyfork.org/scripts/380394/Google%20Drive%20Auto%20Download%20%28without%20preview%29.user.js",
+    "sites": [
+      "docs.google.com",
+      "drive.google.com"
+    ],
     "valid": {
-      "status": "invalid",
-      "error": "The // ==UserScript== metadata block is never closed and needs a // ==/UserScript== line (in the script, line 1)",
-      "date": "2026-10-13"
+      "status": "ok",
+      "warnings": [
+        "@icon https://ssl.gstatic.com/docs/doclist/images/infinite_arrow_favicon_4.ico: The server returned HTTP 404 (in the script, line 10)"
+      ],
+      "tags": [
+        "icon-dead-link"
+      ],
+      "date": "2026-10-13",
+      "version": "1.0.0.1"
     }
   },
   "380615": {
@@ -37015,6 +37219,9 @@
       "warnings": [
         "@icon http://res.hpoi.net.cn/gk/res/img/favicon.ico: The server returned HTTP 404 (in the script, line 2)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1.0.0"
     },
@@ -37127,6 +37334,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://greasyfork.org/scripts/6250-waitforkeyelements/code/waitForKeyElements.js?version=23756: The server returned HTTP 404 (in the script, line 11)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "2.5"
     }
@@ -37239,6 +37449,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://cdn.staticfile.org/jquery/3.5.1/jquery.min.js: The server returned HTTP 404 (in the script, line 9)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.9.0"
     }
@@ -38216,6 +38429,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js: The server returned HTTP 404 (in the script, line 5)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.05"
     }
@@ -38970,6 +39186,9 @@
       "warnings": [
         "@icon https://i.pximg.net/user-profile/img/2019/05/02/16/56/10/15718030_ded90a676c52836d9f739f7aa6d4faf6_170.jpg: The server returned HTTP 404 (in the script, line 7)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.3"
     },
@@ -39084,6 +39303,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://image.flaticon.com/icons/png/128/3291/3291444.png: The server returned HTTP 404 (in the script, line 6)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "2.9.6.1"
@@ -39325,6 +39547,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js: The server returned HTTP 404 (in the script, line 8)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "20190929"
     }
@@ -39512,6 +39737,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://abload.de/img/mh3k8o.png: The server returned HTTP 404 (in the script, line 9)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "5.8.4"
@@ -40629,7 +40857,8 @@
       "status": "invalid",
       "error": "@match put here your deviantart link names the invalid host \"put here your deviantart link\", so this script would never run on any page; use a host name like example.com, \"*\" for any host, or \"*.example.com\" for a domain and its subdomains (in the script, line 4)",
       "tags": [
-        "ignored-match"
+        "ignored-match",
+        "invalid:bad-match"
       ],
       "date": "2026-10-13",
       "version": "1.0"
@@ -41259,6 +41488,10 @@
       "warnings": [
         "@icon http://spade-squad.com/pub/userscript/icon64.png: The server returned HTTP 404 (in the script, line 8)"
       ],
+      "tags": [
+        "invalid:resource-dead-link",
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1.0.0"
     }
@@ -41785,6 +42018,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://cdn.staticfile.org/html2canvas/0.5.0-beta4/html2canvas.min.js: The server returned HTTP 404 (in the script, line 9)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.20"
     }
@@ -42536,6 +42772,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js: The server returned HTTP 404 (in the script, line 202)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1.0.2"
     }
@@ -42841,6 +43080,9 @@
       "warnings": [
         "@icon https://sci-hub.do/favicon.ico: The server returned HTTP 404 (in the script, line 14)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1.10"
     },
@@ -42928,6 +43170,10 @@
       "error": "@resource sound_files (https://koc-cdn.popreach.com/fb/e2/src/pb/resource/sound_files.js): The server returned HTTP 404 (in the script, line 18)",
       "warnings": [
         "@icon https://koc-cdn.popreach.com/fb/e2/src/img/items/70/363.jpg: The server returned HTTP 404 (in the script, line 5)"
+      ],
+      "tags": [
+        "invalid:resource-dead-link",
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "3.65"
@@ -43152,7 +43398,8 @@
       "status": "invalid",
       "error": "@match https://scholar.google.*/* uses \"*\" inside its host, so this script would never run on any page; \"*\" has to be the whole host or its first label, as in *.example.com (in the script, line 4)",
       "tags": [
-        "ignored-match"
+        "ignored-match",
+        "invalid:bad-match"
       ],
       "date": "2026-10-13",
       "version": "1.3"
@@ -43324,6 +43571,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://www.discuz.net/favicon.ico: The server returned HTTP 404 (in the script, line 8)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "0.9.2"
@@ -43575,9 +43825,13 @@
     ],
     "valid": {
       "status": "invalid",
-      "error": "@require https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/6.18.2/babel.js: The file is larger than the 1 MB limit (in the script, line 31)",
+      "error": "@require https://greasyfork.org/scripts/451088-utils-library/code/Utils%20-%20Library.js?version=1097324: The server returned HTTP 404 (in the script, line 33)",
       "warnings": [
         "@icon https://www.google.com/s2/favicons?domain=9anime.to: The server returned HTTP 404 (in the script, line 43)"
+      ],
+      "tags": [
+        "invalid:require-dead-link",
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "6.3"
@@ -43650,6 +43904,10 @@
       "error": "@require http://cdn.staticfile.org/jquery/2.0.0/jquery.min.js: The server returned an HTML page, not JavaScript; the link may be dead or behind a login (in the script, line 35)",
       "warnings": [
         "@icon https://upyun.calendarli.com/logo.png: The server returned HTTP 404 (in the script, line 18)"
+      ],
+      "tags": [
+        "invalid:require-dead-link",
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "4.1.3"
@@ -43921,7 +44179,8 @@
         "@icon https://i.imgur.com/vX9gMXa.png: The file is larger than the 128 KB limit (in the script, line 12)"
       ],
       "tags": [
-        "malformed-grant"
+        "malformed-grant",
+        "icon-too-large"
       ],
       "date": "2026-10-13",
       "version": "2"
@@ -44005,6 +44264,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://gitcdn.link/repo/richtr/NoSleep.js/07fcee254724ab1b79076fbc22f3dd447649a2eb/dist/NoSleep.min.js: The server returned an HTML page, not JavaScript; the link may be dead or behind a login (in the script, line 37)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "3.5.0"
     }
@@ -44429,6 +44691,9 @@
       "warnings": [
         "@run-at document-begin is not supported. The script runs at document-idle instead. (in the script, line 21)"
       ],
+      "tags": [
+        "unsupported-run-at"
+      ],
       "date": "2026-10-13",
       "version": "4.0.1"
     },
@@ -44662,8 +44927,7 @@
       "instagram.com"
     ],
     "valid": {
-      "status": "invalid",
-      "error": "@require https://cdn.jsdelivr.net/npm/mediabunny@1.34.5/dist/bundles/mediabunny.min.cjs#sha256-wUFR+x2bDvpqgMAVGy2CvGvULyjTGvGy4UUAm8rae5U=: The filename must end in .js (in the script, line 54)",
+      "status": "ok",
       "date": "2026-10-13",
       "version": "4.2.1"
     }
@@ -45137,6 +45401,9 @@
       "warnings": [
         "@icon http://i.cubeupload.com/5F25YM.jpg: The server returned HTTP 404 (in the script, line 11)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "3.6"
     },
@@ -45299,6 +45566,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://greasyfork.org/scripts/410512-sci-js-from-ksw2-center/code/scijs%20(from%20ksw2-center).js: The server returned HTTP 404 (in the script, line 10)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.3"
     }
@@ -45325,6 +45595,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require data:application/javascript,%3Bwindow.Vue%3DVue%3Bwindow.VueDemi%3DVue%3B: URLs with the data: scheme are not supported (in the script, line 35)",
+      "tags": [
+        "invalid:require-data-url"
+      ],
       "date": "2026-10-13",
       "version": "7.3.3"
     }
@@ -45650,7 +45923,10 @@
     ],
     "valid": {
       "status": "invalid",
-      "error": "@require https://unpkg.com/@techstark/opencv-js@4.11.0-release.1/dist/opencv.js#sha512-6Rb1LoaC9dHPLtrQhND5lLcLe2u3hh92yKTvIRQkMSj2A1EDhK0O4aptnEXAuKQcKtKZwACDoQnrrEKCFt5WdA==: The file is larger than the 1 MB limit (in the script, line 493)",
+      "error": "@require https://unpkg.com/@techstark/opencv-js@4.11.0-release.1/dist/opencv.js#sha512-6Rb1LoaC9dHPLtrQhND5lLcLe2u3hh92yKTvIRQkMSj2A1EDhK0O4aptnEXAuKQcKtKZwACDoQnrrEKCFt5WdA==: The file is larger than the 2 MB limit (in the script, line 493)",
+      "tags": [
+        "invalid:require-too-large"
+      ],
       "date": "2026-10-13",
       "version": "5.2.1260"
     }
@@ -46582,6 +46858,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://greasyfork.org/scripts/410512-sci-js-from-ksw2-center/code/scijs%20(from%20ksw2-center).js: The server returned HTTP 404 (in the script, line 20)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "2.3"
     }
@@ -47083,6 +47362,9 @@
       "warnings": [
         "@icon https://www.linkpicture.com/q/hat_45-2.png: The server returned HTTP 404 (in the script, line 8)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.6"
     },
@@ -47200,6 +47482,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://cdn.staticfile.org/jquery/1.12.4/jquery.min.js: The server returned HTTP 404 (in the script, line 9)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1.1"
     }
@@ -47313,7 +47598,10 @@
     "file": "update.greasyfork.org/scripts/409893/Youtube%20WideScreen%20%28New%20Design%20Polymer%29%20%5BUSw%5D%20v75.user.css",
     "valid": {
       "status": "invalid",
-      "error": "No // ==UserScript== metadata block, so this is not a userscript (in the script)",
+      "error": "This is a user style (a /* ==UserStyle== block), not a userscript. User styles need a user style manager extension. (in the script)",
+      "tags": [
+        "invalid:user-style"
+      ],
       "date": "2026-10-13"
     }
   },
@@ -47584,6 +47872,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://greasyfork.org/scripts/410512-sci-js-from-ksw2-center/code/scijs%20(from%20ksw2-center).js: The server returned HTTP 404 (in the script, line 9)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.4"
     }
@@ -48380,6 +48671,10 @@
       "warnings": [
         "@icon https://greasyfork.org/system/screenshots/screenshots/000/023/701/original/scripticon.png?1601395548: The server returned HTTP 404 (in the script, line 19)"
       ],
+      "tags": [
+        "invalid:resource-dead-link",
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.1.45"
     }
@@ -48560,9 +48855,13 @@
     ],
     "valid": {
       "status": "invalid",
-      "error": "@resource sound_files (https://cdn.jsdelivr.net/gh/sickofit666/emoticons1@f6156302c4fb9d76a740faca5c0d54908f5212f7/sound_files.js): The file is larger than the 1 MB limit (in the script, line 20)",
+      "error": "@resource sound_files (https://cdn.jsdelivr.net/gh/sickofit666/emoticons1@f6156302c4fb9d76a740faca5c0d54908f5212f7/sound_files.js): The file is larger than the 2 MB limit (in the script, line 20)",
       "warnings": [
         "@icon https://cdn.jsdelivr.net/gh/sickofit666/emoticons@main/demon.png: The file is larger than the 128 KB limit (in the script, line 6)"
+      ],
+      "tags": [
+        "invalid:resource-too-large",
+        "icon-too-large"
       ],
       "date": "2026-10-13",
       "version": "2.5.2"
@@ -49443,6 +49742,9 @@
       "warnings": [
         "@icon https://img.alicdn.com/favicon.ico: The server returned HTTP 404 (in the script, line 4)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.2.1"
     },
@@ -49520,6 +49822,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://greasyfork.org/rails/active_storage/blobs/eyJfcmFpbHMiOnsibWVzc2FnZSI6IkJBaHBBc1JhIiwiZXhwIjpudWxsLCJwdXIiOiJibG9iX2lkIn19--320c324046c242ba3d08b9d8b1f010395547a97a/wenku.png?locale=zh-CN: The server returned HTTP 404 (in the script, line 7)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "0.1.1"
@@ -50448,7 +50753,10 @@
     "file": "update.greasyfork.org/scripts/419362/%E5%85%A8%E5%B1%80%E6%80%9D%E6%BA%90%E9%BB%91%E4%BD%93.user.css",
     "valid": {
       "status": "invalid",
-      "error": "No // ==UserScript== metadata block, so this is not a userscript (in the script)",
+      "error": "This is a user style (a /* ==UserStyle== block), not a userscript. User styles need a user style manager extension. (in the script)",
+      "tags": [
+        "invalid:user-style"
+      ],
       "date": "2026-10-13"
     }
   },
@@ -50469,7 +50777,10 @@
     "file": "update.greasyfork.org/scripts/419363/%E5%85%A8%E5%B1%80%E5%BE%AE%E8%BD%AF%E9%9B%85%E9%BB%91.user.css",
     "valid": {
       "status": "invalid",
-      "error": "No // ==UserScript== metadata block, so this is not a userscript (in the script)",
+      "error": "This is a user style (a /* ==UserStyle== block), not a userscript. User styles need a user style manager extension. (in the script)",
+      "tags": [
+        "invalid:user-style"
+      ],
       "date": "2026-10-13"
     }
   },
@@ -50741,6 +51052,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://cdn.bootcdn.net/ajax/libs/jszip/3.7.1/jszip.min.js: The server returned HTTP 404 (in the script, line 57)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "2.90"
     }
@@ -51231,6 +51545,9 @@
     "valid": {
       "status": "invalid",
       "error": "@resource css1 (https://cdn.jsdelivr.net/gh/sanzhixiaoxia/statics@main/toast.style.css): The server returned HTTP 404 (in the script, line 15)",
+      "tags": [
+        "invalid:resource-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1.7.3"
     }
@@ -52213,6 +52530,9 @@
       "warnings": [
         "@icon https://www.hltv.org/img/static/favicon/favicon-32x32.png: The server returned HTTP 404 (in the script, line 11)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "2.5"
     },
@@ -52408,8 +52728,7 @@
       "downloads.khinsider.com"
     ],
     "valid": {
-      "status": "invalid",
-      "error": "@require https://unpkg.com/file-saver: The filename must end in .js (in the script, line 37)",
+      "status": "ok",
       "date": "2026-10-13",
       "version": "1.1.1"
     }
@@ -52743,6 +53062,9 @@
     "valid": {
       "status": "invalid",
       "error": "@resource coordCSS (https://barnyruilt.alwaysdata.net/style.css): The server returned HTTP 404 (in the script, line 7)",
+      "tags": [
+        "invalid:resource-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.3"
     }
@@ -53330,7 +53652,8 @@
         "@icon https://greasyfork.s3.us-east-2.amazonaws.com/v5nav1si68dbv3bybm4y382lya1d: The server returned HTTP 404 (in the script, line 11)"
       ],
       "tags": [
-        "ignored-match"
+        "ignored-match",
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "0.1"
@@ -54783,6 +55106,9 @@
       "warnings": [
         "@icon https://cdn.discordapp.com/attachments/664899301247287298/878019963900817448/743a8ebae02a90a9b147c97fb03faff4.jpg: The server returned HTTP 404 (in the script, line 10)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1"
     },
@@ -56194,6 +56520,9 @@
       "warnings": [
         "@icon https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTJNVczs2oU6qdgJBw2ZSSe4ibVAGjaZMgWosjYzjXZU1B6Lp9MHoQ27ARzAtofWYHxz3U&usqp=CAU: The server returned HTTP 404 (in the script, line 14)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "30.6.11"
     },
@@ -56389,6 +56718,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://greasyfork.org/scripts/434530-anti-invis-builds/code/Anti%20Invis%20Builds.js?version=982831: The server returned HTTP 404 (in the script, line 10)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "10.6"
     }
@@ -56558,11 +56890,15 @@
       "created_date": "2021-10-19",
       "updated_date": "2024-12-09"
     },
+    "version": "1.7.3",
     "file": "update.greasyfork.org/scripts/434134/%5BPokeclicker%5D%20Simple%20Auto%20Farmer.user.js",
+    "sites": [
+      "www.pokeclicker.com"
+    ],
     "valid": {
-      "status": "invalid",
-      "error": "The // ==UserScript== metadata block is never closed and needs a // ==/UserScript== line (in the script, line 1)",
-      "date": "2026-10-13"
+      "status": "ok",
+      "date": "2026-10-13",
+      "version": "1.7.3"
     }
   },
   "434199": {
@@ -56617,11 +56953,16 @@
       "created_date": "2021-10-20",
       "updated_date": "2021-11-02"
     },
+    "version": "0.5.4",
     "file": "update.greasyfork.org/scripts/434215/Fastsplit%20and%20Bubble%20Cells%20Script.user.js",
+    "sites": [
+      "agma.io",
+      "cellcraft.io"
+    ],
     "valid": {
-      "status": "invalid",
-      "error": "No // ==UserScript== metadata block, so this is not a userscript (in the script)",
-      "date": "2026-10-13"
+      "status": "ok",
+      "date": "2026-10-13",
+      "version": "0.5.4"
     }
   },
   "434305": {
@@ -56988,6 +57329,9 @@
       "status": "ok",
       "warnings": [
         "@icon http://i.cubeupload.com/5F25YM.jpg: The server returned HTTP 404 (in the script, line 11)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "3.6"
@@ -57632,6 +57976,9 @@
       "warnings": [
         "@icon https://searx.be/image_proxy?url=https%3A%2F%2Fencrypted-tbn0.gstatic.com%2Fimages%3Fq%3Dtbn%3AANd9GcQBQeAIPvYfxjTxd6_TQQRR2y7i-kyia2vUCw%26usqp%3DCAU&h=202fb5ea70a36a5e40c4b0be47cffa21e6b419fb5d61926d4f0b3300544b49a7: The server returned HTTP 404 (in the script, line 33)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1.9"
     },
@@ -57747,6 +58094,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://media.discordapp.net/attachments/878345257786429471/922818957159829534/favicons_1_1.png: The server returned HTTP 404 (in the script, line 10)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "0.2"
@@ -58474,6 +58824,10 @@
       "warnings": [
         "@icon https://www.google.com/s2/favicons?domain=1v1.lol: The server returned HTTP 404 (in the script, line 8)"
       ],
+      "tags": [
+        "invalid:require-dead-link",
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.1"
     }
@@ -58615,6 +58969,10 @@
       "error": "@require https://greasyfork.org/scripts/436749-wasm-patcher/code/wasm_patcher.js: The server returned HTTP 404 (in the script, line 9)",
       "warnings": [
         "@icon https://www.google.com/s2/favicons?domain=1v1.lol: The server returned HTTP 404 (in the script, line 8)"
+      ],
+      "tags": [
+        "invalid:require-dead-link",
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "0.0000000000.1"
@@ -59186,7 +59544,10 @@
     "file": "update.greasyfork.org/scripts/439505/%E5%85%A8%E5%B1%80%E9%B8%BF%E8%92%99%E9%BB%91%E4%BD%93.user.css",
     "valid": {
       "status": "invalid",
-      "error": "No // ==UserScript== metadata block, so this is not a userscript (in the script)",
+      "error": "This is a user style (a /* ==UserStyle== block), not a userscript. User styles need a user style manager extension. (in the script)",
+      "tags": [
+        "invalid:user-style"
+      ],
       "date": "2026-10-13"
     }
   },
@@ -59250,6 +59611,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://www.chess.com/bundles/web/favicons/favicon-32x32.c2a8280d.png: The server returned HTTP 404 (in the script, line 8)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "1.0 Beta"
@@ -59407,6 +59771,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://cdn.bootcdn.net/ajax/libs/jquery/2.2.4/jquery.min.js: The server returned HTTP 404 (in the script, line 13)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.2"
     }
@@ -59528,10 +59895,12 @@
       "1v1.school"
     ],
     "valid": {
-      "status": "invalid",
-      "error": "@require https://cdn.jsdelivr.net/npm/lil-gui@0.19: The filename must end in .js (in the script, line 12)",
+      "status": "ok",
       "warnings": [
         "@icon https://www.google.com/s2/favicons?domain=1v1.lol: The server returned HTTP 404 (in the script, line 9)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "1.4"
@@ -59599,6 +59968,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://www.hebergeur-image.fr/uploads/20231210/7a28ab28a8e9a4bea32b6918aa65a39ef5dea1fb.png: The server returned HTTP 404 (in the script, line 11)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "2.3"
@@ -59811,6 +60183,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://greasyfork.org/scripts/434599-apm/code/APM.js?version=983214: The server returned HTTP 404 (in the script, line 8)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "2"
     }
@@ -59995,6 +60370,10 @@
       "error": "@require https://greasyfork.org/scripts/436749-wasm-patcher/code/wasm_patcher.js: The server returned HTTP 404 (in the script, line 9)",
       "warnings": [
         "@icon https://www.google.com/s2/favicons?domain=1v1.lol: The server returned HTTP 404 (in the script, line 8)"
+      ],
+      "tags": [
+        "invalid:require-dead-link",
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "01"
@@ -60506,6 +60885,9 @@
       "warnings": [
         "@icon https://cdn.discordapp.com/attachments/954435318856175649/1089541815067234374/pixil-frame-0_6_2.png: The server returned HTTP 404 (in the script, line 9)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "v3.1.0"
     },
@@ -60665,6 +61047,9 @@
       "status": "ok",
       "warnings": [
         "@run-at start is not supported. The script runs at document-idle instead. (in the script, line 4)"
+      ],
+      "tags": [
+        "unsupported-run-at"
       ],
       "date": "2026-10-13",
       "version": "1.5"
@@ -61153,6 +61538,9 @@
       "warnings": [
         "@icon https://*.google.com/s2/favicons?sz=64&domain=fdownloader.net: The server returned HTTP 404 (in the script, line 12)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.69"
     },
@@ -61203,7 +61591,8 @@
         "@icon https://giphy.com/gifs/movie-man-willsmith-gi8JtlDffQMexR3YcU: The file is larger than the 128 KB limit (in the script, line 12)"
       ],
       "tags": [
-        "malformed-grant"
+        "malformed-grant",
+        "icon-too-large"
       ],
       "date": "2026-10-13",
       "version": "1.5"
@@ -61281,8 +61670,7 @@
       "voxiom.io"
     ],
     "valid": {
-      "status": "invalid",
-      "error": "@require https://cdn.jsdelivr.net/npm/lil-gui@0.19: The filename must end in .js (in the script, line 12)",
+      "status": "ok",
       "date": "2026-10-13",
       "version": "4.9"
     }
@@ -61435,6 +61823,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://pic.jitudisk.com/public/2022/06/04/59e467b286dcb.png: The server returned HTTP 404 (in the script, line 15)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "0.1"
@@ -62933,6 +63324,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://cdn.staticfile.org/timeago.js/4.0.2/timeago.min.js: The server returned HTTP 404 (in the script, line 18)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1.1.0"
     }
@@ -63805,6 +64199,9 @@
       "warnings": [
         "@icon https://greasyfork.org/vite/assets/blacklogo96-e0c2c761.png: The server returned HTTP 404 (in the script, line 5)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "3.2.7"
     },
@@ -64301,6 +64698,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://cdn.bootcdn.net/ajax/libs/jquery/3.2.1/jquery.min.js: The server returned HTTP 404 (in the script, line 45)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1.4.3"
     }
@@ -64408,6 +64808,9 @@
       "warnings": [
         "@icon https://www.berrywidgets.com/assets/health-bar2.png: The server returned HTTP 404 (in the script, line 10)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1.3"
     },
@@ -64449,6 +64852,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://www.berrywidgets.com/assets/health-bar2.png: The server returned HTTP 404 (in the script, line 10)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "1.4"
@@ -64626,7 +65032,10 @@
     "file": "update.greasyfork.org/scripts/453435/%E5%85%A8%E5%B1%80%E8%8B%B9%E6%96%B9.user.css",
     "valid": {
       "status": "invalid",
-      "error": "No // ==UserScript== metadata block, so this is not a userscript (in the script)",
+      "error": "This is a user style (a /* ==UserStyle== block), not a userscript. User styles need a user style manager extension. (in the script)",
+      "tags": [
+        "invalid:user-style"
+      ],
       "date": "2026-10-13"
     }
   },
@@ -65164,6 +65573,9 @@
       "warnings": [
         "@icon https://czrsd.com/static/sigmod/SigMod25-rounded.png: The file is larger than the 128 KB limit (in the script, line 12)"
       ],
+      "tags": [
+        "icon-too-large"
+      ],
       "date": "2026-10-13",
       "version": "10.2.3.3"
     },
@@ -65684,6 +66096,9 @@
       "warnings": [
         "@icon https://www.techwb.cn/CK100.png: The server returned HTTP 404 (in the script, line 16)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "2.5.0"
     },
@@ -65962,6 +66377,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://image.flaticon.com/icons/svg/99/99188.svg: The server returned HTTP 404 (in the script, line 9)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "1.6"
@@ -66553,6 +66971,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://greasyfork.org/scripts/410512-sci-js-from-ksw2-center/code/scijs%20(from%20ksw2-center).js: The server returned HTTP 404 (in the script, line 11)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.0.1"
     }
@@ -66579,6 +67000,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://greasyfork.org/scripts/410512-sci-js-from-ksw2-center/code/scijs%20(from%20ksw2-center).js: The server returned HTTP 404 (in the script, line 11)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.0.1"
     }
@@ -66696,6 +67120,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://greasyfork.org/scripts/410512-sci-js-from-ksw2-center/code/scijs%20(from%20ksw2-center).js: The server returned HTTP 404 (in the script, line 25)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1.0.0"
     }
@@ -66717,7 +67144,10 @@
     "file": "update.greasyfork.org/scripts/457101/Deviantart%20V7%20%28pre%20eclipse%29%20theme%20beta.user.css",
     "valid": {
       "status": "invalid",
-      "error": "No // ==UserScript== metadata block, so this is not a userscript (in the script)",
+      "error": "This is a user style (a /* ==UserStyle== block), not a userscript. User styles need a user style manager extension. (in the script)",
+      "tags": [
+        "invalid:user-style"
+      ],
       "date": "2026-10-13"
     }
   },
@@ -66831,6 +67261,10 @@
       "error": "@require https://greasyfork.org/scripts/368273-msgpack/code/msgpack.js?version=598723: The server returned HTTP 404 (in the script, line 11)",
       "warnings": [
         "@icon https://cdn.discordapp.com/attachments/759868693840003072/762661498178109450/lightcg.jpg: The server returned HTTP 404 (in the script, line 10)"
+      ],
+      "tags": [
+        "invalid:require-dead-link",
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "1.5"
@@ -67346,7 +67780,10 @@
     ],
     "valid": {
       "status": "invalid",
-      "error": "@require https://unpkg.com/opencv.js@1.2.1/opencv.js: The file is larger than the 1 MB limit (in the script, line 10)",
+      "error": "@require https://unpkg.com/opencv.js@1.2.1/opencv.js: The file is larger than the 2 MB limit (in the script, line 10)",
+      "tags": [
+        "invalid:require-too-large"
+      ],
       "date": "2026-10-13",
       "version": "3.1"
     }
@@ -67411,6 +67848,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://r.resimlink.com/rkU4RSlg.png: The file is larger than the 128 KB limit (in the script, line 49)"
+      ],
+      "tags": [
+        "icon-too-large"
       ],
       "date": "2026-10-13",
       "version": "2.1.1"
@@ -67481,7 +67921,8 @@
         "Ignoring @match https://search.*.cf/search*, which uses \"*\" inside its host; \"*\" has to be the whole host or its first label, as in *.example.com (in the script, line 25)"
       ],
       "tags": [
-        "ignored-match"
+        "ignored-match",
+        "invalid:resource-dead-link"
       ],
       "date": "2026-10-13",
       "version": "3.7.5"
@@ -67546,8 +67987,7 @@
       "www.chess.com"
     ],
     "valid": {
-      "status": "invalid",
-      "error": "@resource stockfish-5.js (https://raw.githubusercontent.com/sayfpack13/chess-analysis-bot/main/tampermonkey%20script/content/stockfish-5.js): The file is larger than the 1 MB limit (in the script, line 24)",
+      "status": "ok",
       "date": "2026-10-13",
       "version": "8.6.1"
     }
@@ -67572,8 +68012,7 @@
       "www.chess.com"
     ],
     "valid": {
-      "status": "invalid",
-      "error": "@resource stockfish.js (https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/9.0.0/stockfish.js): The file is larger than the 1 MB limit (in the script, line 22)",
+      "status": "ok",
       "date": "2026-10-13",
       "version": "1.2.9.5"
     }
@@ -67819,6 +68258,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://upload.wikimedia.org/wikipedia/commons/thumb/4/46/Bitcoin.svg/800px-Bitcoin.svg.png: The server returned HTTP 404 (in the script, line 39)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "1.10.5"
@@ -68385,6 +68827,9 @@
       "warnings": [
         "@icon https://static.wikia.nocookie.net/blooket/images/1/11/Wiseowlsvg.svg: The server returned HTTP 404 (in the script, line 7)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "15"
     },
@@ -68799,6 +69244,9 @@
         "@grant none overrides @grant GM_getResourceText, GM_addStyle, so the script runs in the page with no GM APIs. Remove the none line to use them. (in the script, line 7)",
         "@icon https://work.ink/favicon.ico: The server returned HTTP 404 (in the script, line 8)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1.0.6"
     },
@@ -69080,6 +69528,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://gcdnb.pbrd.co/images/mQLi55aRWkSR.png?o=1: The server returned HTTP 404 (in the script, line 20)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "2.8.0"
@@ -69461,6 +69912,9 @@
       "warnings": [
         "@icon https://th.bing.com/th/id/R.c8397fb766c4397fea8a8b499c15a453?rik=aROX42RoH7HhXw&pid=ImgRaw&r=0: The server returned HTTP 404 (in the script, line 5)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "2.1"
     },
@@ -69556,6 +70010,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require http://cdn.staticfile.org/jquery/1.12.1/jquery.min.js: The server returned an HTML page, not JavaScript; the link may be dead or behind a login (in the script, line 15)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "2.4.8"
     }
@@ -70044,6 +70501,9 @@
       "warnings": [
         "@icon https://media.discordapp.net/attachments/750977638486638633/1125257675471601784/Instagram_logo_2022.png?size=256: The server returned HTTP 404 (in the script, line 10)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1.12"
     },
@@ -70121,6 +70581,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://greasyfork.org/scripts/456235-moomoo-js/code/MooMoojs.js?version=1144738: The server returned HTTP 404 (in the script, line 10)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "2v"
     }
@@ -70443,6 +70906,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://f12.cx/favicon.png: The file is larger than the 128 KB limit (in the script, line 17)"
+      ],
+      "tags": [
+        "icon-too-large"
       ],
       "date": "2026-10-13",
       "version": "2.9.3"
@@ -70775,6 +71241,9 @@
       "warnings": [
         "@icon none: The server returned HTTP 404 (in the script, line 21)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.2.21"
     },
@@ -70814,6 +71283,9 @@
       "status": "ok",
       "warnings": [
         "@icon none: The server returned HTTP 404 (in the script, line 21)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "0.2.20"
@@ -71002,6 +71474,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://cdn.bootcdn.net/ajax/libs/jszip/3.9.1/jszip.min.js: The server returned HTTP 404 (in the script, line 58)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1.11.0"
     }
@@ -71303,8 +71778,7 @@
       "discord.com"
     ],
     "valid": {
-      "status": "invalid",
-      "error": "@require https://cdn.jsdelivr.net/npm/sweetalert2@11: The filename must end in .js (in the script, line 13)",
+      "status": "ok",
       "date": "2026-10-13",
       "version": "2.3"
     },
@@ -71346,6 +71820,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://www.duolingopro.net/static/favicons/dlp/128/light/primary.png: The server returned HTTP 404 (in the script, line 9)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "3.1BETA.04.5"
@@ -71688,6 +72165,9 @@
       "warnings": [
         "@run-at document_idle is not supported. The script runs at document-idle instead. (in the script, line 7)"
       ],
+      "tags": [
+        "unsupported-run-at"
+      ],
       "date": "2026-10-13",
       "version": "v2"
     },
@@ -71950,6 +72430,9 @@
       "warnings": [
         "@icon none: The server returned HTTP 404 (in the script, line 9)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1.2.0"
     },
@@ -72068,6 +72551,9 @@
     "valid": {
       "status": "invalid",
       "error": "@resource js_vue (https://cdn.staticfile.org/vue/3.3.7/vue.global.min.js): The server returned HTTP 404 (in the script, line 23)",
+      "tags": [
+        "invalid:resource-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "2.2.22.1"
     }
@@ -72217,6 +72703,10 @@
       "warnings": [
         "@icon https://cdn.discordapp.com/icons/1134569036043276439/2664d328e7ccce265d3a473e05adc96c.webp: The server returned HTTP 404 (in the script, line 4)"
       ],
+      "tags": [
+        "invalid:require-dead-link",
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "2.2"
     }
@@ -72297,6 +72787,9 @@
       "warnings": [
         "@icon https://cdn.glitch.com/82ae8945-dcc6-4276-98a9-665381b4cd2b/cursor12.png: The server returned HTTP 404 (in the script, line 8)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1.8.2"
     },
@@ -72375,6 +72868,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://cdn.glitch.com/82ae8945-dcc6-4276-98a9-665381b4cd2b/cursor12.png: The server returned HTTP 404 (in the script, line 8)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "1.2"
@@ -73102,10 +73598,12 @@
       "pan.baidu.com"
     ],
     "valid": {
-      "status": "invalid",
-      "error": "@require https://cdn.jsdelivr.net/npm/sweetalert2@11: The filename must end in .js (in the script, line 13)",
+      "status": "ok",
       "warnings": [
         "@icon https://pansvip.com/favicon.ico: The server returned HTTP 404 (in the script, line 8)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "0.1.1"
@@ -73525,6 +74023,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://cdn.glitch.com/82ae8945-dcc6-4276-98a9-665381b4cd2b/cursor12.png: The server returned HTTP 404 (in the script, line 8)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "2.0"
@@ -74081,6 +74582,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://cdn.discordapp.com/icons/1164634915330072609/6918102e1281bfeb58b66687c2520ab0.webp?size=240: The server returned HTTP 404 (in the script, line 8)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "0.3"
@@ -74920,6 +75424,9 @@
       "warnings": [
         "@icon https://www.hdwallpapers.in/download/trippy_purple_neon_hd_trippy-1600x900.jpg: The file is larger than the 128 KB limit (in the script, line 7)"
       ],
+      "tags": [
+        "icon-too-large"
+      ],
       "date": "2026-10-13",
       "version": "7"
     },
@@ -74967,6 +75474,10 @@
       "warnings": [
         "@icon https://cdn.discordapp.com/avatars/1131925981460975676/36b51f984147c8b907af0a3dcb834853.png?size=4096: The server returned HTTP 404 (in the script, line 19)"
       ],
+      "tags": [
+        "invalid:require-dead-link",
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "5_beta"
     }
@@ -74992,13 +75503,15 @@
     ],
     "valid": {
       "status": "invalid",
-      "error": "@require https://cdn.jsdelivr.net/npm/babylonjs@7.15.0/babylon.min.js: The file is larger than the 1 MB limit (in the script, line 13)",
+      "error": "@require https://cdn.jsdelivr.net/npm/babylonjs@7.15.0/babylon.min.js: The file is larger than the 2 MB limit (in the script, line 13)",
       "warnings": [
         "Ignoring unsupported @grant unsafeWindows (in the script, line 9)",
         "@icon https://github.com/onlypuppy7/LibertyMutualShellShockers/blob/main/scripticon.jpg?raw=true: The server returned HTTP 404 (in the script, line 11)"
       ],
       "tags": [
-        "malformed-grant"
+        "malformed-grant",
+        "invalid:require-too-large",
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "1.4.2"
@@ -75031,6 +75544,10 @@
       "warnings": [
         "@icon https://cdn.discordapp.com/attachments/942291806740160552/1187992941306855544/Untitled_design_23.png?ex=6598e7a5&is=658672a5&hm=3b02984cc121d8feced3ba084129cbb21f3b3be25bd8d7c9964f4f176eeeecba&: The server returned HTTP 404 (in the script, line 8)"
       ],
+      "tags": [
+        "invalid:require-dead-link",
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "2"
     }
@@ -75055,8 +75572,7 @@
       "youtube.com"
     ],
     "valid": {
-      "status": "invalid",
-      "error": "@require https://bundle.run/p-queue@6.3.0: The filename must end in .js (in the script, line 11)",
+      "status": "ok",
       "date": "2026-10-13",
       "version": "0.1"
     }
@@ -75406,6 +75922,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://unpkg.com/three@latest/build/three.min.js: The server returned HTTP 404 (in the script, line 9)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "2024-01-30"
     }
@@ -75490,6 +76009,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://cdn.discordapp.com/attachments/1124451069204910161/1177654466523189360/MOSHED-2023-11-24-13-55-23.jpg?ex=65734b30&is=6560d630&hm=1b42ff32759ea222cc3b1eac33cb7852209358d47e44c560b10efe0f8f230752&: The server returned HTTP 404 (in the script, line 13)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "1.1"
@@ -75957,6 +76479,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://greasyfork.org/scripts/368273-msgpack/code/msgpack.js?version=598723: The server returned HTTP 404 (in the script, line 12)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "2.6"
     }
@@ -76100,6 +76625,9 @@
       "warnings": [
         "@icon https://www.google.com/shellshockers.io: The server returned HTTP 404 (in the script, line 8)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1.0"
     },
@@ -76228,6 +76756,9 @@
       "warnings": [
         "@icon https://cdn.discordapp.com/attachments/1149405048049254521/1213453447312179250/Leaf-PlexusBot.jpg?ex=65f58796&is=65e31296&hm=9429f9b475e4c8240d555afd1626549b179d6689dff76bd343d67de9898fe102&: The server returned HTTP 404 (in the script, line 8)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1.2.1"
     },
@@ -76306,6 +76837,9 @@
       "warnings": [
         "@icon https://www.google.com/s2/favicons?sz=64&domain=pqjc.site: The server returned HTTP 404 (in the script, line 8)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "2024-03-09"
     },
@@ -76346,6 +76880,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://warchol.at/favicon.ico: The server returned HTTP 404 (in the script, line 8)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "2.0.3"
@@ -76928,6 +77465,10 @@
       "warnings": [
         "@icon https://cdn.discordapp.com/attachments/942291806740160552/1187992941306855544/Untitled_design_23.png?ex=6598e7a5&is=658672a5&hm=3b02984cc121d8feced3ba084129cbb21f3b3be25bd8d7c9964f4f176eeeecba&: The server returned HTTP 404 (in the script, line 8)"
       ],
+      "tags": [
+        "invalid:require-dead-link",
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "1"
     }
@@ -76955,6 +77496,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://yt3.ggpht.com/ofXbHpiwGc4bYnwwljjZJo53E7JRODr-SG32NPV1W6QiUnGUtVAYDwTP2NMz2pUPGnt99Juh5w=s88-c-k-c0x00ffffff-no-rj: The server returned HTTP 404 (in the script, line 9)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "1.1"
@@ -77115,6 +77659,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://greasyfork.org/scripts/368273-msgpack/code/msgpack.js?version=598723: The server returned HTTP 404 (in the script, line 12)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "3"
     }
@@ -77350,6 +77897,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://steamuserimages-a.akamaihd.net/ugc/2044108148224666217/6A44151F7534306FEC8259BDE5496463C9B55720/?imw=512&imh=512&ima=fit&impolicy=Letterbox&imcolor=%23000000&letterbox=true: The server returned HTTP 404 (in the script, line 34)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "2.2.0"
@@ -77897,7 +78447,8 @@
         "@icon https://vplugin.videoall.icu/favicon.svg: The server returned HTTP 404 (in the script, line 84)"
       ],
       "tags": [
-        "unsupported-grant:GM.webRequest"
+        "unsupported-grant:GM.webRequest",
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "v1.0.3"
@@ -78325,6 +78876,9 @@
       "warnings": [
         "@icon https://media.tenor.com/SI5tOTnHS34AAAAi/verycat-twitch-cat-twitch-emote.gif: The file is larger than the 128 KB limit (in the script, line 11)"
       ],
+      "tags": [
+        "icon-too-large"
+      ],
       "date": "2026-10-13",
       "version": "1.0"
     },
@@ -78443,6 +78997,9 @@
     "valid": {
       "status": "invalid",
       "error": "@require https://lf9-cdn-tos.bytecdntp.com/cdn/expire-1-M/jszip/3.1.5/jszip.min.js: The server returned HTTP 404 (in the script, line 7)",
+      "tags": [
+        "invalid:require-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "2.12"
     }
@@ -79123,6 +79680,9 @@
       "warnings": [
         "@icon https://img.freepik.com/premium-photo/intense-devil-art-black-white-wallpaper-with-multiple-filte_899449-50671.jpg: The file is larger than the 128 KB limit (in the script, line 8)"
       ],
+      "tags": [
+        "icon-too-large"
+      ],
       "date": "2026-10-13",
       "version": "V1.123456789101112.5"
     },
@@ -79650,6 +80210,9 @@
       "warnings": [
         "@icon https://gofile.io/dist/img/favicon16.png: The server returned HTTP 404 (in the script, line 13)"
       ],
+      "tags": [
+        "icon-dead-link"
+      ],
       "date": "2026-10-13",
       "version": "0.8.6"
     },
@@ -79837,8 +80400,7 @@
       "ixl.com"
     ],
     "valid": {
-      "status": "invalid",
-      "error": "@require https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js: The file is larger than the 1 MB limit (in the script, line 11)",
+      "status": "ok",
       "date": "2026-10-13",
       "version": "9.3"
     }
@@ -80305,8 +80867,7 @@
       "youtube.com"
     ],
     "valid": {
-      "status": "invalid",
-      "error": "@require https://cdn.jsdelivr.net/npm/sweetalert2@11: The filename must end in .js (in the script, line 26)",
+      "status": "ok",
       "date": "2026-10-13",
       "version": "1.5.1"
     }
@@ -80335,6 +80896,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://media.chatgptinfinity.com/images/icons/infinity-symbol/circled/with-robot/icon48.png?f196818: The server returned HTTP 404 (in the script, line 204)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "2024.12.21.12"
@@ -81083,6 +81647,9 @@
       "warnings": [
         "@icon https://i.imgur.com/11sYWVM.png: The file is larger than the 128 KB limit (in the script, line 6)"
       ],
+      "tags": [
+        "icon-too-large"
+      ],
       "date": "2026-10-13",
       "version": "4.1"
     },
@@ -81533,10 +82100,12 @@
       "www.chess.com"
     ],
     "valid": {
-      "status": "invalid",
-      "error": "@resource stockfish.js (https://raw.githubusercontent.com/longkidkoolstar/stockfish/refs/heads/main/stockfish.js): The file is larger than the 1 MB limit (in the script, line 15)",
+      "status": "ok",
       "warnings": [
         "@icon https://i.imgur.com/Z30WgSo.png: The file is larger than the 128 KB limit (in the script, line 10)"
+      ],
+      "tags": [
+        "icon-too-large"
       ],
       "date": "2026-10-13",
       "version": "4.1.7"
@@ -81760,6 +82329,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://raw.githubusercontent.com/blmpsaa/skribbl/refs/heads/main/icon.jpg: The server returned HTTP 404 (in the script, line 8)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "2025-04-12"
@@ -82196,6 +82768,9 @@
       "warnings": [
         "@icon https://cdn.jsdelivr.net/gh/GameSketchers/AimbaeShiro@main/Assets/logo.png: The file is larger than the 128 KB limit (in the script, line 18)"
       ],
+      "tags": [
+        "icon-too-large"
+      ],
       "date": "2026-10-13",
       "version": "1.6.7"
     },
@@ -82397,6 +82972,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://i.imgur.com/AFJt4iq.png: The file is larger than the 128 KB limit (in the script, line 6)"
+      ],
+      "tags": [
+        "icon-too-large"
       ],
       "date": "2026-10-13",
       "version": "1.6.6.5"
@@ -83526,10 +84104,12 @@
       "quillbot.com"
     ],
     "valid": {
-      "status": "invalid",
-      "error": "@require https://cdn.jsdelivr.net/npm/sweetalert2@11: The filename must end in .js (in the script, line 10)",
+      "status": "ok",
       "warnings": [
         "@icon https://quillbot.com/favicon.png: The server returned HTTP 404 (in the script, line 8)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "4.2.0"
@@ -83558,6 +84138,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://i.imgur.com/rlMQW2P.png: The file is larger than the 128 KB limit (in the script, line 5)"
+      ],
+      "tags": [
+        "icon-too-large"
       ],
       "date": "2026-10-13",
       "version": "5.5.4"
@@ -83600,6 +84183,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://krunkergame.com/wp-content/uploads/thumbs/custom/K/krunker.webp: The server returned HTTP 404 (in the script, line 12)"
+      ],
+      "tags": [
+        "icon-dead-link"
       ],
       "date": "2026-10-13",
       "version": "2.0"
@@ -83720,6 +84306,9 @@
       "status": "ok",
       "warnings": [
         "@icon https://media1.giphy.com/media/v1.Y2lkPTZjMDliOTUyNGpzdnl1czBxcm14bGt6OWR5MHVucnIzN3BseGxrNDRrZGpoMGZ1MyZlcD12MV9zdGlja2Vyc19zZWFyY2gmY3Q9cw/pgslAFp1vWALCgFlrC/giphy.gif: The file is larger than the 128 KB limit (in the script, line 11)"
+      ],
+      "tags": [
+        "icon-too-large"
       ],
       "date": "2026-10-13",
       "version": "6.10x"
@@ -84321,8 +84910,7 @@
       "www.songsterr.com"
     ],
     "valid": {
-      "status": "invalid",
-      "error": "@require https://cdn.jsdelivr.net/npm/@coderline/alphatab@1.8.1/dist/alphaTab.min.js: The file is larger than the 1 MB limit (in the script, line 35)",
+      "status": "ok",
       "date": "2026-10-13",
       "version": "5.1.1"
     }
@@ -85092,7 +85680,10 @@
     ],
     "valid": {
       "status": "invalid",
-      "error": "@require https://cdn.jsdelivr.net/npm/babylonjs@7.15.0/babylon.min.js: The file is larger than the 1 MB limit (in the script, line 85)",
+      "error": "@require https://cdn.jsdelivr.net/npm/babylonjs@7.15.0/babylon.min.js: The file is larger than the 2 MB limit (in the script, line 85)",
+      "tags": [
+        "invalid:require-too-large"
+      ],
       "date": "2026-10-13",
       "version": "2.5"
     }

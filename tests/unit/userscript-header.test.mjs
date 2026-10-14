@@ -13,6 +13,7 @@ import {
   splitHeaderBody,
   NO_METADATA_BLOCK,
   UNTERMINATED_METADATA_BLOCK,
+  USERSTYLE_NOT_SUPPORTED,
 } from '../../dist/userscript-header.js';
 
 const SAMPLE = `// ==UserScript==
@@ -162,6 +163,43 @@ test('parseHeader tolerates extra whitespace around the markers', () => {
   assert.equal(getValue(h, 'name'), 'Padded');
 });
 
+// Shapes GreasyFork serves and TM and VM install.
+test('markers can have other text before or after them on the line', () => {
+  const src = `/// ==UserScript==
+// @name Loose
+// ==/UserScript==//// var trailing = 1;
+body();
+`;
+  const result = splitHeaderBody(src);
+  assert.equal(result.error, undefined);
+  assert.equal(result.leadingText, '');
+  // The rest of the closing line is comment, so it stays in the header.
+  assert.equal(
+    result.headerText,
+    '/// ==UserScript==\n// @name Loose\n// ==/UserScript==//// var trailing = 1;',
+  );
+  assert.equal(result.bodyText, 'body();\n');
+  assert.equal(getValue(parseHeader(src), 'name'), 'Loose');
+});
+
+test('loose markers keep CRLF line endings and line numbers right', () => {
+  const src = 'x = 1; // ==UserScript==\r\n// @name Crlf\r\n// ==/UserScript== end\r\nbody();\r\n';
+  const result = splitHeaderBody(src);
+  assert.equal(result.leadingText, '');
+  assert.equal(result.headerText, 'x = 1; // ==UserScript==\r\n// @name Crlf\r\n// ==/UserScript== end');
+  assert.equal(result.bodyText, 'body();\r\n');
+  const name = parseHeader(src).tags.find((t) => t.tag === 'name');
+  assert.deepEqual([name.value, name.line], ['Crlf', 2]);
+});
+
+test('a marker needs the // before it', () => {
+  assert.equal(splitHeaderBody('==UserScript==\n// ==/UserScript==\n').error, NO_METADATA_BLOCK);
+  assert.equal(
+    splitHeaderBody('// ==UserScript==\n==/UserScript==\n').error,
+    UNTERMINATED_METADATA_BLOCK,
+  );
+});
+
 test('splitHeaderBody returns the raw block and the body', () => {
   const src = `// ==UserScript==
 // @name Foo
@@ -205,6 +243,11 @@ test('splitHeaderBody flags missing opening marker', () => {
   assert.equal(result.leadingText, '');
   assert.equal(result.headerText, '');
   assert.equal(result.bodyText, src);
+});
+
+test('splitHeaderBody names a user style rather than calling it no block', () => {
+  const src = '/* ==UserStyle==\n@name Dark\n==/UserStyle== */\nbody { color: red }\n';
+  assert.equal(splitHeaderBody(src).error, USERSTYLE_NOT_SUPPORTED);
 });
 
 test('splitHeaderBody flags unterminated block', () => {

@@ -15,6 +15,18 @@ Two related pieces:
 
 ## Header parser
 
+### Marker lines
+
+A marker line is `//`, optional spaces or tabs, then `==UserScript==`
+or `==/UserScript==`. Anything else can come before or after on the
+line, as VM matches it.
+
+- GreasyFork serves scripts opening with `/// ==UserScript==` or
+  closing with `// ==/UserScript==////`, and TM and VM install both.
+- Each marker takes its whole line, so text after the closing marker
+  stays in the header (it's part of that comment) and the body starts
+  on the next line.
+
 ### `splitHeaderBody(source)`
 
 Returns `{leadingText, headerText, bodyText, error?}`:
@@ -27,7 +39,8 @@ Returns `{leadingText, headerText, bodyText, error?}`:
 - `bodyText` — everything after the closing marker (a single
   trailing newline is stripped so the body doesn't lead with a blank
   line).
-- `error` — `NO_METADATA_BLOCK` or `UNTERMINATED_METADATA_BLOCK`
+- `error` — `NO_METADATA_BLOCK`, `USERSTYLE_NOT_SUPPORTED` (no userscript
+  block, but a `/* ==UserStyle==` one) or `UNTERMINATED_METADATA_BLOCK`
   (exported from the same module, since the message doubles as the
   discriminant). On error, `leadingText = ''`, `headerText = ''`, and
   `bodyText = source`.

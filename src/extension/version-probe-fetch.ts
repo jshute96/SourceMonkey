@@ -11,8 +11,8 @@ import { getValue, parseHeader } from '../userscript-header.js';
 import type { ProbeTarget, VersionProbe } from '../version-probe.js';
 
 // A `.meta.js` is a couple of KB; a `@downloadURL` is a whole
-// userscript. 1 MB matches the `@require` body cap — past that we're
-// not reading a userscript header, we're downloading something else.
+// userscript. Past 1 MB we're not reading a userscript header, we're
+// downloading something else.
 const PROBE_MAX_BYTES = 1024 * 1024;
 const PROBE_TIMEOUT_MS = 5000;
 

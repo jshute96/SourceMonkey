@@ -123,23 +123,23 @@ test.describe('@require', () => {
     }
   });
 
-  test('non-.js @require URL flips the script to error', async ({ sm }) => {
-    // Write a sibling JSON file so the only failure surface is the
-    // suffix check (not "file missing").
-    fs.writeFileSync(path.join(scriptsDir.path, 'lib.json'), '{"x":1}');
+  test('a @require with no .js suffix loads', async ({ sm }) => {
+    // CDN shorthands (`cdn.jsdelivr.net/npm/sweetalert2@11`) name a
+    // package rather than a file, so nothing gates on the suffix.
+    fs.writeFileSync(path.join(scriptsDir.path, 'lib'), 'window.__SM_LIB = 1;');
     scriptsDir.write({
       relativePath: 'main.user.js',
       meta: {
-        name: 'Bad Suffix',
+        name: 'No Suffix',
         match: ['https://example.com/*'],
-        extra: ['// @require     lib.json'],
+        extra: ['// @require     lib'],
       },
       body: '',
     });
     const collection = await sm.addCollection(scriptsDir.path);
     const data = await sm.getCollectionWithScripts(collection!.id);
-    expect(data!.scripts[0].status).toBe('invalid');
-    expect(data!.scripts[0].errorMessage).toMatch(/must end in \.js/);
+    expect(data!.scripts[0].status).toBe('ok');
+    expect(data!.scripts[0].requires?.[0]?.source).toBe('window.__SM_LIB = 1;');
   });
 
   test('@require traversal is rejected before any fetch', async ({ sm }) => {

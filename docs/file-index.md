@@ -98,7 +98,7 @@ and `lib/`.
 | `src/phase-timing.ts` | Debug-gated timers behind the refresh / registration / enable paths: per-sequence phases plus cumulative fan-out totals |
 | `src/bytes.ts` | Shared byte helpers: `sha256Hex` (content/file hashes) plus chunked `bytesToBase64` / `base64ToBytes` for message-hop and `@resource` transport |
 | `src/match-targets.ts` | Pure `@match` pattern → `{origin, linkUrl}` extractor, the first-few-distinct-sites list behind multi-icon rows, and the same-directory fallback for site-less patterns |
-| `src/file-loader.ts` | Resolves header refs (`@icon`, `@require`, `@resource`) against the script's own URL, containing a local script to its folder; scheme-aware byte + text fetcher reporting why it failed; `.js` suffix gate |
+| `src/file-loader.ts` | Resolves header refs (`@icon`, `@require`, `@resource`) against the script's own URL, containing a local script to its folder; scheme-aware byte + text fetcher reporting why it failed |
 | `src/run-context.ts` | The page-vs-service-worker test (`isPageContext`), and the guard that stops a page writing (`assertWorkerContext`) |
 | `src/http-read.ts` | One http(s) read, made in the service worker when a page asks — a document fetch acts on the response's `Link: rel=preload` headers |
 | `src/external-files.ts` | `@require` + `@resource` orchestrator: resolve, fetch, dedup (cross-script + cross-kind), attach typed entries, word the failures; the `@icon` check |
