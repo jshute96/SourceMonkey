@@ -866,6 +866,38 @@ Why the split:
 - Both checks run in the SW (not page-side) so refusals also reach the
   per-script Log.
 
+## `GM_cookie`
+
+User-facing surface (call shapes, fields, what a script can reach) is
+in [supported-GM-APIs.md](supported-GM-APIs.md#cookies).
+
+- **Bindings** (`gm-bindings.ts`): `GM_cookie` is a function with
+  `list` / `set` / `delete` on it, and `GM.cookie` an object of
+  Promise-returning methods. Both call `reg.gm.cookie.call(scriptId,
+  action, details, cb, promised)`.
+- **Page side** (`wrapper-gm-runtime.js`): copies the known fields out
+  of `details` as plain values (so a function in it can't fail the
+  send) and sends one `sm:gm-cookie` per call. No per-call state stays
+  behind.
+- **SW side** (`src/extension/gm-cookie.ts`, dispatched from
+  `background.ts`):
+  - The page URL is the sender frame's, never the payload's.
+  - The target URL is checked against the script's rules through the
+    match index (`scriptMatchesUrl`), the same rules that decide where
+    it runs.
+  - `httpOnly` cookies are filtered from `list`. `set` and `delete`
+    first look up every cookie of that name sent to the URL or on its
+    domain, and refuse if any is `httpOnly`: `cookies.get` would show
+    only one, and `remove` can take several.
+  - An incognito tab's calls carry its cookie store's id
+    (`chrome.cookies.getAllCookieStores`). Without it Chrome would use
+    the regular profile's jar.
+  - A bridge-relayed call goes through `bridgeMayActAs` with the
+    `cookie` subsystem.
+- **Trust**: the `scriptId` is wrapper-supplied, as for every GM call,
+  so a sibling script in the same world could borrow another's
+  `@match` reach. Same caveat as storage and `@connect` above.
+
 ## `GM_registerMenuCommand` / `GM_unregisterMenuCommand`
 
 ### Surface

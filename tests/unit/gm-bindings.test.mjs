@@ -212,6 +212,28 @@ test('emitGmBindings: GM_notification routes to reg.gm.notification.show with th
   assert.match(out.js, /__smReg\.gm\.notification\.show\("script-1"/);
 });
 
+test('emitGmBindings: GM_cookie is callable with list/set/delete; GM.cookie is promised', () => {
+  const out = emitGmBindings(['GM_cookie'], makeInfo({ grants: ['GM_cookie'] }));
+  const seen = [];
+  const reg = {
+    gm: { cookie: { call: (...args) => { seen.push(args); return 'ret'; } } },
+    apply: Reflect.apply,
+  };
+  const { GM_cookie, GM } = new Function('__smReg', `${out.js} return { GM_cookie, GM };`)(reg);
+  const cb = () => {};
+  GM_cookie.list({ name: 'a' }, cb);
+  GM_cookie.delete({ name: 'b' });
+  GM_cookie('set', { name: 'c' }, cb);
+  GM.cookie.list({ name: 'd' });
+  assert.deepEqual(seen, [
+    ['script-1', 'list', { name: 'a' }, cb, false],
+    ['script-1', 'delete', { name: 'b' }, undefined, false],
+    ['script-1', 'set', { name: 'c' }, cb, false],
+    ['script-1', 'list', { name: 'd' }, undefined, true],
+  ]);
+  assert.deepEqual(Object.keys(GM.cookie), ['list', 'set', 'delete']);
+});
+
 test('emitGmBindings: GM_download routes to reg.gm.download.start with the scriptId', () => {
   const out = emitGmBindings(['GM_download'], makeInfo({ grants: ['GM_download'] }));
   assert.match(out.js, /const GM_download = function \(detailsOrUrl, name\)/);

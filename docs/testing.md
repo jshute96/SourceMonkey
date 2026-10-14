@@ -390,6 +390,10 @@ fetch via the SW). Highlights:
   traversing `name`) including the Log-tab entry, `abort()`, and
   the deliberate contrast that `@connect` gates `GM_xmlhttpRequest`
   but not `GM_download`.
+- `tests/e2e/gm-cookie.spec.ts` — `GM_cookie` / `GM.cookie` list, set
+  and delete against the real cookie jar in both worlds, callbacks,
+  `httpOnly` cookies hidden and protected, a URL outside `@match`
+  refused, and ungranted access gated.
 - `tests/e2e/window-onurlchange.spec.ts` — `@grant window.onurlchange`:
   page-initiated `pushState` / `replaceState` / hash / back all
   deliver a `urlchange`; the initial load doesn't, but a same-URL

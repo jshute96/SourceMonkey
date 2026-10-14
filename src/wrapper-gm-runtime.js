@@ -2641,6 +2641,72 @@
     }
   }
 
+  /* ---------- GM_cookie ----------
+
+     One SW round-trip per call (`sm:gm-cookie`); the SW checks the URL
+     against the script's rules. Two faces, as in TM:
+       GM_cookie.list(details, cb)    cb(cookies, error)
+       GM_cookie.set(details, cb)     cb(error)
+       GM_cookie.delete(details, cb)  cb(error)
+       GM_cookie(action, details, cb) the same, by name
+     and GM.cookie.list / .set / .delete(details), which return Promises
+     (list's resolves to the cookies; a failure rejects with an Error).
+     The legacy form returns undefined and reports errors as strings,
+     which is what TM hands its callbacks. */
+  var COOKIE_FIELDS = ["url", "domain", "name", "path", "value", "secure",
+    "httpOnly", "sameSite", "expirationDate"];
+  /* Only the fields the SW reads, as plain values: the details object
+     may hold anything, and a function in it would fail the send. */
+  function cookieDetails(d) {
+    var out = {};
+    if (!d || typeof d !== "object") return out;
+    for (var i = 0; i < COOKIE_FIELDS.length; i++) {
+      var k = COOKIE_FIELDS[i];
+      var v = d[k];
+      if (v === undefined) continue;
+      if (k === "url" && v && typeof v === "object" && typeof v.href === "string") v = v.href;
+      if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") out[k] = v;
+    }
+    var pk = d.partitionKey;
+    if (pk && typeof pk === "object") {
+      out.partitionKey = {};
+      if (typeof pk.topLevelSite === "string") out.partitionKey.topLevelSite = pk.topLevelSite;
+      if (typeof pk.hasCrossSiteAncestor === "boolean") out.partitionKey.hasCrossSiteAncestor = pk.hasCrossSiteAncestor;
+    }
+    return out;
+  }
+  var cookie = {
+    call: function (scriptId, action, details, cb, promised) {
+      var reply = api.sendAsync({
+        type: "sm:gm-cookie",
+        scriptId: scriptId,
+        action: action,
+        details: cookieDetails(details),
+      }).then(function (r) {
+        return r && r.ok ? r : { ok: false, error: (r && r.error) || "GM_cookie." + action + " failed" };
+      }, function (err) {
+        return { ok: false, error: String(err && err.message || err) };
+      });
+      if (promised) {
+        return reply.then(function (r) {
+          if (!r.ok) throw new _Error(r.error);
+          return action === "list" ? r.cookies : undefined;
+        });
+      }
+      if (typeof cb === "function") {
+        reply.then(function (r) {
+          try {
+            if (action === "list") cb(r.ok ? r.cookies : undefined, r.ok ? undefined : r.error);
+            else cb(r.ok ? undefined : r.error);
+          } catch (e) {
+            try { console.info("[SourceMonkey] GM_cookie callback threw:", e); } catch (_e) {}
+          }
+        });
+      }
+      return undefined;
+    },
+  };
+
   /* ---------- GM_download ----------
 
      Two call shapes (TM):
@@ -3430,6 +3496,7 @@
     tab: tab,
     notification: notification,
     download: download,
+    cookie: cookie,
     menu: menu,
     /* Before a manual script's next run in this document (see
        `rerunManual` in userscript-prelude.js): retire what its last

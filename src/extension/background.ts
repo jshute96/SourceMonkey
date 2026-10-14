@@ -31,6 +31,7 @@ import {
   localScriptIds,
   onCacheChanged,
   scriptGrantsSubsystem,
+  scriptMatchesUrl,
   scriptWorld,
   indexedScript,
   type MatchedScript,
@@ -346,6 +347,13 @@ import {
   SM_WINDOW_FOCUS_MSG,
   type WindowControlResult,
 } from './gm-window-control.js';
+import {
+  incognitoStoreId,
+  runCookieCall,
+  SM_GM_COOKIE_MSG,
+  type GmCookiePayload,
+  type GmCookieResult,
+} from './gm-cookie.js';
 import {
   buildPopupView,
   POPUP_CHANGED_MESSAGE,
@@ -4397,6 +4405,45 @@ async function handleWindowControl(
   return result;
 }
 
+// ---------- GM_cookie dispatch ----------
+
+// The cookie calls are about the page the script runs on (the sending
+// frame), or another URL its rules cover; `runCookieCall` checks that.
+// Refusals and failures go to the script's Log as well as back to it,
+// as for window.close: a script that ignores the error leaves nothing
+// else to go on.
+async function handleCookieCall(
+  msg: GmCookiePayload & { __viaBridge?: unknown },
+  sender: chrome.runtime.MessageSender,
+): Promise<GmCookieResult> {
+  const scriptId = msg.scriptId;
+  if (viaBridge(msg) && !(await bridgeMayActAs(scriptId, sender, ['cookie']))) {
+    return { ok: false, error: BRIDGE_DENIED };
+  }
+  if (typeof scriptId !== 'string') {
+    return { ok: false, error: 'Internal error: the cookie call named no userscript' };
+  }
+  const pageUrl = sender.url ?? sender.tab?.url;
+  if (!pageUrl) return { ok: false, error: NO_ORIGINATOR_TAB };
+  await ensureLoaded();
+  const tabId = sender.tab?.id;
+  const storeId = sender.tab?.incognito && tabId != null ? await incognitoStoreId(tabId) : undefined;
+  const result = await runCookieCall(msg.action, msg.details, {
+    pageUrl,
+    scriptMatches: (url) => scriptMatchesUrl(scriptId, url),
+    ...(storeId !== undefined ? { storeId } : {}),
+  });
+  if (!result.ok) {
+    logScriptEvent(scriptId, {
+      level: 'warning',
+      source: 'gm-cookie',
+      ...(tabId != null ? { tabId } : {}),
+      message: `GM_cookie: ${result.error}`,
+    });
+  }
+  return result;
+}
+
 // ---------- GM_download dispatch ----------
 
 // Ship one download event to the tab that asked for it, and mirror
@@ -5268,6 +5315,13 @@ function installScriptMessageListener(): void {
       return respondAsync(
         `gm-window-${which}`,
         handleWindowControl(msg as { scriptId?: unknown; __viaBridge?: unknown }, sender, which),
+        sendResponse,
+      );
+    }
+    if (type === SM_GM_COOKIE_MSG) {
+      return respondAsync(
+        'gm-cookie',
+        handleCookieCall(msg as GmCookiePayload & { __viaBridge?: unknown }, sender),
         sendResponse,
       );
     }

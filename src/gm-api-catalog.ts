@@ -45,6 +45,7 @@ export type ApiSubsystem =
   | 'notification'
   | 'tab'
   | 'download'
+  | 'cookie'
   | 'unsafe-window'
   | 'url-change'
   | 'window-control';
@@ -171,6 +172,10 @@ export const GM_APIS: readonly GmApiSpec[] = Object.freeze([
   // to disk rather than back to the script, so the exfiltration risk
   // `@connect` guards doesn't apply. See docs/GM-APIs.md.
   { name: 'GM_download', gmDotName: 'download', kind: 'async', subsystem: 'download' },
+  // An object (`.list` / `.set` / `.delete`), not a function, so it gets
+  // its own bindings: callbacks on `GM_cookie`, Promises on `GM.cookie`.
+  // The SW limits it to URLs the script's `@match` / `@include` cover.
+  { name: 'GM_cookie', gmDotName: 'cookie', kind: 'async', subsystem: 'cookie' },
 ]);
 
 // Quick lookup. Built lazily so unit tests that only import types or

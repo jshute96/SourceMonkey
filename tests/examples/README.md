@@ -135,6 +135,7 @@ events.
 | `gm-xmlhttp/`              | `GM_xmlhttpRequest`                                               | form-driven   |
 | `gm-open-in-tab/`          | `GM_openInTab`                                                    | form-driven   |
 | `gm-notification/`         | `GM_notification`                                                 | button-driven |
+| `gm-cookie/`               | `GM_cookie` / `GM.cookie`                                         | form-driven   |
 | `gm-download/`             | `GM_download`                                                     | button-driven |
 | `gm-menu/`                 | `GM_registerMenuCommand` / `GM_unregisterMenuCommand`             | button-driven |
 | `gm-resource/`             | `GM_getResourceText` / `GM_getResourceURL`                        | pure read     |

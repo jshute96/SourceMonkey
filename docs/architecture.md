@@ -11,9 +11,9 @@ details live in the topic-specific docs linked below.
 > `GM_addElement`), clipboard, `GM_xmlhttpRequest` (text + binary,
 > with `@connect` URL gating and the surgery that lets a script set
 > forbidden request headers like `Sec-Fetch-*`), `GM_download`,
-> `GM_notification`, `GM_openInTab`, `GM_log`, and
+> `GM_notification`, `GM_openInTab`, `GM_cookie`, `GM_log`, and
 > `GM_registerMenuCommand` / `GM_unregisterMenuCommand` (listed
-> under each script in the toolbar popup). Deferred: `GM_cookie` (bindings stubbed). See
+> under each script in the toolbar popup). See
 > [GM-APIs.md](GM-APIs.md) and [TODO.md](../TODO.md).
 
 ## Components
@@ -245,6 +245,10 @@ details live in the topic-specific docs linked below.
   notification id back to the originating tab + request id so
   `onClicked` / `onClosed` events route to the userscript's
   `onclick` / `ondone` callbacks.
+- **GM_cookie handler** (`src/extension/gm-cookie.ts`) — `chrome.cookies`
+  list / set / delete for URLs the calling script's `@match` /
+  `@include` rules cover, with `httpOnly` cookies hidden. See
+  [supported-GM-APIs.md](supported-GM-APIs.md#cookies).
 - **window.onurlchange driver** (`src/extension/gm-url-change.ts`) — forwards
   `chrome.webNavigation`'s same-document navigation events to the
   frame that changed, which is the only way an isolated-world script

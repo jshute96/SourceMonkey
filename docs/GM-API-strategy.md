@@ -264,8 +264,8 @@ recommendation itself still stands.
   adopting Chrome's.
 - **VM's API surface grew** past what this doc assumed: `GM_cookie`
   (2.35.1+), and `GM_getValues` / `GM_setValues` / `GM_deleteValues`
-  (2.19.1+). None of those are in our catalog; they're listed as gaps
-  in [supported-GM-APIs.md](supported-GM-APIs.md) and
+  (2.19.1+). We have `GM_cookie` now; the bulk value calls are listed
+  as gaps in [supported-GM-APIs.md](supported-GM-APIs.md) and
   [TODO.md](../TODO.md).
 - **VM remains cross-browser**, which is why the parts we called
   redundant for us (Firefox `cloneInto` / `exportFunction`,

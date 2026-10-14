@@ -711,6 +711,55 @@ primitive, and any host that acts on a plain GET is reachable.
 
 ---
 
+## Cookies
+
+| API | Status | TM | VM | GM | Notes |
+|-----|:------:|:--:|:--:|:--:|-------|
+| `GM_cookie` / `GM.cookie` | ✅ | ✓ | ✓ |   | `.list` / `.set` / `.delete` over the browser's cookie jar (`chrome.cookies`), for URLs the script's own rules cover. |
+
+### Cookie call shape
+
+- `GM_cookie.list(details, cb)` — `cb(cookies, error)`.
+- `GM_cookie.set(details, cb?)` / `GM_cookie.delete(details, cb?)` —
+  `cb(error)`, `undefined` on success.
+- `GM_cookie(action, details, cb)` — the same, by name (TM's form).
+- The legacy form returns `undefined`; errors reach the callback as
+  strings, as in TM.
+- `GM.cookie.list(details)` / `.set` / `.delete` return Promises. `list`
+  resolves to the cookies; a failure rejects with an `Error`.
+
+### Cookie details
+
+- `url` — the URL the call is about. Defaults to the page's (the
+  frame's) URL; a relative one resolves against it.
+- `list` filters: `domain`, `name`, `path`, `partitionKey`. A `domain`
+  without a `url` lists that domain's cookies, its subdomains'
+  included.
+- `set`: `name`, `value`, `domain`, `path`, `secure`, `sameSite`,
+  `expirationDate` (seconds since the epoch; leave it out for a
+  session cookie), `partitionKey`. `secure` defaults to whether the
+  URL is https.
+- `delete`: `name` (required), `partitionKey`.
+- Each listed cookie has `name`, `value`, `domain`, `path`, `secure`,
+  `httpOnly`, `sameSite`, `session`, `hostOnly`, and `expirationDate`
+  / `partitionKey` when set: TM's fields.
+
+### What a script can reach
+
+- **Only URLs its own `@match` / `@include` rules cover** (and no
+  `@exclude` does), as in TM and VM. A `domain`-only `list` is checked
+  as `https://<domain>/`. Anything else is refused with an error.
+- **No `httpOnly` cookies.** `list` leaves them out, and `set` and
+  `delete` refuse any call that could make, replace or remove one: a
+  cookie of that name sent to the URL, or on its domain. TM and VM both hide
+  them on Chrome by default, and each has a setting to allow them;
+  SourceMonkey has no such setting yet.
+- Only http(s) URLs: the browser keeps no cookies for the others.
+- In an incognito tab, the incognito cookie jar.
+- A refused or failed call is also logged on the script's Log tab.
+
+---
+
 ## Menu commands
 
 | API | Status | TM | VM | GM | Notes |
@@ -780,9 +829,6 @@ is a catalog entry + a body — nothing structural.
 
 [logging]: logging.md#page-console-startup-logs
 
-- `GM_cookie` (and `GM.cookie`) — cross-origin cookie store.
-  TM's, and VM's too since 2.35.1: `.list` / `.set` / `.delete`, with
-  the calling script's `@match` validated against the target URL.
 - `GM_getValues` / `GM_setValues` / `GM_deleteValues` — bulk storage
   reads and writes (TM 5.x, VM 2.19.1+). Our per-call storage APIs
   already batch writes, so these are convenience, not throughput.

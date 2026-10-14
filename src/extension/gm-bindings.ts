@@ -367,6 +367,14 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
         return `const GM_download = function (detailsOrUrl, name) { return __smReg.gm.download.start(${jsLit(scriptId)}, detailsOrUrl, name); };`;
     }
   }
+  // Cookie subsystem: GM_cookie is TM's function-with-methods —
+  // `GM_cookie.list(details, cb)` and friends, and `GM_cookie("list",
+  // details, cb)` — reporting through callbacks. The GM4 form is in
+  // emitGmObject.
+  if (spec.subsystem === 'cookie') {
+    return `const GM_cookie = function (action, details, cb) { return __smReg.gm.cookie.call(${jsLit(scriptId)}, action, details, cb, false); }; `
+      + COOKIE_ACTIONS.map((a) => `GM_cookie[${jsLit(a)}] = ${cookieMethod(scriptId, a, false)};`).join(' ');
+  }
   // Menu subsystem: register/unregister context-menu commands. The
   // runtime stashes the callback locally (callbacks aren't
   // serializable) and sends the SW a `{commandId, name}` envelope so
@@ -424,6 +432,16 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   ].join(' ');
 }
 
+const COOKIE_ACTIONS = ['list', 'set', 'delete'] as const;
+
+// One `GM_cookie` / `GM.cookie` method. `promised` is the GM4 form,
+// which returns a Promise and takes no callback.
+function cookieMethod(scriptId: string, action: string, promised: boolean): string {
+  return promised
+    ? `function (details) { return __smReg.gm.cookie.call(${jsLit(scriptId)}, ${jsLit(action)}, details, undefined, true); }`
+    : `function (details, cb) { return __smReg.gm.cookie.call(${jsLit(scriptId)}, ${jsLit(action)}, details, cb, false); }`;
+}
+
 // Build the GM4 namespace object — `const GM = { ... }`. Not frozen, as
 // in TM and VM: GM_config and other libraries add to it.
 // For each granted API with a `gmDotName`, expose a property on `GM`.
@@ -432,13 +450,19 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
 // registry's copies (`apply`, `resolve`, `reject`): a page that replaced
 // `Function.prototype.apply` or `Promise.resolve` would otherwise be
 // handed the GM function itself.
-function emitGmObject(grantedSpecs: readonly GmApiSpec[]): string {
+function emitGmObject(grantedSpecs: readonly GmApiSpec[], scriptId: string): string {
   const props: string[] = [];
   for (const spec of grantedSpecs) {
     if (!spec.gmDotName) continue;
     if (spec.subsystem === 'unsafe-window') continue;
     if (spec.name === 'GM_info') {
       props.push(`info: GM_info`);
+      continue;
+    }
+    // An object of Promise-returning methods, not a function.
+    if (spec.subsystem === 'cookie') {
+      const methods = COOKIE_ACTIONS.map((a) => `${jsLit(a)}: ${cookieMethod(scriptId, a, true)}`);
+      props.push(`${spec.gmDotName}: { ${methods.join(', ')} }`);
       continue;
     }
     if (spec.gmDotPromised) {
@@ -540,7 +564,7 @@ export function emitGmBindings(
   const allSpecsIncludingInfo = [findApi('GM_info')!].concat(
     specs.filter((s) => s.name !== 'GM_info'),
   );
-  const gmObject = emitGmObject(allSpecsIncludingInfo);
+  const gmObject = emitGmObject(allSpecsIncludingInfo, info.scriptId);
   if (gmObject) {
     parts.push(gmObject);
     declared.push('GM');

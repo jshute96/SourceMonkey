@@ -533,6 +533,13 @@ test.describe('@grant unsafeWindow', () => {
     expect((reply as { ok?: unknown }).ok).toBe(false);
     await page.waitForTimeout(300);
     expect((await extensionContext.pages()).length).toBe(before);
+
+    // Nor list cookies through it: a script granted GM_cookie can reach
+    // other sites its @match covers, beyond the page's own.
+    const cookieReply = await bridgeRequest(page, await sm.channelKey(), {
+      type: 'sm:gm-cookie', scriptId: plainId, action: 'list', details: {},
+    });
+    expect((cookieReply as { ok?: unknown }).ok).toBe(false);
     await page.close();
   });
 });

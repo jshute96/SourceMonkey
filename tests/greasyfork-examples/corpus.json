@@ -68967,29 +68967,29 @@
     ],
     "valid": {
       "status": "ok",
-      "warnings": [
-        "Ignoring unsupported @grant GM_cookie (in the script, line 12)"
-      ],
-      "tags": [
-        "unsupported-grant:GM_cookie"
-      ],
-      "date": "2026-10-01",
+      "date": "2026-10-13",
       "version": "1.0.11"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-02",
+      "status": "pass",
+      "date": "2026-10-13",
       "version": "1.0.11"
     },
-    "tags": [
-      "unsupported-grant:GM_cookie"
-    ],
     "notes": [
       {
         "date": "2026-10-02",
         "version": "1.0.11",
         "text": "Tested in sm-dev in the shared visible browser (Reddit blocks headless), signed out, on r/MorbidReality, which shows Reddit's \"Mature Content / Yes, I'm Over 18\" interstitial.\n\n- Script: its first statement after the blur fix calls `GM_cookie.set` to write an `over18` cookie, and SourceMonkey has no `GM_cookie`, so it throws `GM_cookie is not defined` (line 24). The MutationObserver that removes the modals and blurs is never set up, and the interstitial stays.\n- A copy with `GM_cookie.set` replaced by a `document.cookie` write ran clean; after a reload the interstitial was gone and the subreddit's posts showed. Tampermonkey provides `GM_cookie.set`, so the script would work there.\n- The test `over18` cookie was removed afterwards."
+      },
+      {
+        "date": "2026-10-13",
+        "version": "1.0.11",
+        "text": "Re-tested with `GM_cookie` added (on the unmerged `gm-cookie` branch): the script now starts with no error, but Reddit could not be judged.\n\n- Script: on r/MorbidReality, in a headed temp browser, it ran clean, and its `GM_cookie.set` calls left two `over18=true` cookies (on `reddit.com` and `www.reddit.com`), read back with both `document.cookie` and `GM_cookie.list`. That cookie is what made the interstitial go away in the earlier test's `document.cookie` copy.\n- Reddit answered both the temp browser and the shared visible browser with \"Prove your humanity\" (a reCAPTCHA page), so whether the interstitial and blur go away wasn't checked."
+      },
+      {
+        "date": "2026-10-13",
+        "version": "1.0.11",
+        "text": "Passed when tested by hand in the shared visible browser, after solving Reddit's reCAPTCHA there: with `GM_cookie` now supported, the script set its `over18` cookie and the \"Mature Content\" interstitial on r/MorbidReality was gone."
       }
     ]
   },

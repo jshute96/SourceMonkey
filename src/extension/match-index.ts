@@ -349,6 +349,13 @@ export function indexedScript(id: string): Pick<MatchedScript, 'world' | 'nofram
   };
 }
 
+// Whether script `id`'s rules cover `url`, enabled or not. False for an
+// id the index doesn't hold.
+export function scriptMatchesUrl(id: string, url: string): boolean {
+  const entry = cache.get(id);
+  return entry !== undefined && urlMatchesScript(url, entry.matching);
+}
+
 // Whether `id` is a manual script (`@run-at context-menu`). False for
 // an id the index doesn't hold.
 export function isManualScriptId(id: string): boolean {

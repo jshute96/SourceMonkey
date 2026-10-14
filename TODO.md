@@ -377,8 +377,6 @@ wasn't checked.
   - Page code can tamper with the built-ins a granted page-world
     script uses itself (docs/GM-API-strategy.md, section 3, decided
     against VM's safe-builtins when granted scripts ran isolated).
-- **`GM_cookie`** (463802) is the whole failure for a Reddit script.
-  See "GM_* APIs not yet in the catalog".
 
 The next items were checked against Tampermonkey 5.5.0 and
 Violentmonkey 2.49.0 with a throwaway `tests/examples/` probe script
@@ -622,18 +620,15 @@ extension `Origin` is removed by default. What's still open:
 
 Adding any of these is a catalog entry + a body — nothing structural.
 
-- `GM_cookie.list` / `.set` / `.delete` — `chrome.cookies` wrapped
-  with per-script `@match` validation. VM's `checkCookieOpts`
-  (`src/background/utils/cookies.js`, shipped in VM 2.35.1) is the
-  reference shape: validate the target URL against the calling
-  script's `@match`, and hide `httpOnly` cookies unless the user
-  opted in.
 - `GM_getValues` / `GM_setValues` / `GM_deleteValues` — bulk storage
   calls that both TM (5.x) and VM (2.19.1+) have. Convenience over our
   existing per-key APIs, which already batch writes.
 
 ### GM_* implementation follow-ups
 
+- **No way to let a script reach `httpOnly` cookies with `GM_cookie`.**
+  TM has a global "cookie access" setting and VM a per-script opt-in;
+  `src/extension/gm-cookie.ts` always hides them.
 - **A throw in a `GM_xmlhttpRequest` callback never reaches the Log.**
   `callXhrCallback` (`src/wrapper-gm-runtime.js`) catches it and only
   logs `console.info("[SourceMonkey] XHR callback threw:", e)` to the
