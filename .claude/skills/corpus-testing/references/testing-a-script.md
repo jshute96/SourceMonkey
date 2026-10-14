@@ -74,8 +74,9 @@ one that looks risky.
   something strange (requests to unexpected hosts, reading storage it has
   no use for), stop the run.
 - Record a script you won't run as `n/a --reason unsafe`, with a note
-  saying what looked dangerous, so nobody picks it up later. It's the one
-  `n/a` that needs no run.
+  saying what looked dangerous, so nobody picks it up later. Like the
+  other scripts we choose not to run (see "Picking scripts to test" in
+  the skill), it needs no run.
 - A script you already ran that turns out to send private data (page URLs
   or contents to its author's server, say) keeps its result; add the
   `sends-browsing-data` tag and say what it sends in a note.

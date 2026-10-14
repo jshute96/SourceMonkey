@@ -336,8 +336,10 @@ Beside `listing`, a record can hold:
   - `n/a`: we couldn't meaningfully try it. `--reason` is one of
     `requires-login`, `paid`, `geo-blocked`, `bot-blocked`, `site-gone`,
     `needs-interaction`, `not-web`, `other-browser`, `unsafe`, `other`.
-  - `unsafe` is the one `n/a` recorded without a run: a script we chose not
-    to run because it looked dangerous. Say why in the note.
+  - An `n/a` can also record a script we chose not to run, with a note
+    starting "Not run:": `unsafe` for one that looked dangerous, or the
+    reason that kept us from trying it (`requires-login`, `paid`, or
+    `other` for game cheats and bots).
   - `other-browser` is for a script that relies on another browser's
     features. It's `n/a`, not a failure, since no Chrome extension could run
     it. Say in the note what it relies on.

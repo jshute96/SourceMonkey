@@ -53,8 +53,12 @@ untested, sort by Updated) or in `corpus.db` (`Scripts.updated_date`, after
   broken against today's sites, which teaches little about SourceMonkey.
 - Skip what can't be judged without side effects or an account: game cheats
   and bots, login-only sites, social and dating apps, course and exam sites,
-  shopping flows, paid features. Leave these untested rather than
-  recording `n/a`: `n/a` is for a script you tried and couldn't judge.
+  shopping flows, paid features. Record these as `n/a` without a run,
+  with a note starting "Not run:" that says why, so they drop out of
+  `list --untested`:
+  - `--reason requires-login` for login-only sites and course or exam
+    sites, `--reason paid` for paid-feature unlocks.
+  - `--reason other` for anything else, such as game cheats and bots.
 - Don't run scripts that look risky, for example ones that look like
   they'd collect or send out private data; record them as `n/a --reason
   unsafe` instead. Corpus scripts are untrusted; see "Untrusted scripts" in
