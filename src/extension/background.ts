@@ -347,6 +347,14 @@ import {
   type WindowControlResult,
 } from './gm-window-control.js';
 import {
+  dropTabData,
+  forgetTabDataForTests,
+  getTabData,
+  listTabData,
+  saveTabData,
+  SM_TAB_DATA_MSG,
+} from './gm-tab-data.js';
+import {
   buildPopupView,
   POPUP_CHANGED_MESSAGE,
   POPUP_CLOSE_MESSAGE,
@@ -1030,8 +1038,10 @@ const api: SourceMonkeyApi = {
     await valueWritesSaved();
     await chrome.storage.local.clear();
     await chrome.storage.session.clear();
-    // The value store's maps came from the rows just cleared.
+    // The value store's maps came from the rows just cleared, and the
+    // tab-data store's from the session rows.
     forgetLoadedValues();
+    forgetTabDataForTests();
     await valueWritesSaved();
     await chrome.storage.local.clear();
     // sm-dev's claims and run leases live in memory too, and a lease
@@ -3035,6 +3045,10 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   // (a download the user started is theirs to keep) — we just have
   // nowhere left to route progress / completion events.
   dropOriginatorDownloads(tabId);
+  // GM_getTab: the tab's objects go with it.
+  void dropTabData(tabId).catch((err) => {
+    console.info('[SourceMonkey] dropping tab data failed:', err);
+  });
   // GM_xmlhttpRequest: cancel this tab's in-flight requests. Unlike a
   // download, nobody benefits from one finishing — the page that asked
   // is gone, so the response has nowhere to go — and letting it run on
@@ -4254,7 +4268,7 @@ function originOf(url: string | undefined): string | undefined {
 // one would be a guess. The userscript surfaces this to its own
 // author, so it describes the situation rather than naming our field.
 const NO_ORIGINATOR_TAB =
-  'internal error: could not identify the tab this call came from';
+  'Internal error: SourceMonkey could not identify the tab this call came from';
 
 // A `window.close` request from a frame (docs/frames.md).
 const FRAME_CLOSE_REFUSED = 'A script in a frame cannot close the tab';
@@ -4395,6 +4409,35 @@ async function handleWindowControl(
     });
   }
   return result;
+}
+
+// ---------- GM_getTab / GM_saveTab / GM_getTabs dispatch ----------
+
+// The tab is always the sender's own, as for window.close: the payload
+// names only the script, so the bridge gate is all there is to check.
+async function handleTabData(
+  msg: { scriptId?: unknown; action?: unknown; data?: unknown },
+  sender: chrome.runtime.MessageSender,
+): Promise<{ ok: true; value?: unknown } | { ok: false; error: string }> {
+  const scriptId = msg.scriptId;
+  if (typeof scriptId !== 'string' || scriptId === '') {
+    return { ok: false, error: 'Internal error: The request named no script' };
+  }
+  const tabId = sender.tab?.id;
+  if (tabId == null) return { ok: false, error: NO_ORIGINATOR_TAB };
+  try {
+    switch (msg.action) {
+      case 'get': return { ok: true, value: await getTabData(tabId, scriptId) };
+      case 'save': await saveTabData(tabId, scriptId, msg.data); return { ok: true };
+      case 'list': return { ok: true, value: await listTabData(scriptId) };
+      default: return { ok: false, error: 'Internal error: The tab-data action is unknown' };
+    }
+  } catch (err) {
+    // The first read of the session rows can fail for any action; `get`
+    // and `save` can also fail writing (a first `get` records the tab).
+    const what = msg.action === 'list' ? 'Tab data could not be read' : 'Tab data could not be saved';
+    return { ok: false, error: `${what}: ${err instanceof Error ? err.message : String(err)}` };
+  }
 }
 
 // ---------- GM_download dispatch ----------
@@ -5260,6 +5303,14 @@ function installScriptMessageListener(): void {
       }
       try { sendResponse({ ok: true }); } catch { /* gone */ }
       return false;
+    }
+    if (type === SM_TAB_DATA_MSG) {
+      const tdPayload = msg as { scriptId?: unknown; action?: unknown; data?: unknown };
+      return respondAsync(
+        'gm-tab-data',
+        guardBridgeAsync(msg, tdPayload.scriptId, ['tab-data'], sender, () => handleTabData(tdPayload, sender)),
+        sendResponse,
+      );
     }
     if (type === SM_WINDOW_CLOSE_MSG || type === SM_WINDOW_FOCUS_MSG) {
       // Async dispatch — the page side doesn't block on the reply, but

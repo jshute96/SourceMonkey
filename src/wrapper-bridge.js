@@ -155,6 +155,7 @@
     "sm:gm-menu-register", "sm:gm-menu-unregister",
     "sm:gm-download-start", "sm:gm-download-abort",
     "sm:gm-window-close", "sm:gm-window-focus",
+    "sm:gm-tab-data",
     "sm:gm-resync",
     "sm:gm-log", "sm:gm-dom-blocked",
     /* Generic envelope for async APIs that have no dedicated body yet

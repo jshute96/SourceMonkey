@@ -20,9 +20,6 @@ A backlog of **candidates**, not a list of obligations.
     Revisit if Chrome adds it.
   - Removing an iframe sends no event, so the badge can count a run in
     a removed frame until the popup opens or another frame navigates.
-  - `GM_saveTab` / `GM_getTab` (per-tab storage shared by a tab's
-    frames) become more useful now that scripts in frames talk to each
-    other.
   - For `about:blank` / `srcdoc` frames: no match pattern reaches them
     (not even `<all_urls>`), so registration can't. The supported route
     would be on-request injection: watch for such frames and run the
@@ -470,6 +467,34 @@ scripts, checked against Tampermonkey 5.5.1 with `sm-dev --manager tm`
     checked: probe it before deciding.
   - Fix, if we follow VM: when the argument matches no id, remove
     this script's commands with that caption.
+- **Registering the same caption again adds a second menu entry**
+  (seen on 381682 and 477154, h5player).
+  - Both re-register their commands with the same captions and never
+    unregister, so `menu` lists each one twice (M1-M6, then the same
+    as M7-M12). Cosmetic: either copy runs the command.
+  - The script's comments say it relies on the manager merging
+    commands with the same caption.
+  - Both managers merge them:
+    - VM keys commands by `options.id || caption` (see the item above),
+      so a repeat replaces the first. VM 2.49 (probed 2026-10-13, as
+      for TM below) returns `"Same caption"` from both calls, lists it
+      once, runs the later callback, and unregistering either id
+      removes it entirely: nothing older comes back.
+    - TM 5.5 (probed 2026-10-13: the same caption registered twice,
+      then TM's popup read with sm-dev) lists the caption once, and
+      clicking it runs the later callback. It still returns a new id
+      for each call (1, 2, 3).
+    - TM keeps both underneath. Unregistering the newer id brings the
+      older entry back (clicking runs the first callback); unregistering
+      the older id leaves the newer one shown.
+  - The managers differ only after an unregister. A script written
+    for VM never sees two ids for one caption, so following TM loses
+    nothing there.
+  - Fix, to match TM: in `src/extension/gm-menu.ts`, keep every
+    registration with its own id, but show only the newest of this
+    script's commands with a given caption in the same document.
+    Unregistering by id removes just that one, so an older one with the
+    caption shows again.
 - **Unconfirmed: a frame script skipped by the 10 s decision timeout**
   (seen on 446887, Nitro Type).
   - In a headed browser, after the script's own reloads, the race

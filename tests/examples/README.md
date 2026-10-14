@@ -134,6 +134,7 @@ events.
 | `gm-clipboard/`            | `GM_setClipboard`                                                 | form-driven   |
 | `gm-xmlhttp/`              | `GM_xmlhttpRequest`                                               | form-driven   |
 | `gm-open-in-tab/`          | `GM_openInTab`                                                    | form-driven   |
+| `gm-tab/`                  | `GM_getTab` / `GM_saveTab` / `GM_getTabs`                         | form-driven   |
 | `gm-notification/`         | `GM_notification`                                                 | button-driven |
 | `gm-download/`             | `GM_download`                                                     | button-driven |
 | `gm-menu/`                 | `GM_registerMenuCommand` / `GM_unregisterMenuCommand`             | button-driven |

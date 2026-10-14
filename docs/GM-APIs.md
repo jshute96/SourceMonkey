@@ -55,6 +55,9 @@ SourceMonkey actually does today.
   `@grant window.close` / `@grant window.focus`. Re-issues the call as
   `chrome.tabs.remove` / `chrome.windows.update` on the sender's own
   tab.
+- **`src/extension/gm-tab-data.ts`** — SW-side store for
+  `GM_getTab` / `GM_saveTab` / `GM_getTabs`. See
+  [below](#gm_gettab--gm_savetab--gm_gettabs).
 
 ## Bindings layout in the wrapper
 
@@ -713,6 +716,35 @@ Returns `undefined` (matches TM/VM signature).
 - On SW restart all three go empty; userscripts holding control
   handles from the prior SW lifetime stop receiving `onclose`
   events. Opened tabs stay open — we don't clean up after a restart.
+
+## `GM_getTab` / `GM_saveTab` / `GM_getTabs`
+
+Per-tab objects, one per (tab, script). User-facing behavior is in
+[supported-GM-APIs.md](supported-GM-APIs.md#per-tab-data).
+
+### Page side
+
+- `__smReg.gm.tabData` in `wrapper-gm-runtime.js` sends one
+  `sm:gm-tab-data` message per call (`action: get | save | list`).
+- With a callback, the call returns `undefined` and a failure is
+  logged to the page console; without one, it returns the Promise.
+  The `GM.` aliases pass through, so they get the Promise.
+- `save` sends a shallow copy of the object's own keys.
+
+### SW side
+
+- `src/extension/gm-tab-data.ts`. The tab is always the sender's
+  (`sender.tab.id`), so the payload names only the script, which the
+  bridge gate checks for page-world calls.
+- Kept in memory, mirrored to `chrome.storage.session` as one
+  `gmtab:<tabId>` row per tab.
+  - The mirror is what keeps the data across the worker being
+    stopped while idle.
+  - Session storage clears when the browser quits, matching the
+    API's lifetime.
+- `tabs.onRemoved` drops the tab's row.
+- A first `GM_getTab` in a tab records `{}` there, so the tab shows
+  in `GM_getTabs`, as in TM.
 
 ## `GM_notification`
 

@@ -44,6 +44,7 @@ export type ApiSubsystem =
   | 'clipboard'
   | 'notification'
   | 'tab'
+  | 'tab-data'
   | 'download'
   | 'unsafe-window'
   | 'url-change'
@@ -163,6 +164,12 @@ export const GM_APIS: readonly GmApiSpec[] = Object.freeze([
   { name: 'GM_setClipboard', gmDotName: 'setClipboard', kind: 'sync', subsystem: 'clipboard' },
   { name: 'GM_notification', gmDotName: 'notification', kind: 'async', subsystem: 'notification' },
   { name: 'GM_openInTab', gmDotName: 'openInTab', kind: 'async', subsystem: 'tab' },
+  // Per-tab objects kept by the SW while the tab is open. Each takes an
+  // optional callback, as in TM, and returns a Promise when given none,
+  // which is what the `GM.` form passes through.
+  { name: 'GM_getTab', gmDotName: 'getTab', kind: 'async', subsystem: 'tab-data' },
+  { name: 'GM_saveTab', gmDotName: 'saveTab', kind: 'async', subsystem: 'tab-data' },
+  { name: 'GM_getTabs', gmDotName: 'getTabs', kind: 'async', subsystem: 'tab-data' },
   // Like GM_xmlhttpRequest, GM_download hands back a sync `{abort}`
   // control object while the transfer itself runs in the SW — `async`
   // classifies the SW round-trip, not the return value. It is NOT

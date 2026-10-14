@@ -237,6 +237,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/frame-info.ts` | Whether a message came from an iframe or a page's top frame, and which page, via `webNavigation.getFrame` |
 | `src/extension/gm-menu.ts` | SW-side `GM_registerMenuCommand` per-(tab, document, script) command registry feeding the toolbar popup |
 | `src/extension/gm-url-change.ts` | SW-side `window.onurlchange` driver — forwards `webNavigation.onHistoryStateUpdated` to the changed document as `sm:url-change` |
+| `src/extension/gm-tab-data.ts` | SW-side store for `GM_getTab` / `GM_saveTab` / `GM_getTabs`: per-(tab, script) objects mirrored to session storage |
 | `src/extension/gm-window-control.ts` | SW-side `window.close` / `window.focus` driver — closes or fronts the sender's own tab via `chrome.tabs` / `chrome.windows` |
 
 ### Development harness (`src/harness/`)
@@ -526,7 +527,9 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/manual-scripts.spec.ts` | Manual scripts (`@run-at context-menu`): never registered, run on request, refusals, the popup's Run item |
 | `tests/unit/window-onurlchange.test.mjs` | Unit tests for the SW-side `window.onurlchange` driver (document targeting, message shape, no-receiver rejection) |
 | `tests/e2e/window-onurlchange.spec.ts` | E2E for `@grant window.onurlchange` — pushState / replaceState / fragment / back delivery, payload shape, gating, assignment form |
+| `tests/unit/gm-tab-data.test.mjs` | Unit tests for the tab-data store: get/save/list, null saves, worker restart, tab close, failed writes |
 | `tests/unit/gm-window-control.test.mjs` | Unit tests for the SW-side `window.close` / `window.focus` driver (tab close, tab select + window raise, minimized restore, failures) |
+| `tests/e2e/gm-tab-data.spec.ts` | E2E for `GM_getTab` / `GM_saveTab` / `GM_getTabs` in both worlds: kept across loads, listed across tabs, dropped on close |
 | `tests/e2e/window-close-focus.spec.ts` | E2E for `@grant window.close` / `window.focus` — the tab really closes and re-selects, overrides are per-grant, the page's own methods stay native, and the per-document grant leak is pinned |
 | `tests/unit/tab-status.test.mjs` | Unit tests for the per-tab badge classification + report-merge helpers |
 | `tests/unit/toolbar-summary.test.mjs` | Unit tests for the toolbar badge color and tooltip status lines |
@@ -542,6 +545,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/examples/gm-dom/` | `GM_addStyle` and `GM_addElement` DOM-injection examples |
 | `tests/examples/gm-clipboard/` | `GM_setClipboard` round-trip example |
 | `tests/examples/gm-xmlhttp/` | `GM_xmlhttpRequest` form-driven example (method, body, responseType, anonymous, headers, abort) plus a cross-manager wire-header report |
+| `tests/examples/gm-tab/` | `GM_getTab` / `GM_saveTab` / `GM_getTabs` example: a per-tab load count and note, and every tab's object |
 | `tests/examples/gm-open-in-tab/` | `GM_openInTab` call-shape examples (active, background, positional, onclose) |
 | `tests/examples/gm-notification/` | `GM_notification` call-shape examples (button-driven) |
 | `tests/examples/gm-download/` | `GM_download` call-shape examples (relative + absolute http(s), `data:`, `blob:`, abort, 404, refused cases) |

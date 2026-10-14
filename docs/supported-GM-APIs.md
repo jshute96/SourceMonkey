@@ -567,6 +567,9 @@ How this is done, and what it can't cover:
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
 | `GM_openInTab` / `GM.openInTab` | ✅ | ✓ | ✓ |   | `chrome.tabs.create` wrapper. Returns a control object synchronously: `{ close(), closed, onclose }`. See below for call shapes and options. |
+| `GM_getTab` / `GM.getTab` | ✅ | ✓ |   |   | This script's object for the current tab, kept while the tab is open. See [Per-tab data](#per-tab-data). |
+| `GM_saveTab` / `GM.saveTab` | ✅ | ✓ |   |   | Saves that object (a shallow copy). |
+| `GM_getTabs` / `GM.getTabs` | ✅ | ✓ |   |   | This script's object for every tab that has one, keyed by tab id. |
 
 ### Open-in-tab call shape
 
@@ -586,6 +589,22 @@ How this is done, and what it can't cover:
 - If the originating tab closes while opened tabs are still alive,
   the opened tabs stay open (matches TM/VM) but the SW drops the
   mapping, so the `onclose` callback can't be routed anywhere.
+
+### Per-tab data
+
+- `GM_getTab(callback)` calls `callback(tab)` with this script's
+  object for the tab it runs in, or `{}` if nothing was saved there.
+- `GM_saveTab(tab, callback?)` saves a shallow copy of `tab`;
+  `callback()` runs once it's saved.
+- `GM_getTabs(callback)` calls `callback(tabs)`: `{ [tabId]: tab }`
+  for each tab where the script called `GM_getTab` or saved.
+- Without a callback, each returns a Promise of the same value, which
+  is what the `GM.` forms are.
+- The object survives navigations and reloads in the tab, and goes
+  when the tab closes or the browser quits.
+- Frames share their tab's object.
+- Values travel as JSON, so functions, `undefined` and the like are
+  dropped.
 
 ---
 
@@ -807,8 +826,7 @@ is a catalog entry + a body — nothing structural.
 - `GM_getValues` / `GM_setValues` / `GM_deleteValues` — bulk storage
   reads and writes (TM 5.x, VM 2.19.1+). Our per-call storage APIs
   already batch writes, so these are convenience, not throughput.
-- `GM_audio`, `GM_webRequest`, `GM_getTab`, `GM_saveTab`,
-  `GM_getTabs` — TM-specific surface.
+- `GM_audio`, `GM_webRequest` — TM-specific surface.
 - `GM.bootstrap`, `GM_NEXT_API_FROM_TM`, etc. — moving targets.
 
 ---

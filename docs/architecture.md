@@ -236,6 +236,10 @@ details live in the topic-specific docs linked below.
   (page-generated id ↔ assigned chrome tab id ↔ originator tab) mapping
   so `chrome.tabs.onRemoved` can route close events back to the
   originating tab's `onclose` callback.
+- **GM_getTab store** (`src/extension/gm-tab-data.ts`) — keeps each
+  script's per-tab object for `GM_getTab` / `GM_saveTab` /
+  `GM_getTabs`, mirrored to `chrome.storage.session`, and drops a tab's
+  objects when it closes.
 - **GM_download dispatcher** (`src/extension/gm-download.ts`) — drives
   `chrome.downloads` on behalf of userscripts for `http(s)` URLs
   (`blob:` / `data:` downloads stay in the page); tracks the

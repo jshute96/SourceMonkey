@@ -381,6 +381,9 @@ fetch via the SW). Highlights:
 - `tests/e2e/gm-open-in-tab.spec.ts` — `GM_openInTab` opens at the
   right URL, both options-object and positional call shapes work,
   `onclose` fires when the opened tab is closed.
+- `tests/e2e/gm-tab-data.spec.ts` — `GM_getTab` / `GM_saveTab` /
+  `GM_getTabs`, in both worlds: a tab's object survives a navigation,
+  a second tab is listed, and a closed tab's object goes.
 - `tests/e2e/gm-notification.spec.ts` — `GM_notification` resolves
   with a notification id; details and positional call shapes; the
   GM4 alias returns a Promise; empty `text` rejects.

@@ -34,10 +34,11 @@ recommends a path.
   - `window.close` / `window.focus` — likewise promoted and shipped;
     both are small, and the browser makes the page's own versions
     useless.
+  - `GM_getTab` / `GM_saveTab` / `GM_getTabs` — likewise; small, and
+    the only way to keep state per tab.
 - **Not** a goal: the long tail of TM-specific surface
-  (`GM_webRequest`, `GM_audio`, `GM_getTab` / `saveTab` / `getTabs`,
-  `GM.backgroundControl`). These can come later if real users need
-  them.
+  (`GM_webRequest`, `GM_audio`, `GM.backgroundControl`). These can
+  come later if real users need them.
 - Compatibility with userscripts already written against
   Tampermonkey or Violentmonkey on the supported surface is a
   significant secondary goal.
@@ -637,7 +638,7 @@ spec that drives the API from a userscript on the fixture server.
 
 ## Things to revisit later
 
-- TM-only surface (`GM_webRequest`, `GM_audio`, `GM_getTab`).
+- TM-only surface (`GM_webRequest`, `GM_audio`).
 - Whether to add a `@inject-into` option (currently we infer from
   `@grant`). Some scripts assume the VM keyword.
 - Per-script `@match` validation gate that's stricter than VM's —

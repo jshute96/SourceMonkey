@@ -346,6 +346,19 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
         return `const GM_openInTab = function (url, options) { return __smReg.gm.tab.open(${jsLit(scriptId)}, url, options); };`;
     }
   }
+  // Tab-data subsystem: GM_getTab / GM_saveTab / GM_getTabs. The
+  // callback is the last argument, as in TM; with none, the call
+  // returns a Promise instead.
+  if (spec.subsystem === 'tab-data') {
+    switch (spec.name) {
+      case 'GM_getTab':
+        return `const GM_getTab = function (callback) { return __smReg.gm.tabData.get(${jsLit(scriptId)}, callback); };`;
+      case 'GM_saveTab':
+        return `const GM_saveTab = function (tab, callback) { return __smReg.gm.tabData.save(${jsLit(scriptId)}, tab, callback); };`;
+      case 'GM_getTabs':
+        return `const GM_getTabs = function (callback) { return __smReg.gm.tabData.list(${jsLit(scriptId)}, callback); };`;
+    }
+  }
   // Notification subsystem: GM_notification. Returns the SW round-trip
   // Promise (TM/VM hand back undefined; we hand back the Promise so
   // callers that want to wait for the notification to be created can).

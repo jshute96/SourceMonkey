@@ -206,6 +206,16 @@ test('emitGmBindings: GM_openInTab routes to reg.gm.tab.open with the scriptId',
   assert.doesNotMatch(out.js, /"sm:gm-call"[^}]*GM_openInTab/);
 });
 
+test('emitGmBindings: GM_getTab / GM_saveTab / GM_getTabs route to reg.gm.tabData', () => {
+  const grants = ['GM_getTab', 'GM_saveTab', 'GM_getTabs', 'GM.getTab'];
+  const out = emitGmBindings(grants, makeInfo({ grants }));
+  assert.match(out.js, /const GM_getTab = function \(callback\) \{ return __smReg\.gm\.tabData\.get\("script-1", callback\)/);
+  assert.match(out.js, /const GM_saveTab = function \(tab, callback\) \{ return __smReg\.gm\.tabData\.save\("script-1", tab, callback\)/);
+  assert.match(out.js, /const GM_getTabs = function \(callback\) \{ return __smReg\.gm\.tabData\.list\("script-1", callback\)/);
+  assert.match(out.js, /getTab: function \(\) \{ return __smReg\.apply\(GM_getTab, null, arguments\)/);
+  assert.doesNotMatch(out.js, /"sm:gm-call"/);
+});
+
 test('emitGmBindings: GM_notification routes to reg.gm.notification.show with the scriptId', () => {
   const out = emitGmBindings(['GM_notification'], makeInfo({ grants: ['GM_notification'] }));
   assert.match(out.js, /const GM_notification = function/);

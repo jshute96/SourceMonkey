@@ -2820,6 +2820,54 @@
     }
   }
 
+  /* ---------- GM_getTab / GM_saveTab / GM_getTabs ----------
+
+     Per-tab objects the SW keeps while the tab is open (gm-tab-data.ts).
+     Each call takes an optional callback, as in TM: with one, it gets
+     the result and the call returns undefined; with none, the call
+     returns a Promise, which is what `GM.getTab()` and the like hand
+     back. A failure is always logged to the console, and also rejects
+     that Promise. Logging covers the usual bare `GM_saveTab(tab)`,
+     whose Promise nobody holds: the handler attached here also keeps
+     its rejection from being reported as uncaught. */
+  function tabDataCall(apiName, payload, callback) {
+    var p = api.sendAsync(payload).then(function (reply) {
+      if (reply && reply.ok) return reply.value;
+      throw new _Error("[SourceMonkey] " + apiName + ": " + ((reply && reply.error) || "SourceMonkey sent no reply"));
+    });
+    p.then(function (value) {
+      if (typeof callback !== "function") return;
+      try { callback(value); } catch (e) {
+        try { console.info("[SourceMonkey] " + apiName + " callback threw:", e); } catch (_e) {}
+      }
+    }, function (err) {
+      /* Our own errors carry the prefix already; a transport failure
+         doesn't. */
+      var msg = (err && err.message) || String(err);
+      if (msg.indexOf("[SourceMonkey]") !== 0) msg = "[SourceMonkey] " + apiName + ": " + msg;
+      try { console.info(msg); } catch (_e) {}
+    });
+    return (typeof callback === "function") ? undefined : p;
+  }
+  var tabData = {
+    get: function (scriptId, callback) {
+      return tabDataCall("GM_getTab", { type: "sm:gm-tab-data", scriptId: scriptId, action: "get" }, callback);
+    },
+    save: function (scriptId, obj, callback) {
+      /* A shallow copy of the own enumerable keys, as TM stores. */
+      var data = obj;
+      if (obj != null && typeof obj === "object") {
+        data = {};
+        var keys = _ObjectKeys(obj);
+        for (var i = 0; i < keys.length; i++) data[keys[i]] = obj[keys[i]];
+      }
+      return tabDataCall("GM_saveTab", { type: "sm:gm-tab-data", scriptId: scriptId, action: "save", data: data }, callback);
+    },
+    list: function (scriptId, callback) {
+      return tabDataCall("GM_getTabs", { type: "sm:gm-tab-data", scriptId: scriptId, action: "list" }, callback);
+    },
+  };
+
   /* ---------- GM_notification ----------
 
      Per-call: page-side request id (notif-<n>-<rand>) keyed to the
@@ -3705,6 +3753,7 @@
     xhr: xhr,
     log: log,
     tab: tab,
+    tabData: tabData,
     notification: notification,
     download: download,
     menu: menu,
