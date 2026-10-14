@@ -97,6 +97,7 @@
   var _ArrayBufferByteLengthGet = null;
   var _DataViewByteLengthGet = null;
   var _TypedArrayLengthGet = null;
+  var _TypedArraySubarray = null;
   (function () {
     function getter(obj, name) {
       var d = Object.getOwnPropertyDescriptor(obj, name);
@@ -113,6 +114,7 @@
          Uint8Array.prototype; its `length` getter accepts any typed
          array and rejects everything else. */
       _TypedArrayLengthGet = getter(_ObjectGetPrototypeOf(Uint8Array.prototype), "length");
+      _TypedArraySubarray = _ObjectGetPrototypeOf(Uint8Array.prototype).subarray;
     } catch (_binE) {}
   })();
   /* Constructor tables for the codec's brand-keyed revival. Built from
@@ -639,12 +641,21 @@
      stack — 32k elements is the usual safe ceiling. */
   var B64_CHUNK = 0x8000;
 
+  /* Joined with `+`, not an array's `push` / `join`, which a page could
+     replace and so see the bytes (a request body goes through here). */
   function bytesToBase64(bytes) {
-    var parts = [];
-    for (var i = 0; i < bytes.length; i += B64_CHUNK) {
-      parts.push(_ReflectApply(_fromCharCode, null, bytes.subarray(i, i + B64_CHUNK)));
+    var bin = "";
+    var len = _ReflectApply(_TypedArrayLengthGet, bytes, []);
+    for (var i = 0; i < len; i += B64_CHUNK) {
+      var chunk = _ReflectApply(_TypedArraySubarray, bytes, [i, i + B64_CHUNK]);
+      /* An own `length`: `apply` reads it, and the prototype's getter
+         is the page's to replace. */
+      var d = _ObjectCreate(null);
+      d.value = _ReflectApply(_TypedArrayLengthGet, chunk, []);
+      _ObjectDefineProperty(chunk, "length", d);
+      bin += _ReflectApply(_fromCharCode, null, chunk);
     }
-    return _btoa(parts.join(""));
+    return _btoa(bin);
   }
 
   function base64ToBytes(b64) {
@@ -1028,7 +1039,7 @@
       try {
         L.callback(key, oldValue, newValue, remote);
       } catch (e) {
-        try { console.info("[SourceMonkey] value-change listener threw:", e); } catch (_lE) {}
+        reportCallbackError(e);
       }
     }
   }
@@ -1896,6 +1907,24 @@
   var _rsEnqueue = null;
   var _rsClose = null;
   var _rsError = null;
+  var _strToLowerCase = String.prototype.toLowerCase;
+  var _strSlice = String.prototype.slice;
+  var _strTrim = String.prototype.trim;
+  var _String = String;
+  /* For a request body (`encodeRequestBody`): each throws when handed
+     anything but its own type, so calling one is also the type check. */
+  var _blobSizeGet = null;
+  var _blobTypeGet = null;
+  var _FileReader = (typeof FileReader === "function") ? FileReader : null;
+  var _frReadAsArrayBuffer = null;
+  var _frResultGet = null;
+  var _frErrorGet = null;
+  var _addEventListener = null;
+  var _fileNameGet = null;
+  var _abIsView = (typeof ArrayBuffer === "function") ? ArrayBuffer.isView : null;
+  var _formDataEntries = null;
+  var _formDataIterNext = null;
+  var _uspToString = null;
   (function () {
     function getter(obj, name) {
       var d = _ObjectGetOwnPropertyDescriptor(obj, name);
@@ -1907,6 +1936,20 @@
       _taBufferGet = getter(ta, "buffer");
       _taByteLengthGet = getter(ta, "byteLength");
     } catch (_taE) {}
+    try {
+      _blobSizeGet = getter(Blob.prototype, "size");
+      _blobTypeGet = getter(Blob.prototype, "type");
+      _frReadAsArrayBuffer = FileReader.prototype.readAsArrayBuffer;
+      _frResultGet = getter(FileReader.prototype, "result");
+      _frErrorGet = getter(FileReader.prototype, "error");
+      _addEventListener = EventTarget.prototype.addEventListener;
+      _fileNameGet = getter(File.prototype, "name");
+    } catch (_bE) {}
+    try {
+      _formDataEntries = FormData.prototype.entries;
+      _formDataIterNext = _ObjectGetPrototypeOf(_ReflectApply(_formDataEntries, new FormData(), [])).next;
+    } catch (_fE) {}
+    try { _uspToString = URLSearchParams.prototype.toString; } catch (_pE) {}
     try { _urlHrefGet = getter(_URLCtor.prototype, "href"); } catch (_uE) {}
     try { _baseURIGet = getter(Node.prototype, "baseURI"); } catch (_bE) {}
     try {
@@ -1968,6 +2011,162 @@
     return bytes;
   }
 
+  /* The `charset` parameter of a MIME type ("text/html; charset=GBK"),
+     lowercased, or "" when it has none. */
+  function charsetOf(mime) {
+    if (typeof mime !== "string") return "";
+    var lower = _ReflectApply(_strToLowerCase, mime, []);
+    var at = _ReflectApply(_strIndexOf, lower, ["charset="]);
+    if (at < 0) return "";
+    var rest = _ReflectApply(_strSlice, lower, [at + 8]);
+    var end = _ReflectApply(_strIndexOf, rest, [";"]);
+    if (end >= 0) rest = _ReflectApply(_strSlice, rest, [0, end]);
+    rest = _ReflectApply(_strTrim, rest, []);
+    if (rest.length > 1 && (rest[0] === '"' || rest[0] === "'")) rest = _ReflectApply(_strSlice, rest, [1, -1]);
+    return rest;
+  }
+
+  /* The text decoder for a response, as XMLHttpRequest picks it: the
+     charset of `overrideMimeType`, else the response's Content-Type,
+     else UTF-8. JSON is always UTF-8. `x-user-defined`, which old
+     scripts use to read binary data from `responseText`, is a label
+     TextDecoder knows: it maps each byte to one character. */
+  function responseDecoder(entry, mime) {
+    var label = entry.responseType === "json" ? "" : (charsetOf(entry.overrideMimeType) || charsetOf(mime));
+    if (label) {
+      try { return new _TextDecoder(label); } catch (_le) { /* unknown label: UTF-8 */ }
+    }
+    return new _TextDecoder();
+  }
+
+  /* The MIME type the body is read as: `overrideMimeType` when given,
+     as XMLHttpRequest does, else the response's own. */
+  function responseMime(entry, mime) {
+    return typeof entry.overrideMimeType === "string" && entry.overrideMimeType ? entry.overrideMimeType : (mime || "");
+  }
+
+  /* A request body (`details.data`) for the wire, which carries JSON:
+     `done` gets `{ data }` for text, `{ body }` for the rest
+     (GmXhrBody in gm-xhr-types.ts), or an Error. Called at once for
+     text; a Blob or a FormData holding files is read first.
+
+     As XMLHttpRequest's send() takes them: a string, a FormData, a
+     URLSearchParams, a Blob or File, an ArrayBuffer or a view of one.
+     Anything else goes as its String(). `binary` (TM's and VM's
+     option) sends a string's characters as bytes, one each. */
+  function encodeRequestBody(data, binary, done) {
+    if (data === undefined || data === null) return done(bare({}));
+    if (typeof data === "string") {
+      if (!binary) return done(bare({ data: data }));
+      var raw = new _Uint8Array(data.length);
+      for (var i = 0; i < data.length; i++) raw[i] = _ReflectApply(_charCodeAt, data, [i]) & 255;
+      return done(bare({ body: bare({ kind: "bytes", data: bytesToBase64(raw), type: "" }) }));
+    }
+    if (typeof data !== "object") return done(bare({ data: _String(data) }));
+    /* FormData: its entries, with each file's bytes. */
+    var entries = null;
+    try { entries = _ReflectApply(_formDataEntries, data, []); } catch (_fe) {}
+    if (entries) {
+      var list = [];
+      for (;;) {
+        var step = _ReflectApply(_formDataIterNext, entries, []);
+        if (step.done) break;
+        setOwn(list, list.length, step.value);
+      }
+      var out = jsonArray();
+      var next = function (n) {
+        if (n === list.length) return done(bare({ body: bare({ kind: "form", entries: out }) }));
+        var name = _String(list[n][0]);
+        var value = list[n][1];
+        if (typeof value === "string") {
+          setOwn(out, out.length, bare({ name: name, value: value }));
+          return next(n + 1);
+        }
+        readBlob(value, function (b64) {
+          if (typeof b64 !== "string") return done(b64);
+          setOwn(out, out.length, bare({
+            name: name, data: b64,
+            filename: _ReflectApply(_fileNameGet, value, []),
+            type: _ReflectApply(_blobTypeGet, value, []),
+          }));
+          next(n + 1);
+        });
+      };
+      return next(0);
+    }
+    try {
+      return done(bare({ body: bare({ kind: "params", data: _ReflectApply(_uspToString, data, []) }) }));
+    } catch (_pe) {}
+    var isBlob = false;
+    try { _ReflectApply(_blobSizeGet, data, []); isBlob = true; } catch (_be) {}
+    var isBuffer = false;
+    try { _ReflectApply(_ArrayBufferByteLengthGet, data, []); isBuffer = true; } catch (_ae) {}
+    if (isBlob || isBuffer || (_abIsView && _abIsView(data))) {
+      /* A Blob of it, so a buffer and each kind of view read alike. */
+      var blob = isBlob ? data : new _Blob(ownIterable([data]));
+      var type = isBlob ? _ReflectApply(_blobTypeGet, data, []) : "";
+      return readBlob(blob, function (b64) {
+        if (typeof b64 !== "string") return done(b64);
+        done(bare({ body: bare({ kind: "bytes", data: b64, type: type }) }));
+      });
+    }
+    done(bare({ data: _String(data) }));
+  }
+
+  /* An array to serialize with the rest of a message, with an own
+     `toJSON` of undefined, so JSON.stringify doesn't look one up on a
+     prototype the page could have given one. */
+  function jsonArray() {
+    var arr = [];
+    var d = _ObjectCreate(null);
+    d.value = undefined;
+    _ObjectDefineProperty(arr, "toJSON", d);
+    return arr;
+  }
+
+  /* A Blob's bytes in base64, or the Error reading them gave. With a
+     FileReader, not `blob.arrayBuffer()`: resolving that promise reads
+     the buffer's `then`, and our `then` on it reads its `constructor`,
+     both of which a page could have a getter for. */
+  function readBlob(blob, cb) {
+    var reader;
+    try {
+      reader = new _FileReader();
+      var opts = _ObjectCreate(null);
+      opts.once = true;
+      _ReflectApply(_addEventListener, reader, ["loadend", function () {
+        var buf = _ReflectApply(_frResultGet, reader, []);
+        if (!buf) {
+          var err = _ReflectApply(_frErrorGet, reader, []);
+          return cb(new _Error(_String((err && err.message) || "The body could not be read")));
+        }
+        try { cb(bytesToBase64(new _Uint8Array(buf))); } catch (e) { cb(e); }
+      }, opts]);
+      _ReflectApply(_frReadAsArrayBuffer, reader, [blob]);
+    } catch (e) {
+      cb(e instanceof _Error ? e : new _Error(_String(e)));
+    }
+  }
+
+  /* A script's own callback threw: report it the way an uncaught error
+     in the script is, as TM and VM let it surface, so it reaches the
+     script's Log rather than vanishing. `reportError` dispatches the
+     window's `error` event, which the prelude attributes by the
+     error's stack. */
+  var _reportError = (typeof reportError === "function") ? reportError : null;
+  function reportCallbackError(e) {
+    /* With no stack, the prelude can't tell whose it is, so it would go
+       nowhere: the page console at least shows it. */
+    if (!(e instanceof _Error)) {
+      try { console.info("[SourceMonkey] A callback threw:", e); } catch (_ie) {}
+      return;
+    }
+    if (_reportError) {
+      try { _ReflectApply(_reportError, self, [e]); return; } catch (_re) {}
+    }
+    _setTimeout(function () { throw e; }, 0);
+  }
+
   /* Whether a responseType's body is kept as text (decoded piece by
      piece, so `responseText` grows during onprogress) rather than as
      bytes, or handed on through a stream ('stream'). */
@@ -1990,9 +2189,7 @@
     source.start = function (controller) { entry.streamController = controller; };
     source.cancel = function () {
       entry.streamController = null;
-      if (activeRequests[id] !== entry) return;
-      stopXhrInWorker(id);
-      dispatchXhrEvent(id, bare({ kind: "abort" }));
+      if (activeRequests[id] === entry) abortRequest(id);
     };
     return new _ReadableStream(source);
   }
@@ -2011,6 +2208,7 @@
       responseText: entry.text,
       response: entry.stream ? entry.stream
         : entry.text !== "" && (entry.responseType === "" || entry.responseType === "text") ? entry.text : null,
+      context: entry.context,
     };
   }
 
@@ -2042,9 +2240,13 @@
     if (event.kind === "headers") {
       entry.head = event;
       entry.total = typeof event.total === "number" ? event.total : null;
+      /* The charset can come from the response, so the decoder waits
+         for its headers. */
+      if (entry.decodes) entry.decoder = responseDecoder(entry, event.mimeType);
       setReadyState(entry, 2);
       return;
     }
+    if (entry.decodes && !entry.decoder) entry.decoder = responseDecoder(entry, "");
     var bytes = decodeBase64(event.data);
     try {
       if (entry.decoder) entry.text += _ReflectApply(_tdDecode, entry.decoder, [bytes, { stream: true }]);
@@ -2086,7 +2288,7 @@
      fills `responseText` and `response` on the load's response. */
   function finishXhrBody(entry, response) {
     var rt = entry.responseType;
-    var mime = response.responseMimeType || "";
+    var mime = responseMime(entry, response.responseMimeType);
     if (entry.stream) {
       setOwn(response, "responseText", "");
       setOwn(response, "response", entry.stream);
@@ -2095,7 +2297,7 @@
       }
       return;
     }
-    if (!entry.decoder) {
+    if (!entry.decodes) {
       setOwn(response, "responseText", "");
       if (rt === "blob") {
         var opts = _ObjectCreate(null);
@@ -2115,9 +2317,8 @@
       entry.pieces = [];
       return;
     }
-    /* TextDecoder's default, like Response.text(): UTF-8 whatever the
-       charset says, a leading BOM dropped. */
-    var text = entry.text + _ReflectApply(_tdDecode, entry.decoder, []);
+    /* An empty body never got a piece, so may have no decoder yet. */
+    var text = entry.text + (entry.decoder ? _ReflectApply(_tdDecode, entry.decoder, []) : "");
     setOwn(response, "responseText", text);
     var body;
     if (rt === "json") {
@@ -2144,6 +2345,28 @@
        terminal — load, error, timeout, abort all settle the
        request and free the slot here. */
     delete activeRequests[id];
+    settleXhr(entry, event, false);
+  }
+
+  /* The script gave up on the request (`abort()`, or cancelling its
+     stream). It's settled now, so nothing more arrives for it, but
+     the callbacks run later, as XMLHttpRequest's abort event and TM's
+     and VM's `onabort` come after `abort()` returns. Like TM, no
+     `onreadystatechange` for it: a script that saved something at
+     readyState 3 and then aborted keeps it. */
+  function abortRequest(id) {
+    var entry = activeRequests[id];
+    if (!entry) return;
+    delete activeRequests[id];
+    stopXhrInWorker(id);
+    if (entry.ttlTimer) {
+      try { _clearTimeout(entry.ttlTimer); } catch (_te) {}
+      entry.ttlTimer = null;
+    }
+    _setTimeout(function () { settleXhr(entry, bare({ kind: "abort" }), true); }, 0);
+  }
+
+  function settleXhr(entry, event, byScript) {
     if (entry.ttlTimer) {
       try { _clearTimeout(entry.ttlTimer); } catch (_te) {}
     }
@@ -2165,6 +2388,7 @@
         payload = plainCopy(bare(event.response));
         finishXhrBody(entry, payload);
         setOwn(payload, "readyState", 4);
+        setOwn(payload, "context", entry.context);
       } catch (e) {
         /* Too big to build: an error instead, as nothing else will
            settle the request now. */
@@ -2199,11 +2423,16 @@
     /* `onreadystatechange` fires before the terminal callback, and
        onloadend after it: the order XMLHttpRequest (and so
        Tampermonkey/Violentmonkey) uses. */
-    callXhrCallback(entry.onreadystatechange, payload);
+    if (!byScript) callXhrCallback(entry.onreadystatechange, payload);
     callXhrCallback(cb, payload);
     callXhrCallback(entry.onloadend, payload);
+    /* GM.xmlHttpRequest's Promise: the response on a load, else the
+       same object as a rejection. */
+    if (entry.settle) entry.settle(kind === "load", payload);
   }
 
+  /* What a failed request's callbacks get. `finalUrl` is where the
+     request had got to, after any redirect, when its headers came. */
   function emptyXhrResponse(entry) {
     return {
       readyState: 4,
@@ -2212,7 +2441,8 @@
       responseText: "",
       response: null,
       responseHeaders: "",
-      finalUrl: entry.url,
+      finalUrl: entry.head ? entry.head.finalUrl : entry.url,
+      context: entry.context,
     };
   }
 
@@ -2221,7 +2451,7 @@
     try {
       cb(payload);
     } catch (e) {
-      try { console.info("[SourceMonkey] XHR callback threw:", e); } catch (_e) {}
+      reportCallbackError(e);
     }
   }
 
@@ -2276,18 +2506,48 @@
        `{abort}` immediately. The user's onload/onerror/ontimeout/
        onabort/onreadystatechange callbacks come from `details` and
        are stored locally (callbacks aren't serializable across the
-       bridge). */
-    start: function (scriptId, details) {
+       bridge).
+
+       With `asPromise` (GM.xmlHttpRequest, as in TM and VM) it returns
+       a Promise of the response instead, with `abort` on it: it
+       resolves on a load and rejects with the same object on an error,
+       timeout or abort. `details`' callbacks still run. */
+    start: function (scriptId, details, asPromise) {
       if (!details || typeof details !== "object") {
-        throw new _Error("[SourceMonkey] GM_xmlhttpRequest: details object required");
+        var noDetails = new _Error("[SourceMonkey] GM_xmlhttpRequest: details object required");
+        if (asPromise) return guarded(new _Promise(function (_ok, fail) { fail(noDetails); }));
+        throw noDetails;
       }
       /* Its own fields, in an object with no prototype: reading one the
          script left out (`method`, `ontimeout`) would otherwise reach a
          page getter on `Object.prototype`, handing it `details`. */
       details = bare(details);
+      var settle = null;
+      var promise = null;
+      if (asPromise) {
+        /* Resolving reads the response's `then`, so the response has an
+           own one, undefined: a page getter on `Object.prototype` would
+           otherwise be handed it. And `guarded`, so the page's
+           `Promise.prototype` doesn't see the promise either. */
+        promise = guarded(new _Promise(function (resolve, reject) {
+          settle = function (ok, response) {
+            if (!ok) return reject(response);
+            setOwnBare(response, "then", undefined);
+            resolve(response);
+          };
+        }));
+      }
+      var control = promise || {};
       var url = urlArg(details.url);
       if (typeof url !== "string" || !url) {
-        throw new _Error("[SourceMonkey] GM_xmlhttpRequest: url required");
+        /* As VM: the error goes to `onerror` when there is one, and is
+           thrown otherwise. A Promise rejects with it either way. */
+        var noUrl = new _Error("[SourceMonkey] GM_xmlhttpRequest: url required");
+        if (typeof details.onerror !== "function" && !promise) throw noUrl;
+        callXhrCallback(details.onerror, noUrl);
+        if (settle) settle(false, noUrl);
+        setOwn(control, "abort", function () {});
+        return control;
       }
       url = resolvePageUrl(url);
       var id = "xhr-" + (_xhrNextId++) + "-" + randomPart();
@@ -2303,15 +2563,21 @@
         onloadend: details.onloadend,
         url: url,
         responseType: responseType,
+        overrideMimeType: details.overrideMimeType,
+        /* Handed back on every response, as TM and VM do. */
+        context: details.context,
+        settle: settle,
         ttlTimer: null,
         /* What has arrived: 0 until the worker takes the request. */
         readyState: 0,
         head: null,
         total: null,
         loaded: 0,
-        /* The body so far: text through a streaming decoder, or byte
+        /* The body so far: text through a streaming decoder (made when
+           the headers come, as the charset can be theirs), or byte
            pieces for blob/arraybuffer. */
-        decoder: isTextResponseType(responseType) ? new _TextDecoder() : null,
+        decodes: isTextResponseType(responseType),
+        decoder: null,
         text: "",
         pieces: [],
         stream: null,
@@ -2331,7 +2597,6 @@
       request.method = typeof details.method === "string" ? details.method : "GET";
       request.url = url;
       request.headers = plainHeaders(details.headers);
-      request.data = details.data;
       request.timeout = typeof details.timeout === "number" ? details.timeout : undefined;
       request.responseType = typeof details.responseType === "string" ? details.responseType : undefined;
       /* Truthy, not `=== true`: TM/VM both treat `anonymous` as a
@@ -2339,43 +2604,55 @@
          omitting credentials — reading `anonymous: 1` as "send my
          cookies anyway" is the wrong direction to get it wrong. */
       request.anonymous = details.anonymous ? true : undefined;
-      var startMsg = _ObjectCreate(null);
-      startMsg.type = "sm:gm-xhr-start";
-      startMsg.id = id;
-      startMsg.scriptId = scriptId;
-      startMsg.request = request;
-      api.sendAsync(startMsg).then(function (reply) {
-        /* Anything but an explicit ack is a refusal — the SW's bridge
-           gate replies `{ok:false, error}`, and the bridge's own
-           fallback when the SW is unreachable carries no `ok` at all.
-           Settle now rather than letting the TTL above do it. */
-        if (reply && reply.ok === true) {
-          var started = activeRequests[id];
-          if (started) xhrStarted(started);
+      /* TM's cache and redirect options. */
+      request.nocache = details.nocache ? true : undefined;
+      request.revalidate = details.revalidate ? true : undefined;
+      request.redirect = typeof details.redirect === "string" ? details.redirect : undefined;
+      var send = function (body) {
+        /* Aborted while a Blob was read: nothing to send. */
+        if (activeRequests[id] !== entry) return;
+        if (body instanceof _Error) {
+          xhrStarted(entry);
+          dispatchXhrEvent(id, { kind: "error", message: "[SourceMonkey] GM_xmlhttpRequest: Could not read the request body: " + _String(body.message || body) });
           return;
         }
-        /* XMLHttpRequest's loadstart comes before any error. */
-        var refused = activeRequests[id];
-        if (refused) xhrStarted(refused);
-        var why = (reply && reply.error) || "SourceMonkey did not accept the request";
-        dispatchXhrEvent(id, { kind: "error", message: "[SourceMonkey] GM_xmlhttpRequest: " + why });
-      }, function (err) {
-        /* The send itself failed (chrome.runtime not available).
-           Synthesize an error event for the caller. */
-        var unsent = activeRequests[id];
-        if (unsent) xhrStarted(unsent);
-        dispatchXhrEvent(id, { kind: "error", message: String(err && err.message || err) });
-      });
-      return {
-        abort: function () {
-          if (!activeRequests[id]) return;
-          api.sendAsync({ type: "sm:gm-xhr-abort", id: id }).catch(function () {});
-          /* Local abort event — match TM/VM, which fire `onabort`
-             immediately on the caller's side rather than waiting
-             for an SW round-trip. */
-          dispatchXhrEvent(id, { kind: "abort" });
-        },
+        request.data = body.data;
+        request.body = body.body;
+        var startMsg = _ObjectCreate(null);
+        startMsg.type = "sm:gm-xhr-start";
+        startMsg.id = id;
+        startMsg.scriptId = scriptId;
+        startMsg.request = request;
+        api.sendAsync(startMsg).then(function (reply) {
+          /* Anything but an explicit ack is a refusal — the SW's bridge
+             gate replies `{ok:false, error}`, and the bridge's own
+             fallback when the SW is unreachable carries no `ok` at all.
+             Settle now rather than letting the TTL above do it. */
+          if (reply && reply.ok === true) {
+            var started = activeRequests[id];
+            if (started) xhrStarted(started);
+            return;
+          }
+          /* XMLHttpRequest's loadstart comes before any error. */
+          var refused = activeRequests[id];
+          if (refused) xhrStarted(refused);
+          var why = (reply && reply.error) || "SourceMonkey did not accept the request";
+          dispatchXhrEvent(id, { kind: "error", message: "[SourceMonkey] GM_xmlhttpRequest: " + why });
+        }, function (err) {
+          /* The send itself failed (chrome.runtime not available).
+             Synthesize an error event for the caller. */
+          var unsent = activeRequests[id];
+          if (unsent) xhrStarted(unsent);
+          dispatchXhrEvent(id, { kind: "error", message: String(err && err.message || err) });
+        });
       };
+      try {
+        encodeRequestBody(details.data, !!details.binary, send);
+      } catch (e) {
+        send(e instanceof _Error ? e : new _Error(_String(e)));
+      }
+      setOwn(control, "abort", function () { abortRequest(id); });
+      return control;
     },
   };
 
@@ -2538,7 +2815,7 @@
     var cb = entry.onclose;
     if (typeof cb === "function") {
       try { cb(); } catch (e) {
-        try { console.info("[SourceMonkey] GM_openInTab onclose threw:", e); } catch (_e) {}
+        reportCallbackError(e);
       }
     }
   }
@@ -2627,7 +2904,7 @@
       var cb = entry.onclick;
       if (typeof cb === "function") {
         try { cb(); } catch (e) {
-          try { console.info("[SourceMonkey] GM_notification onclick threw:", e); } catch (_e) {}
+          reportCallbackError(e);
         }
       }
     } else if (event === "closed") {
@@ -2635,7 +2912,7 @@
       var cb2 = entry.ondone;
       if (typeof cb2 === "function") {
         try { cb2(); } catch (e) {
-          try { console.info("[SourceMonkey] GM_notification ondone threw:", e); } catch (_e) {}
+          reportCallbackError(e);
         }
       }
     }
@@ -2902,7 +3179,7 @@
           total: event.total,
         });
       } catch (e) {
-        try { console.info("[SourceMonkey] GM_download onprogress threw:", e); } catch (_e) {}
+        reportCallbackError(e);
       }
       return;
     }
@@ -2934,7 +3211,7 @@
     try {
       cb(arg);
     } catch (e) {
-      try { console.info("[SourceMonkey] GM_download callback threw:", e); } catch (_e) {}
+      reportCallbackError(e);
     }
   }
 
@@ -3015,7 +3292,7 @@
     try {
       cb();
     } catch (e) {
-      try { console.info("[SourceMonkey] GM_registerMenuCommand callback threw:", e); } catch (_e) {}
+      reportCallbackError(e);
     }
   }
 
@@ -3117,7 +3394,7 @@
       try {
         fn(info);
       } catch (e) {
-        try { console.info("[SourceMonkey] urlchange listener threw:", e); } catch (_le) {}
+        reportCallbackError(e);
       }
     }
   }

@@ -254,16 +254,23 @@ export function headerStallMessage(stallMs: number): string {
   );
 }
 
+// For a request the script asked to fail on a redirect
+// (`redirect: 'error'`), which got one.
+export function redirectRefusedMessage(): string {
+  return gmXhrError('The server redirected the request, and the script asked to fail on a redirect (redirect: "error")');
+}
+
 // For a request that never got a response: Chrome's `fetch` rejects
 // with a bare "Failed to fetch" for a name that doesn't resolve, a
 // refused or dropped connection, a failed TLS handshake, and a request
 // another extension blocked alike, so the causes are listed rather than
 // one guessed (see TODO.md for telling them apart). The host is the
 // request's own; a redirect `fetch` followed to a dead host lands here
-// too, with nothing to tell us which hop failed.
+// too, with nothing to tell us which hop failed, so the message covers
+// a site the host redirected to.
 export function unreachableMessage(host: string): string {
   return gmXhrError(
-    `Could not reach ${host}. The name may not resolve, or the connection was refused, failed or blocked.`,
+    `Could not reach ${host} or a site it redirected to. The name may not resolve, or the connection was refused, failed or blocked.`,
   );
 }
 

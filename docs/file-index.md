@@ -226,7 +226,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/gm-bindings.ts` | Per-script `GM_*` / `GM.*` binding emitter — generates compile-in `const GM_X = ...` source spliced into the wrapper |
 | `src/extension/gm-values.ts` | Row layer for `GM_*` values: `gmval:<scriptId>:<key>` rows in `chrome.storage.local`, used only by the value store |
 | `src/extension/value-store.ts` | The worker's one store for `GM_*` values: in-memory maps, numbered writes, saving to disk behind them |
-| `src/extension/gm-xhr.ts` | SW-side `GM_xmlhttpRequest` runner — fetch + AbortController, the body streamed to the page in pieces, cookies, timeout |
+| `src/extension/gm-xhr.ts` | SW-side `GM_xmlhttpRequest` runner — fetch + AbortController, request bodies, the response streamed to the page in pieces, cookies, timeout |
 | `src/extension/gm-xhr-headers.ts` | Forbidden-request-header surgery for `GM_xmlhttpRequest` — classify, tag the URL, compile to a DNR session rule, stale-rule sweep |
 | `src/extension/gm-tab.ts` | SW-side `GM_openInTab` dispatcher (`chrome.tabs.create` + per-request mapping for close-event routing) |
 | `src/extension/sm-dev-link.ts` | SW side of sm-dev: tab claims and run leases, when a test collection is stale, the event stream to runs |
@@ -503,6 +503,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/gm-xhr-credentials.spec.ts` | E2E tests for `GM_xmlhttpRequest` cookies — credentialed by default, withheld by a truthy `anonymous` |
 | `tests/e2e/gm-xhr-headers.spec.ts` | E2E tests for `GM_xmlhttpRequest` header surgery — overrides reach the wire, URL tag stays inside the browser, rule torn down after |
 | `tests/e2e/gm-xhr-binary.spec.ts` | E2E tests for `GM_xmlhttpRequest` binary path — arraybuffer/blob/document via base64 wire reconstruction |
+| `tests/e2e/gm-xhr-options.spec.ts` | E2E tests for `GM_xmlhttpRequest` request bodies, charsets, `context`, `GM.xmlHttpRequest`'s Promise, `redirect`, callback errors |
 | `tests/e2e/gm-connect.spec.ts` | E2E tests for `@connect` gating — the connection prompt and its answers, own-origin and relative URLs, rules, redirects, revoking |
 | `tests/unit/gm-connect.test.mjs` | Unit tests for `@connect` parsing/matching and `decideConnect` — wildcard, self, bare host, subdomain, own origin, host-less URLs |
 | `tests/unit/gm-download.test.mjs` | Unit tests for the `GM_download` SW dispatcher (URL/name validation, terminal events, timeout, abort, progress polling) |

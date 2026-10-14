@@ -1104,14 +1104,20 @@ gets the install's key: see
     defined outright (`setOwn`), so `Object.prototype` getters, setters
     and `toJSON` see nothing. That includes the script's `details`,
     read from an own-fields copy.
+  - That covers request bodies, read with a `FileReader` (a Blob's own
+    `arrayBuffer()` promise would read `then` and `constructor` off
+    what it resolves with), and `GM.xmlHttpRequest`'s Promise, which
+    is `guarded` and resolves with a response that has its own `then`.
   - `tests/e2e/gm-xhr-hostile-page.spec.ts` hooks `TextDecoder`,
-    `atob`, typed arrays, `Blob`, `URL`, `JSON`, `DOMParser`, the
-    stream controller, array methods and iteration, and those
-    `Object.prototype` members, and checks the page sees none of it.
+    `atob`, `btoa`, `String.fromCharCode`, typed arrays, `Blob`,
+    `FormData` iteration, `URL`, `JSON`, `DOMParser`, the stream
+    controller, array methods and iteration, `Promise.prototype`, and
+    those `Object.prototype` members, and checks the page sees none of
+    it.
   - What the script does with it is the script's business: its own
     code calls the page's built-ins like any page-world code, and so
-    does serializing a non-string `data` (its `toJSON`), or reading a
-    field the response object lacks.
+    does turning a `data` we don't take as a body into text (its
+    `toString`), or reading a field the response object lacks.
 - The listeners for the bridge's keyed events only read them, and
   handle what they carry in a microtask once the dispatch is over:
   while one runs, `window.event` is the event, whose type carries the

@@ -295,7 +295,7 @@ and the page's CSP applies to it.
 
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
-| `GM_xmlhttpRequest` / `GM.xmlHttpRequest` | ✅ | ✓ | ✓ | ✓ (`GM.xmlHttpRequest` only) | Returns `{abort}` synchronously. SW-side `fetch` with `AbortController`; the body streams back to the originating tab in pieces, with progress events. No size cap. |
+| `GM_xmlhttpRequest` / `GM.xmlHttpRequest` | ✅ | ✓ | ✓ | ✓ (`GM.xmlHttpRequest` only) | `GM_xmlhttpRequest` returns `{abort}` synchronously; `GM.xmlHttpRequest` returns a Promise of the response, with `abort` on it (see below). SW-side `fetch` with `AbortController`; the body streams back to the originating tab in pieces, with progress events. No size cap. |
 
 ### XHR details object
 
@@ -304,17 +304,32 @@ and the page's CSP applies to it.
 | Field | Notes |
 |-------|-------|
 | `method` | Default `GET`. Uppercased before send. |
-| `url` | Required. A `URL` object works too. |
+| `url` | Required. A `URL` object works too. Without one, `onerror` gets the Error when given (as in VM), and otherwise it's thrown. |
 | `headers` | Plain object. Any header, including ones the browser normally forbids a script to set — see [Forbidden headers](#forbidden-headers). |
-| `data` | Body. String only today; non-string falls through `String(...)`. |
+| `data` | Body, as XMLHttpRequest's `send()` takes it: a string, `FormData`, `URLSearchParams`, `Blob` / `File`, `ArrayBuffer` or a typed array / `DataView`. Anything else is sent as its `String(...)`. The Content-Type follows from the body (multipart, form-urlencoded, the Blob's type) unless `headers` sets one. |
+| `binary` | `true` sends a string `data` as bytes, one per character (its low 8 bits). |
 | `timeout` | Milliseconds. Aborts the request and fires `ontimeout`. |
 | `responseType` | `text` (default) / `json` / `blob` / `arraybuffer` / `document` / `stream`. With `stream` (as in TM), `response` is a `ReadableStream` of the body's bytes from `onloadstart` on, fed as they arrive. |
+| `overrideMimeType` | Its charset decodes the text, in place of the response's (`text/plain; charset=x-user-defined` gives one character per byte, for reading binary data from `responseText`). Its type is also the `blob`'s type and picks how a `document` parses. |
+| `context` | Any value, handed back as `context` on every response object. |
+| `nocache` / `revalidate` | TM's: `nocache` skips the browser's cache; `revalidate` checks a cached copy with the server first. |
+| `redirect` | TM's: `'error'` makes a redirect fail the request with `onerror`. Redirects are followed otherwise, `'manual'` included. |
 | `anonymous` | `true` sends the request without the user's cookies (and any cached HTTP-auth credentials). Default `false` — see [Credentials](#credentials). |
 | `onload`, `onerror`, `ontimeout`, `onabort` | Terminal callbacks: exactly one fires. Callbacks aren't serializable across the SW boundary so they stay on the page side keyed by request id. |
 | `onloadstart` | Once the extension has taken the request, with `readyState: 1`. |
 | `onreadystatechange` | At `readyState` 2 (headers in), 3 (body arriving) and 4 (just before the terminal callback), the order XMLHttpRequest uses. |
 | `onprogress` | Per piece of the body, with `lengthComputable`, `loaded` and `total` beside the response fields. For text types, `responseText` is the text so far. |
 | `onloadend` | After the terminal callback, with the same object. |
+
+A callback that throws is reported as the script's error, on its Log,
+as an uncaught error in the script is.
+
+Not supported: TM's `cookie`, `fetch`, `proxy` and `cookiePartition`,
+`user` / `password`, and `upload` callbacks.
+
+`GM.xmlHttpRequest` resolves with the response on `onload`, and
+rejects with the same object `onerror`, `ontimeout` or `onabort` gets.
+The details' callbacks run too.
 
 ### XHR response shape
 
@@ -325,7 +340,7 @@ For `responseType: 'text'` (default) and `'json'`:
 | `status` | HTTP status number. |
 | `statusText` | HTTP status text. |
 | `responseURL` / `finalUrl` | Final URL after redirects. |
-| `responseText` | Body as text. |
+| `responseText` | Body as text, decoded by `overrideMimeType`'s charset, else the response's, else UTF-8 (JSON is always UTF-8). |
 | `response` | Same as `responseText` for `text`; parsed object for `json` (or `null` on parse failure). |
 | `responseHeaders` | Multi-line `Name: value\r\n…` (TM/VM convention; trailing CRLF). |
 | `readyState` | `4` (done) for the terminal callbacks; 1-3 in the earlier ones. |
@@ -343,9 +358,14 @@ on a failure rejects reads with the error (an `AbortError` or
 
 `ontimeout` and `onabort` get the empty shape of a failed request:
 `readyState: 4`, `status: 0`, empty `statusText` / `responseText` /
-`responseHeaders`, `response: null`, and `finalUrl` set to the request
-URL. `onerror` gets the same plus `error`. `onreadystatechange`
-receives the same object as the terminal callback that follows it.
+`responseHeaders`, `response: null`, and `finalUrl` set to where the
+request had got to (after any redirect, once its headers came). `onerror`
+gets the same plus `error`. `onreadystatechange` receives the same
+object as the terminal callback that follows it, except after
+`abort()`, which fires none, as in TM. `onabort` comes after `abort()`
+returns.
+
+Every response object also has `context`, from the details.
 
 ### `@connect` gating
 
@@ -463,8 +483,9 @@ How this is done, and what it can't cover:
 - HTTP error statuses (404, 500, …) fire `onload` with the
   non-2xx status — matches XHR semantics. Only network-level
   failures (DNS, ECONNREFUSED, etc.) fire `onerror`.
-  - Their `error` is `Could not reach <host>. The name may not
-    resolve, or the connection was refused, failed or blocked.` rather than
+  - Their `error` is `Could not reach <host> or a site it redirected
+    to. The name may not resolve, or the connection was refused, failed
+    or blocked.` (`fetch` doesn't say which hop failed) rather than
     the browser's bare `Failed to fetch`, which says the same for all
     of these causes.
 - No upload progress (`upload.onprogress`).
@@ -670,8 +691,8 @@ primitive, and any host that acts on a plain GET is reachable.
   permission on update. The `chrome.downloads.onChanged` listener that
   comes with it sees every download in the browser (the API has no
   per-extension filter); SourceMonkey ignores any id it didn't start.
-- **`abort()` settles the call locally, immediately** (matching
-  `GM_xmlhttpRequest`), then asks the SW to cancel. On the in-page
+- **`abort()` settles the call locally, immediately**, then asks the
+  SW to cancel. On the in-page
   `blob:` / `data:` path there is nothing to cancel — the browser
   already owns the transfer — so `abort()` only suppresses the
   synthetic `onload`.

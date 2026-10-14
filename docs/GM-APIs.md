@@ -299,7 +299,8 @@ Response types `text` (default), `json`, `blob`, `arraybuffer`,
 Architecture:
 
 - Page-side `GM_xmlhttpRequest(details)` returns `{abort}`
-  synchronously. The runtime stores the callbacks
+  synchronously (`GM.xmlHttpRequest`, a Promise with `abort` on it).
+  The runtime stores the callbacks
   (`onloadstart`/`onprogress`/`onreadystatechange`/`onload`/
   `onerror`/`ontimeout`/`onabort`/`onloadend`) keyed by a generated
   request id (callbacks aren't serializable
@@ -307,14 +308,26 @@ Architecture:
   SW with the serializable request fields.
   - A `URL` object as `url` is taken as its `href`, as in VM.
     `GM_download` and `GM_openInTab` accept one too (`urlArg`).
+  - A body that isn't text (a FormData, Blob, buffer) goes as base64
+    in a `GmXhrBody` (`encodeRequestBody`), since the message carries
+    JSON. A Blob is read first, so the envelope goes out after it.
+    The SW rebuilds it for `fetch`, which sets the Content-Type.
 - SW (`src/extension/gm-xhr.ts`) runs `fetch(url, init)` against an
   `AbortController`, and sends `sm:gm-xhr-event`s back to the
   originating frame via `chrome.tabs.sendMessage`. The page-side
   listener dispatches them by request id. See
   [Streaming the response](#streaming-the-response).
-- `abort()` fires `onabort` synchronously on the page side AND
-  sends a `sm:gm-xhr-abort` to the SW (which `AbortController`s
-  the fetch).
+- `abort()` settles the request on the page side at once, so nothing
+  more arrives for it, and sends a `sm:gm-xhr-abort` to the SW (which
+  `AbortController`s the fetch). `onabort` and `onloadend` run on a
+  later task, as in TM and VM, with no `onreadystatechange`, as in TM.
+- A throw in a callback is reported as the script's uncaught error
+  (`reportCallbackError`, through `reportError`), so it reaches the
+  script's Log. The other GM callbacks (value listeners, menu
+  commands, notifications, downloads, tabs) do the same.
+- Text bodies are decoded by the charset of `overrideMimeType`, else
+  of the response's Content-Type, else UTF-8, as XMLHttpRequest does.
+  The decoder is made when the headers arrive.
 - Timeout: SW-side `setTimeout` that calls
   `controller.abort()`. A shadow flag distinguishes timeout from
   user-initiated abort so the right callback fires.

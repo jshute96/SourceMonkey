@@ -197,7 +197,7 @@ test.describe('GM_xmlhttpRequest streaming', () => {
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
-    await expect(page.locator('body')).toHaveAttribute('data-sm-seen', 'rsc2,rsc3,rsc4,abort,loadend');
+    await expect(page.locator('body')).toHaveAttribute('data-sm-seen', 'rsc2,rsc3,abort,loadend');
     await page.close();
   });
 

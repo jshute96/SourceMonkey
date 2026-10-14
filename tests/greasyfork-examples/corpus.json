@@ -15154,9 +15154,8 @@
       "version": "0.1.2"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-05",
+      "status": "pass",
+      "date": "2026-10-13",
       "version": "0.1.2"
     },
     "tags": [
@@ -15167,6 +15166,11 @@
         "date": "2026-10-05",
         "version": "0.1.2",
         "text": "On the Steam workshop page of a Don't Starve mod (`?id=1608490902`, \"Simple Health Bar\") the script adds its three buttons after the Subscribe button. Its API lookup asked for `api.steampowered.com` (no `@connect`); allowed.\n- \"复制下载链接\" (copy link): alerts the mod's `cdn.steamusercontent.com` zip URL. Works.\n- \"重命名并下载\" (rename and download): asks for `cdn.steamusercontent.com`; allowed. It saved `Simple Health Bar.zip` at 180053 bytes, a corrupt zip. The file is 189884 bytes.\n- SourceMonkey: the script fetches with `overrideMimeType: 'text/plain; charset=x-user-defined'` and rebuilds bytes from `responseText` (`charCodeAt & 255`). SourceMonkey ignores `overrideMimeType` and decodes as UTF-8; the saved file equals the real bytes run through a lossy UTF-8 decode, byte for byte.\n- A 10-line probe doing the same request gave `responseText.length` 189884 under Tampermonkey (`--manager tm`) and 180053 under SourceMonkey.\n- Script: for Don't Starve Together mods (`?id=378160973`) the API now gives an empty `file_url`, so the script hides its buttons there. The tieba side (`http://tieba.baidu.com/p/*`) gets Baidu's slider captcha."
+      },
+      {
+        "date": "2026-10-13",
+        "version": "0.1.2",
+        "text": "Re-tested after the GM_xmlhttpRequest compatibility changes (2026-10-13, uncommitted): passes on Steam. On the workshop page of `?id=1608490902` (\"Simple Health Bar\") the buttons appeared; the API lookup asked for `api.steampowered.com` and the download for `cdn.steamusercontent.com` (no `@connect`; both allowed).\n- \"重命名并下载\" saved `Simple Health Bar.zip` at 189,884 bytes, byte-identical (`cmp`) to the CDN file fetched with curl; `unzip -t` reports no errors.\n- SourceMonkey: passes only because `overrideMimeType: 'text/plain; charset=x-user-defined'` is now honored, so the tag stays.\n- The tieba side was not re-tested (Baidu's slider captcha, as before)."
       }
     ]
   },
@@ -21205,9 +21209,8 @@
       "version": "0.8"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-06",
+      "status": "pass",
+      "date": "2026-10-13",
       "version": "0.8"
     },
     "tags": [
@@ -21218,6 +21221,11 @@
         "date": "2026-10-06",
         "version": "0.8",
         "text": "On `https://music.163.com/#/song?id=186016` (晴天) the script added one `封面下载` (cover download) link in the song iframe, pointing at the cover image, with `download` set to `晴天-周杰伦-叶惠美.jpg`.\n\n- Clicking it ran `GM_xmlhttpRequest` (load 200) and saved `晴天-周杰伦-叶惠美.jpg`, but the file is corrupt: 1,818,371 bytes against the real 1,913,288, and every byte at or above 0x80 came out as 0xFD (`fd50 4e47...` instead of `8950 4e47...`).\n- SourceMonkey: the script reads binary with `overrideMimeType: \"text/plain;charset=x-user-defined\"` and `charCodeAt(i) & 0xff`; SourceMonkey decodes the body as UTF-8, so U+FFFD replaces the high bytes. Known gap, TODO.md \"`GM_xmlhttpRequest` ignores `overrideMimeType`\"."
+      },
+      {
+        "date": "2026-10-13",
+        "version": "0.8",
+        "text": "Re-tested after the GM_xmlhttpRequest compatibility changes (2026-10-13, uncommitted): passes. On `https://music.163.com/#/song?id=186016` (晴天) the `封面下载` link appeared in the song iframe; clicking it ran `GM_xmlhttpRequest` (load 200) and saved `晴天-周杰伦-叶惠美.jpg` at 1,913,288 bytes, byte-identical (`cmp`) to the same URL fetched with curl (a 1080x1080 PNG).\n- SourceMonkey: passes only because `overrideMimeType: \"text/plain;charset=x-user-defined\"` is now honored (one character per byte), so the tag stays."
       }
     ]
   },
@@ -25698,9 +25706,8 @@
       "version": "1.8"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-04",
+      "status": "pass",
+      "date": "2026-10-13",
       "version": "1.8"
     },
     "tags": [
@@ -25716,6 +25723,11 @@
         "date": "2026-10-04",
         "version": "1.8",
         "text": "Checked in Tampermonkey 5.5.0 and Violentmonkey 2.49.0 with a probe script (302 redirect, `abort()` from `onreadystatechange` at readyState 3), confirming the `sourcemonkey` blame:\n- Tampermonkey: no `onreadystatechange` after `abort()`; `onabort` and `onloadend` follow asynchronously.\n- Violentmonkey: one more `onreadystatechange`, but with readyState 0 and the redirected `finalUrl`, so this script's `readyState > 2` check skips it.\n- SourceMonkey: `onreadystatechange` with readyState 4 and the original URL, before `abort()` returns."
+      },
+      {
+        "date": "2026-10-13",
+        "version": "1.8",
+        "text": "Re-tested after the GM_xmlhttpRequest compatibility changes (2026-10-13, uncommitted): passes, because of the fix (`abort()` no longer fires `onreadystatechange`), so `xhr-abort-readystate` stays.\n- Headed, on `baidu.com/s?wd=hao123`. The result links now resolve to their targets: 3 `baidu.com/link?` hrefs left in `#content_left` (was 46), and those 3 are one link whose target (`bbs.hiapk.com`) doesn't answer, so its request fails. The hao123 results are removed (10 to 5 `#content_left>div`, no `hao123.com` links left).\n- Probe in the script's world on the same page (`abort()` from `onreadystatechange` at readyState 3): `[3, 200, m.hao123.com/]`, `abort()` returns, then `onabort` with readyState 4 and `finalUrl` `m.hao123.com/`. No `onreadystatechange` after the abort.\n- The `--noscript` control tab went to Baidu's captcha, so the before counts are from the earlier note.\n- SourceMonkey (minor): the failed request's error reads \"Could not reach www.baidu.com\", the request's host, though the 302 went to `bbs.hiapk.com`, which is the host that failed."
       }
     ]
   },
@@ -28282,9 +28294,8 @@
       "version": "1.1.0"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-06",
+      "status": "pass",
+      "date": "2026-10-13",
       "version": "1.1.0"
     },
     "tags": [
@@ -28295,6 +28306,11 @@
         "date": "2026-10-06",
         "version": "1.1.0",
         "text": "On a safebooru.org list page (`tags=landscape`, 42 thumbnails) the script adds its toolbar (Viewer, User Menu, Download Mode) and a progress stripe per thumbnail, then fetches each post page with `GM.xmlHttpRequest`.\n\n- SourceMonkey: the response has no `context`. The script passes `context: {index, url}` and its `onload` reads `xhr.context.index`, so every callback throws `TypeError: Cannot read properties of undefined (reading 'index')` (shown only as `[page info] [SourceMonkey] XHR callback threw`). No image became ready: 0 of 42 stripes, `Download All (0)`.\n- A direct check in the script world: `GM.xmlHttpRequest({..., context: {index: 3}})` gave `response.context === null`.\n- Under Tampermonkey (`--manager tm`) on the same page all 42 stripes became `image-ready` and the button showed `Download All (42)`. Tampermonkey and Violentmonkey both document `context` as passed through to the response.\n- Site: safebooru answers many parallel post requests with 404 (31 of 42 from the page's own `fetch` too), which the script handles once `context` works."
+      },
+      {
+        "date": "2026-10-13",
+        "version": "1.1.0",
+        "text": "Re-tested after the GM_xmlhttpRequest compatibility changes (2026-10-13, uncommitted): passes. On the safebooru.org list page (`tags=landscape`, 42 thumbnails) `xhr.context.index` now works: no `reading 'index'` errors, and each 200 post page made its thumbnail `image-ready`.\n- Site: safebooru answers bursts of parallel post requests with 404 (curl: 9 of 20 parallel requests for one post got 404; the same URLs alone gave 200). The first pass got 10, 9 and 10 of 42 ready on three loads; Tampermonkey (`--manager tm`) got 17 and 30 on the same page at the same time.\n- Script: its Shift+I retries the empty ones; four presses brought it to 42 of 42 and `Download All (42)`.\n- Script: some 200 post pages throw `TypeError: Cannot read properties of null (reading 'textContent')` in `createTagObj` (8 on one load; once under Tampermonkey too), without stopping the image from becoming ready.\n- SourceMonkey: passes only because `context` is now passed back on the response, so the tag stays."
       }
     ]
   },
@@ -36246,9 +36262,8 @@
       "version": "1.2"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-06",
+      "status": "pass",
+      "date": "2026-10-13",
       "version": "1.2"
     },
     "tags": [
@@ -36259,6 +36274,11 @@
         "date": "2026-10-06",
         "version": "1.2",
         "text": "On books.google.com \"Pride and Prejudice\" (`id=s1gVAAAAYAAJ`, full view; headed) the panel appeared; with range 0 to 3, Start read the page list (434 pages), fetched page images with `GM_xmlhttpRequest` (200s) and saved `Pride_and_Prejudice_s1gVAAAAYAAJ_003_434.zip`. Its PNG entries are corrupt: `001_PP1.png` is 198,724 bytes of `data` where the same URL fetched with curl is a 207,633-byte JPEG.\n- SourceMonkey: the script reads binary through `overrideMimeType: 'image/png; charset=x-user-defined'` and `responseText`, which SourceMonkey decodes as UTF-8 (known gap, TODO.md \"`GM_xmlhttpRequest` ignores `overrideMimeType`\").\n- Script: it passes `synchronous: true`, which managers ignore, so its save timer can race the image responses. Under Tampermonkey (`--manager tm`, range 0 to 2) the zip was saved before any image arrived and came out empty (22 bytes), so that run can't show the bytes; the TODO item has the Tampermonkey comparison."
+      },
+      {
+        "date": "2026-10-13",
+        "version": "1.2",
+        "text": "Re-tested after the GM_xmlhttpRequest compatibility changes (2026-10-13, uncommitted): passes. On books.google.com \"Pride and Prejudice\" (`id=s1gVAAAAYAAJ`, headed) the panel appeared and Start read the page list (434 pages).\n- Range 0 to 10 saved `Pride_and_Prejudice_s1gVAAAAYAAJ_010_434.zip` (2,978,660 bytes); `unzip -t` reports no errors and its 9 entries are valid JPEGs. `001_PP1.png` is 207,633 bytes, byte-identical (`cmp`) to the same URL fetched with curl.\n- Script: it saves the zip right after its \"Saving…\" alert without waiting for the image responses, so the last pages miss it: range 0 to 3 gave an empty 22-byte zip (as under Tampermonkey before), and range 0 to 10 gave 9 of 10 pages.\n- SourceMonkey: passes only because `overrideMimeType: 'image/png; charset=x-user-defined'` is now honored, so the tag stays."
       }
     ]
   },
@@ -68525,9 +68545,8 @@
       "version": "0.9.1"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-03",
+      "status": "pass",
+      "date": "2026-10-13",
       "version": "0.9.1"
     },
     "tags": [
@@ -68543,6 +68562,11 @@
         "date": "2026-10-03",
         "version": "0.9.1",
         "text": "Re-blamed to sourcemonkey: Violentmonkey accepts a non-string `url` and converts it (`src/injected/web/requests.js`, `URL` objects via their `href`), so the `URL` object this script passes would work there. SourceMonkey requires a string and throws \"url required\"."
+      },
+      {
+        "date": "2026-10-13",
+        "version": "0.9.1",
+        "text": "Re-tested after the GM_xmlhttpRequest compatibility changes (2026-10-13, uncommitted): passes, because of the earlier fix that accepts a `URL` object as `url`, so `xhr-url-object` stays.\n- On https://nnyy.in/dianying/20262339.html, with `video.canPlayType` stubbed to `''` and the page's `play_m3u8` called with its `bfikuncdn.com/20261012/7ZzNiWVg/index.m3u8` source (as in the first test), the hook processed the playlists and the script's `gmFetch(URL.parse(...))` HEAD requests went out. No `url required` errors.\n- The ad chunks on `bfikuncdn.com/20261009/...` loaded 200 with Last-Modified 9 Oct 2026. The main video's segments are on `kkzycdn.com:65`, which doesn't answer here (curl gets nothing either), so they fall back to date 0, `suspiciousTimestamps` stays empty and nothing is removed. Removal itself couldn't be checked end to end; the first test's `.href` copy showed it removing chunks when both hosts answered.\n- `gmFetch(URL.parse('https://nnyy.in/favicon.ico'))` from the script's world also resolved, with its headers."
       }
     ]
   },
@@ -77147,9 +77171,8 @@
       "version": "25.14"
     },
     "test": {
-      "status": "fail",
-      "blame": "sourcemonkey",
-      "date": "2026-10-11",
+      "status": "pass",
+      "date": "2026-10-13",
       "version": "25.14"
     },
     "tags": [
@@ -77160,6 +77183,11 @@
         "date": "2026-10-11",
         "version": "25.14",
         "text": "The game pages need an account (https://www.milkywayidle.com/game sends a signed-out visitor back to the landing page), but the script's market price fetch already runs on the landing page, and fails there because of SourceMonkey.\n- Script: `fetchMarketJSON` does `const response = await GM.xmlHttpRequest({...})` and reads `response.status` and `response.responseText`.\n- SourceMonkey: `GM.xmlHttpRequest` returns the same `{abort}` object as `GM_xmlhttpRequest`, not a Promise (`emitGmObject` in `src/extension/gm-bindings.ts` passes it through; docs/supported-GM-APIs.md says \"Returns `{abort}` synchronously\"). So the `await` gets `{abort}` at once: the log shows `fetch end with response status: undefined` and `validateMarketJson jsonStr is null` before the request's `load 200`. The script marks its market data expired and falls back to its hard-coded backup; `localStorage.MWITools_marketAPI_json` stayed empty.\n- Tampermonkey 5.5.1 (`--manager tm`, same page): `fetch success 200`, then `fetch end with response status: 200`, and it stored 117,062 characters of market JSON.\n- In the script's world, `GM.xmlHttpRequest({url, method: 'GET'})` gave an object with only `abort`, `instanceof Promise` false. Tampermonkey's and Violentmonkey's `GM.xmlHttpRequest` return a Promise of the response (with `abort` on it).\n- On the public combat simulator (https://shykai.github.io/MWICombatSimulatorTest/dist/) the script adds its \"Import solo/group\" button; importing needs character data saved from the game."
+      },
+      {
+        "date": "2026-10-13",
+        "version": "25.14",
+        "text": "Re-tested after the GM_xmlhttpRequest compatibility changes (2026-10-13, uncommitted): passes, because of the fix (`GM.xmlHttpRequest` returns a Promise), so `gm-xhr-promise` stays.\n- On https://www.milkywayidle.com/ the log shows `fetchMarketJSON fetch success 200`, then `fetch end with response status: 200` and the parsed `{marketData, timestamp}`. `localStorage.MWITools_marketAPI_json` holds 119,042 characters (was empty).\n- In the script's world, `GM.xmlHttpRequest({url, method: 'GET'})` gives a Promise with `abort` on it, resolving to a response with status 200."
       }
     ]
   },

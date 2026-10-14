@@ -384,46 +384,16 @@ The next items were checked against Tampermonkey 5.5.0 and
 Violentmonkey 2.49.0 with a throwaway `tests/examples/` probe script
 (2026-10-04).
 
-- **`abort()` re-fires `onreadystatechange`** (`xhr-abort-readystate`:
-  32891).
-  - `abort()` in `src/wrapper-gm-runtime.js` dispatches the terminal
-    event synchronously, so `onreadystatechange` runs again before
-    `abort()` returns, with `readyState` 4, `status` 0, and
-    `emptyXhrResponse`'s `finalUrl`, which is the original request URL.
-  - 32891 stores `finalUrl` at readyState 3 and then aborts; the extra
-    call puts the pre-redirect URL back.
-  - TM fires no `onreadystatechange` after `abort()`. VM fires one with
-    `readyState` 0 and the redirected `finalUrl`. Both deliver
-    `onabort` / `onloadend` asynchronously.
-  - Fix: skip `onreadystatechange` for a script-initiated abort; keep
-    the last reported `finalUrl` on `entry` for non-load events (it's
-    also wrong after a redirect for error and timeout); consider
-    delivering `onabort` asynchronously, which contradicts the comment
-    at the local abort dispatch.
 - **`GM_setClipboard` ignores its callback** (`setclipboard-callback`:
   483847).
   - TM documents `GM_setClipboard(data, info, cb)`; the binding in
     `src/extension/gm-bindings.ts` takes `(text, type)`, so the
     script's "copied" toast never shows. Fix: call `cb` when the copy
     finishes.
-- **`GM_xmlhttpRequest` with no `url` always throws** (seen in 30954).
-  - VM calls `onerror` with the error when one is given, and throws
-    otherwise; TM returns `{abort}` and silently does nothing.
-    SourceMonkey throws even when `onerror` is given. Fix: follow VM.
 
 The next items came from testing the oldest corpus scripts, checked
 against Tampermonkey with `sm-dev --manager tm` probes (2026-10-05).
 
-- **`GM_xmlhttpRequest` ignores `overrideMimeType`**
-  (`xhr-override-mimetype`: 16385, 379049, 26727).
-  - Old scripts read binary data by passing
-    `overrideMimeType: 'text/plain; charset=x-user-defined'` and taking
-    `charCodeAt(i) & 255` from `responseText`.
-  - SourceMonkey decodes the body as UTF-8, so a 189,884-byte zip came
-    back as 180,053 characters (TM: 189,884) and the saved file was
-    corrupt.
-  - Fix: honor the option's charset when building `responseText` (for
-    `x-user-defined`, map each byte to one character).
 - **`unsafeWindow` and `GM_*` aren't properties of `window`/`self`
   in the isolated world** (`unsafewindow-on-window`: 593, 4881, 4882,
   455261, 455855; `gm-on-window`: 456077, 455261, 455855).
@@ -448,13 +418,6 @@ scripts, checked against Tampermonkey 5.5 with `sm-dev --manager tm`
     `src/extension/gm-tab.ts`, documented in docs/GM-APIs.md).
     Possible fix: allow `data:` and `blob:` too, still refusing
     `file:`, `chrome:` and `chrome-extension:`.
-- **`GM_xmlhttpRequest` drops the `context` option**
-  (`xhr-context`: 37466).
-  - TM and VM pass `details.context` back as `response.context`.
-    SourceMonkey doesn't, so 37466's `onload` throws reading
-    `xhr.context.index` and 0 of 42 images download (TM: 42 of 42).
-  - Fix: keep `context` in the page-side request entry and put it on
-    every response object.
 - **`GM_registerMenuCommand` without a callback throws**
   (`menu-no-callback`: 406501).
   - 406501 calls `GM.registerMenuCommand("===== START =====")` with
@@ -485,18 +448,6 @@ The next items came from sweeping the last untested valid corpus
 scripts, checked against Tampermonkey 5.5.1 with `sm-dev --manager tm`
 (2026-10-10).
 
-- **`GM.xmlHttpRequest` returns `{abort}`, not a Promise**
-  (`gm-xhr-promise`: 494467).
-  - `emitGmObject` in `src/extension/gm-bindings.ts` passes the
-    `GM_xmlhttpRequest` result through (documented in
-    docs/supported-GM-APIs.md).
-  - TM and VM return a Promise of the response, with `abort` on it.
-    494467 does `await GM.xmlHttpRequest(...)`, gets `{abort}` at
-    once, and falls back to stale data (TM: stored 117 KB of fresh
-    market JSON).
-  - Fix: return a Promise that resolves on `onload` and rejects on
-    error/timeout/abort, still calling the details' callbacks, with
-    `abort` added to it.
 - **Unhandled rejections aren't reported after `document.write()`**
   (seen on 437625).
   - A `@run-at document-start` script that calls `document.write()`
@@ -634,14 +585,12 @@ Adding any of these is a catalog entry + a body — nothing structural.
 
 ### GM_* implementation follow-ups
 
-- **A throw in a `GM_xmlhttpRequest` callback never reaches the Log.**
-  `callXhrCallback` (`src/wrapper-gm-runtime.js`) catches it and only
-  logs `console.info("[SourceMonkey] XHR callback threw:", e)` to the
-  page console, so it isn't an `sm:error`, the script's Log doesn't
-  show it, and sm-dev shows it only under `logs --log-source all`. TM
-  and VM let it surface as the script's uncaught error. Report it as
-  the script's error (and check the other runtime callbacks: value
-  listeners, menu commands, notifications, downloads).
+- **Large `GM_xmlhttpRequest` request bodies fail with Chrome's
+  message.** A non-text body goes to the worker as base64 in one
+  message, so past roughly 45 MB it hits Chrome's 64 MiB message limit
+  and the script gets "Message length exceeded maximum allowed length",
+  without our prefix or a fix. Send big bodies in pieces, as responses
+  come back, or at least say what the limit is.
 - **Value sequence numbers after a backward clock step.** The value
   store starts its counter from `Date.now()` (`src/extension/value-store.ts`).
   If the clock steps back by more than an earlier worker's lifetime,
@@ -967,11 +916,6 @@ Adding any of these is a catalog entry + a body — nothing structural.
   stale row per write; the receiving document just has no store for
   that scriptId. Fix: drop a tab's rows on committed navigation and
   let the new document's sm:start re-add them.
-- **`GM_xmlhttpRequest` binary request bodies.** FormData / Blob /
-  ArrayBuffer request bodies aren't supported — non-string `data`
-  stringifies to `[object …]` at the SW boundary. Wire format
-  needs a binary-tagged envelope (mirroring the binary RESPONSE
-  path) for non-text bodies.
 - **`composeWrapperErrorMessage` substring dedup.** The first-line
   dedup in `background.ts` checks `firstLine.includes(msg)`, so a
   message like `"ok"` substring-matches a stack first line of

@@ -306,7 +306,7 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
     // The host named, not the browser's bare "Failed to fetch".
     await expect(page.locator('body')).toHaveAttribute(
       'data-sm-got-error',
-      '[SourceMonkey] GM_xmlhttpRequest: Could not reach 127.0.0.1:1. The name may not resolve, or the connection was refused, failed or blocked.',
+      '[SourceMonkey] GM_xmlhttpRequest: Could not reach 127.0.0.1:1 or a site it redirected to. The name may not resolve, or the connection was refused, failed or blocked.',
       { timeout: 6000 },
     );
     const gotLoad = await page.locator('body').getAttribute('data-sm-got-load');
@@ -333,6 +333,7 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
       },
       body: `
         let rsc = '';
+        let returned = false;
         const handle = GM_xmlhttpRequest({
           method: 'GET',
           url: 'http://127.0.0.1:1/never',
@@ -340,13 +341,14 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
           onerror: () => { document.body.dataset.smGotError = 'yes'; },
           onabort: (r) => {
             document.body.dataset.smGotAbort = 'yes';
-            document.body.dataset.smAbortSeen = rsc + ',abort' + r.readyState;
+            document.body.dataset.smAbortSeen = rsc + ',abort' + r.readyState + ',' + returned;
           },
           onreadystatechange: (r) => { rsc = 'rsc' + r.readyState + ' ' + r.status; },
         });
-        // Abort immediately. Page-side, this should fire onabort
-        // synchronously (TM/VM behavior).
+        // Abort immediately. As in TM and VM, onabort comes after
+        // abort() returns, and (as in TM) with no onreadystatechange.
         handle.abort();
+        returned = true;
       `,
     });
     await sm.addCollection(scriptsDir.path);
@@ -355,7 +357,7 @@ test.describe('GM_xmlhttpRequest text path (Phase 8)', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page.locator('body')).toHaveAttribute('data-sm-got-abort', 'yes');
-    await expect(page.locator('body')).toHaveAttribute('data-sm-abort-seen', 'rsc4 0,abort4');
+    await expect(page.locator('body')).toHaveAttribute('data-sm-abort-seen', ',abort4,true');
     // Neither load nor error should fire.
     expect(await page.locator('body').getAttribute('data-sm-got-load')).toBeNull();
     expect(await page.locator('body').getAttribute('data-sm-got-error')).toBeNull();

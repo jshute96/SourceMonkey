@@ -9,11 +9,11 @@ export interface GmXhrRequestPayload {
   url: string;
   // Headers object — { header-name: value }.
   headers?: Record<string, string>;
-  // Body text. Non-string request bodies (FormData / Blob /
-  // ArrayBuffer) are not yet supported — see TODO.md "XHR binary
-  // request bodies". Non-string values stringify via String() at the
-  // SW boundary.
+  // The body, when it's text.
   data?: string;
+  // The body, when it isn't (a message carries JSON, so bytes go as
+  // base64). The page reads Blobs and files before sending.
+  body?: GmXhrBody;
   // Timeout in ms. 0 / undefined = no timeout.
   timeout?: number;
   // 'text' | 'json'. Anything else is treated as 'text' for now.
@@ -22,9 +22,30 @@ export interface GmXhrRequestPayload {
   // origin. Requests are credentialed by default (TM/VM behavior) —
   // see the `credentials` note in `runXhr` (gm-xhr.ts).
   anonymous?: boolean;
+  // TM's cache options: `nocache` skips the browser's cache, and
+  // `revalidate` checks a cached copy with the server first.
+  nocache?: boolean;
+  revalidate?: boolean;
+  // TM's: 'error' makes a redirect fail the request. Anything else
+  // follows redirects.
+  redirect?: string;
   // GET/HEAD requests can't have a body. The runner doesn't enforce
   // it; fetch() will reject and the page sees an error event.
 }
+
+// A request body that isn't text, as the page encodes it.
+export type GmXhrBody =
+  // A Blob, File, ArrayBuffer or view, or a `binary` string. `type` is
+  // a Blob's, sent as the Content-Type unless the script set one.
+  | { kind: 'bytes'; data: string; type: string }
+  // A FormData: sent as multipart/form-data.
+  | { kind: 'form'; entries: GmXhrFormEntry[] }
+  // A URLSearchParams, as its text: sent form-urlencoded.
+  | { kind: 'params'; data: string };
+
+export type GmXhrFormEntry =
+  | { name: string; value: string }
+  | { name: string; data: string; filename: string; type: string };
 
 // One serialized HTTP response, as the terminal `load` event carries
 // it. Field names roughly match TM/VM's onload payload shape so
@@ -72,6 +93,8 @@ export type GmXhrStreamEvent =
     statusText: string;
     finalUrl: string;
     responseHeaders: string;
+    // The Content-Type, whose charset decodes a text body.
+    mimeType: string;
     total: number | null;
   }
   | {

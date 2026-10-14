@@ -315,7 +315,8 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
     }
   }
   // XHR subsystem: GM_xmlhttpRequest returns a `{abort}` control
-  // object synchronously. The runtime stores the callbacks locally
+  // object synchronously (GM.xmlHttpRequest, a Promise: see
+  // `emitGmObject`). The runtime stores the callbacks locally
   // and forwards a serializable request to the SW; the SW ships
   // load/error/timeout/abort events back asynchronously via
   // chrome.tabs.sendMessage. The dispatch routes through
@@ -432,13 +433,19 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
 // registry's copies (`apply`, `resolve`, `reject`): a page that replaced
 // `Function.prototype.apply` or `Promise.resolve` would otherwise be
 // handed the GM function itself.
-function emitGmObject(grantedSpecs: readonly GmApiSpec[]): string {
+function emitGmObject(grantedSpecs: readonly GmApiSpec[], scriptId: string): string {
   const props: string[] = [];
   for (const spec of grantedSpecs) {
     if (!spec.gmDotName) continue;
     if (spec.subsystem === 'unsafe-window') continue;
     if (spec.name === 'GM_info') {
       props.push(`info: GM_info`);
+      continue;
+    }
+    // A Promise of the response, with `abort` on it, as in TM and VM,
+    // where GM_xmlhttpRequest returns `{abort}`.
+    if (spec.name === 'GM_xmlhttpRequest') {
+      props.push(`xmlHttpRequest: function (details) { return __smReg.gm.xhr.start(${jsLit(scriptId)}, details, true); }`);
       continue;
     }
     if (spec.gmDotPromised) {
@@ -540,7 +547,7 @@ export function emitGmBindings(
   const allSpecsIncludingInfo = [findApi('GM_info')!].concat(
     specs.filter((s) => s.name !== 'GM_info'),
   );
-  const gmObject = emitGmObject(allSpecsIncludingInfo);
+  const gmObject = emitGmObject(allSpecsIncludingInfo, info.scriptId);
   if (gmObject) {
     parts.push(gmObject);
     declared.push('GM');

@@ -1,7 +1,8 @@
 // SW-side `GM_xmlhttpRequest` handler. Drives `fetch` against the
 // page's request, sends events back to the originating tab via
-// `chrome.tabs.sendMessage`. Supports text and binary response types
-// (text/json/blob/arraybuffer/document) and `@connect` URL gating.
+// `chrome.tabs.sendMessage`. Supports text and binary request bodies
+// and response types (text/json/blob/arraybuffer/document/stream),
+// and `@connect` URL gating.
 // Requests are credentialed (the user's cookies go out) unless the
 // caller passes `anonymous: true` — see `runXhr`.
 // Headers `fetch` refuses to send (Origin / Cookie / Referer /
@@ -49,10 +50,11 @@
 // AbortController per request. Stored in a Map keyed by id so an
 // aborted request can be cancelled mid-fetch.
 
-import { bytesToBase64 } from '../bytes.js';
+import { base64ToBytes, bytesToBase64 } from '../bytes.js';
 import {
   headerRuleFailedMessage,
   headerStallMessage,
+  redirectRefusedMessage,
   unreachableMessage,
 } from '../gm-connect.js';
 import {
@@ -61,7 +63,7 @@ import {
   whenStaleRulesCleared,
   type HeaderRuleSpec,
 } from './gm-xhr-headers.js';
-import type { GmXhrEvent, GmXhrRequestPayload, GmXhrStreamEvent } from '../gm-xhr-types.js';
+import type { GmXhrBody, GmXhrEvent, GmXhrRequestPayload, GmXhrStreamEvent } from '../gm-xhr-types.js';
 
 // Per-request abort handles. Key: request id. `tabId` is the tab that
 // asked, so closing it can cancel what it left running — see
@@ -280,9 +282,15 @@ export async function runXhr(
       signal: controller.signal,
     };
     // GET / HEAD with no body — fetch() rejects "body not allowed".
-    if (request.data != null && init.method !== 'GET' && init.method !== 'HEAD') {
-      init.body = typeof request.data === 'string' ? request.data : String(request.data);
+    if (init.method !== 'GET' && init.method !== 'HEAD') {
+      if (request.body) init.body = requestBody(request.body);
+      else if (request.data != null) init.body = typeof request.data === 'string' ? request.data : String(request.data);
     }
+    if (request.nocache) init.cache = 'no-store';
+    else if (request.revalidate) init.cache = 'no-cache';
+    // 'manual' keeps the redirect from being followed, and the response
+    // it gives says it was one.
+    if (request.redirect === 'error') init.redirect = 'manual';
     // The tagged URL where there's a rule: the tag is what the rule
     // matches on, and it never leaves the browser (a fragment isn't
     // transmitted, and `res.url` comes back without it).
@@ -296,6 +304,9 @@ export async function runXhr(
       }
       throw err;
     });
+    if (res.type === 'opaqueredirect') {
+      return { kind: 'error', message: redirectRefusedMessage() };
+    }
     // Headers are in, so the stall backstop has nothing left to guard —
     // whatever the body does from here is the download's business.
     clearHeaderStall();
@@ -324,7 +335,10 @@ export async function runXhr(
     const pushOrStop = (event: GmXhrStreamEvent): Promise<void> => push(event).catch(() => {
       throw new PageGoneError();
     });
-    await pushOrStop({ kind: 'headers', status: res.status, statusText: res.statusText, finalUrl: res.url, responseHeaders, total });
+    await pushOrStop({
+      kind: 'headers', status: res.status, statusText: res.statusText, finalUrl: res.url, responseHeaders,
+      mimeType: res.headers.get('content-type') ?? '', total,
+    });
     await streamBody(res, total, pushOrStop, controller);
     // The body went ahead in `progress` events; the page-side runtime
     // builds `responseText` and `response` from them.
@@ -367,6 +381,26 @@ export async function runXhr(
     // path already dropped it. `removeHeaderRule` swallows its own
     // failures, so this can't reject out of the `finally`.
     if (installedRuleId != null) await removeHeaderRule(installedRuleId);
+  }
+}
+
+// A non-text request body as `fetch` takes it. `fetch` sets the
+// Content-Type from it (a Blob's type, the multipart boundary, or
+// form-urlencoded) unless the script's headers set one.
+function requestBody(body: GmXhrBody): BodyInit {
+  switch (body.kind) {
+    case 'bytes':
+      return new Blob([base64ToBytes(body.data)], { type: body.type });
+    case 'params':
+      return new URLSearchParams(body.data);
+    case 'form': {
+      const form = new FormData();
+      for (const entry of body.entries) {
+        if ('value' in entry) form.append(entry.name, entry.value);
+        else form.append(entry.name, new Blob([base64ToBytes(entry.data)], { type: entry.type }), entry.filename);
+      }
+      return form;
+    }
   }
 }
 
@@ -516,18 +550,32 @@ async function removeHeaderRule(ruleId: number): Promise<void> {
 export function reserveXhr(id: string, tabId: number | null): AbortSignal {
   const controller = new AbortController();
   activeXhrs.set(id, { controller, tabId });
+  if (earlyAborts.delete(id)) controller.abort();
   return controller.signal;
 }
+
+// Ids aborted before the worker took their request: an `abort()` right
+// after the call can overtake the start message, which first waits on
+// checks (whose bridge it came through) before `reserveXhr`. Kept a
+// minute, far longer than that wait; without them the request would
+// still go out.
+const earlyAborts = new Set<string>();
+const EARLY_ABORT_TTL_MS = 60 * 1000;
 
 export function releaseXhr(id: string): void {
   activeXhrs.delete(id);
 }
 
 // Cancel an in-flight request by id. Idempotent — calling abort on a
-// completed request is a no-op (the entry is gone).
+// completed request is a no-op (the entry is gone). An id not seen yet
+// is remembered, for a start message still on its way.
 export function abortXhr(id: string): boolean {
   const entry = activeXhrs.get(id);
-  if (!entry) return false;
+  if (!entry) {
+    earlyAborts.add(id);
+    setTimeout(() => earlyAborts.delete(id), EARLY_ABORT_TTL_MS);
+    return false;
+  }
   entry.controller.abort();
   return true;
 }
