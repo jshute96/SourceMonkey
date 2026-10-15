@@ -362,7 +362,8 @@ function rowData(id, record) {
   const entries = noteEntries(record);
   const noteText = entries.map((e) => (e.label ? e.label + ': ' : '') + e.text).join(' ');
   return {
-    rank: listing.rank, id: Number(id), name: listing.name, url: listing.info_page, file: record.file,
+    // The original top-2000-by-installs order, kept as that label's rank.
+    rank: record.labels?.find((entry) => entry.label === 'top2000')?.rank, id: Number(id), name: listing.name, url: listing.info_page, file: record.file,
     installs: listing.total_installs, updated: listing.updated_date, version: record.version ?? '',
     sites, valid: record.valid?.status ?? '', tags,
     // Validation said something: an error, or warnings on a valid script.
