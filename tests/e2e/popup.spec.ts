@@ -556,7 +556,38 @@ test.describe('toolbar popup', () => {
     await popup.locator('.row', { hasText: 'Cmds' }).locator('button.command', { hasText: 'Paint' }).click();
     await expect.poll(() => page.evaluate(() => document.body.dataset.painted ?? null)).toBe('yes');
     await popup.close();
+
+    // An opened list stays open for the tab's lifetime: a later popup,
+    // after a reload, shows it open, and closing it lasts too.
+    await page.reload();
+    await waitFor(() => sm.getActionContextMenu(tabId), (g) => g.length === 2, { label: 'commands registered again' });
+    const again = await openPopup(extensionContext, extensionId, tabId);
+    const manyAgain = again.locator('.row', { hasText: 'Many' });
+    await expect(manyAgain.locator('button.disclose')).toHaveText('▾ Hide commands');
+    await expect(manyAgain.locator('button.command')).toHaveCount(5);
+    await manyAgain.locator('button.disclose').click();
+    await expect(manyAgain.locator('button.command')).toHaveCount(0);
+    await again.close();
+    const third = await openPopup(extensionContext, extensionId, tabId);
+    await expect(third.locator('.row', { hasText: 'Many' }).locator('button.disclose')).toHaveText('▸ 5 commands');
+    await third.close();
+
+    // Another tab has its own: there the list starts closed.
+    const other = await extensionContext.newPage();
+    await other.goto(`${fixtureServer.baseUrl}/target.html`);
+    const otherTabId = await activeTabId(getServiceWorker);
+    await waitFor(() => sm.getActionContextMenu(otherTabId), (g) => g.length === 2, { label: 'commands in the other tab' });
+    const otherPopup = await openPopup(extensionContext, extensionId, otherTabId);
+    await expect(otherPopup.locator('.row', { hasText: 'Many' }).locator('button.disclose')).toHaveText('▸ 5 commands');
+    await otherPopup.close();
+    await other.close();
+
+    // Closing the tab drops what it kept.
+    const sessionKeys = () => getServiceWorker().then((sw) => sw.evaluate(
+      async () => Object.keys(await chrome.storage.session.get(null)).filter((k) => k.startsWith('popupopen:'))));
+    expect(await sessionKeys()).toEqual([`popupopen:${tabId}`]);
     await page.close();
+    await expect.poll(sessionKeys).toEqual([]);
   });
 
   test('"Reload page" reloads with every script, keeping the popup open', async ({

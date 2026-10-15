@@ -359,6 +359,13 @@ Every pill has a tooltip:
   indented, one clickable row each.
 - More than four commands: collapsed by default behind a disclosure row
   (`▸ 6 commands`). Fewer: shown open.
+- Opening or closing a script's list lasts for the tab's lifetime, so
+  the next popup on that tab shows it the same way, across reloads and
+  navigations.
+  - Someone using one of a script's commands is likely to come back for
+    another.
+  - Kept per tab in session storage (`popup-commands-open.ts`), and
+    dropped when the tab closes.
 - Commands keep their registration order.
 - A caption registered again, in the same document or another frame,
   shows once, and a click runs all its registrations (see

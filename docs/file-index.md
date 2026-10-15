@@ -154,6 +154,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/collection-dialog.ts` | The create / edit collection dialog shared by the collections page and the install page: name / location / local-overrides fields, an inferred Type row, live validation, pre-create readability probe, create/install/move wording |
 | `src/extension/refresh-targets.ts` | Picks the collections/scripts a `?refresh_local` or `?refresh_file=<path>` trigger should refresh |
 | `src/extension/popup.ts` | Toolbar popup controller: renders the worker's view, toggles scripts and collections, menus, menu commands, reloads |
+| `src/extension/popup-commands-open.ts` | SW-side store of which scripts' command lists are open in a tab's popup, kept for the tab's lifetime |
 | `src/extension/popup-view.ts` | Pure model of the toolbar popup: rows by collection, statuses, tooltips, reload banner; popup ↔ worker messages |
 | `src/extension/script-enablement.ts` | Enable toggles that keep one copy of each script active, restore displaced copies, and run Enable all |
 | `src/extension/script-blobs.ts` | Storage format 2: splits script rows from their bodies in shared `blob:<sha256>` rows, reads them back, migrates format 1, deletes unused blobs |

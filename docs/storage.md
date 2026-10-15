@@ -47,6 +47,7 @@ browsing session, not the user's configuration.
 | `"loglevel:<scid>"`      | `LogLevel`              | Highest level a script-originated entry in that log has carried; drives WARNING / ERROR in the Status column. |
 | `"tab:<tabId>"`          | `TabRecord`             | Per-tab expected vs actual injection state behind the toolbar badge (see [matching.md](matching.md)). |
 | `"gmtab:<tabId>"`        | `Record<scid, object>`  | Each script's `GM_getTab` object for that tab; removed when the tab closes (see [GM-APIs.md](GM-APIs.md#gm_gettab--gm_savetab--gm_gettabs)). |
+| `"popupopen:<tabId>"`    | `Record<scid, boolean>` | Scripts whose menu command list was opened or closed in that tab's popup; removed when the tab closes (see [status-popup.md](status-popup.md#menu-commands)). |
 | `"injector-rejections"`  | `Record<string,string>` | `{script id → Chrome's reason for refusing its registration}` — what the UI renders as REJECTED (see [injection.md](injection.md#rejected-registrations)). |
 | `"smDevClaims"`          | `Record<tabId, SmDevClaim>` | sm-dev's tab claims: the run that controls each tab, and its lease (see [sm-dev-design.md](sm-dev-design.md#tab-claims)). |
 | `"smDevRuns"`            | `Record<runId, number>` | When each sm-dev run's lease runs out, for removing a crashed run's test collection (see [sm-dev-design.md](sm-dev-design.md#test-collections)). |

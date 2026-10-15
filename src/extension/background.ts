@@ -355,6 +355,7 @@ import {
   saveTabData,
   SM_TAB_DATA_MSG,
 } from './gm-tab-data.js';
+import { dropCommandsOpen, getCommandsOpen, setCommandsOpen } from './popup-commands-open.js';
 import {
   buildPopupView,
   POPUP_CHANGED_MESSAGE,
@@ -366,6 +367,7 @@ import {
   POPUP_RELOAD_MESSAGE,
   POPUP_VIEW_MESSAGE,
   POPUP_SET_ENABLED_MESSAGE,
+  POPUP_SET_COMMANDS_OPEN_MESSAGE,
   RELOAD_NO_SCRIPTS_LABEL,
   type PopupChangedMessage,
   type PopupCloseMessage,
@@ -374,6 +376,7 @@ import {
   type PopupRunScriptRequest,
   type PopupReloadRequest,
   type PopupScriptInput,
+  type PopupSetCommandsOpenRequest,
   type PopupSetEnabledRequest,
   type PopupView,
   type PopupViewRequest,
@@ -2140,7 +2143,11 @@ async function popupViewForTab(
 ): Promise<PopupView> {
   // Runs in frames that are gone, and their menu commands, don't show.
   await inTabQueue(tabId, () => pruneGoneFramesAndRepaint(tabId));
-  return buildTabView(tabId, undefined, keepIds, keepUrl);
+  const [view, commandsOpen] = await Promise.all([
+    buildTabView(tabId, undefined, keepIds, keepUrl),
+    getCommandsOpen(tabId),
+  ]);
+  return { ...view, commandsOpen };
 }
 
 // Drop what the tab holds for frame documents it no longer has: their
@@ -2496,6 +2503,22 @@ function installPopupListener(): void {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const msg = message as { type?: unknown } | null;
     if (!msg || !fromExtensionPage(sender)) return undefined;
+    if (msg.type === POPUP_SET_COMMANDS_OPEN_MESSAGE) {
+      const req = msg as Partial<PopupSetCommandsOpenRequest>;
+      if (typeof req.tabId !== 'number' || typeof req.scriptId !== 'string' || typeof req.open !== 'boolean') {
+        sendResponse(null);
+        return undefined;
+      }
+      // Answered, so the popup's send doesn't fail for want of a reply.
+      setCommandsOpen(req.tabId, req.scriptId, req.open).then(
+        () => { try { sendResponse({ ok: true }); } catch { /* popup gone */ } },
+        (err) => {
+          console.info('[SourceMonkey] popup could not save an open command list:', describeError(err));
+          try { sendResponse({ ok: false }); } catch { /* popup gone */ }
+        },
+      );
+      return true;
+    }
     if (msg.type === POPUP_SET_ENABLED_MESSAGE) {
       const req = msg as Partial<PopupSetEnabledRequest>;
       if (typeof req.id !== 'string' || typeof req.enabled !== 'boolean'
@@ -3051,6 +3074,10 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   // GM_getTab: the tab's objects go with it.
   void dropTabData(tabId).catch((err) => {
     console.info('[SourceMonkey] dropping tab data failed:', err);
+  });
+  // The popup's open command lists, likewise.
+  void dropCommandsOpen(tabId).catch((err) => {
+    console.info('[SourceMonkey] dropping the popup\'s open command lists failed:', err);
   });
   // GM_xmlhttpRequest: cancel this tab's in-flight requests. Unlike a
   // download, nobody benefits from one finishing — the page that asked

@@ -184,6 +184,10 @@ export interface PopupView {
   // Every collection, in collections-page order: the popup's frozen
   // layout can hold a group the sections above no longer have.
   collections: PopupCollectionInput[];
+  // Scripts whose command list the person opened or closed in this
+  // tab's popup (`popup-commands-open.ts`). Only in the popup's own
+  // view, not a badge paint's.
+  commandsOpen?: Record<string, boolean>;
 }
 
 export { RUN_SCRIPT_LABEL };
@@ -201,6 +205,9 @@ export const POPUP_RUN_SCRIPT_MESSAGE = 'sm:popup-run-script';
 // Popup → worker: tick or untick a script's or a collection's box. The
 // worker writes it, so the popup needn't load the script store.
 export const POPUP_SET_ENABLED_MESSAGE = 'sm:popup-set-enabled';
+// Popup → worker: a script's command list was opened or closed, which
+// lasts for the tab's lifetime.
+export const POPUP_SET_COMMANDS_OPEN_MESSAGE = 'sm:popup-set-commands-open';
 // Worker → popup: something the view for `tabId` shows changed
 // (badge state, menu commands). The popup asks for a fresh view. Sent
 // over the port an open popup holds, named this prefix + its tab id.
@@ -240,6 +247,9 @@ export interface PopupSetEnabledRequest {
   type: typeof POPUP_SET_ENABLED_MESSAGE; target: 'script' | 'collection'; id: string; enabled: boolean;
   // Ctrl/Cmd-clicked: change only this, leaving other copies alone.
   solo?: boolean;
+}
+export interface PopupSetCommandsOpenRequest {
+  type: typeof POPUP_SET_COMMANDS_OPEN_MESSAGE; tabId: number; scriptId: string; open: boolean;
 }
 export interface PopupChangedMessage { type: typeof POPUP_CHANGED_MESSAGE; tabId: number }
 export interface PopupCloseMessage { type: typeof POPUP_CLOSE_MESSAGE }

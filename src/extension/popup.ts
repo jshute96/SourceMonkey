@@ -24,6 +24,7 @@ import {
   POPUP_PORT_PREFIX,
   POPUP_RELOAD_MESSAGE,
   POPUP_SET_ENABLED_MESSAGE,
+  POPUP_SET_COMMANDS_OPEN_MESSAGE,
   POPUP_STATUS_LABELS,
   POPUP_VIEW_MESSAGE,
   RELOAD_NO_SCRIPTS_LABEL,
@@ -35,6 +36,7 @@ import {
   type PopupGroup,
   type PopupReloadRequest,
   type PopupRow,
+  type PopupSetCommandsOpenRequest,
   type PopupSetEnabledRequest,
   type PopupStatus,
   type PopupView,
@@ -76,9 +78,10 @@ let tabId: number | null = null;
 // The current port to the worker (`connectToWorker`).
 let workerPort: chrome.runtime.Port | null = null;
 let view: PopupView | null = null;
-// Scripts whose command list the person opened or closed, overriding
-// the default (closed past COMMANDS_SHOWN_OPEN). For as long as the
-// popup is open.
+// Scripts whose command list the person opened or closed in this popup,
+// overriding the default (closed past COMMANDS_SHOWN_OPEN). The worker
+// keeps them for the tab's lifetime (`view.commandsOpen`); these cover
+// a toggle until the next view brings it back.
 const commandsOpen = new Map<string, boolean>();
 
 // The Open button and the header's home links (icon, product name).
@@ -594,13 +597,19 @@ function commandList(row: PopupRow): HTMLElement {
   }
   if (row.commands.length === 0) return list;
   const long = row.commands.length > COMMANDS_SHOWN_OPEN;
-  const open = commandsOpen.get(row.id) ?? !long;
+  const open = commandsOpen.get(row.id) ?? view?.commandsOpen?.[row.id] ?? !long;
   if (long) {
     const toggle = el('button', { type: 'button', class: 'disclose', 'aria-expanded': String(open) },
       open ? '▾ Hide commands' : `▸ ${row.commands.length} commands`);
     toggle.addEventListener('click', () => {
       commandsOpen.set(row.id, !open);
       render(view);
+      if (tabId !== null) {
+        const req: PopupSetCommandsOpenRequest = {
+          type: POPUP_SET_COMMANDS_OPEN_MESSAGE, tabId, scriptId: row.id, open: !open,
+        };
+        quietly(chrome.runtime.sendMessage(req));
+      }
     });
     list.append(toggle);
   }
