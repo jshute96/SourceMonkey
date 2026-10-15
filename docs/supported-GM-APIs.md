@@ -769,6 +769,13 @@ primitive, and any host that acts on a plain GET is reachable.
     entry instead of duplicating it (matches TM/VM).
 - Returns the command id. Pass that id to
   `GM_unregisterMenuCommand` to remove the entry.
+- A caption the script registers more than once in a tab (without the
+  same `id`) shows once, and picking it runs every registration, in the
+  order they were made, as in TM.
+  - That holds across frames: a script registering a caption in the top
+    frame and its iframes shows it once, and a click runs it in each.
+  - Each registration still gets its own id. Unregistering one leaves
+    the entry for the rest.
 
 ### Menu lifecycle
 

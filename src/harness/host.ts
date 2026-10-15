@@ -618,9 +618,9 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
   // ---------- What a test or command can do ----------
 
   /**
-   * Invoke a registered menu command by its name, or by id. The newest
-   * registration wins when a name is repeated, and the command fires
-   * on the page that registered it.
+   * Invoke a registered menu command by its name, or by id, on the page
+   * that registered it. The extension runs all the script's
+   * registrations of that caption in the tab, as its menu does.
    */
   async fireMenuCommand(nameOrId: string, scriptId?: string): Promise<boolean> {
     const entry = [...this.reports.menuCommands].reverse().find((m) =>

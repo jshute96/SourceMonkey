@@ -129,13 +129,14 @@ Status stays per tab, kept on the top document's state
   fires the command in the document that registered it.
 - The popup merges a tab's documents under each script's row: the top
   frame's commands first, then each frame's.
+- A script's caption shows once per tab, however many frames registered
+  it, and a click runs it in each of them, as in TM (see
+  [supported-GM-APIs.md](supported-GM-APIs.md#menu-command-call-shape)).
 - Each entry also records the page (top document) it belongs to. A
   top-frame navigation drops every entry from an earlier page, frames
   included.
 - A tab's registrations and removals are handled in the order they
   came, as a frame's first looks up its page.
-- A script registering the same command in several frames shows it
-  once per frame, with nothing to tell them apart.
 - A frame's commands go when its document does (the same pruning as
   frame runs).
 

@@ -165,6 +165,9 @@ T1: http://localhost:8765/frames/frames.html
 
 - A command an iframe registered names its frame: `M3: Toggle (F2)`.
   In JSON, the command's `frame`.
+  - A caption the script registered in more than one document is one
+    command with no frame named, as in the popup. Firing it runs it in
+    each document.
   - The list is SourceMonkey's: one menu per script per tab, holding
     each frame's commands (see [frames.md](frames.md#menu-commands)).
     sm-dev only adds the label.

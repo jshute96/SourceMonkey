@@ -16,11 +16,17 @@
 //     correct: the SW would have no way to route a fire event back to a
 //     callback that no longer exists.
 //
+// Every registration is kept. A script's caption shows once per tab, and
+// picking it runs all its registrations (`visibleCommands`,
+// `menuCommandGroup`).
+//
 // Storage is in-memory only — same shape as `gm-tab.ts` / `gm-notification.ts`.
 //
 // A tab holds commands from several documents when scripts run in its
 // iframes: the top frame's and each frame's. The popup merges them per
 // script (docs/frames.md).
+
+import { visibleCommands } from '../menu-captions.js';
 
 export interface MenuCommandEntry {
   commandId: string;
@@ -119,8 +125,9 @@ export function registerMenuCommand(
 
 // Remove a menu command. No-op if it isn't registered (matches TM —
 // `GM_unregisterMenuCommand(<unknown id>)` is silent). Returns true
-// iff the visible state changed, so callers can skip a wasted rebuild
-// on unknown ids.
+// iff a registration was removed, so callers can skip a wasted rebuild
+// on unknown ids. (Removing a hidden older registration of a repeated
+// caption also returns true: a redraw that changes nothing.)
 //
 // Scoped like the register side: an unregister reaches only its own
 // document's entries. The same commandId can legitimately exist in two
@@ -148,12 +155,9 @@ export function unregisterMenuCommand(
   return true;
 }
 
-// All registered commands for a tab, keyed by scriptId: the top
-// frame's first, then each frame's. Returns an empty map when nothing
-// is registered (callers iterate it either way).
-export function getMenuCommandsForTab(
-  tabId: number,
-): ReadonlyMap<string, readonly MenuCommandEntry[]> {
+// Every registration in a tab, keyed by scriptId, in registration
+// order: the top frame's first, then each frame's.
+function allCommandsForTab(tabId: number): Map<string, MenuCommandEntry[]> {
   const merged = new Map<string, MenuCommandEntry[]>();
   for (const doc of byTab.get(tabId)?.values() ?? []) {
     for (const [scriptId, list] of doc.scripts) {
@@ -162,6 +166,29 @@ export function getMenuCommandsForTab(
     }
   }
   return merged;
+}
+
+// The commands a tab shows, keyed by scriptId: one per caption across
+// all the tab's documents (see `visibleCommands`). Returns an empty map
+// when nothing is registered (callers iterate it either way).
+export function getMenuCommandsForTab(
+  tabId: number,
+): ReadonlyMap<string, readonly MenuCommandEntry[]> {
+  const shown = new Map<string, MenuCommandEntry[]>();
+  for (const [scriptId, list] of allCommandsForTab(tabId)) {
+    shown.set(scriptId, visibleCommands(list, (c) => c.name));
+  }
+  return shown;
+}
+
+// The registrations picking `entry` runs: all of the script's commands
+// in the tab with its caption, in any document, in registration order.
+export function menuCommandGroup(
+  tabId: number,
+  scriptId: string,
+  entry: MenuCommandEntry,
+): MenuCommandEntry[] {
+  return (allCommandsForTab(tabId).get(scriptId) ?? []).filter((c) => c.name === entry.name);
 }
 
 // Look up a single command — used by the popup's command handler to

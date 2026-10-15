@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        SourceMonkey example: frames: every frame
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.2
+// @version     1.0.3
 // @description Runs in the page and each of its frames, sharing a counter across them.
 // @match       *://*/*frames/frames.html
 // @match       *://*/*frames/frame-a.html
@@ -50,4 +50,7 @@
   document.getElementById('buttons')?.append(button);
 
   GM_registerMenuCommand('Every frame: mark ' + page, () => log('Menu command ran in ' + page));
+  // The same caption in every document: the manager shows it once, and
+  // picking it runs it in each of them.
+  GM_registerMenuCommand('Every frame: mark all', () => log('Mark all ran in ' + page));
 })();

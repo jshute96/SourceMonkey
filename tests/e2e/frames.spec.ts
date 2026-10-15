@@ -60,14 +60,15 @@ test.describe('scripts in iframes', () => {
     // Menu commands: the top frame's first, then each frame's.
     const menus = await waitFor(
       () => sm.getActionContextMenu(tabId),
-      (g) => g.find((x) => x.scriptId === ids[EVERY])?.commands.length === 4
+      (g) => g.find((x) => x.scriptId === ids[EVERY])?.commands.length === 5
         && g.some((x) => x.scriptId === ids[B_ONLY]),
       { label: 'menu commands from every document' },
     );
     const every = menus.find((x) => x.scriptId === ids[EVERY])!.commands;
     expect(every[0]!.name).toBe('Every frame: mark top');
     expect(every.map((c) => c.name).sort()).toEqual([
-      'Every frame: mark frame-a', 'Every frame: mark frame-b', 'Every frame: mark nested', 'Every frame: mark top',
+      'Every frame: mark all', 'Every frame: mark frame-a', 'Every frame: mark frame-b', 'Every frame: mark nested',
+      'Every frame: mark top',
     ]);
 
     // A command fires in the document that registered it, only.
@@ -75,6 +76,13 @@ test.describe('scripts in iframes', () => {
     expect(await sm.fireActionContextMenuItem(tabId, ids[EVERY]!, markA.commandId, markA.documentId)).toEqual({ ok: true });
     await expect(frameA.locator('#log')).toContainText('Menu command ran in frame-a');
     await expect(page.locator('#log')).not.toContainText('Menu command ran');
+
+    // A caption registered in each document shows once, and runs in all.
+    const markAll = every.find((c) => c.name === 'Every frame: mark all')!;
+    expect(await sm.fireActionContextMenuItem(tabId, ids[EVERY]!, markAll.commandId, markAll.documentId)).toEqual({ ok: true });
+    for (const [where, doc] of [['top', page], ['frame-a', frameA], ['nested', await frameByPage(page, 'nested')]] as const) {
+      await expect(doc.locator('#log')).toContainText(`Mark all ran in ${where}`);
+    }
 
     // The Log says where a run in a frame was, and on which page, with
     // one row per page for a script's frames, counting them.
@@ -96,7 +104,7 @@ test.describe('scripts in iframes', () => {
     const after = await sm.getActionContextMenu(tabId);
     expect(after.some((x) => x.scriptId === ids[B_ONLY])).toBe(false);
     expect(after.find((x) => x.scriptId === ids[EVERY])!.commands.map((c) => c.name).sort())
-      .toEqual(['Every frame: mark frame-a', 'Every frame: mark top']);
+      .toEqual(['Every frame: mark all', 'Every frame: mark frame-a', 'Every frame: mark top']);
     await waitForTabState(sm, tabId, (s) => s.badgeText === '2', 'badge drops the removed frame\'s script');
 
     await page.close();

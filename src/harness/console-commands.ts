@@ -50,6 +50,7 @@ import { err as errorLine, message, MISTAKE_PREFIX, paintAs, paintOutput, quoted
 import * as S from './output-style.js';
 import { loadPage, PageNotLoaded, seconds, settleTabs, timeoutFlagMs, waitFor, within } from './wait.js';
 import { userscriptLabel, type SavedPageHeader } from './save-html.js';
+import { visibleCommands } from '../menu-captions.js';
 import {
   comparableUrl, openingSavedLine, pagesToOpen, routeSavedPage, savedPageServe,
   type PageToOpen, type PageWord, type SavedPageFile, type SavedPageStart,
@@ -2094,7 +2095,7 @@ async function statusJson(ctx: ConsoleContext, tab: ControlledTab | undefined): 
     const errors = (tab ? fromTab(ctx, tab, reports.errors) : reports.errors).filter((r) => r.scriptId === id);
     scripts.push({
       ...scriptJson(ctx, script),
-      ...(tab ? { menuCommands: fromTab(ctx, tab, reports.menuCommands).filter((r) => r.scriptId === id && menuLive(ctx, tab, r)).length } : {}),
+      ...(tab ? { menuCommands: tabMenuCommands(ctx, tab).filter((r) => r.scriptId === id).length } : {}),
       // Another manager's aren't readable.
       ...(ctx.predicted ? {} : { values: id ? Object.keys(await ctx.host.valuesOf(id)).length : 0 }),
       errors: errors.length,
@@ -2139,7 +2140,7 @@ function menuJson(ctx: ConsoleContext, tab: ControlledTab): J.MenuData['tabs'][n
   const commands = menuGroups(ctx, tab).flatMap(({ script, commands: registered }) => registered
     .map((c) => ({
       id: `M${++n}`, script: scriptNumber(ctx, script), name: c.name, ...('run' in c ? { builtin: 'run' as const } : {}),
-      ...('record' in c && c.record.frameNumber !== undefined ? { frame: `F${c.record.frameNumber}` } : {}),
+      ...('record' in c && c.frameNumber !== undefined ? { frame: `F${c.frameNumber}` } : {}),
     })));
   return { tab: tabName(tab), url: tab.page.url(), commands };
 }
@@ -2500,7 +2501,9 @@ function logLineJson(ctx: ConsoleContext, record: LogRecord): J.LogLine {
 
 // One entry `menu` lists: a command a script registered, or a manual
 // script's own "Run this script" (`run`).
-type MenuEntry = { name: string; scriptId: string } & ({ record: MenuCommandRecord } | { run: true });
+// `frameNumber`: the iframe all of the entry's registrations are in,
+// when they are all in one.
+type MenuEntry = { name: string; scriptId: string } & ({ record: MenuCommandRecord; frameNumber?: number } | { run: true });
 
 // A tab's menu commands under the script that registered each, in load
 // order. A manual script that can run on the tab's document (`@run-at
@@ -2508,18 +2511,29 @@ type MenuEntry = { name: string; scriptId: string } & ({ record: MenuCommandReco
 // script" first. The M numbers `menu` prints count through this, so
 // firing by number reads the same order.
 function menuGroups(ctx: ConsoleContext, tab: ControlledTab): { script: PreparedScript; label: string; commands: MenuEntry[] }[] {
-  const all = fromTab(ctx, tab, ctx.host.reports.menuCommands).filter((c) => menuLive(ctx, tab, c));
+  const all = tabMenuCommands(ctx, tab);
   const manual = new Set(ctx.host.manualScripts(tab.link));
   return ctx.scripts
     .map((script) => {
       const scriptId = script.id ?? '';
       const commands: MenuEntry[] = all
         .filter((c) => c.scriptId === script.id)
-        .map((record) => ({ name: record.name, scriptId, record }));
+        .map(({ record, frameNumber }) => ({ name: record.name, scriptId, record, frameNumber }));
       if (manual.has(scriptId)) commands.unshift({ name: RUN_SCRIPT_LABEL, scriptId, run: true });
       return { script, label: scriptRow(ctx, script), commands };
     })
     .filter((group) => group.commands.length > 0);
+}
+
+// The menu commands a tab shows, as the extension's popup does: one per
+// script and caption, across the tab's frames. Firing it runs them all.
+function tabMenuCommands(ctx: ConsoleContext, tab: ControlledTab): { scriptId: string; record: MenuCommandRecord; frameNumber?: number }[] {
+  const live = fromTab(ctx, tab, ctx.host.reports.menuCommands).filter((c) => menuLive(ctx, tab, c));
+  const key = (c: MenuCommandRecord): string => `${c.scriptId}\0${c.name}`;
+  return visibleCommands(live, key).map((record) => {
+    const docs = new Set(live.filter((c) => key(c) === key(record)).map((c) => c.documentId));
+    return { scriptId: record.scriptId, record, ...(docs.size === 1 ? { frameNumber: record.frameNumber } : {}) };
+  });
 }
 
 // Whether an iframe's menu command is still there: its document is one
@@ -2539,7 +2553,7 @@ function menuLines(ctx: ConsoleContext, tab: ControlledTab): string[] {
   for (const group of menuGroups(ctx, tab)) {
     lines.push(group.label);
     // One an iframe registered names it: each frame has its own copy.
-    for (const c of group.commands) lines.push(ui`    ${S.id(`M${++n}`)}: ${S.name(c.name)}${'record' in c && c.record.frameNumber !== undefined ? ui` (${S.id(`F${c.record.frameNumber}`)})` : ''}`);
+    for (const c of group.commands) lines.push(ui`    ${S.id(`M${++n}`)}: ${S.name(c.name)}${'record' in c && c.frameNumber !== undefined ? ui` (${S.id(`F${c.frameNumber}`)})` : ''}`);
   }
   return lines;
 }
@@ -2674,7 +2688,7 @@ async function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined):
     }
     lines.push(activityLine(ctx, tab, id));
     const errors = fromTab(ctx, tab, reports.errors).filter((r) => r.scriptId === id);
-    const menus = fromTab(ctx, tab, reports.menuCommands).filter((r) => r.scriptId === id && menuLive(ctx, tab, r)).length;
+    const menus = tabMenuCommands(ctx, tab).filter((r) => r.scriptId === id).length;
     // Stored values are the script's, shared by every tab.
     const values = await valueCount(ctx, id);
     // Only the counts that aren't zero, and no line when none is.

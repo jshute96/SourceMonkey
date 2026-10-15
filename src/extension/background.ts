@@ -328,6 +328,7 @@ import {
 import {
   clearTab as clearMenuCommandsForTab,
   findMenuCommand,
+  menuCommandGroup,
   getMenuCommandsForTab,
   hasFrameDocuments as hasFrameMenuDocuments,
   pruneDocuments as pruneMenuDocuments,
@@ -2602,20 +2603,22 @@ async function dispatchMenuCommand(
     // person, it takes a capital like any other message.
     return { ok: false, error: 'this menu command is no longer registered' };
   }
-  try {
-    // To the document that registered it: with scripts in frames, a
-    // tab-wide send would reach every frame, and an explicit `{id}` can
-    // name a command in more than one of them.
-    await chrome.tabs.sendMessage(tabId, {
-      type: 'sm:gm-menu-fire',
-      smWorld: pushWorld(scriptId), smScript: scriptId,
-      scriptId,
-      commandId,
-    }, entry.documentId ? { documentId: entry.documentId } : {});
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: String((err as Error)?.message ?? err) };
-  }
+  // As in TM, the entry stands for all the script's registrations of its
+  // caption in the tab (`menuCommandGroup`), and picking it runs each,
+  // whichever frame it is in. Each goes to the document that registered
+  // it: a tab-wide send would reach every frame, and an explicit `{id}`
+  // can name a command in more than one of them.
+  const sends = menuCommandGroup(tabId, scriptId, entry).map((c) => chrome.tabs.sendMessage(tabId, {
+    type: 'sm:gm-menu-fire',
+    smWorld: pushWorld(scriptId), smScript: scriptId,
+    scriptId,
+    commandId: c.commandId,
+  }, c.documentId ? { documentId: c.documentId } : {}));
+  // Fired if any document took it: a frame can be going away.
+  const results = await Promise.allSettled(sends);
+  if (results.some((r) => r.status === 'fulfilled')) return { ok: true };
+  const reason = (results.find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined)?.reason;
+  return { ok: false, error: String((reason as Error)?.message ?? reason) };
 }
 
 // Whether a tab's sm-dev claim lets manual script `match` run there:

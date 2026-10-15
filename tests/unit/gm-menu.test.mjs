@@ -16,6 +16,7 @@ const {
   unregisterMenuCommand,
   getMenuCommandsForTab,
   findMenuCommand,
+  menuCommandGroup,
   clearTab,
   pruneDocuments,
   topDocument,
@@ -129,6 +130,7 @@ test('the same commandId in two documents stays apart, and resolves by document'
   const tab = freshTab();
   registerMenuCommand(tab, 'top', 's1', 'shared', 'Top');
   registerMenuCommand(tab, 'frame1', 's1', 'shared', 'Frame', 'top');
+  assert.deepEqual(names(tab, 's1'), ['Top', 'Frame']);
   assert.equal(findMenuCommand(tab, 's1', 'shared', 'frame1').name, 'Frame');
   assert.equal(findMenuCommand(tab, 's1', 'shared').name, 'Top');
   assert.equal(unregisterMenuCommand(tab, 'frame1', 's1', 'shared'), true);
@@ -163,4 +165,43 @@ test('pruneDocuments drops frames that are gone, never the top frame', () => {
   assert.equal(hasFrameDocuments(tab), true);
   pruneDocuments(tab, new Set());
   assert.equal(hasFrameDocuments(tab), false);
+});
+
+// As in TM: a repeated caption shows once and runs the newest
+// registration; each registration keeps its own id underneath.
+test('a caption registered again shows once, as its first registration', () => {
+  const tab = freshTab();
+  registerMenuCommand(tab, 'doc', 's1', 'c1', 'Same');
+  registerMenuCommand(tab, 'doc', 's1', 'c2', 'Other');
+  registerMenuCommand(tab, 'doc', 's1', 'c3', 'Same');
+  const shown = getMenuCommandsForTab(tab).get('s1');
+  assert.deepEqual(shown.map((c) => [c.name, c.commandId]), [['Same', 'c1'], ['Other', 'c2']]);
+  // Picking it runs both registrations, in order.
+  assert.deepEqual(menuCommandGroup(tab, 's1', shown[0]).map((c) => c.commandId), ['c1', 'c3']);
+  // Another script's caption is its own.
+  registerMenuCommand(tab, 'doc', 's2', 'c4', 'Same');
+  assert.deepEqual(names(tab, 's2'), ['Same']);
+  assert.deepEqual(menuCommandGroup(tab, 's2', getMenuCommandsForTab(tab).get('s2')[0]).map((c) => c.commandId), ['c4']);
+});
+
+test('unregistering one of a repeated caption leaves the entry for the rest', () => {
+  const tab = freshTab();
+  registerMenuCommand(tab, 'doc', 's1', 'c1', 'Same');
+  registerMenuCommand(tab, 'doc', 's1', 'c2', 'Same');
+  unregisterMenuCommand(tab, 'doc', 's1', 'c1');
+  const shown = getMenuCommandsForTab(tab).get('s1');
+  assert.deepEqual(shown.map((c) => c.commandId), ['c2']);
+  assert.deepEqual(menuCommandGroup(tab, 's1', shown[0]).map((c) => c.commandId), ['c2']);
+});
+
+test('the same caption in the top frame and a frame shows once, and runs in both', () => {
+  const tab = freshTab();
+  registerMenuCommand(tab, 'frame', 's1', 'c1', 'Same', 'top');
+  registerMenuCommand(tab, 'top', 's1', 'c1', 'Same');
+  const shown = getMenuCommandsForTab(tab).get('s1');
+  assert.deepEqual(shown.map((c) => c.documentId), ['top']);
+  assert.deepEqual(menuCommandGroup(tab, 's1', shown[0]).map((c) => c.documentId), ['top', 'frame']);
+  // The frame going leaves the top frame's.
+  pruneDocuments(tab, new Set());
+  assert.deepEqual(menuCommandGroup(tab, 's1', shown[0]).map((c) => c.documentId), ['top']);
 });

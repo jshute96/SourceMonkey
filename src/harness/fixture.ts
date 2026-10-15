@@ -44,6 +44,7 @@ import {
   type PreparedScript,
   type PrepareOptions,
 } from './prepare.js';
+import { visibleCommands } from '../menu-captions.js';
 
 export interface LoadOptions extends Omit<PrepareOptions, 'file' | 'text'> {
   /** Seed the script's `GM_*` storage before it runs. */
@@ -281,7 +282,11 @@ export const test = base.extend<HarnessFixtures & InternalFixtures>({
         const runnable = host.manualScripts(attachment).filter((m) => id === undefined || m === id);
         return [
           ...runnable.map(() => RUN_SCRIPT_LABEL),
-          ...host.reports.menuCommands.filter((m) => id === undefined || m.scriptId === id).map((m) => m.name),
+          // As the popup lists them: a repeated caption once.
+          ...visibleCommands(
+            host.reports.menuCommands.filter((m) => id === undefined || m.scriptId === id),
+            (m) => `${m.scriptId}\0${m.name}`,
+          ).map((m) => m.name),
         ];
       },
       fireMenu: async (label, script) => {

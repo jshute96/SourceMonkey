@@ -414,4 +414,65 @@ test.describe('GM_registerMenuCommand', () => {
 
     await page.close();
   });
+
+  // As in TM: a caption registered again with a new id shows once and
+  // runs the newest registration; unregistering that one shows the
+  // older one again.
+  test('a repeated caption shows once and runs all its registrations; unregistering one keeps the rest', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'menu-repeat.user.js',
+      meta: {
+        name: 'MenuRepeat',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_registerMenuCommand', 'GM_unregisterMenuCommand'],
+      },
+      body: `
+        const fires = [];
+        document.body.dataset.smFires = '[]';
+        function recordFire(name) {
+          fires.push(name);
+          document.body.dataset.smFires = JSON.stringify(fires);
+        }
+        const first = GM_registerMenuCommand('Same', () => recordFire('first'));
+        GM_registerMenuCommand('Same', () => recordFire('second'));
+        const btn = document.createElement('button');
+        btn.id = 'sm-test-unregister-first';
+        btn.addEventListener('click', () => { GM_unregisterMenuCommand(first); });
+        document.body.appendChild(btn);
+        document.body.dataset.smReady = '1';
+      `,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-ready', '1');
+    const tabId = await activeTabId(getServiceWorker);
+
+    const shown = await waitFor(
+      () => sm.getActionContextMenu(tabId),
+      (g) => g.length === 1 && g[0]!.commands.length === 1,
+      { label: 'one entry for the repeated caption' },
+    );
+    const scriptId = shown[0]!.scriptId;
+    expect(await sm.fireActionContextMenuItem(tabId, scriptId, shown[0]!.commands[0]!.commandId)).toEqual({ ok: true });
+    await expect.poll(() => readFires(page)).toEqual(['first', 'second']);
+
+    // The shown entry was the first registration; the second takes over.
+    await page.locator('#sm-test-unregister-first').click();
+    const after = await waitFor(
+      () => sm.getActionContextMenu(tabId),
+      (g) => g.length === 1 && g[0]!.commands[0]?.commandId !== shown[0]!.commands[0]!.commandId,
+      { label: 'the second registration shows' },
+    );
+    expect(after[0]!.commands.map((c) => c.name)).toEqual(['Same']);
+    expect(await sm.fireActionContextMenuItem(tabId, scriptId, after[0]!.commands[0]!.commandId)).toEqual({ ok: true });
+    await expect.poll(() => readFires(page)).toEqual(['first', 'second', 'second']);
+
+    await page.close();
+  });
 });

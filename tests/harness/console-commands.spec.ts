@@ -123,6 +123,32 @@ test.describe('sm-dev typed commands', () => {
     await expect.poll(() => host.getValue(script.id!, 'said')).toBe(3);
   });
 
+  test('menu lists a repeated caption once, firing all its registrations, as the popup does', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {
+    const script = await loadScript({
+      relativePath: 'menus.user.js',
+      meta: { name: 'Menus', match: ['*://*/target.html'], grant: ['GM_registerMenuCommand', 'GM_setValue', 'GM_getValue'] },
+      body: `const said = (n) => GM_setValue('said', [...GM_getValue('said', []), n]);
+        GM_registerMenuCommand('Same', () => said(1));
+        GM_registerMenuCommand('Other', () => said(0));
+        GM_registerMenuCommand('Same', () => said(2));`,
+    });
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect.poll(() => host.reports.menuCommands.length).toBe(3);
+
+    const lines: string[] = [];
+    const tabs = [{ n: 1, page, link: attachment }];
+    const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(plainLine(l)), stop: () => undefined };
+    const run = async (line: string) => {
+      lines.length = 0;
+      await runConsoleCommand(line, ctx);
+      return [...lines];
+    };
+
+    expect(await run('menu')).toEqual(['Menu commands:', `* 1: Menus (${scriptsDir.path}/menus.user.js)`, '    M1: Same', '    M2: Other']);
+    expect(await run('menu M1')).toEqual(['[sm-dev] Fired "Same"']);
+    await expect.poll(() => host.getValue(script.id!, 'said')).toEqual([1, 2]);
+  });
+
   test('menu lists a manual script\'s Run this script before it has run, and runs it', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {
     const script = await loadScript({
       relativePath: 'manual.user.js',

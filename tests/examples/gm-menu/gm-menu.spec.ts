@@ -14,7 +14,7 @@ import { test, expect } from '../../fixtures/manager';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 test.describe('examples / gm-menu', () => {
-  test('by-name pair: each Register adds a new entry; Unregister peels them off LIFO', async ({
+  test('by-name pair: each Register gets a new id; Unregister peels them off LIFO', async ({
     extensionContext, fixtureServer, setup,
   }) => {
     // VM keys menu commands by `opts.id || caption`, so registering
@@ -33,9 +33,10 @@ test.describe('examples / gm-menu', () => {
     // Nothing registered on load.
     await expect(page.locator('#registered li.empty')).toHaveCount(1);
 
-    // Three register clicks → three distinct entries with the same
-    // visible name. Each gets a unique generated id from
-    // GM_registerMenuCommand.
+    // Three register clicks → three registrations with the same
+    // caption, each with a unique generated id from
+    // GM_registerMenuCommand. (The script's own list shows all three;
+    // the manager's menu shows the caption once.)
     await page.locator('#btn-register-by-name').click();
     await page.locator('#btn-register-by-name').click();
     await page.locator('#btn-register-by-name').click();

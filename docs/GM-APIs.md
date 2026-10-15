@@ -921,6 +921,15 @@ Why the split:
 - `register` returns an opaque id; pass it to `unregister` to
   remove the entry. Passing `{id: 'stable'}` as the third arg
   locks a stable id so a re-register updates the entry in place.
+- A repeated caption (new id) is kept as its own registration, but the
+  listing (`getMenuCommandsForTab` in `gm-menu.ts`) shows one entry
+  per script and caption in the tab, across its frames: the first
+  registration. A click runs the whole group (`menuCommandGroup`),
+  each in its own document, matching TM.
+  - VM keys a document's commands by `options.id || caption` and
+    returns that key, so a repeat in one document replaces the entry,
+    and unregistering removes the caption entirely. A script written
+    for VM never holds two ids for one caption in a document.
 
 ### Components
 
