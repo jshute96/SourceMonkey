@@ -15,11 +15,13 @@
 //   import-validation FILE   import an existing `validate-corpus.mjs --json FILE`
 //                            run; names resolve against --base (default: repo root)
 //   show ID                  print one record
-//   list [filters]           one line per script, in listing order:
+//   list [filters]           one line per script, in top2000 rank order, then by ID:
 //                              --untested  no test result yet
 //                              --test S    test status S
 //                              --valid S   validation status S
 //                              --tag T     carries tag T (either source; repeatable)
+//                              --label L   carries label L (`add-scripts.mjs`), listed
+//                                          in that label's rank order
 //                              --limit N
 //   set ID [options]         record a finding:
 //                              --test pass|fail|n/a
@@ -48,7 +50,7 @@ import { resolveGrants } from '../../dist/gm-api-catalog.js';
 import { describeDiagnostic } from '../../dist/diagnostic-location.js';
 import { matchPatternProblem } from '../../dist/url-match.js';
 import {
-  CORPUS_JSON, checkRoot, findExisting, listingRows, patternTarget, printHelp, readCorpus, updateCorpus,
+  CORPUS_JSON, checkRoot, findExisting, labelRank, listingRows, patternTarget, printHelp, readCorpus, updateCorpus,
 } from './corpus.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -90,7 +92,7 @@ const COMMAND_OPTIONS = {
   'validate': ['date'],
   'import-validation': ['base', 'date'],
   'show': [],
-  'list': ['untested', 'test', 'valid', 'tag', 'limit'],
+  'list': ['untested', 'test', 'valid', 'tag', 'label', 'limit'],
   'set': ['test', 'reason', 'blame', 'note', 'note-file', 'replace-note', 'remove-note', 'tag', 'untag', 'version', 'date'],
 };
 
@@ -226,6 +228,10 @@ async function importValidation(opts, results, unchecked = []) {
     updates.set(id, { version: result.version, file: path.relative(opts.root, file), sites: targetSites(source), valid });
   }
 
+  // A verdict that matches the recorded one, date aside, keeps the old date,
+  // so a rerun only redates the scripts whose result changed.
+  const sameVerdict = (a, b) => a && JSON.stringify({ ...a, date: '' }) === JSON.stringify({ ...b, date: '' });
+  let changed = 0;
   await updateCorpus(opts.corpus, (live) => {
     for (const id of unchecked) {
       const record = live[id];
@@ -238,6 +244,8 @@ async function importValidation(opts, results, unchecked = []) {
       record.file = update.file;
       if (update.sites.length) record.sites = update.sites;
       else delete record.sites;
+      if (sameVerdict(record.valid, update.valid)) update.valid.date = record.valid.date;
+      else changed++;
       record.valid = update.valid;
     }
   });
@@ -245,7 +253,8 @@ async function importValidation(opts, results, unchecked = []) {
   const counts = {};
   for (const { valid } of updates.values()) counts[valid.status] = (counts[valid.status] ?? 0) + 1;
   const tagged = [...updates.values()].filter((u) => u.valid.tags).length;
-  console.info(`Imported ${updates.size} verdicts: ${JSON.stringify(counts)}, ${tagged} with derived tags`);
+  console.info(`Imported ${updates.size} verdicts: ${JSON.stringify(counts)}, ${tagged} with derived tags; ` +
+    `${changed} new or changed`);
   if (unmatched) console.info(`${unmatched} validator records matched no corpus script`);
 }
 
@@ -370,13 +379,24 @@ async function show(opts) {
   console.log(`\nFile: ${file ? path.relative(process.cwd(), file) : '(not downloaded)'}`);
 }
 
+/** One `list` line: ID and installs right-aligned, the statuses padded, then the name. */
+function listLine([id, installs, valid, tested, name]) {
+  return [id.padStart(7), installs.padStart(9), valid.padEnd(7), tested.padEnd(6), name].join('  ');
+}
+
 async function list(opts) {
   oneOf(opts.test, TEST_STATUSES, 'test status');
   oneOf(opts.valid, ['ok', 'invalid', 'tool error'], 'validation status');
   const corpus = await readCorpus(opts.corpus);
   const limit = opts.limit ? Number(opts.limit) : Infinity;
   let shown = 0;
-  for (const row of listingRows(corpus)) {
+  let rows = listingRows(corpus);
+  if (opts.label !== undefined) {
+    const hasLabel = (row) => corpus[row.id].labels?.some((entry) => entry.label === opts.label);
+    const rank = (row) => labelRank(corpus[row.id], opts.label) ?? Infinity;
+    rows = rows.filter(hasLabel).sort((a, b) => rank(a) - rank(b) || a.id - b.id);
+  }
+  for (const row of rows) {
     if (shown >= limit) break;
     const record = corpus[row.id];
     if (opts.untested && record.test) continue;
@@ -385,14 +405,10 @@ async function list(opts) {
     // `--tag` is repeatable (for `set`); here every named tag must be present.
     const tags = [...(record.tags ?? []), ...(record.valid?.tags ?? [])];
     if (!opts.tag.every((tag) => tags.includes(tag))) continue;
-    const cells = [
-      String(row.id).padStart(7),
-      String(row.total_installs ?? '').padStart(9),
-      (record.valid?.status ?? '-').padEnd(7),
-      (record.test?.status ?? '-').padEnd(4),
-      row.name,
-    ];
-    console.log(cells.join('  '));
+    if (shown === 0) console.log(listLine(['ID', 'INSTALLS', 'VALID', 'TESTED', 'NAME']));
+    console.log(listLine([
+      String(row.id), String(row.total_installs ?? ''), record.valid?.status ?? '-', record.test?.status ?? '-', row.name,
+    ]));
     shown++;
   }
 }

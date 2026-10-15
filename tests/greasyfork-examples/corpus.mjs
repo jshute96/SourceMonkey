@@ -41,22 +41,46 @@ export async function readCorpus(file = CORPUS_JSON) {
   return JSON.parse(await readFile(file, 'utf8'));
 }
 
+/** The label for GreasyFork's top-installs listing, ranked by installs when last read. */
+export const TOP_LABEL = 'top2000';
+
+/** A record's rank under `label`, or undefined when it lacks the label or a rank. */
+export function labelRank(record, label) {
+  return record.labels?.find((entry) => entry.label === label)?.rank;
+}
+
 /**
- * The listed scripts in listing order, as flat rows (`id` plus the listing
- * fields). Records that dropped out of the latest listing (`rank: null`) come
- * last, by id: they keep their findings and still get downloaded and built.
+ * Give a record `label`, with `rank` when there is one. A record that already
+ * has the label takes the new rank, and keeps its old one when `rank` is
+ * undefined. Returns `added`, `reranked`, or false for no change.
+ */
+export function setLabel(record, label, rank) {
+  const entry = record.labels?.find((e) => e.label === label);
+  if (!entry) {
+    (record.labels ??= []).push(rank === undefined ? { label } : { label, rank });
+    return 'added';
+  }
+  if (rank === undefined || entry.rank === rank) return false;
+  entry.rank = rank;
+  return 'reranked';
+}
+
+/**
+ * The listed scripts as flat rows (`id` plus the listing fields), in
+ * `TOP_LABEL` rank order, then the rest by id. Each row's `rank` is its
+ * `TOP_LABEL` rank, or null.
  */
 export function listingRows(corpus) {
   const rank = (row) => row.rank ?? Infinity;
   return Object.entries(corpus)
     .filter(([, record]) => record.listing)
-    .map(([id, record]) => ({ id: Number(id), ...record.listing }))
+    .map(([id, record]) => ({ id: Number(id), ...record.listing, rank: labelRank(record, TOP_LABEL) ?? null }))
     .sort((a, b) => rank(a) - rank(b) || a.id - b.id);
 }
 
 // Record keys in the order they are written, so a record reads the same way
 // whichever tool last touched it and a diff shows only what changed.
-const RECORD_KEYS = ['listing', 'version', 'file', 'sites', 'valid', 'test', 'tags', 'notes'];
+const RECORD_KEYS = ['listing', 'labels', 'version', 'file', 'sites', 'valid', 'test', 'tags', 'notes'];
 
 function canonicalRecord(record) {
   const out = {};

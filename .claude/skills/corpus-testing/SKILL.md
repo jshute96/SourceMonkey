@@ -6,7 +6,8 @@ description: Test GreasyFork corpus scripts (tests/greasyfork-examples/) on thei
 # Testing the GreasyFork corpus
 
 The corpus (`tests/greasyfork-examples/`) is the 2000 most-installed
-GreasyFork scripts, downloaded, with a record per script in `corpus.json`.
+GreasyFork scripts plus others added since, downloaded, with a record per
+script in `corpus.json`.
 Testing a script means running the downloaded copy on its target site with
 `sm-dev`, judging whether it does what it promises, and recording that.
 
@@ -14,8 +15,8 @@ Where things are:
 
 - `tests/greasyfork-examples/README.md`: the tools and data. Downloading,
   validation, the record format, statuses and blames, the results page. Read
-  its "Test results" section once. Downloading and re-validating are rare;
-  follow the README when they're needed.
+  its "Test results" section once, and its "Adding scripts" section before
+  adding any.
 - [references/testing-a-script.md](references/testing-a-script.md): how to
   test one script and record it. Hand this file to each agent in a batch.
 - The `SourceMonkey-dev` skill: how to drive `sm-dev` itself.
@@ -38,11 +39,33 @@ unknown, and would test SourceMonkey as it was, not as it is.
 - Agents don't rebuild. One that finds a documented command missing
   reports it.
 
+## Adding scripts to test
+
+To test scripts not in the corpus yet (GreasyFork IDs or script URLs, a
+GreasyFork search or listing page, or any page that links to scripts), add
+them first. The README's "Adding scripts" section has the source types and
+options.
+
+```sh
+A=tests/greasyfork-examples/add-scripts.mjs
+node $A --compare <sources>                # which are new, and how the rest were tested
+node $A --add --label-new L <sources>      # label the new ones, to pick them out later
+node tests/greasyfork-examples/download-scripts.mjs
+node tests/greasyfork-examples/record-results.mjs validate
+```
+
+- Choose a label for the collection (`--label-new L`), or `--label-all L`
+  to also label the ones already in the corpus.
+- Pick the batch with `list --label L --untested --valid ok`, then build
+  and test as below. Invalid scripts can't be installed, so they aren't
+  tested.
+
 ## Picking scripts to test
 
 ```sh
 R=tests/greasyfork-examples/record-results.mjs
-node $R list --untested --valid ok          # candidates, in listing order
+node $R list --untested --valid ok          # candidates, in top2000 rank order
+node $R list --label L --untested --valid ok  # one collection, in its rank order
 ```
 
 `list` doesn't show update dates; filter on them in `results.html` (Test:

@@ -632,10 +632,9 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 
 | File | Description |
 |------|-------------|
-| `tests/greasyfork-examples/README.md` | Full pipeline docs: saving the Cloudflare-gated listing pages, downloading, the database schema, and the reports |
-| `tests/greasyfork-examples/greasyfork-dump/` | Hand-saved GreasyFork listing pages, the input to `fetch-top-scripts.mjs` (gitignored) |
-| `tests/greasyfork-examples/fetch-top-scripts.mjs` | CLI that parses hand-saved GreasyFork listing pages into `corpus.json`'s listing blocks (installs, ratings, dates, code URL) |
-| `tests/greasyfork-examples/corpus.json` | Top 2000 GreasyFork scripts by installs, plus validation and test findings for each; the checked-in source of truth |
+| `tests/greasyfork-examples/README.md` | Full pipeline docs: adding scripts and labels, downloading, the database schema, and the reports |
+| `tests/greasyfork-examples/add-scripts.mjs` | CLI that finds GreasyFork script IDs from IDs, URLs or linking pages, and compares or adds them to `corpus.json` |
+| `tests/greasyfork-examples/corpus.json` | Corpus GreasyFork scripts with their listing data, labels, and validation and test findings; the source of truth |
 | `tests/greasyfork-examples/validate-corpus.mjs` | CLI that runs the install-time checks over the corpus offline and groups failures, with JSON output |
 | `tests/greasyfork-examples/record-results.mjs` | CLI that records findings in `corpus.json`: imports offline validation, sets test results, tags, and notes |
 | `tests/greasyfork-examples/serve-results.mjs` | Serves `results.html`, `corpus.json` and the downloaded scripts on localhost, for the results page |
@@ -643,7 +642,7 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 | `tests/greasyfork-examples/download-scripts.mjs` | CLI that downloads the corpus's userscripts plus their `@require` / `@resource` dependencies into a URL-shaped tree |
 | `tests/greasyfork-examples/files/` | Downloaded userscripts, `@require` libraries, and `@resource` assets at `<host>/<url-path>`, plus `_location.json` (gitignored) |
 | `tests/greasyfork-examples/download-report.json` | Last download run's counts, dead links, and failed URLs (gitignored) |
-| `tests/greasyfork-examples/corpus.mjs` | Shared corpus helpers: locked atomic `corpus.json` updates, URL↔on-disk-path mapping, `@match` parsing |
+| `tests/greasyfork-examples/corpus.mjs` | Shared corpus helpers: locked atomic `corpus.json` updates, labels, URL↔on-disk-path mapping, `@match` parsing |
 | `tests/greasyfork-examples/build-db.mjs` | Loads `corpus.json` and downloaded files into `corpus.db` (scripts, headers, match patterns, deps, findings) |
 | `tests/greasyfork-examples/corpus.db` | SQLite database built from the corpus by `build-db.mjs` (gitignored) |
 | `tests/greasyfork-examples/analysis.sql` | Annotated analysis queries over `corpus.db`, one `-- @report` block per table |

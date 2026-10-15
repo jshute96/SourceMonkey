@@ -8,8 +8,8 @@
 //   https://update.greasyfork.org/scripts/25253/ZOOM%20HACK%20for%20Blobleio%21.user.js
 //   → tests/greasyfork-examples/files/update.greasyfork.org/scripts/25253/ZOOM%20HACK%20for%20Blobleio%21.user.js
 //
-// Unlike the listing pages (see README.md), the raw `.user.js` URLs are not
-// behind the Cloudflare bot check, so a plain fetch works.
+// The raw `.user.js` URLs aren't behind GreasyFork's Cloudflare bot check
+// (see README.md), so a plain fetch works.
 //
 // Usage:
 //   node tests/greasyfork-examples/download-scripts.mjs [options]
@@ -117,7 +117,7 @@ class AbortRun extends Error {}
 
 /**
  * Anything on `greasyfork.org` itself sits behind the same Cloudflare bot check
- * as the listing pages and always 403s us, but `update.greasyfork.org` serves
+ * as its HTML pages and always 403s us, but `update.greasyfork.org` serves
  * the same bytes unprotected:
  *   /scripts/<id>-<slug>/code/<File>.js → /scripts/<id>/<File>.js
  *   /libraries/<name>/<ver>/<File>.js   → same path, mirror host

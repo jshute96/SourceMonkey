@@ -30,9 +30,9 @@ real-browser end-to-end suite for everything that touches the
   [sm-dev-violentmonkey.md](sm-dev-violentmonkey.md#checking-a-vm-version)
   and [sm-dev-tampermonkey.md](sm-dev-tampermonkey.md#how-stable-these-calls-are).
 - `tests/greasyfork-examples/` — not a test suite: tooling that builds a
-  corpus of the top 2000 real-world GreasyFork scripts, analyses it, and
-  records per-script validation and test results in `corpus.json` (see
-  its own `README.md`). Playwright's `testMatch` covers only
+  corpus of real-world GreasyFork scripts (the top 2000 and more),
+  analyses it, and records per-script validation and test results in
+  `corpus.json` (see its own `README.md`). Playwright's `testMatch` covers only
   `e2e/**` and `examples/**`, so nothing here runs as a test.
 
 `sm-dev validate` runs the install-time pipeline over files on disk

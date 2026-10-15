@@ -52,7 +52,6 @@ function parseArgs(argv) {
 const SCHEMA = `
 CREATE TABLE Scripts (
   id             INTEGER PRIMARY KEY,
-  rank           INTEGER,  -- position in the listing; NULL once a script drops out
   name           TEXT NOT NULL,
   info_page      TEXT NOT NULL,
   script_url     TEXT NOT NULL,
@@ -147,6 +146,13 @@ CREATE TABLE ScriptTags (
   source    TEXT NOT NULL
 );
 
+-- Labels on corpus records, each with its rank under that label when it has one.
+CREATE TABLE ScriptLabels (
+  script_id INTEGER NOT NULL REFERENCES Scripts(id),
+  label     TEXT NOT NULL,
+  rank      INTEGER
+);
+
 CREATE TABLE ScriptNotes (
   script_id INTEGER NOT NULL REFERENCES Scripts(id),
   date      TEXT NOT NULL,
@@ -183,10 +189,10 @@ async function main() {
   db.exec(SCHEMA);
 
   const insertScript = db.prepare(`
-    INSERT INTO Scripts (id, rank, name, info_page, script_url, total_installs, daily_installs,
+    INSERT INTO Scripts (id, name, info_page, script_url, total_installs, daily_installs,
                          ratings_good, ratings_ok, ratings_bad, created_date, updated_date,
                          size, local_filename)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const insertHeader = db.prepare(`
     INSERT INTO ScriptHeaders (script_id, header_field, header_field_full, header_field_suffix, argument)
     VALUES (?, ?, ?, ?, ?)`);
@@ -207,6 +213,7 @@ async function main() {
                                test_status, test_reason, test_blame, test_date, test_version)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const insertTag = db.prepare('INSERT INTO ScriptTags (script_id, tag, source) VALUES (?, ?, ?)');
+  const insertLabel = db.prepare('INSERT INTO ScriptLabels (script_id, label, rank) VALUES (?, ?, ?)');
   const insertNote = db.prepare('INSERT INTO ScriptNotes (script_id, date, version, text) VALUES (?, ?, ?, ?)');
   const insertFindings = (id, record) => {
     const { valid, test } = record;
@@ -218,6 +225,7 @@ async function main() {
     }
     for (const tag of valid?.tags ?? []) insertTag.run(id, tag, 'validation');
     for (const tag of record.tags ?? []) insertTag.run(id, tag, 'manual');
+    for (const entry of record.labels ?? []) insertLabel.run(id, entry.label, entry.rank ?? null);
     for (const note of record.notes ?? []) insertNote.run(id, note.date, note.version ?? null, note.text);
   };
   const stats = { scripts: 0, missingBodies: 0, headers: 0, noHeaderBlock: 0, requires: 0, resources: 0, matches: 0 };
@@ -227,7 +235,7 @@ async function main() {
     const id = Number(row.id);
     const facts = await fileFacts(opts.root, row.script_url);
     insertScript.run(
-      id, row.rank, row.name, row.info_page, row.script_url,
+      id, row.name, row.info_page, row.script_url,
       row.total_installs, row.daily_installs,
       row.ratings_good, row.ratings_ok, row.ratings_bad,
       row.created_date, row.updated_date,

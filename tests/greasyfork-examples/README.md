@@ -1,8 +1,9 @@
 # GreasyFork corpus
 
 Tools and data for testing SourceMonkey against real-world userscripts: the
-2000 most-installed scripts on [GreasyFork](https://greasyfork.org), downloaded
-with their dependencies, plus a record of what testing each one found.
+2000 most-installed scripts on [GreasyFork](https://greasyfork.org) plus
+others added since, downloaded with their dependencies, and a record of what
+testing each one found.
 
 This README covers the tools and data. For how to test scripts on their
 live sites and record results (also for agents), see the `corpus-testing`
@@ -14,8 +15,7 @@ skill in [`.claude/skills/corpus-testing/`](../../.claude/skills/corpus-testing/
 
 | File | In git | Contents | Written by | Read by |
 |------|:------:|----------|------------|---------|
-| `greasyfork-dump/` | no | GreasyFork listing pages, saved by hand from a browser | you ([how](#why-the-pages-are-saved-by-hand)) | `fetch-top-scripts.mjs` |
-| `corpus.json` | yes | One record per script: its GreasyFork `listing` stats, plus test findings | `fetch-top-scripts.mjs` (listings), `record-results.mjs` (findings) | every tool |
+| `corpus.json` | yes | One record per script: its GreasyFork `listing` stats, plus test findings | `add-scripts.mjs` (listings), `record-results.mjs` (findings) | every tool |
 | `files/` | no | Downloaded scripts and their `@require` / `@resource` files (~270 MB) | `download-scripts.mjs` | `build-db.mjs`, `record-results.mjs` |
 | `download-report.json` | no | Last download run's counts and failures | `download-scripts.mjs` | you |
 | `corpus.db` | no | SQLite database of listings, parsed headers, dependencies and findings; rebuilt from scratch each run | `build-db.mjs` | `render-analysis.mjs`, ad hoc SQL |
@@ -24,14 +24,13 @@ skill in [`.claude/skills/corpus-testing/`](../../.claude/skills/corpus-testing/
 | `results.html` | yes | Static page that reads `corpus.json` and shows a sortable, filterable table of every script's validity, test status, tags and notes | you (hand-written) | you, in a browser |
 
 `corpus.json` is the source of truth. Everything not in git can be rebuilt
-from it, except `greasyfork-dump/`, which is only needed to refresh the
-listing.
+from it.
 
 ### Scripts
 
 | Script | Reads | Writes | Does |
 |--------|-------|--------|------|
-| `fetch-top-scripts.mjs` | `greasyfork-dump/` | `corpus.json` listings | [Extracts](#extracting) the top scripts from the saved pages |
+| `add-scripts.mjs` | GreasyFork, `corpus.json` | `corpus.json` listings | [Finds script IDs](#adding-scripts) from IDs, URLs or pages, and compares or adds them |
 | `download-scripts.mjs` | `corpus.json` | `files/`, `download-report.json` | [Downloads](#downloading-the-scripts-themselves) each script, then its dependencies |
 | `record-results.mjs` | `corpus.json`, `files/` | `corpus.json` findings | **Records individual facts about one script at a time** (a test result, tag or note) as you learn them. [More](#test-results). Its `validate` subcommand is the one bulk step |
 | `build-db.mjs` | `corpus.json`, `files/` | `corpus.db` | [Loads everything into SQLite](#analysis-database) |
@@ -54,73 +53,120 @@ node tests/greasyfork-examples/build-db.mjs          # → corpus.db
 node tests/greasyfork-examples/render-analysis.mjs   # → analysis.html
 ```
 
-## Why the pages are saved by hand
-
-GreasyFork is behind a Cloudflare bot check. `curl` gets a 403 "Just a
-moment..." page, and both headless and headed Playwright get stuck on the
-interstitial, so there is no scripted download path. Save the listing pages
-from a normal browser session instead:
-
-1. Open `https://greasyfork.org/en/scripts?sort=total_installs&page=1`.
-2. Save into `tests/greasyfork-examples/greasyfork-dump/` as `gfpage1.html`
-   (Ctrl+S → "Webpage, HTML Only").
-3. Repeat for `page=2`, `page=3`, … — 100 scripts per page, so 20 pages is the
-   top 2000.
-
-## Extracting
+## Adding scripts
 
 ```sh
-node tests/greasyfork-examples/fetch-top-scripts.mjs
+A=tests/greasyfork-examples/add-scripts.mjs
+node $A 14178 https://greasyfork.org/en/scripts/4391-name   # IDs and script URLs
+node $A "https://greasyfork.org/en/scripts?q=youtube&sort=total_installs" --pages 3
+node $A https://github.com/someone/awesome-userscripts      # every GreasyFork script link on the page
+node $A ~/Downloads/some-page.html                          # the same, from a saved page
+node $A --add <sources>                                     # add the new ones
 ```
 
-Defaults to every `greasyfork-dump/gfpage<N>.html`, in page order, updating
-the `listing` block of each record in `corpus.json`.
+Sources:
 
-- Findings (everything outside `listing`) are left alone.
-- After a full run, a script missing from the listing keeps its record and
-  findings, with `listing.rank` set to `null`. The other tools still include
-  it, after the ranked ones.
-- A partial run (`--count`, or pages named on the command line) updates only
-  the scripts it saw, and leaves every other rank alone.
+- A script ID, or a GreasyFork script URL (any page under it, or its
+  `update.greasyfork.org` code URL).
+- A GreasyFork listing or search URL (`/scripts?...`,
+  `/scripts/by-site/<domain>`). `--pages N` reads N pages from the one given,
+  and `--all-pages` reads them all from page 1.
+- A GreasyFork user page (`/users/<id>-<name>`): all that user's scripts.
+- Any other URL: every link on it to a GreasyFork script is taken.
+- A saved HTML file: every GreasyFork script link in it, as for a URL.
+  Relative links resolve against the URL the browser recorded when saving
+  (or `<base href>`, or the canonical link).
 
-Options:
+Modes:
 
-- `--dir PATH` — where to look for the `gfpage*.html` set (default `greasyfork-dump/`)
-- `--count N` — stop after N scripts
-- `--corpus PATH` — corpus file to update
-- positional file paths — parse exactly these files instead of the default set
+- `--compare` (default): one line per ID, showing whether it's new to the
+  corpus and, if not, its validation status (whether it passes
+  SourceMonkey's offline install checks) and test result. See
+  [Record format](#record-format).
+  - TESTED is blank for an untested script, or shows the kind of
+    validation error when it's invalid (`invalid (require-dead-link)`).
+- `--list`: just the unique IDs, for piping.
+- `--show`: prints the records `--add` would write, as JSON, without
+  writing them.
+- `--add`: adds the IDs not yet in the corpus, each with a `listing` block.
+  Existing records are left alone.
+  - After adding, run `download-scripts.mjs` and `record-results.mjs validate`.
+
+From sources to test results, for a new collection labeled L:
+
+```sh
+node $A --compare <sources>                      # what's new, and what's already tested
+node $A --add --label-new L <sources>            # or --label-all L, plus --label-with-rank
+node tests/greasyfork-examples/download-scripts.mjs
+node tests/greasyfork-examples/record-results.mjs validate
+node tests/greasyfork-examples/record-results.mjs list --label L --untested --valid ok
+```
+
+Then test them as the `corpus-testing` skill
+([`.claude/skills/corpus-testing/`](../../.claude/skills/corpus-testing/SKILL.md)) describes.
+
+Where the data comes from:
+
+- GreasyFork's JSON API (`api.greasyfork.org`). A listing URL becomes the
+  same path with `format=json`, and one script is `/scripts/<id>.json`.
+- Listing and user results already carry each script's data, so `--add` fetches
+  only the IDs that came from plain IDs or scraped links.
+- GreasyFork's HTML pages have at times been behind a Cloudflare bot check
+  (an anti-scraping filter) that blocks scripted fetches. The API hasn't.
+  Scraping links from a GreasyFork page, such as a user's favorites, reads its
+  HTML, and so does `--all-pages` to count the pages. Both fail while the
+  check is on; `--pages N` doesn't.
+
+### Labels
+
+A label marks a collection of scripts, like the ones from one listing:
+
+- `--label-new L` gives label L to the scripts `--add` adds.
+- `--label-all L` also gives it to the scripts found that are already in the
+  corpus.
+- `--label-with-rank` ranks each script under the label by the order the
+  sources found it, from 1, across pages and sources. Without it, labels
+  carry no `rank`.
+  - With `--label-new`, only the new scripts get ranks, so the ranks have
+    gaps where existing scripts were found.
+  - With `--label-all`, existing scripts that already had the label take
+    their new rank. Ones that had it but weren't found keep their old rank.
+- `top2000` marks scripts from GreasyFork's top-installs listing, ranked by
+  installs when the listing was last read. Scripts that have dropped out
+  keep their older rank, so ranks can repeat. `results.html` shows that
+  rank in its `#` column, and the other tools process scripts in that
+  order, then the rest by ID.
+
+```sh
+node $A --add --label-all wiki --label-with-rank --all-pages \
+  "https://greasyfork.org/en/scripts/by-site/wikipedia.org?sort=total_installs"
+```
 
 ## Listing fields
 
-Each record is keyed by GreasyFork's integer script ID (`data-script-id`). Its
-`listing` block holds:
+Each record is keyed by GreasyFork's integer script ID. Its `listing` block
+holds:
 
-| Field | Source in the listing markup |
-|-------|------------------------------|
-| `rank` | position in the saved pages, from 1; `null` once a script drops out |
-| `name` | `data-script-name` |
-| `info_page` | the `a.script-link` href, made absolute |
-| `script_url` | `data-code-url` (the `update.greasyfork.org` `.user.js` URL) |
-| `total_installs` | `data-script-total-installs` |
-| `daily_installs` | `data-script-daily-installs` |
-| `ratings_good` / `ratings_ok` / `ratings_bad` | the `good`/`ok`/`bad-rating-count` spans |
-| `created_date` | `data-script-created-date` |
-| `updated_date` | `data-script-updated-date` |
+| Field | Source in the API's script data |
+|-------|---------------------------------|
+| `name` | `name` |
+| `info_page` | `url`, with the `/en/` locale added |
+| `script_url` | `code_url` (the `update.greasyfork.org` `.user.js` URL) |
+| `total_installs` | `total_installs` |
+| `daily_installs` | `daily_installs` |
+| `ratings_good` / `ratings_ok` / `ratings_bad` | `good_ratings` / `ok_ratings` / `bad_ratings` |
+| `created_date` | `created_at`, as YYYY-MM-DD |
+| `updated_date` | `code_updated_at`, as YYYY-MM-DD |
 
 Notes:
 
-- Counts are JSON numbers (the visible page renders them with commas), or
-  `null` when the page showed none.
-- Rows keep the page's sort order. Expect a handful of off-by-one inversions in
-  `total_installs` across page boundaries — counts tick up while you're saving
-  pages, not a parse error.
-- Scripts repeated across pages (same cause) are dropped after the first sighting.
-- The default listing shows English-language results only. To include the rest,
-  save pages with `&filter_locale=0` in the URL.
+- Counts are JSON numbers, or `null` when GreasyFork gives none.
+- GreasyFork listings show English-language results only by default. To
+  include the rest, add `&filter_locale=0` to the listing URL.
 
 ## Downloading the scripts themselves
 
-The raw `.user.js` URLs are *not* behind the bot check, so these fetch normally:
+The raw `.user.js` URLs fetch normally:
 
 ```sh
 node tests/greasyfork-examples/download-scripts.mjs [--count N]
@@ -167,8 +213,8 @@ https://update.greasyfork.org/scripts/25253/ZOOM%20HACK%20for%20Blobleio%21.user
 
 ### The greasyfork.org mirror
 
-`@require` URLs pointing at `greasyfork.org` itself hit the same bot check as
-the listing pages and always 403. `update.greasyfork.org` serves the same bytes
+`@require` URLs pointing at `greasyfork.org` itself hit the same bot check as its
+HTML pages and always 403. `update.greasyfork.org` serves the same bytes
 unprotected, so those fetch from the mirror:
 
 - `/scripts/<id>-<slug>/code/<File>.js` → `update…/scripts/<id>/<File>.js`
@@ -235,7 +281,7 @@ way SourceMonkey does (`pnpm run build` first).
 
 | Table | Contents |
 |-------|----------|
-| `Scripts` | One row per corpus record's `listing` (including `rank`), plus `size` and `local_filename` of the downloaded body |
+| `Scripts` | One row per corpus record's `listing`, plus `size` and `local_filename` of the downloaded body |
 | `RequiresFiles` | One row per distinct `@require` URL, with `size` / `local_filename` |
 | `ResourceFiles` | Same, for `@resource` URLs |
 | `ScriptRequiresFiles` | script_id → require URL |
@@ -244,6 +290,7 @@ way SourceMonkey does (`pnpm run build` first).
 | `ScriptMatches` | Every `@match` / `@include` line, decomposed into `shape`, `scheme`, `host_pattern`, `site`, and per-component wildcard flags |
 | `ScriptResults` | Validation status and error, and test status, reason, blame, date and version, for each record with findings (warnings and sites stay in `corpus.json`) |
 | `ScriptTags` | Every tag, with `source` `validation` (derived) or `manual` |
+| `ScriptLabels` | Every label, with its `rank` when it has one |
 | `ScriptNotes` | Every dated note |
 
 Notes:
@@ -291,6 +338,7 @@ every downloaded script and records each verdict.
 R=tests/greasyfork-examples/record-results.mjs
 node $R validate                       # offline-validate every downloaded script, import verdicts
 node $R list --untested --valid ok --limit 20
+node $R list --label awesome-userscripts --untested   # one collection, in its rank order
 node $R show 14178                     # one record, plus its path under files/
 node $R set 14178 --test pass --note "Redirect links rewritten on a bing.com search"
 node $R set 14178 --test fail --blame sourcemonkey --note-file /tmp/why.md
@@ -311,6 +359,8 @@ scripts/sm-dev --run D<yours> --local tests/greasyfork-examples/files start "<fi
 ```
 
 - It records a verdict for every downloaded script, `tool error` included.
+- A verdict that matches the one recorded keeps its old `date`, so a rerun
+  redates only the scripts whose result changed.
 - A listed script that isn't downloaded has its `valid`, `sites`,
   `version` and `file` cleared, so an old verdict can't pass for a current one.
 - Each command refuses options it doesn't take, so a misspelled one fails loudly.
@@ -321,6 +371,7 @@ Beside `listing`, a record can hold:
 
 | Field | Written by | Contents |
 |-------|------------|----------|
+| `labels` | `add-scripts.mjs` | `{ label, rank }` list naming the collections the script belongs to; `rank` (from 1) only where the label was given one. [More](#labels) |
 | `version` | `validate` | `@version` of the downloaded copy |
 | `file` | `validate` | Where the downloaded copy is, relative to `files/` |
 | `sites` | `validate` | What its `@match` / `@include` lines target, for the results page: a site, a host pattern, a regex, or `*` |
