@@ -22,6 +22,7 @@ skill in [`.claude/skills/corpus-testing/`](../../.claude/skills/corpus-testing/
 | `analysis.sql` | yes | The queries behind `analysis.html` | you | `render-analysis.mjs` |
 | `analysis.html` | yes | Corpus statistics report | `render-analysis.mjs` | you |
 | `results.html` | yes | Static page that reads `corpus.json` and shows a sortable, filterable table of every script's validity, test status, tags and notes | you (hand-written) | you, in a browser |
+| `corpus-help.js` | yes | One-sentence description of each test status, n/a reason, fail blame and tag, shown as its tooltip | you | `results.html`, `show-on-GreasyFork.user.js` |
 
 `corpus.json` is the source of truth. Everything not in git can be rebuilt
 from it.
@@ -36,7 +37,8 @@ from it.
 | `build-db.mjs` | `corpus.json`, `files/` | `corpus.db` | [Loads everything into SQLite](#analysis-database) |
 | `validate-corpus.mjs` | `files/` | stdout, `--json` file | [Validates](#validating-the-corpus) every downloaded script offline; `record-results.mjs validate` runs it |
 | `render-analysis.mjs` | `corpus.db`, `analysis.sql` | `analysis.html` | Renders the statistics report |
-| `serve-results.mjs` | `results.html`, `corpus.json` | | [Serves the results page](#viewing-results) on localhost |
+| `serve-results.mjs` | `results.html`, `corpus.json`, `corpus-help.js` | | [Serves the results page](#viewing-results) on localhost |
+| `show-on-GreasyFork.user.js` | `corpus.json`, `corpus-help.js`, from `serve-results.mjs` | | Userscript that shows each script's validation and test status on Greasy Fork's script pages and listings |
 | `corpus.mjs` | | | Shared helpers: locked `corpus.json` updates, URL to `files/` path mapping |
 
 Each script takes `--help`, which prints its usage.
@@ -384,18 +386,22 @@ Beside `listing`, a record can hold:
   - `pass`: the script does what it promises.
   - `fail`: it doesn't. `--blame` says whose fault: `sourcemonkey`, `script`
     (broken or out of date against the site), or `unknown`.
+  - `inconclusive`: we ran it on its target site, but what it acts on never
+    showed up (no ad served, the popup never appeared, a redesign not served
+    to us), so there's no verdict. The note says what was missing.
   - `n/a`: we couldn't meaningfully try it. `--reason` is one of
     `requires-login`, `paid`, `geo-blocked`, `bot-blocked`, `site-gone`,
-    `needs-interaction`, `not-web`, `other-browser`, `unsafe`, `other`.
+    `needs-interaction`, `not-web`, `other-browser`, `unsafe`, `game`,
+    `other`.
   - An `n/a` can also record a script we chose not to run, with a note
     starting "Not run:": `unsafe` for one that looked dangerous, or the
     reason that kept us from trying it (`requires-login`, `paid`, or
-    `other` for game cheats and bots).
+    `game` for game cheats, bots and tools).
   - `other-browser` is for a script that relies on another browser's
     features. It's `n/a`, not a failure, since no Chrome extension could run
     it. Say in the note what it relies on.
   - No `test` at all means nobody has tried it yet.
-- `fail` and `n/a` require a note saying what happened.
+- `fail`, `inconclusive` and `n/a` require a note saying what happened.
 - `date` defaults to today, and `version` to the `@version` of the copy in
   `files/` now (which can be newer than the one `validate` last recorded).
   `results.html` flags a test whose `version` is older than the current copy.
@@ -416,6 +422,9 @@ node tests/greasyfork-examples/serve-results.mjs   # then open http://localhost:
   it asks you to choose `corpus.json`. You navigate to it once; after that the
   page offers to reopen the same file with one click.
 - Every link opens in a new tab, except the Summary ones below.
+- The search box matches names, IDs, sites, tags and notes. A number on its
+  own finds only the script with that ID, with its notes shown in full, or
+  a "Script N not in test corpus." row (`results.html?q=<id>` links to one).
 - Min year and Max year limit the scripts to those last updated on GreasyFork
   in that range; "none" leaves that end open.
 - Summary shows each filter's choices (Validation, Testing, Tag) with how many
@@ -453,7 +462,7 @@ node tests/greasyfork-examples/serve-results.mjs   # then open http://localhost:
 
 `validate` replaces `valid.tags` each run. An invalid script gets
 `invalid:<reason>` saying why (`require-dead-link`, `require-too-large`,
-`bad-match`, `user-style`, ...; the list is `HELP.tag` in `results.html`).
+`bad-match`, `user-style`, ...; the list is in `corpus-help.js`).
 Any script also gets tags for features it uses that SourceMonkey doesn't
 support but that don't make it invalid:
 
@@ -471,7 +480,10 @@ support but that don't make it invalid:
 
 Hand-added `tags` are for what only running the script shows, such as an
 unsupported feature the checks can't see. Give a new one a description in
-`HELP.tag` in `results.html`, which shows it as the tag's tooltip.
+`corpus-help.js`, which `results.html` and `show-on-GreasyFork.user.js` show
+as the tag's tooltip. A tag names a problem that still exists: once a
+SourceMonkey gap is fixed and its scripts re-tested, the tag comes off them
+and out of `corpus-help.js`.
 
 ### Parallel writers
 

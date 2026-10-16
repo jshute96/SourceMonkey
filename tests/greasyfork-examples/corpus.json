@@ -873,9 +873,6 @@
       "date": "2026-10-11",
       "version": "1.7.1.1"
     },
-    "tags": [
-      "idle-after-load"
-    ],
     "notes": [
       {
         "date": "2026-10-05",
@@ -3562,8 +3559,8 @@
       "version": "2020.03.24"
     },
     "test": {
-      "status": "n/a",
-      "reason": "other",
+      "status": "fail",
+      "blame": "script",
       "date": "2026-10-06",
       "version": "2020.03.24"
     },
@@ -4642,9 +4639,6 @@
       "date": "2026-10-12",
       "version": "1.66"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-10-11",
@@ -5671,9 +5665,6 @@
       "date": "2026-10-11",
       "version": "2022.03.05.01"
     },
-    "tags": [
-      "needs-cloneinto"
-    ],
     "notes": [
       {
         "date": "2026-10-06",
@@ -7510,7 +7501,6 @@
       "version": "36"
     },
     "tags": [
-      "needs-page-globals",
       "trusted-types"
     ],
     "notes": [
@@ -12243,9 +12233,6 @@
       "date": "2026-10-05",
       "version": "1.0.0"
     },
-    "tags": [
-      "idle-after-load"
-    ],
     "notes": [
       {
         "date": "2026-10-05",
@@ -15373,9 +15360,6 @@
       "date": "2026-10-01",
       "version": "2026.08.01.1"
     },
-    "tags": [
-      "xhr-response-readystate"
-    ],
     "notes": [
       {
         "date": "2026-09-29",
@@ -18284,9 +18268,6 @@
       "date": "2026-10-13",
       "version": "0.1.2"
     },
-    "tags": [
-      "xhr-override-mimetype"
-    ],
     "notes": [
       {
         "date": "2026-10-05",
@@ -20975,10 +20956,6 @@
       "date": "2026-10-11",
       "version": "20240625.1"
     },
-    "tags": [
-      "gm-frozen",
-      "needs-cloneinto"
-    ],
     "notes": [
       {
         "date": "2026-10-02",
@@ -22299,9 +22276,6 @@
       "date": "2026-10-06",
       "version": "3.4"
     },
-    "tags": [
-      "needs-iframes"
-    ],
     "notes": [
       {
         "date": "2026-10-06",
@@ -22776,7 +22750,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-05",
       "version": "1.0"
     },
@@ -24198,9 +24172,6 @@
       "date": "2026-10-11",
       "version": "2025.04.13"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-09-29",
@@ -26235,9 +26206,6 @@
       "date": "2026-10-12",
       "version": "2026.06.09.01"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-10-11",
@@ -26501,9 +26469,6 @@
       "date": "2026-10-13",
       "version": "0.8"
     },
-    "tags": [
-      "xhr-override-mimetype"
-    ],
     "notes": [
       {
         "date": "2026-10-06",
@@ -27261,8 +27226,7 @@
       "version": "1.0"
     },
     "tags": [
-      "http-only-match",
-      "needs-page-globals"
+      "http-only-match"
     ],
     "notes": [
       {
@@ -27812,9 +27776,6 @@
       "date": "2026-10-11",
       "version": "4.4.8"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-09-29",
@@ -27995,9 +27956,6 @@
       "date": "2026-10-12",
       "version": "2026.06.09.00"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-10-11",
@@ -29485,9 +29443,6 @@
       "date": "2026-10-06",
       "version": "0.3.2"
     },
-    "tags": [
-      "idle-after-load"
-    ],
     "notes": [
       {
         "date": "2026-10-03",
@@ -30149,9 +30104,6 @@
       "date": "2026-10-11",
       "version": "3.8.7"
     },
-    "tags": [
-      "gm-frozen"
-    ],
     "notes": [
       {
         "date": "2026-10-02",
@@ -30220,9 +30172,6 @@
       "date": "2026-10-06",
       "version": "0.7.02"
     },
-    "tags": [
-      "idle-after-load"
-    ],
     "notes": [
       {
         "date": "2026-09-29",
@@ -30480,9 +30429,6 @@
       "date": "2026-10-11",
       "version": "3.0.0"
     },
-    "tags": [
-      "needs-module-globals"
-    ],
     "notes": [
       {
         "date": "2026-10-04",
@@ -32140,9 +32086,6 @@
       "date": "2026-10-13",
       "version": "1.8"
     },
-    "tags": [
-      "xhr-abort-readystate"
-    ],
     "notes": [
       {
         "date": "2026-10-04",
@@ -32286,9 +32229,6 @@
       "date": "2026-09-29",
       "version": "3.6.2"
     },
-    "tags": [
-      "needs-xhr-onprogress"
-    ],
     "notes": [
       {
         "date": "2026-09-29",
@@ -32736,9 +32676,6 @@
       "date": "2026-10-10",
       "version": "1.3.25"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-10-10",
@@ -33968,9 +33905,6 @@
       "date": "2026-10-12",
       "version": "3.3.1"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-10-11",
@@ -35431,9 +35365,6 @@
       "date": "2026-10-11",
       "version": "0.2.0"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-10-04",
@@ -35525,9 +35456,6 @@
       "date": "2026-10-13",
       "version": "1.1.0"
     },
-    "tags": [
-      "xhr-context"
-    ],
     "notes": [
       {
         "date": "2026-10-06",
@@ -35825,9 +35753,6 @@
       "date": "2026-10-11",
       "version": "1.3.2"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-09-29",
@@ -37233,8 +37158,7 @@
       "version": "1.0"
     },
     "test": {
-      "status": "n/a",
-      "reason": "other",
+      "status": "inconclusive",
       "date": "2026-10-06",
       "version": "1.0"
     },
@@ -37280,9 +37204,6 @@
       "date": "2026-10-12",
       "version": "2024.10.28.003"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-10-11",
@@ -38317,9 +38238,6 @@
       "date": "2026-10-12",
       "version": "2025.10.09.001"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-10-11",
@@ -38410,9 +38328,6 @@
       "date": "2026-10-12",
       "version": "2026.04.14.00"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-10-11",
@@ -38874,8 +38789,7 @@
       "version": "1.7.3"
     },
     "tags": [
-      "ignored-match",
-      "inline-handler-scope"
+      "ignored-match"
     ],
     "notes": [
       {
@@ -42017,10 +41931,6 @@
       "date": "2026-10-11",
       "version": "2.0"
     },
-    "tags": [
-      "needs-page-globals",
-      "patches-page-builtins"
-    ],
     "notes": [
       {
         "date": "2026-09-29",
@@ -44761,9 +44671,6 @@
       "date": "2026-10-13",
       "version": "1.2"
     },
-    "tags": [
-      "xhr-override-mimetype"
-    ],
     "notes": [
       {
         "date": "2026-10-06",
@@ -45402,9 +45309,6 @@
       "date": "2026-10-11",
       "version": "0.6"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-10-02",
@@ -45684,9 +45588,6 @@
       "date": "2026-10-11",
       "version": "1.0.0"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-10-04",
@@ -46551,8 +46452,7 @@
       "version": "10.10.19"
     },
     "test": {
-      "status": "n/a",
-      "reason": "other",
+      "status": "inconclusive",
       "date": "2026-09-29",
       "version": "10.10.19"
     },
@@ -46637,8 +46537,8 @@
       "version": "0.5.0.1"
     },
     "test": {
-      "status": "n/a",
-      "reason": "other",
+      "status": "fail",
+      "blame": "script",
       "date": "2026-10-06",
       "version": "0.5.0.1"
     },
@@ -46728,7 +46628,6 @@
       "version": "4.1.4(en)"
     },
     "tags": [
-      "needs-page-globals",
       "sends-browsing-data"
     ],
     "notes": [
@@ -47357,9 +47256,6 @@
       "date": "2026-10-06",
       "version": "4.1"
     },
-    "tags": [
-      "idle-after-load"
-    ],
     "notes": [
       {
         "date": "2026-09-29",
@@ -47423,9 +47319,6 @@
       "date": "2026-10-11",
       "version": "1.4"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-10-06",
@@ -47611,7 +47504,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-13",
       "version": "1.2.1"
     },
@@ -47703,7 +47596,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-13",
       "version": "1.4.8"
     },
@@ -48934,8 +48827,7 @@
       "version": "9.2.0"
     },
     "tags": [
-      "gm-reassign",
-      "page-shadows-require"
+      "gm-reassign"
     ],
     "notes": [
       {
@@ -50846,9 +50738,6 @@
       "date": "2026-10-11",
       "version": "1.0.33"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-10-03",
@@ -51758,9 +51647,6 @@
       "date": "2026-10-11",
       "version": "4.15.1"
     },
-    "tags": [
-      "needs-custom-elements"
-    ],
     "notes": [
       {
         "date": "2026-10-03",
@@ -55260,8 +55146,7 @@
       "version": "2.3.1"
     },
     "tags": [
-      "mutation-events",
-      "needs-page-globals"
+      "mutation-events"
     ],
     "notes": [
       {
@@ -56298,7 +56183,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-07",
       "version": "1.6.1"
     },
@@ -56531,9 +56416,6 @@
       "date": "2026-10-07",
       "version": "0.1 alpha"
     },
-    "tags": [
-      "needs-iframes"
-    ],
     "notes": [
       {
         "date": "2026-10-07",
@@ -58497,9 +58379,6 @@
       "date": "2026-10-11",
       "version": "5.1.5"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-09-29",
@@ -58954,7 +58833,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "1.2.4"
     },
@@ -59120,9 +58999,6 @@
       "date": "2026-10-11",
       "version": "2.1"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-10-03",
@@ -62459,9 +62335,6 @@
       "date": "2026-10-13",
       "version": "7.6.8"
     },
-    "tags": [
-      "connect-subdomain"
-    ],
     "notes": [
       {
         "date": "2026-09-29",
@@ -62677,7 +62550,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-07",
       "version": "1.5.2"
     },
@@ -66346,7 +66219,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-07",
       "version": "1.0.0"
     },
@@ -67441,9 +67314,6 @@
       "date": "2026-10-11",
       "version": "0.1"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-10-07",
@@ -68564,7 +68434,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-13",
       "version": "1.7.3"
     },
@@ -68651,7 +68521,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-13",
       "version": "0.5.4"
     },
@@ -69234,9 +69104,6 @@
       "date": "2026-10-12",
       "version": "1.10.5"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-10-10",
@@ -70037,9 +69904,6 @@
       "date": "2026-10-12",
       "version": "0.14"
     },
-    "tags": [
-      "needs-cloneinto"
-    ],
     "notes": [
       {
         "date": "2026-10-11",
@@ -70190,7 +70054,6 @@
       "version": "0.8.0-bata.17"
     },
     "tags": [
-      "gm-frozen",
       "service-dead"
     ],
     "notes": [
@@ -70384,9 +70247,6 @@
       "date": "2026-10-07",
       "version": "0.6.1"
     },
-    "tags": [
-      "needs-iframes"
-    ],
     "notes": [
       {
         "date": "2026-10-07",
@@ -71908,8 +71768,7 @@
       "version": "0.4"
     },
     "test": {
-      "status": "n/a",
-      "reason": "other",
+      "status": "inconclusive",
       "date": "2026-10-04",
       "version": "0.4"
     },
@@ -71959,7 +71818,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-13",
       "version": "1.4"
     },
@@ -72055,9 +71914,6 @@
       "date": "2026-10-06",
       "version": "2.3"
     },
-    "tags": [
-      "idle-after-load"
-    ],
     "notes": [
       {
         "date": "2026-10-03",
@@ -72666,9 +72522,6 @@
       "date": "2026-10-07",
       "version": "5.7.0"
     },
-    "tags": [
-      "run-at-context-menu"
-    ],
     "notes": [
       {
         "date": "2026-09-29",
@@ -73510,9 +73363,6 @@
       "date": "2026-10-11",
       "version": "1.26"
     },
-    "tags": [
-      "unsafewindow-on-window"
-    ],
     "notes": [
       {
         "date": "2026-10-11",
@@ -73997,7 +73847,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-13",
       "version": "4.9"
     },
@@ -74602,8 +74452,7 @@
       "version": "3"
     },
     "test": {
-      "status": "n/a",
-      "reason": "other",
+      "status": "inconclusive",
       "date": "2026-10-10",
       "version": "3"
     },
@@ -75896,9 +75745,6 @@
       "date": "2026-10-10",
       "version": "1.0.0"
     },
-    "tags": [
-      "run-at-context-menu"
-    ],
     "notes": [
       {
         "date": "2026-10-10",
@@ -76077,7 +75923,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-13",
       "version": "v1"
     },
@@ -76545,10 +76391,6 @@
       "date": "2026-10-12",
       "version": "14.2"
     },
-    "tags": [
-      "needs-page-globals",
-      "patches-page-builtins"
-    ],
     "notes": [
       {
         "date": "2026-10-11",
@@ -76778,9 +76620,6 @@
       "date": "2026-10-07",
       "version": "1.4"
     },
-    "tags": [
-      "unsafewindow-on-window"
-    ],
     "notes": [
       {
         "date": "2026-10-07",
@@ -78683,9 +78522,6 @@
       "date": "2026-10-12",
       "version": "1.5.0"
     },
-    "tags": [
-      "patches-page-builtins"
-    ],
     "notes": [
       {
         "date": "2026-10-11",
@@ -78963,9 +78799,6 @@
       "date": "2026-10-03",
       "version": "0.4.0"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-10-03",
@@ -79056,9 +78889,6 @@
       "date": "2026-10-07",
       "version": "0.7"
     },
-    "tags": [
-      "unsafewindow-on-window"
-    ],
     "notes": [
       {
         "date": "2026-10-07",
@@ -80758,9 +80588,6 @@
       "date": "2026-10-11",
       "version": "2.4.4"
     },
-    "tags": [
-      "value-sync-latency"
-    ],
     "notes": [
       {
         "date": "2026-10-11",
@@ -81129,7 +80956,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-13",
       "version": "8.6.1"
     },
@@ -81176,7 +81003,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-13",
       "version": "1.2.9.5"
     },
@@ -81698,8 +81525,7 @@
       "version": "0.5"
     },
     "test": {
-      "status": "n/a",
-      "reason": "other",
+      "status": "inconclusive",
       "date": "2026-10-06",
       "version": "0.5"
     },
@@ -82164,9 +81990,6 @@
       "date": "2026-10-10",
       "version": "15"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-10-10",
@@ -82315,9 +82138,6 @@
       "date": "2026-10-13",
       "version": "0.9.1"
     },
-    "tags": [
-      "xhr-url-object"
-    ],
     "notes": [
       {
         "date": "2026-10-03",
@@ -83442,9 +83262,6 @@
       "date": "2026-10-11",
       "version": "1.87.1"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-09-29",
@@ -83886,9 +83703,6 @@
       "date": "2026-09-29",
       "version": "1.3"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-09-29",
@@ -85087,9 +84901,6 @@
       "date": "2026-10-11",
       "version": "1.25.1"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-09-29",
@@ -85461,9 +85272,6 @@
       "date": "2026-10-12",
       "version": "3.0.7"
     },
-    "tags": [
-      "needs-cloneinto"
-    ],
     "notes": [
       {
         "date": "2026-10-10",
@@ -85690,8 +85498,7 @@
       "version": "0.1"
     },
     "test": {
-      "status": "n/a",
-      "reason": "other",
+      "status": "inconclusive",
       "date": "2026-10-10",
       "version": "0.1"
     },
@@ -86282,9 +86089,6 @@
       "date": "2026-10-12",
       "version": "2.1"
     },
-    "tags": [
-      "window-writes-reach-page"
-    ],
     "notes": [
       {
         "date": "2026-10-10",
@@ -87198,8 +87002,7 @@
       "version": "1.0"
     },
     "test": {
-      "status": "n/a",
-      "reason": "other",
+      "status": "inconclusive",
       "date": "2026-10-03",
       "version": "1.0"
     },
@@ -87428,9 +87231,6 @@
       "date": "2026-10-12",
       "version": "1.5.0"
     },
-    "tags": [
-      "patches-page-builtins"
-    ],
     "notes": [
       {
         "date": "2026-10-10",
@@ -87474,8 +87274,7 @@
       "version": "1.4.4"
     },
     "test": {
-      "status": "n/a",
-      "reason": "other",
+      "status": "inconclusive",
       "date": "2026-10-03",
       "version": "1.4.4"
     },
@@ -87578,9 +87377,6 @@
       "date": "2026-10-11",
       "version": "4.5"
     },
-    "tags": [
-      "unsafewindow-on-window"
-    ],
     "notes": [
       {
         "date": "2026-10-11",
@@ -89078,9 +88874,6 @@
       "date": "2026-10-06",
       "version": "1.0.3"
     },
-    "tags": [
-      "idle-after-load"
-    ],
     "notes": [
       {
         "date": "2026-10-03",
@@ -90253,9 +90046,6 @@
       "date": "2026-10-12",
       "version": "5.0.8"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-10-02",
@@ -90628,7 +90418,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "1.07"
     },
@@ -91145,8 +90935,7 @@
       "version": "1.1.0"
     },
     "test": {
-      "status": "n/a",
-      "reason": "other",
+      "status": "inconclusive",
       "date": "2026-10-03",
       "version": "1.1.0"
     },
@@ -91245,9 +91034,6 @@
       "date": "2026-10-11",
       "version": "2.1.4"
     },
-    "tags": [
-      "needs-cloneinto"
-    ],
     "notes": [
       {
         "date": "2026-10-04",
@@ -92141,9 +91927,6 @@
       "date": "2026-10-02",
       "version": "1.01"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-10-02",
@@ -92457,9 +92240,6 @@
       "date": "2026-10-13",
       "version": "25.14"
     },
-    "tags": [
-      "gm-xhr-promise"
-    ],
     "notes": [
       {
         "date": "2026-10-11",
@@ -92597,9 +92377,6 @@
       "date": "2026-10-11",
       "version": "0.1"
     },
-    "tags": [
-      "patches-page-builtins"
-    ],
     "notes": [
       {
         "date": "2026-10-11",
@@ -92695,9 +92472,6 @@
       "date": "2026-10-12",
       "version": "2.2.0"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-10-11",
@@ -93488,7 +93262,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-10",
       "version": "2024-06-17"
     },
@@ -94641,7 +94415,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "1"
     },
@@ -95316,7 +95090,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "4.1.0"
     },
@@ -96087,7 +95861,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "0.0.4"
     },
@@ -97138,9 +96912,6 @@
       "date": "2026-10-12",
       "version": "47.0"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-10-11",
@@ -98231,7 +98002,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-13",
       "version": "4.1.7"
     },
@@ -98362,9 +98133,6 @@
       "date": "2026-10-01",
       "version": "1.3"
     },
-    "tags": [
-      "shadows-window"
-    ],
     "notes": [
       {
         "date": "2026-09-29",
@@ -99109,7 +98877,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "1.8.3"
     },
@@ -99391,7 +99159,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "2.1.2.1"
     },
@@ -100468,9 +100236,6 @@
       "date": "2026-10-12",
       "version": "1.1"
     },
-    "tags": [
-      "patches-page-builtins"
-    ],
     "notes": [
       {
         "date": "2026-10-11",
@@ -100928,7 +100693,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "12.0.0"
     },
@@ -101252,7 +101017,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "2.81"
     },
@@ -101481,9 +101246,6 @@
       "date": "2026-10-12",
       "version": "9.3.11"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-10-11",
@@ -101890,9 +101652,6 @@
       "date": "2026-10-11",
       "version": "5.1.0"
     },
-    "tags": [
-      "needs-page-globals"
-    ],
     "notes": [
       {
         "date": "2026-10-02",
@@ -103181,7 +102940,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "3.0.0"
     },
@@ -103406,7 +103165,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "2.1"
     },
@@ -103593,7 +103352,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "2.0"
     },
@@ -103733,7 +103492,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "1.0"
     },
@@ -103823,7 +103582,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-13",
       "version": "1.0"
     },
@@ -104319,7 +104078,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "2024-11-28"
     },
@@ -104413,7 +104172,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "1.1"
     },
@@ -104503,7 +104262,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "58.1"
     },
@@ -104550,7 +104309,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "3.6.0"
     },
@@ -104604,7 +104363,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "1.0.3"
     },
@@ -104724,7 +104483,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "1.0"
     },
@@ -104821,7 +104580,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "1.0"
     },
@@ -104864,7 +104623,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "3.3"
     },
@@ -105798,8 +105557,7 @@
       "version": "1.0.4"
     },
     "test": {
-      "status": "n/a",
-      "reason": "other",
+      "status": "inconclusive",
       "date": "2026-10-14",
       "version": "1.0.4"
     },
@@ -106389,7 +106147,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "5.3"
     },
@@ -106823,7 +106581,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "2.1.16"
     },
@@ -106908,7 +106666,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "1.1"
     },
@@ -107036,7 +106794,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "2.0.0"
     },
@@ -107082,7 +106840,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "5.4.0"
     },
@@ -107166,7 +106924,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "4.2"
     },
@@ -107425,7 +107183,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "1.0"
     },
@@ -107555,7 +107313,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "5.0.3"
     },
@@ -107598,7 +107356,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "1.21.6"
     },
@@ -107684,7 +107442,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "1.5.0"
     },
@@ -107991,7 +107749,7 @@
     },
     "test": {
       "status": "n/a",
-      "reason": "other",
+      "reason": "game",
       "date": "2026-10-14",
       "version": "1.1"
     },

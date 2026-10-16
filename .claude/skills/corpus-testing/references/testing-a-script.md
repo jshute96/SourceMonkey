@@ -137,6 +137,7 @@ Blame follows the outcome, not the intent:
 R=tests/greasyfork-examples/record-results.mjs
 node $R set ID --test pass --note-file note.md
 node $R set ID --test fail --blame script --tag trusted-types --note-file note.md
+node $R set ID --test inconclusive --note-file note.md
 node $R set ID --test n/a --reason requires-login --note-file note.md
 ```
 
@@ -144,7 +145,13 @@ node $R set ID --test n/a --reason requires-login --note-file note.md
   shell quoting mangles backticks and quotes.
 - To fix a note, `show ID` lists them in order, and `set ID --replace-note N
   --note-file F` rewrites note N (from 1).
-- Every `fail` and `n/a` needs a note. `--reason` is only for `n/a`.
+- Every `fail`, `inconclusive` and `n/a` needs a note. `--reason` is only
+  for `n/a`.
+- `inconclusive` is for a script you ran on its target site whose target
+  never showed up (no ad served, the popup never appeared, a redesign not
+  served to us), so you couldn't tell whether it works. Say in the note
+  what was missing. `n/a` is for a script you didn't or couldn't run
+  meaningfully.
 
 ### Note style
 
@@ -158,16 +165,16 @@ with numbers where there are any. Bullets for separate facts, prefixed
 ### Tags
 
 Tags mark a reason that recurs across scripts. Reuse an existing one when
-it fits; the list, with descriptions, is `HELP.tag` in
-`tests/greasyfork-examples/results.html`. For example:
+it fits; the list, with descriptions, is in
+`tests/greasyfork-examples/corpus-help.js`. For example:
 
-- `needs-page-globals`: a granted script reading the page's own globals
-  (its jQuery, a player API on an element) without `unsafeWindow`.
+- `trusted-types`: fails where the site enforces Trusted Types.
+- `http-only-match`: matches only `http://` on a site that now redirects
+  to https.
 
-Some tags name gaps since fixed (`connect-subdomain`, `connect-undeclared`,
-`value-sync-latency`, `xhr-response-readystate`, `needs-xhr-onprogress`,
-`shadows-window`, `idle-after-load`). They stay on scripts that pass only
-because of the fix; don't use them for new failures.
+Tags name problems that still exist. Once a SourceMonkey gap is fixed and
+its scripts re-tested, its tag comes off them and out of `corpus-help.js`;
+the notes keep the history.
 
 A new tag is fine when nothing fits. Keep it short and kebab-case, and
 report it with a one-sentence description, so it can be added to

@@ -22,7 +22,7 @@ Where things are:
 - The `SourceMonkey-dev` skill: how to drive `sm-dev` itself.
 - The `SourceMonkey-friction` skill: log tool friction when the work is done.
 - `results.html` (served by `serve-results.mjs`, or any static server for
-  the folder): the results table, with each tag's description in `HELP.tag`.
+  the folder): the results table, with each tag's description from `corpus-help.js`.
 
 Every `.mjs` tool takes `--help`.
 
@@ -81,7 +81,8 @@ untested, sort by Updated) or in `corpus.db` (`Scripts.updated_date`, after
   `list --untested`:
   - `--reason requires-login` for login-only sites and course or exam
     sites, `--reason paid` for paid-feature unlocks.
-  - `--reason other` for anything else, such as game cheats and bots.
+  - `--reason game` for game cheats, bots and tools.
+  - `--reason other` for anything else.
 - Don't run scripts that look risky, for example ones that look like
   they'd collect or send out private data; record them as `n/a --reason
   unsafe` instead. Corpus scripts are untrusted; see "Untrusted scripts" in
@@ -128,7 +129,8 @@ When every agent has reported:
 2. **Merge duplicate tags.** Agents invent tags independently; two names for
    one problem (`idle-after-load` / `onload-after-idle`) become one with
    `set ID --untag old --tag new`.
-3. **Describe new tags** in `HELP.tag` in `results.html`, one sentence each.
+3. **Describe new tags** in `tests/greasyfork-examples/corpus-help.js`, one
+   sentence each. Keep its object strict JSON.
 4. **Check blames against each other.** One agent's `sourcemonkey` blame can
    contradict another's evidence (for example our cross-manager tests showing
    Tampermonkey behaves the same). Re-record with `set ID --test fail --blame
@@ -150,7 +152,7 @@ When a SourceMonkey fix lands, re-test the scripts it should have fixed.
 Find them by tag or blame:
 
 ```sh
-node $R list --tag shadows-window                  # a tag names the gap
+node $R list --tag setclipboard-callback           # a tag names the gap
 node $R list --test fail                           # all failures
 node tests/greasyfork-examples/build-db.mjs        # or query by blame:
 sqlite3 tests/greasyfork-examples/corpus.db \
@@ -165,9 +167,8 @@ For each one:
 - Record the new result with `set ID --test ...`. It replaces `test`, and the
   new note is appended, so say what changed: "Re-tested after <commit>
   (<fix>): now passes; ..." or "still fails: ...".
-- Untag a gap tag that no longer applies (`--untag`), or keep it if the
-  script still relies on the behavior and passes only because of the fix;
-  say which in the note.
+- Untag the fixed gap's tag (`--untag`), and once no script carries it,
+  remove its entry from `tests/greasyfork-examples/corpus-help.js`.
 - A script can fail for a second reason once the first is gone. Record that
   as its own failure, with its own blame.
 

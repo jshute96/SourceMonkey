@@ -56,6 +56,7 @@ th[data-dir=asc]::after { content:" \25B2"; font-size:.7em; }
 th[data-dir=desc]::after { content:" \25BC"; font-size:.7em; }
 td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
 td.nowrap { white-space:nowrap; }
+td.no-match { color:var(--muted); padding:1rem .5rem; }
 a { color:var(--accent); }
 .name { min-width:10rem; max-width:18rem; }
 a.button { display:inline-block; color:inherit; text-decoration:none; background:var(--head); border:1px solid var(--line);
@@ -82,7 +83,7 @@ h1 { overflow-wrap:anywhere; }
              margin:0 .2rem .2rem 0; font-size:.85em; white-space:nowrap; }
 .s-ok, .s-pass { color:var(--ok); font-weight:600; }
 .s-invalid, .s-fail, .s-toolerror { color:var(--bad); font-weight:600; }
-.s-na { color:var(--na); font-weight:600; }
+.s-na, .s-inconclusive { color:var(--na); font-weight:600; }
 .detail, .stamp { color:var(--muted); font-size:.85em; }
 .stale { color:var(--na); font-size:.85em; }
 /* Notes show in a full-width row under the script's row; the Notes column only toggles it. */
@@ -159,6 +160,7 @@ code { font-size:.9em; background:var(--head); padding:0 .25rem; border-radius:3
 </table>
 </div>
 
+<script src="corpus-help.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -166,8 +168,8 @@ const cls = (s) => 's-' + s.replace(/[^a-z]/g, '');
 
 // ---------- Tooltips ----------
 
-// What each status, detail and tag means. Reasons and blames mirror REASONS and
-// BLAMES in record-results.mjs; hand-added tags need an entry here to get one.
+// What each status, detail and tag means: the shared ones from
+// corpus-help.js, plus the filter choices only this page has.
 const HELP = {
   valid: {
     'ok': 'Valid: SourceMonkey would install it. It may still have validation warnings.',
@@ -175,122 +177,30 @@ const HELP = {
     'invalid': 'Invalid: SourceMonkey would refuse to install it. The Notes say why.',
     'tool error': 'The validator itself failed on this script, so there is no verdict',
   },
-  test: {
-    'tested': 'Any recorded test result',
-    'untested': 'Not tried on its target site yet',
-    'pass': 'Tried on its target site, and it did what it says',
-    'fail': 'Tried on its target site, and it did not work. The detail says whose fault.',
-    'n/a': 'Could not be tried meaningfully. The detail says why.',
-  },
-  detail: {
-    'requires-login': 'Needs an account on the target site',
-    'paid': 'Needs a paid subscription or purchase',
-    'geo-blocked': 'The site refuses our region',
-    'bot-blocked': 'A bot check (a captcha, Cloudflare or a firewall) stopped the test browser, visible ones too',
-    'unsafe': 'Not run on purpose: from its description or code it harvests credentials or private data, spams, or drives accounts or money',
-    'site-gone': 'The target site no longer exists or answers',
-    'needs-interaction': 'Only does something after a manual flow we can\'t script',
-    'not-web': 'Targets local files, browser pages, or no real site',
-    'other-browser': 'Relies on another browser\'s features (Firefox-only APIs, old Opera)',
-    'other': 'Another reason. The Notes explain.',
-    'sourcemonkey': 'SourceMonkey\'s fault: a missing feature or a bug',
-    'script': 'The script\'s fault: broken, or out of date against the current site',
-    'unknown': 'Not yet known whose fault it is',
-  },
-  tag: {
-    '(any)': 'Scripts with any tag',
-    'malformed-grant': 'A @grant line that isn\'t an API name (some scripts use them as comments). Found by validation.',
-    'ignored-match': 'A @match Chrome would refuse, which SourceMonkey drops. Found by validation.',
-    'unsupported-run-at': 'A @run-at value SourceMonkey doesn\'t support, so the script runs at document-idle instead. Found by validation.',
-    'icon-dead-link': 'Its @icon didn\'t download (an HTTP error or no response, say), so a globe shows instead. Found by validation.',
-    'icon-too-large': 'Its @icon is over SourceMonkey\'s icon size limit, so a globe shows instead. Found by validation.',
-    'invalid:require-dead-link': 'Invalid: a @require that won\'t load (an HTTP error, no response, a timeout, an empty file, or an HTML page instead of JavaScript). Found by validation.',
-    'invalid:resource-dead-link': 'Invalid: a @resource that won\'t load (an HTTP error, no response, a timeout or an empty file). Found by validation.',
-    'invalid:require-other': 'Invalid: a @require rejected for another reason. The validation error says which. Found by validation.',
-    'invalid:resource-other': 'Invalid: a @resource rejected for another reason. The validation error says which. Found by validation.',
-    'invalid:resource-data-url': 'Invalid: a @resource given as a data: URL, which SourceMonkey doesn\'t support. Found by validation.',
-    'invalid:other': 'Invalid for a reason the validator doesn\'t classify. The validation error says which. Found by validation.',
-    'invalid:require-too-large': 'Invalid: a @require over SourceMonkey\'s per-file size limit. Found by validation.',
-    'invalid:resource-too-large': 'Invalid: a @resource over SourceMonkey\'s per-file size limit. Found by validation.',
-    'invalid:require-data-url': 'Invalid: a @require given as a data: URL, which SourceMonkey doesn\'t support. Found by validation.',
-    'invalid:bad-match': 'Invalid: no @match is usable (no path, a * inside the host, or not a URL at all), so it would never run. Found by validation.',
-    'invalid:user-style': 'Invalid: a user style (/* ==UserStyle== */ CSS), not a userscript. Found by validation.',
-    'invalid:no-metadata-block': 'Invalid: no // ==UserScript== metadata block. Found by validation.',
-    'invalid:unterminated-metadata-block': 'Invalid: the metadata block is never closed. Found by validation.',
-    'invalid:no-name': 'Invalid: no @name. Found by validation.',
-    'invalid:no-match': 'Invalid: no @match or @include. Found by validation.',
-    'invalid:syntax-error': 'Invalid: the script doesn\'t parse. Found by validation.',
-    'trusted-types': 'Fails where the site enforces Trusted Types, e.g. by assigning innerHTML in the page world',
-    'needs-page-globals': 'Reads the page\'s own globals (like its jQuery) without unsafeWindow. Works in Tampermonkey, and in SourceMonkey since scripts run in the page by default (aab036d)',
-    'connect-undeclared': 'Uses GM_xmlhttpRequest with no @connect rule for a host it requests, which SourceMonkey blocked until it got a prompt asking the user, as Tampermonkey has',
-    'needs-onreadystatechange': 'Waits for GM_xmlhttpRequest\'s onreadystatechange, which SourceMonkey never fires',
-    'mutation-events': 'Relies on mutation events like DOMNodeInserted, which Chrome removed in 2024',
-    'run-at-context-menu': 'Uses @run-at context-menu (run on request), which SourceMonkey runs from the popup\'s Run this script',
-    'xhr-response-readystate': 'Checks readyState on GM_xmlhttpRequest\'s response, which SourceMonkey leaves unset',
-    'needs-xhr-onprogress': 'Relies on GM_xmlhttpRequest\'s onprogress, which SourceMonkey fires since its responses stream',
-    'tld-include': 'Uses Tampermonkey\'s .tld host form in @include (any top-level domain), which SourceMonkey doesn\'t support',
-    'inline-script-csp': 'Inserts an inline <script> element, which SourceMonkey\'s USER_SCRIPT world CSP blocks in the extension',
-    'connect-subdomain': 'Declares a bare @connect domain and needs its subdomains, which Tampermonkey allows but SourceMonkey doesn\'t',
-    'shadows-window': 'Declares a top-level const window. Broke SourceMonkey\'s own unsafeWindow binding while the two shared a scope; works since the user program got its own (650d8b7)',
-    'gm-on-window': 'Reads GM_* functions as window properties (window.GM_xmlhttpRequest), as Tampermonkey and Violentmonkey provide. Works in SourceMonkey since c2dbb1f',
-    'idle-after-load': 'Sets itself up in a window load handler, which SourceMonkey\'s document-idle missed until it ran idle bodies before load (fixed)',
-    'contextmenu-on-mousedown': 'Expects the contextmenu event after mouseup, as on Windows. On Linux and macOS Chrome it comes on mousedown.',
-    'gm-frozen': 'Adds properties to the GM object (like a GM_config polyfill setting GM.getValue) or wraps it in a Proxy. Works since f3d2c5c, which left GM unfrozen as in Tampermonkey and Violentmonkey',
-    'gm-reassign': 'Assigns to a granted GM_* name (GM_xmlhttpRequest = GM.xmlHttpRequest). Works in the page world since c2dbb1f; still throws under @inject-into content, where SourceMonkey declares those names const',
-    'needs-cloneinto': 'Calls Firefox\'s cloneInto or exportFunction unchecked, which Violentmonkey stands in for on Chrome. Works in SourceMonkey since f3d2c5c',
-    'needs-iframes': 'Must run inside an iframe (like the reCAPTCHA frames), and SourceMonkey only runs scripts in the top frame',
-    'service-dead': 'Depends on a third-party download or proxy service that no longer responds',
-    'http-only-match': 'Matches only http:// on a site that now redirects to https, so it never runs on the real page in any manager',
-    'beforescriptexecute': 'Relies on Firefox\'s beforescriptexecute event, which Chrome never fires',
-    'needs-flash': 'Relies on Flash content (embed flashvars, SWF players) that browsers and sites no longer serve',
-    'unsafewindow-on-window': 'Reads unsafeWindow as a property of window or top-level this, as Tampermonkey and Violentmonkey provide. Works in SourceMonkey since c2dbb1f',
-    'xhr-override-mimetype': 'Reads binary data through GM_xmlhttpRequest\'s overrideMimeType (text/plain; charset=x-user-defined), one character per byte',
-    'require-clobbers-page': 'Its @require library (like jQuery) sets a global the page has too. Replaced the page\'s while SourceMonkey ran such scripts unsandboxed; the sandbox window keeps it, as in Tampermonkey (52f830e)',
-    'xhr-url-object': 'Passes a URL object as GM_xmlhttpRequest\'s url, which the managers take as its href',
-    'needs-custom-elements': 'Uses customElements, which is null in Chrome\'s isolated world and works only in the page, where SourceMonkey now runs scripts by default (aab036d)',
-    'needs-gm-webrequest': 'Uses Tampermonkey\'s GM_webRequest (@webRequest), which SourceMonkey doesn\'t support',
-    'xhr-abort-readystate': 'Calls abort() on a GM_xmlhttpRequest from onreadystatechange, and relies on no further onreadystatechange call after it, as in Tampermonkey',
-    'setclipboard-callback': 'Passes a callback as GM_setClipboard\'s third argument, which Tampermonkey calls once the copy is done and SourceMonkey ignores',
-    'sm-dev-late-start': 'Fails only because sm-dev starts document-start code after the page\'s first scripts (on a reload, or in a tab a run tab opened), and works injected at true document start',
-    'anti-tamper': 'The site detects the script\'s changes to built-ins (comparing Object.prototype with its own clean about:blank iframes, say) and stops working, in every manager',
-    'sends-browsing-data': 'Sends the URLs or contents of pages you visit to the author\'s server, beyond what its feature needs',
-    'openintab-data-url': 'Opens a data: URL with GM_openInTab, which Tampermonkey opens and SourceMonkey refuses (it allows only http and https)',
-    'xhr-context': 'Passes a context option to GM_xmlhttpRequest and reads response.context in its callbacks',
-    'domain-moved': 'Matches only a domain the site has left (like discordapp.com, now discord.com), so it never runs on the real pages',
-    'mixed-content': 'Talks to a plain http:// or ws:// endpoint from an https page, which the browser blocks in every manager',
-    'shadow-dom-v0': 'Uses Shadow DOM v0\'s createShadowRoot(), which Chrome removed in 2020, so it throws in every manager',
-    'dead-asset': 'Loads an image, stylesheet or other asset from a URL that\'s gone (often an expired Discord attachment link), so its visible effect is missing in every manager',
-    'page-shadows-require': 'The page\'s own top-level let, const or class of a name (like $) its @require library also sets. Hid the library while SourceMonkey ran such scripts unsandboxed; the sandbox window sees the library, as in Tampermonkey (52f830e)',
-    'menu-no-callback': 'Calls GM_registerMenuCommand with only a name (to show a divider like "==== START ===="), which Tampermonkey accepts without throwing and SourceMonkey rejects',
-    'needs-module-globals': 'Reads undeclared exports, module or define (as webpack and UMD bundles do), which Tampermonkey and Violentmonkey give as undefined. Works in SourceMonkey since f3d2c5c',
-    'dom-at-start': 'Uses document.head or document.body at top level under @run-at document-start, before they exist; SourceMonkey runs at the true start, and Tampermonkey sometimes runs late enough to get away with it',
-    'start-late-on-reload': 'Must run before DOMContentLoaded, which SourceMonkey\'s document-start code misses on a reload of a fast, cached page',
-    'patches-page-builtins': 'Patches a built-in (performance.now, XMLHttpRequest.prototype, Object.prototype) from a granted script without unsafeWindow, which reaches the page in Tampermonkey. Works in SourceMonkey since scripts run in the page by default (aab036d)',
-    'window-writes-reach-page': 'Assigns window properties (like replacing setTimeout) that would break the page if they reached it. Tampermonkey keeps them in its sandbox, and so does SourceMonkey since its page-world scripts got a sandbox window (c2dbb1f)',
-    'inline-handler-scope': 'Defines functions for inline onclick attributes in its own HTML, which run in the page. Works in SourceMonkey since scripts run in the page by default (aab036d)',
-    'gm-info-options': 'Reads GM_info.script.options, which Tampermonkey provides and SourceMonkey doesn\'t',
-    'gm-xhr-promise': 'Awaits GM.xmlHttpRequest for its response, which the managers return as a Promise',
-    'needs-site-jquery': 'A page-world script that calls the site\'s jQuery ($), which the site no longer loads, so it throws in every manager',
-    'missed-dcl': 'Does all its setup in a DOMContentLoaded listener while running at the default @run-at, after that event, so it never sets up in any manager',
-    'manager-gated': 'Refuses to run unless GM_info names a specific manager or version',
-    'grant-none-override': 'Declares @grant none alongside other @grant lines, so in every manager it gets no GM APIs and throws on its first GM_* call',
-    'value-sync-latency': 'Passes messages between tabs through GM values with a short reply timeout, which SourceMonkey once missed by batching writes for 150 ms in each direction',
-    'mutation-loop': 'Changes the DOM from its own MutationObserver callback each time, so the observer fires forever and the page hangs, in every manager',
-  },
+  test: { 'tested': 'Any recorded test result', ...CORPUS_HELP.test },
+  detail: CORPUS_HELP.detail,
+  tag: { '(any)': 'Scripts with any tag', ...CORPUS_HELP.tag },
 };
+
+/**
+ * A tag's description: its own entry, or its `prefix:*` entry with the
+ * name filled in (see corpus-help.js). The userscript has the same lookup.
+ */
+function tagHelp(help, tag) {
+  if (Object.hasOwn(help, tag)) return help[tag];
+  const colon = tag.indexOf(':');
+  const pattern = colon > 0 && help[tag.slice(0, colon) + ':*'];
+  return pattern ? pattern.replaceAll('{name}', tag.slice(colon + 1)) : '';
+}
 
 /** The tooltip for a value, or '' when there is none. */
 function helpFor(kind, value) {
   if (kind === 'test' && value.includes(':')) {
     const [status, detail] = value.split(':');
     const why = HELP.detail[detail];
-    return (status === 'fail' ? 'Failed' : 'Not testable') + (why ? '. ' + why + '.' : '');
+    return (status === 'fail' ? 'Failed.' : 'Not testable.') + (why ? ' ' + why : '');
   }
-  if (kind === 'tag') {
-    let m;
-    if ((m = /^unsupported-grant:(.+)$/.exec(value))) return 'Grants ' + m[1] + ', which SourceMonkey doesn\'t provide, so it is undefined at runtime. Found by validation.';
-    if ((m = /^ignored-header:(.+)$/.exec(value))) return 'Uses ' + m[1] + ', which another manager acts on and SourceMonkey ignores. Found by validation.';
-  }
+  if (kind === 'tag') return tagHelp(HELP.tag, value);
   return HELP[kind]?.[value] ?? '';
 }
 const titleAttr = (kind, value) => { const t = helpFor(kind, value); return t ? ' title="' + esc(t) + '"' : ''; };
@@ -434,7 +344,8 @@ let sortKey = 'rank', sortDir = 1;
 // How each row's notes show: the Notes mode, unless the row was set on its own
 // (its Show/Hide button, or Show full under short notes). Changing the mode resets rows.
 const noteView = new Map();
-const viewOf = (id) => noteView.get(id) ?? $('notes-mode').value;
+// A search for one script's ID shows its notes in full.
+const viewOf = (id) => noteView.get(id) ?? (searchedId() === id ? 'full' : $('notes-mode').value);
 const blank = (v) => v === '' || v === null || v === undefined;
 /** The year of a script's last GreasyFork update, or '' when it has none. */
 const yearOf = (d) => (d.updated ?? '').slice(0, 4);
@@ -463,10 +374,11 @@ function show(corpus, source) {
     count((d) => d.valid === 'invalid') + ' invalid',
     count((d) => d.test === 'pass') + ' passed',
     count((d) => d.test === 'fail') + ' failed',
+    count((d) => d.test === 'inconclusive') + ' inconclusive',
     count((d) => d.test === 'n/a') + ' not testable',
     count((d) => d.test === '') + ' untested',
   ].join(' · ') + '. From <code>' + esc(source) + '</code>, recorded with <code>record-results.mjs</code>.';
-  setOptions($('test'), 'test', [['', 'all'], ['tested', 'tested'], ['untested', 'untested'], ['pass', 'pass'], ['fail', 'fail'], ['n/a', 'n/a']],
+  setOptions($('test'), 'test', [['', 'all'], ['tested', 'tested'], ['untested', 'untested'], ['pass', 'pass'], ['fail', 'fail'], ['inconclusive', 'inconclusive'], ['n/a', 'n/a']],
     [...new Set(data.filter((d) => d.detail).map((d) => d.test + ':' + d.detail))].sort());
   setOptions($('tag'), 'tag', [['', 'all'], ['(any)', '(any tag)']], [...new Set(data.flatMap((d) => d.tags))].sort());
   const years = [...new Set(data.map(yearOf).filter(Boolean))].sort();
@@ -626,10 +538,18 @@ function matches(kind, value, d) {
   return value === '(any)' ? d.tags.length > 0 : d.tags.includes(value);
 }
 
+/** The script ID a search for a bare number names, or null for a text search. */
+function searchedId() {
+  const q = $('q').value.trim();
+  return /^\d+$/.test(q) ? Number(q) : null;
+}
+
 function apply() {
   const q = $('q').value.trim().toLowerCase();
-  shown = rows.filter(({ d }) =>
-    (!q || d.search.includes(q)) && FILTERS.every((kind) => matches(kind, $(kind).value, d)));
+  const id = searchedId();
+  // A bare number finds that script only, not every ID or name containing it.
+  const found = id !== null ? (d) => d.id === id : (d) => !q || d.search.includes(q);
+  shown = rows.filter(({ d }) => found(d) && FILTERS.every((kind) => matches(kind, $(kind).value, d)));
   shown.sort((a, b) => {
     let x = a.d[sortKey], y = b.d[sortKey];
     if (Array.isArray(x)) { x = x.join(','); y = y.join(','); }
@@ -664,6 +584,13 @@ function rowView(r) {
 }
 
 function render() {
+  const id = searchedId();
+  if (id !== null && !rows.some((r) => r.d.id === id)) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td class="no-match" colspan="' + document.querySelectorAll('thead th').length + '">Script ' + id + ' not in test corpus.</td>';
+    $('rows').replaceChildren(tr);
+    return;
+  }
   $('rows').replaceChildren(...shown.flatMap(rowView));
   updateMoreButtons();
 }

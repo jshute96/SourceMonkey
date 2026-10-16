@@ -24,7 +24,7 @@
 //                                          in that label's rank order
 //                              --limit N
 //   set ID [options]         record a finding:
-//                              --test pass|fail|n/a
+//                              --test pass|fail|inconclusive|n/a
 //                              --reason R   why it's n/a, with --test n/a only (see REASONS)
 //                              --blame B    whose fault a failure is (see BLAMES)
 //                              --note TEXT  markdown; --note-file PATH reads it from a file
@@ -56,15 +56,17 @@ import {
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, '../..');
 
-const TEST_STATUSES = ['pass', 'fail', 'n/a'];
+const TEST_STATUSES = ['pass', 'fail', 'inconclusive', 'n/a'];
 // Why a script couldn't be meaningfully tried. Kept to a fixed set so the
-// report can filter on it; `other` plus a note covers the rest.
+// report can filter on it; `other` plus a note covers the rest. Each reason
+// and blame has a description in corpus-help.js.
 const REASONS = [
   'requires-login',     // needs an account on the target site
   'paid',               // needs a paid subscription or purchase
   'geo-blocked',        // the site refuses our region
   'bot-blocked',        // a bot check (captcha, Cloudflare, WAF) we can't get past, headed too
   'unsafe',             // we chose not to run it: it harvests credentials, spams, or drives accounts or money
+  'game',               // a game cheat, bot or tool: can't be judged without playing, and might get an account banned
   'site-gone',          // the target site no longer exists or answers
   'needs-interaction',  // only does something after a manual flow we can't script
   'not-web',            // targets local files, browser pages, or no real site
@@ -312,7 +314,7 @@ async function setFinding(opts) {
   if (opts.date && !/^\d{4}-\d{2}-\d{2}$/.test(opts.date)) throw new Error('The --date option must be YYYY-MM-DD');
   const note = opts['note-file'] ? (await readFile(opts['note-file'], 'utf8')).trim() : opts.note?.trim();
   // A bare status is no use to the next reader; say what was seen.
-  if ((opts.test === 'fail' || opts.test === 'n/a') && !note) {
+  if (['fail', 'inconclusive', 'n/a'].includes(opts.test) && !note) {
     throw new Error(`A --test ${opts.test} result needs a --note saying what happened`);
   }
   if (opts['replace-note'] !== undefined && !note) throw new Error('The --replace-note option needs the new --note or --note-file');
@@ -380,8 +382,9 @@ async function show(opts) {
 }
 
 /** One `list` line: ID and installs right-aligned, the statuses padded, then the name. */
+// TESTED is as wide as its longest value, `inconclusive`.
 function listLine([id, installs, valid, tested, name]) {
-  return [id.padStart(7), installs.padStart(9), valid.padEnd(7), tested.padEnd(6), name].join('  ');
+  return [id.padStart(7), installs.padStart(9), valid.padEnd(7), tested.padEnd(12), name].join('  ');
 }
 
 async function list(opts) {

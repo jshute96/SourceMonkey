@@ -10,11 +10,13 @@
 //   --port N   port to listen on (default 8765)
 //
 // Everything is read fresh on every request, so reloading the page shows
-// results recorded since. Listens on 127.0.0.1 only. Any other static server
+// results recorded since. Each response carries the file's Last-Modified
+// date, which show-on-GreasyFork.user.js checks with a HEAD request before
+// downloading corpus.json again. Listens on 127.0.0.1 only. Any other static server
 // for this folder works too; this one just needs no setup.
 
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { printHelp } from './corpus.mjs';
@@ -22,13 +24,14 @@ import { printHelp } from './corpus.mjs';
 const FILES = {
   '/results.html': { file: 'results.html', type: 'text/html; charset=utf-8' },
   '/corpus.json': { file: 'corpus.json', type: 'application/json; charset=utf-8' },
+  '/corpus-help.js': { file: 'corpus-help.js', type: 'text/javascript; charset=utf-8' },
 };
 FILES['/'] = FILES['/results.html'];
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, 'files');
 
-/** The body and type for a path other than the two page files, or null for a 404. */
-async function dynamicResponse(pathname) {
+/** The file and type for a path other than the fixed files, or null for a 404. */
+function dynamicFile(pathname) {
   if (!pathname.startsWith('/files/')) return null;
   // Each URL part decodes to the name on disk, which keeps its own
   // percent-encoding (`%20`, sent as `%2520`).
@@ -40,11 +43,7 @@ async function dynamicResponse(pathname) {
   }
   const file = path.join(ROOT, ...parts);
   if (!file.startsWith(ROOT + path.sep) || parts.some((p) => p === '..' || p.includes('/'))) return null;
-  const body = await readFile(file).catch((err) => {
-    if (err.code === 'ENOENT' || err.code === 'EISDIR') return null;
-    throw err;
-  });
-  return body && { body, type: 'text/plain; charset=utf-8' };
+  return { file, type: 'text/plain; charset=utf-8' };
 }
 
 function parseArgs(argv) {
@@ -72,16 +71,22 @@ const server = createServer(async (req, res) => {
     res.writeHead(404, { 'content-type': 'text/plain' }).end('Not found');
     return;
   }
+  const found = entry ? { file: path.join(HERE, entry.file), type: entry.type } : dynamicFile(pathname);
   try {
-    const found = entry
-      ? { body: await readFile(path.join(HERE, entry.file)), type: entry.type }
-      : await dynamicResponse(pathname);
-    if (!found) {
+    const info = found && await stat(found.file).catch((err) => {
+      if (err.code === 'ENOENT') return null;
+      throw err;
+    });
+    if (!info?.isFile()) {
       res.writeHead(404, { 'content-type': 'text/plain' }).end('Not found');
       return;
     }
-    res.writeHead(200, { 'content-type': found.type, 'cache-control': 'no-store' });
-    res.end(req.method === 'HEAD' ? undefined : found.body);
+    res.writeHead(200, {
+      'content-type': found.type,
+      'cache-control': 'no-store',
+      'last-modified': info.mtime.toUTCString(),
+    });
+    res.end(req.method === 'HEAD' ? undefined : await readFile(found.file));
   } catch (err) {
     res.writeHead(500, { 'content-type': 'text/plain' }).end(`Could not read ${entry?.file ?? pathname}: ${err.message}`);
   }
