@@ -29,6 +29,12 @@ test('findMissingScripts: expected scripts with no report', () => {
   assert.deepEqual(findMissingScripts(s, new Set(['rejected'])).map((m) => m.id), ['missing']);
 });
 
+test('findMissingScripts: none on a document loaded while user scripts were disabled', () => {
+  // Nothing was injected, so there's no failure to explain in the Log.
+  const s = state({ matches: [script('a', 'MAIN')], loadedWithoutUserscripts: true });
+  assert.deepEqual(findMissingScripts(s), []);
+});
+
 test('findMissingScripts: only scripts that matched at the first load', () => {
   // `later` matched only a pushState URL, or was installed after the
   // document committed: never injected, so not missing either.

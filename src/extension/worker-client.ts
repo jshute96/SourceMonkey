@@ -98,6 +98,7 @@ export const markFirstRunComplete = op('markFirstRunComplete');
 export const writeSetting = op('writeSetting');
 export const backfillCollectionDisplayNames = op('backfillCollectionDisplayNames');
 export const reconcileScriptMembership = op('reconcileScriptMembership');
+export const syncAfterUserScriptsAllowed = op('syncAfterUserScriptsAllowed');
 
 // ---------- Refresh, add, install ----------
 export const updateScript = op('updateScript');

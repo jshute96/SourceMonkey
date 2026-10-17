@@ -58,13 +58,14 @@ export function renderFileAccessBanner(retry = 'then reload this page'): HTMLEle
 // any other link.
 //
 // Exported because the collections page's "Allow User Scripts" banner
-// points at the same details page.
-export function extensionDetailsLink(): HTMLElement {
+// points at the same details page. With `text`, it reads as a plain link
+// inside a sentence instead of showing the address.
+export function extensionDetailsLink(text?: string): HTMLElement {
   const url = `chrome://extensions/?id=${chrome.runtime.id}`;
   const a = document.createElement('a');
   a.href = url;
-  a.textContent = url;
-  a.className = 'chrome-link';
+  a.textContent = text ?? url;
+  a.className = text ? 'chrome-text-link' : 'chrome-link';
   a.addEventListener('click', (event) => {
     event.preventDefault();
     // Caught, not dropped: an unhandled rejection in an extension page

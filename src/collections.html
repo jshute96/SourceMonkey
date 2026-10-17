@@ -139,9 +139,10 @@
       .error { color: #b00; }
       /* The banner box itself is in styles.css (shared with the
          viewer). These are the collections-page-only parts: a roomier
-         gap before the collection list, and the raw-API-error line the
-         "Allow User Scripts" banner appends. */
+         gap before the collection list, and the raw-API-error line in the
+         "Allow User Scripts" banner. */
       .banner { margin-bottom: 1em; }
+      .banner.banner-error .banner-detail { color: #b71c1c; }
       .banner .banner-detail { color: #92400e; font-size: 0.85em; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin-top: 0.5em; }
       /* Inline busy spinner for individual controls (toggles, add form).
          `@keyframes sm-spin` is in styles.css, shared with the dialog

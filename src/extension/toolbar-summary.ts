@@ -8,6 +8,7 @@ import {
   POPUP_NOT_INJECTABLE,
   type PopupRow,
   type PopupView,
+  USER_SCRIPTS_OFF_HEADING,
 } from './popup-view.js';
 import {
   BADGE_GREEN,
@@ -72,6 +73,9 @@ export function summarizeToolbar(view: PopupView, state: TabMatchState | null): 
 
   const lines: string[] = [];
   if (!view.injectable) lines.push(POPUP_NOT_INJECTABLE);
+  // Nothing on the page can run until they're enabled, so that is the
+  // whole story: no "skipped" line, and no reload to suggest.
+  else if (view.userScriptsDisabled) lines.push(USER_SCRIPTS_OFF_HEADING);
   else if (!anyStatus) lines.push(POPUP_NO_SCRIPTS);
   else {
     if (running > 0) lines.push(`${scripts(running)} running.`);
@@ -82,7 +86,10 @@ export function summarizeToolbar(view: PopupView, state: TabMatchState | null): 
     if (added > 0) lines.push(`Reload needed to add ${scripts(added)}.`);
     if (removed > 0) lines.push(`Reload needed to remove ${scripts(removed)}.`);
     if (untracked > 0) {
-      lines.push(`Page loaded before SourceMonkey started. Reload needed for ${scripts(untracked)}.`);
+      const why = state?.loadedWithoutUserscripts && !state.loadedBefore
+        ? 'Page loaded while user scripts were disabled'
+        : 'Page loaded before SourceMonkey started';
+      lines.push(`${why}. Reload needed for ${scripts(untracked)}.`);
     }
     if (missing > 0) lines.push(`${missing} expected ${noun(missing)} ${is(missing)} not running.`);
     if (unexpected > 0) lines.push(`${unexpected} unexpected ${noun(unexpected)} ${is(unexpected)} running.`);
@@ -95,7 +102,7 @@ export function summarizeToolbar(view: PopupView, state: TabMatchState | null): 
   // off green for good.
   let color: string | null = null;
   if (anyBadged) {
-    if (errors + rejected + invalid > 0) color = BADGE_RED;
+    if (errors + rejected + invalid > 0 || view.userScriptsDisabled) color = BADGE_RED;
     else if (updated + added + removed + untracked > 0) color = BADGE_PURPLE;
     else if (missing + unexpected > 0) color = BADGE_ORANGE;
     // Grey says nothing ran: not for a tab where some scripts were kept

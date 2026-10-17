@@ -17,6 +17,7 @@ import {
   enableWithin, setAllScriptsEnabled, setCollectionEnabledExclusive, setScriptEnabledExclusive,
 } from './script-enablement.js';
 import { turnOffOtherCopies } from './script-identity.js';
+import { syncRegistrations } from './injector.js';
 import {
   probeInstalledScript, updateAllCollections, updateCollection, updateScript, type UpdateMode,
 } from './script-updater.js';
@@ -93,6 +94,12 @@ const WORKER_OPS = {
   // A page that finds rows in the old spelling waits for this before
   // reading.
   migrateCollectionKeys: migrateCollectionKeysForPage,
+  // The collections page saw "Allow User Scripts" turned on. Chrome
+  // tells the worker nothing when that happens, and the syncs that ran
+  // while it was off registered nothing, so this places the whole set.
+  async syncAfterUserScriptsAllowed(): Promise<void> {
+    await syncRegistrations();
+  },
 
   // ---------- Refresh, add, install ----------
   // The page reads storage for what changed, so these answer with no

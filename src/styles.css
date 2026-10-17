@@ -37,9 +37,14 @@
 
 .banner strong { display: block; margin-bottom: 4px; }
 
+/* A banner for something that stops scripts running, not a warning: red,
+   as the popup's bar for the same problem. */
+.banner.banner-error { border-color: #e57373; background: #fdecea; color: #b71c1c; }
+.banner.banner-error a { color: inherit; }
+
 .banner p { margin: 4px 0; line-height: 16px; }
 
-/* The `chrome://extensions/?id=…` link every permission banner ends
+/* The `chrome://extensions/?id=…` link a permission banner can end
    with. Styled as inline code because that's what it is — an address
    the user may prefer to copy rather than click. */
 .banner a.chrome-link {
@@ -50,10 +55,17 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color: #92400e;
   text-decoration: none;
-  cursor: pointer;
 }
 
+.banner a.chrome-link { cursor: pointer; }
 .banner a.chrome-link:hover { text-decoration: underline; }
+
+/* A setting's name in a banner sentence: marked, but no bigger or
+   louder than the text around it. */
+.banner code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
 
 .collection-display-name {
   /* Prefer space / slash boundaries when wrapping. `<wbr>` markers

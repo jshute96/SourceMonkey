@@ -120,6 +120,17 @@ From top to bottom:
   - Icon and product name open the collections page, as on other pages.
   - An **Open** button on the right does the same, more visibly.
   - A **⋯ menu** in the corner for page-wide actions (below).
+- Red **user scripts banner**, on every page while "Allow User Scripts"
+  is off: `User scripts are not allowed yet.`, then a line linking to
+  the extension settings to turn it on.
+  - The popup probes `chrome.userScripts` itself on each refresh
+    (`user-scripts-access.ts`); the worker's view doesn't carry it.
+  - It hides the reload banner, since a reload wouldn't run anything.
+  - A page that loads meanwhile is marked `loadedWithoutUserscripts`.
+    Its scripts show as Not loaded until user scripts are enabled. Then
+    they show as Reload (purple), and the reload banner reads
+    `Reload required: Page loaded while user scripts were disabled`
+    (see [matching.md](matching.md#pages-loaded-while-user-scripts-were-disabled)).
 - Cyan **sm-dev banner**, only when the page is under sm-dev's
   control: `Page under sm-dev control`, replacing the menu's row of
   that name.
@@ -131,6 +142,7 @@ From top to bottom:
     cause:
     - `Reload required: Page loaded before SourceMonkey started` (see
       Reload below)
+    - `Reload required: Page loaded while user scripts were disabled`
     - `Reload required: Enabled scripts changed` (enables, and disables
       or removals, since load)
     - `Reload required: Scripts enabled` (only enables)
@@ -284,7 +296,7 @@ colored pills, using the badge colors.
 | `MISSING` | Missing | Orange | Expected on this page, but it hasn't started |
 | `UNEXPECTED` | Unexpected | Orange | Started on this page, but its rules don't match this page |
 | `NOT_LOADED` | Not loaded | Grey | Why it was kept out (below) |
-| `UNTRACKED` | Reload | Purple outline | This page loaded before SourceMonkey started, so its status is unknown. Reload to restart. |
+| `UNTRACKED` | Reload | Purple outline | This page loaded before SourceMonkey started, so its status is unknown. Reload to restart. (On a page loaded while user scripts were disabled: This page loaded while user scripts were disabled, so its scripts didn't run. Reload to run them.) |
 | `WARNING` | Warning | Amber outline | Running on this page, with warnings |
 
 A script running in several documents (the page and its iframes) shows
@@ -346,8 +358,9 @@ Every pill has a tooltip:
 
 - What the status means, or the specifics where there are some.
   - `Not loaded` names why: the page was reloaded with no userscripts,
-    with only one named script, or without this one; or the sm-dev run
-    controlling the tab kept it out.
+    with only one named script, or without this one; the sm-dev run
+    controlling the tab kept it out; or the page loaded while user
+    scripts were disabled, and they still are.
   - `Still running` says whether the script or its collection was
     disabled.
 - A last line saying what a click does: `Click to reload the page.` on

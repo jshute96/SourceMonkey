@@ -126,6 +126,11 @@ export interface TabMatchState {
   // load, so whether its scripts run is unknown. Any copy still running
   // is the old extension's, cut off from it.
   loadedBefore?: boolean;
+  // Set on a document that loaded while "Allow User Scripts" was off, so
+  // Chrome injected nothing. Once it's on, a reload runs its scripts:
+  // like `loadedBefore`, its expected scripts ask for one (UNTRACKED)
+  // rather than reading as MISSING.
+  loadedWithoutUserscripts?: boolean;
   // Runs in the page's iframes: script id → frame document id → run.
   // Kept apart from `actual`, which is the top frame's alone: what runs
   // in frames is never in `matches`, so it can't be MISSING or
@@ -191,9 +196,12 @@ export const SM_DEV_MARKER_CYAN = '#00acc1';
 //                    register it (so it never will) — see
 //                    src/extension/script-rejection.ts
 //       NOT_LOADED — expected, never started, on a document the user
-//                    loaded with "Reload page with no userscripts"
+//                    loaded with "Reload page with no userscripts", or
+//                    one loaded while user scripts were disabled, while
+//                    they still are
 //       UNTRACKED  — expected, never reported, on a document that
-//                    loaded before this copy of the extension started
+//                    loaded before this copy of the extension started,
+//                    or while user scripts were disabled
 //       MISSING    — expected but no `actual` entry yet
 //       UNEXPECTED — actual `started` but not in our expected set
 //       RELOAD     — a script that's started here, but its on-disk
@@ -217,6 +225,9 @@ export const SM_DEV_MARKER_CYAN = '#00acc1';
 export function computeBadge(
   state: TabMatchState,
   rejected: ReadonlySet<string> = new Set(),
+  // User scripts are disabled right now. Only asked about a document
+  // marked `loadedWithoutUserscripts`.
+  userScriptsDisabled = false,
 ): BadgeView {
   const expectedById = new Map<string, MatchedScript>();
   for (const m of state.matches) expectedById.set(m.id, m);
@@ -267,9 +278,14 @@ export function computeBadge(
       // Settled, not provisional: Chrome refused the registration, so
       // no wrapper is coming. Red, like an error.
       status = 'REJECTED';
-    } else if (expected && !actual && state.loadedBefore) {
-      // Not provisional like MISSING: no report is coming, and none
-      // would have reached this copy of the extension anyway.
+    } else if (expected && !actual && state.loadedWithoutUserscripts && userScriptsDisabled) {
+      // Kept out, like a skipped load, until user scripts are enabled:
+      // a reload won't run it yet.
+      status = 'NOT_LOADED';
+    } else if (expected && !actual && (state.loadedBefore || state.loadedWithoutUserscripts)) {
+      // Not provisional like MISSING: no report is coming, since none
+      // would have reached this copy of the extension, or nothing was
+      // injected.
       status = 'UNTRACKED';
     } else if (expected && !actual) {
       status = 'MISSING';

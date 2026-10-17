@@ -22,10 +22,10 @@ function state(extra = {}) {
   return { documentId: 'd1', url: URL_, matches: [], actual: {}, loadMatchIds: [], ...extra };
 }
 
-function view({ st = state(), scripts, collections = COLLS, matching, commands = new Map(), rejected = {}, keepIds, loadUrlMatchingIds, deletedIds, runnable, now }) {
-  const badgeRows = st ? computeBadge(st, new Set(Object.keys(rejected))).rows : [];
+function view({ st = state(), scripts, collections = COLLS, matching, commands = new Map(), rejected = {}, keepIds, loadUrlMatchingIds, deletedIds, runnable, now, userScriptsDisabled }) {
+  const badgeRows = st ? computeBadge(st, new Set(Object.keys(rejected)), userScriptsDisabled).rows : [];
   return buildPopupView({
-    url: URL_, injectable: true, state: st, badgeRows, rejected,
+    url: URL_, injectable: true, state: st, badgeRows, rejected, userScriptsDisabled,
     matchingIds: new Set(matching ?? scripts.map((s) => s.id)),
     scripts, collections, menuCommands: commands, keepIds, loadUrlMatchingIds, deletedIds, now,
     // By default, every manual script can run here.
@@ -454,6 +454,33 @@ test('a page loaded before the extension started: Reload, with a reload banner',
     v.enabled[0].rows[0].tooltip,
     'This page loaded before SourceMonkey started, so its status is unknown. Reload to restart.\nClick to reload the page.',
   );
+});
+
+test('a page loaded while user scripts were disabled: Reload, with its own banner', () => {
+  const v = view({
+    st: state({ matches: [m('a')], loadMatchIds: ['a'], loadedWithoutUserscripts: true }),
+    scripts: [script('a', 'A')],
+    matching: ['a'],
+  });
+  assert.deepEqual(names(v.enabled), ['A: a=UNTRACKED']);
+  assert.equal(v.banner, 'Reload required: Page loaded while user scripts were disabled');
+  assert.equal(
+    v.enabled[0].rows[0].tooltip,
+    'This page loaded while user scripts were disabled, so its scripts didn\'t run. Reload to run them.\nClick to reload the page.',
+  );
+});
+
+test('a page loaded while user scripts are still disabled: Not loaded, and no reload banner', () => {
+  const v = view({
+    st: state({ matches: [m('a')], loadMatchIds: ['a'], loadedWithoutUserscripts: true }),
+    scripts: [script('a', 'A')],
+    matching: ['a'],
+    userScriptsDisabled: true,
+  });
+  assert.deepEqual(names(v.enabled), ['A: a=NOT_LOADED']);
+  assert.equal(v.banner, null);
+  assert.equal(v.userScriptsDisabled, true);
+  assert.match(v.enabled[0].rows[0].tooltip, /^Not run: user scripts are disabled\n/);
 });
 
 test('a script running only in frames is listed under Active in frames, once', () => {

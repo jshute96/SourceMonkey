@@ -638,6 +638,26 @@ test('computeBadge: a document loaded before the extension started → UNTRACKED
   assert.deepEqual(view.rows.map((r) => [r.name, r.status]), [['Alpha', 'UNTRACKED'], ['Beta', 'REJECTED']]);
 });
 
+test('computeBadge: a document loaded while user scripts were disabled → UNTRACKED, not MISSING', () => {
+  const st = {
+    documentId: DOC, url: 'https://x',
+    matches: [expected('a', 'Alpha')],
+    actual: {},
+    loadedWithoutUserscripts: true,
+  };
+  assert.deepEqual(computeBadge(st).rows.map((r) => [r.name, r.status]), [['Alpha', 'UNTRACKED']]);
+});
+
+test('computeBadge: such a document while user scripts are still disabled → NOT_LOADED', () => {
+  const st = {
+    documentId: DOC, url: 'https://x',
+    matches: [expected('a', 'Alpha')],
+    actual: {},
+    loadedWithoutUserscripts: true,
+  };
+  assert.deepEqual(computeBadge(st, new Set(), true).rows.map((r) => [r.name, r.status]), [['Alpha', 'NOT_LOADED']]);
+});
+
 // ---------- Runs in iframes (docs/frames.md) ----------
 
 const frameRun = (state, name, frameId = 1) => ({ state, name, frameId, url: `https://frame/${frameId}` });

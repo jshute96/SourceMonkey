@@ -68,6 +68,22 @@ Chrome requires an explicit user toggle before the API will execute:
 the **"Allow User Scripts"** switch on the extension's details page
 (`chrome://extensions/?id=<extId>`).
 
+- While it's off, the collections page and the popup show a banner
+  pointing at that switch, and the worker's syncs register nothing.
+  - Turning it off doesn't drop registrations already placed; they work
+    again once it's back on.
+  - The world's settings (`configureWorld`, with `messaging: true`) can
+    be gone afterwards, though, while the worker still thinks it set
+    them. Then a MAIN-world script's bridge can't message the worker, no
+    script gets its run decision, and none runs on any page.
+  - So wherever the worker finds user scripts usable
+    (`userScriptsUsable`: at each page load, and when a tab or window
+    comes to the front), it reads Chrome's settings back and puts them
+    in place if they're missing.
+- Chrome tells the worker nothing when the switch is turned on. The
+  collections page rechecks when the person returns to its tab or its
+  window. When it finds the API usable after it wasn't, the banner goes
+  and it asks the worker for a full sync (`syncAfterUserScriptsAllowed`).
 - Not a SourceMonkey quirk: Violentmonkey's MV3 build prompts for the
   same toggle, then tells the user to reload the tab.
 - Chrome below 138 used the browser-wide Developer mode toggle instead.

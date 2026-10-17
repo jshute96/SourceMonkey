@@ -63,11 +63,12 @@
 // Requirements: manifest must include the "userScripts" permission AND
 // the user must enable the "Allow User Scripts" toggle on
 // chrome://extensions. If the toggle is off, chrome.userScripts.register
-// throws. The collections page
-// prompts for the toggle off its own probe (`probeUserScriptsApi` in
-// collections.ts) rather than anything this module records — it needs
-// an answer at render time, and an SW that has been evicted since the
-// last sync would have nothing to report.
+// throws. The collections page and the popup
+// prompt for the toggle off their own probe (`probeUserScriptsApi` in
+// user-scripts-access.ts) rather than anything this module records:
+// they need an answer when they draw, and an SW that has been evicted
+// since the last sync would have nothing to report. When the
+// collections page sees the toggle turned on, it asks for a full sync.
 
 import { fromStorage, MISSING_BLOB_MESSAGE, type ScriptRow } from './script-blobs.js';
 import {
@@ -1489,6 +1490,43 @@ export function isUserScriptsAvailable(): boolean {
   return typeof chrome !== 'undefined' && (chrome as { userScripts?: unknown }).userScripts != null;
 }
 
+// Whether calls work, which is what "Allow User Scripts" decides. The
+// namespace can be there with the toggle off: turned off while this
+// worker runs, every call throws instead. Asks for no scripts by id, so
+// it's one cheap call.
+//
+// When they are, also makes sure Chrome still holds the world's settings
+// (`repairWorldConfiguration`): this runs at each page load and when a
+// page comes to the front, which is where a lost setting would show.
+//
+// Also syncs when it finds them usable after finding them not: scripts
+// added or changed meanwhile were never registered, and Chrome says
+// nothing when the toggle changes.
+let lastFoundUnusable = false;
+
+export async function userScriptsUsable(): Promise<boolean> {
+  let usable = isUserScriptsAvailable();
+  if (usable) {
+    try {
+      await chrome.userScripts.getScripts({ ids: [] });
+    } catch {
+      usable = false;
+    }
+  }
+  if (!usable) {
+    lastFoundUnusable = true;
+    return false;
+  }
+  await repairWorldConfiguration().catch((err: unknown) => {
+    console.info('[SourceMonkey] could not check the user script world settings:', describeError(err));
+  });
+  if (lastFoundUnusable) {
+    lastFoundUnusable = false;
+    void syncRegistrations();
+  }
+  return true;
+}
+
 // Every script and collection row, without the scripts' bodies: those
 // are read by `withBodies`, for the scripts that get a spec.
 async function readAll(): Promise<{ scripts: ScriptMeta[]; collections: Map<string, StoredCollection>; numbers: Map<string, number> }> {
@@ -1984,6 +2022,29 @@ function takeQueuedScope(): SyncScope | undefined {
 let worldConfigured = false;
 async function ensureWorldConfigured(): Promise<void> {
   if (worldConfigured) return;
+  await configureWorld();
+}
+
+// Puts the world's settings back if Chrome doesn't hold them, whatever
+// `worldConfigured` says. Chrome can be left without them while
+// registrations stay: seen after user scripts were disabled and enabled
+// again. Then a MAIN-world script's bridge can't message the worker, so
+// no script on any page gets its run decision, and none runs. Called
+// wherever user scripts are found usable (`userScriptsUsable`).
+async function repairWorldConfiguration(): Promise<void> {
+  const api = chrome.userScripts as unknown as {
+    getWorldConfigurations(): Promise<{ worldId?: string; messaging?: boolean }[]>;
+  };
+  const held = (await api.getWorldConfigurations()).find((c) => c.worldId === undefined);
+  if (held?.messaging === true) {
+    worldConfigured = true;
+    return;
+  }
+  console.info('[SourceMonkey] the user script world had no messaging set up; setting it up again');
+  await configureWorld();
+}
+
+async function configureWorld(): Promise<void> {
   // configureWorld must be called before register. Settings:
   //   - messaging: true — lets our wrapper call
   //     chrome.runtime.sendMessage from the USER_SCRIPT world.
@@ -2442,6 +2503,9 @@ async function runSync(scope: SyncScope | undefined): Promise<void> {
     // context can still claim to know.
     syncState = null;
     dropRecord();
+    // Set the world up again once they're back, and sync then.
+    worldConfigured = false;
+    lastFoundUnusable = true;
     return;
   }
   let state = syncState;

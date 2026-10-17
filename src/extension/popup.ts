@@ -52,6 +52,7 @@ import { touchesStructuralRows } from './structural-keys.js';
 import { enableTitle, watchSoloModifier } from './solo-click.js';
 import { ENABLE_TITLE, viewerUrl } from '../script-display.js';
 import { ignoreResizeObserverLoopErrors } from './resize-observer-loop.js';
+import { probeUserScriptsApi, USER_SCRIPTS_OFF_HEADING, userScriptsFixLine } from './user-scripts-access.js';
 
 // The checkbox tooltip's second line under a disabled collection: the
 // box still sets the script's own flag, which has no effect for now.
@@ -78,6 +79,9 @@ let tabId: number | null = null;
 // The current port to the worker (`connectToWorker`).
 let workerPort: chrome.runtime.Port | null = null;
 let view: PopupView | null = null;
+// "Allow User Scripts" is off, so nothing injects: probed by the popup
+// itself on each refresh, since the view comes from the worker.
+let userScriptsOff = false;
 // Scripts whose command list the person opened or closed in this popup,
 // overriding the default (closed past COMMANDS_SHOWN_OPEN). The worker
 // keeps them for the tab's lifetime (`view.commandsOpen`); these cover
@@ -169,17 +173,20 @@ async function refresh(): Promise<void> {
   const seq = ++refreshSeq;
   const req: PopupViewRequest = { type: POPUP_VIEW_MESSAGE, tabId, keepIds: layoutIds(), keepUrl: layoutUrl ?? undefined };
   let next: PopupView | null;
+  const probe = probeUserScriptsApi();
   try {
     next = (await chrome.runtime.sendMessage(req)) as PopupView | null;
   } catch {
     next = null;
   }
+  const off = !(await probe).usable;
   if (seq !== refreshSeq) return;
   recheckBannerAt(next?.bannerRecheckAt ?? null);
-  const json = JSON.stringify(next);
+  const json = JSON.stringify({ next, off });
   if (json === drawnJson) return;
   drawnJson = json;
   view = next;
+  userScriptsOff = off;
   render(view);
 }
 
@@ -378,12 +385,20 @@ function draw(v: PopupView | null): void {
   bannersEl.replaceChildren();
   scriptsEl.replaceChildren();
   document.body.dataset.ready = 'true';
+  // On every page: it's why no page runs scripts.
+  if (userScriptsOff) {
+    bannersEl.append(el('div', { class: 'banner-row user-scripts-off' },
+      el('span', {}, el('strong', {}, USER_SCRIPTS_OFF_HEADING), userScriptsFixLine('span'))));
+  }
   if (!v || !v.injectable) {
     scriptsEl.append(el('div', { class: 'empty-page' }, POPUP_NOT_INJECTABLE));
     return;
   }
   if (v.smDev) bannersEl.append(el('div', { class: 'banner-row sm-dev' }, el('span', {}, SM_DEV_CONTROL_LABEL)));
-  if (v.banner) {
+  // Not while user scripts are off: a reload wouldn't run them. Once
+  // they're on again, a page that loaded meanwhile asks for a reload
+  // (UNTRACKED).
+  if (v.banner && !userScriptsOff) {
     const reload = el('button', { type: 'button' }, 'Reload');
     reload.addEventListener('click', () => quietly(reloadPlain()));
     bannersEl.append(el('div', { class: 'banner-row reload' }, el('span', {}, v.banner), reload));

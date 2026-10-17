@@ -94,6 +94,7 @@ import {
   resetRejectionRetryGate,
   setBeforeSync,
   syncRegistrations,
+  userScriptsUsable,
   unregisterAllRegistrations,
   type SyncScope,
 } from './injector.js';
@@ -1706,6 +1707,7 @@ async function updateTabMatches(
     if (prev.warnedIds) state.warnedIds = prev.warnedIds;
     if (prev.manualRuns) state.manualRuns = prev.manualRuns;
     if (prev.loadedBefore) state.loadedBefore = true;
+    if (prev.loadedWithoutUserscripts) state.loadedWithoutUserscripts = true;
     if (prev.frameRuns) state.frameRuns = prev.frameRuns;
   } else {
     state.loadMatchIds = incoming.map((m) => m.id);
@@ -1714,6 +1716,9 @@ async function updateTabMatches(
   // Restored too: a report can set up the document's state before its
   // commit gets here.
   if (commit && !state.missingChecked) state.settleBy = Date.now() + SETTLE_CAP_MS;
+  // Asked at the load itself: a later look can't tell what Chrome
+  // injected then.
+  if (commit && !restored && !(await userScriptsUsable())) state.loadedWithoutUserscripts = true;
   const nextRecord = setCurrentDoc(record, docId, state);
   await setTabRecord(tabId, nextRecord);
   if (incoming.length > 0 && trigger === 'navigation') {
@@ -2210,7 +2215,10 @@ async function buildTabView(
   // this page's. What matches the URL stands in until the state lands.
   const state = recorded && stateIn === undefined && recorded.url !== url ? null : recorded;
   const rejected = await readRejections();
-  const badgeRows = state ? computeBadge(state, new Set(Object.keys(rejected))).rows : [];
+  // Asked only of a page that loaded without them: whether they still
+  // are decides between "enable them" and "reload".
+  const userScriptsDisabled = state?.loadedWithoutUserscripts === true && !(await userScriptsUsable());
+  const badgeRows = state ? computeBadge(state, new Set(Object.keys(rejected)), userScriptsDisabled).rows : [];
   const matching = injectable ? findAllMatchingIds(url) : [];
   // After an in-place URL change (pushState), what matched the URL the
   // document loaded at tells "enabled since" from "matches only the new
@@ -2225,6 +2233,7 @@ async function buildTabView(
   const listed = stored.filter((s) => s.run === null || s.run === state?.smDevRun);
   const view = buildPopupView({
     url,
+    userScriptsDisabled,
     injectable,
     state,
     badgeRows,
@@ -3260,10 +3269,26 @@ async function refreshAllOpenTabs(): Promise<void> {
 // decide whether to re-check lives in the updater, not here.
 const focusChecksInFlight = new Set<number>();
 
+// A page that loaded while user scripts were disabled shows red until
+// they're enabled, then asks for a reload. Chrome says nothing when the
+// toggle changes, so its badge is redrawn when the page comes to the
+// front, on the same signals as the local-script check: coming back
+// from enabling them is the case it's for.
+//
+// Checks user scripts are usable first either way: that also puts back
+// the user script world's settings if Chrome lost them, before the
+// reload that coming back to the page is likely to lead to.
+async function redrawIfLoadedWithoutUserscripts(tabId: number): Promise<void> {
+  await userScriptsUsable();
+  const state = getCurrentState(await getTabRecord(tabId));
+  if (state?.loadedWithoutUserscripts) await renderBadge(tabId, state);
+}
+
 function installFocusRefresh(): void {
   chrome.tabs.onActivated.addListener((info) => {
     dlog(`[SourceMonkey] tab ${info.tabId} activated`);
     void refreshLocalScriptsOnTab(info.tabId);
+    void redrawIfLoadedWithoutUserscripts(info.tabId);
   });
   if (chrome.windows && chrome.windows.onFocusChanged) {
     chrome.windows.onFocusChanged.addListener(async (windowId) => {
@@ -3281,6 +3306,7 @@ function installFocusRefresh(): void {
           dlog(`[SourceMonkey] window ${windowId} has no active tab to check`);
           return;
         }
+        void redrawIfLoadedWithoutUserscripts(tab.id);
         await refreshLocalScriptsOnTab(tab.id);
       } catch (err) {
         // The window went away between the event and the query. Nothing
@@ -3446,6 +3472,9 @@ async function applyStaleToTab(tabId: number, scriptIds: string[]): Promise<void
 // straight to the wrapper.
 
 const RELOAD_FAST_PATH_WINDOW_MS = 500;
+// A check-pending answer this slow is a fault, not a busy worker: the
+// slowest planned wait is the fast path's window above.
+const CHECK_PENDING_SLOW_MS = 5_000;
 // Conservative TTL for fast-path entries that nobody consumes (script
 // got unregistered, wrapper never fired because the URL became
 // non-matching after redirect, etc.). 15s is well past any plausible
@@ -3659,9 +3688,13 @@ type CheckPendingReply = (
   startupLogs?: true;
 };
 
+// What a check-pending answer is waiting on, for the slow-answer line.
+interface CheckPendingTrace { stage: string }
+
 async function handleCheckPending(
   sender: chrome.runtime.MessageSender,
   payload: CheckPendingPayload,
+  trace: CheckPendingTrace = { stage: '' },
 ): Promise<CheckPendingReply> {
   // Outside a tab (a document Chrome gives no tab), the same checks
   // run, less the tab's own: no claim, reload skip or reload swap can
@@ -3671,12 +3704,14 @@ async function handleCheckPending(
   // allows (sm-dev-link.ts). First, and for every frame, like the skip
   // reload below. Waits for the claims to load, so a worker that just
   // started can't let a script through.
+  trace.stage = 'loading sm-dev claims';
   await claimsReady();
   const claim = tabId == null ? undefined : activeClaim(tabId);
   // - Only for the extension's own scripts: an id it doesn't know
   //   (a page's forgery over the bridge) runs nothing either way.
   // - A scratch script is sm-dev's: it runs only in the tabs of the run
   //   that pushed it. Nowhere else, a run's tabs or not.
+  trace.stage = 'reading the script row';
   const script = await getScriptMeta(payload.id);
   const scriptRun = script ? scratchRunOf(script.fileUrl) : null;
   if (script && (claim ? !claimAllows(claim, scriptRun) : scriptRun !== null)) {
@@ -3735,6 +3770,7 @@ async function handleCheckPending(
       return { action: 'run' };
     }
     let timedOut = false;
+    trace.stage = 'waiting for the reload fast path\'s refresh';
     const winner = await Promise.race<StoredScript | null | 'timeout'>([
       scriptEntry.promise,
       new Promise<'timeout'>((res) => setTimeout(() => {
@@ -5217,7 +5253,32 @@ function installScriptMessageListener(): void {
       // the wrapper opted in via `needsValues`). See CheckPendingReply
       // above for the snapshot's role.
       const payload = msg as CheckPendingPayload;
-      const decisionP = handleCheckPending(sender, payload);
+      // Every request and answer in debug mode. A slow answer is logged
+      // regardless: the wrapper gives up at WRAPPER_DECISION_TIMEOUT_MS
+      // and doesn't run, so all its scripts show as Missing, and the line
+      // saying what the answer waited on is the only trace of why.
+      const label = typeof payload.id === 'string' ? getScriptLogLabel(payload.id) : String(payload.id);
+      const where = `tab=${tabId ?? 'none'} frame=${sender.frameId ?? '?'}`;
+      const askedAt = Date.now();
+      dlog(`[SourceMonkey] check-pending: ${label} asked ${where}`);
+      const trace: CheckPendingTrace = { stage: 'deciding' };
+      let snapshotDone = !payload.needsValues;
+      let answered = false;
+      const slowTimer = setTimeout(() => {
+        if (answered) return;
+        const waits = [trace.stage, snapshotDone ? '' : 'reading its stored values'].filter(Boolean).join(', ');
+        console.info(
+          `[SourceMonkey] check-pending: ${label} ${where} not answered after ${CHECK_PENDING_SLOW_MS}ms (${waits || 'finishing the reply'}); `
+          + `the script gives up at ${WRAPPER_DECISION_TIMEOUT_MS}ms and won't run`,
+        );
+      }, CHECK_PENDING_SLOW_MS);
+      const answer = (r: CheckPendingReply): void => {
+        answered = true;
+        clearTimeout(slowTimer);
+        dlog(`[SourceMonkey] check-pending: ${label} ${where} answered ${r.action} in ${Date.now() - askedAt}ms`);
+        try { sendResponse(r); } catch { /* gone */ }
+      };
+      const decisionP = handleCheckPending(sender, payload, trace).finally(() => { trace.stage = ''; });
       // A DIRECT request (no `__viaBridge`) can only have come from
       // USER_SCRIPT world, which the page cannot reach — attach the
       // snapshot unconditionally. A bridge-relayed one may be a hostile
@@ -5238,7 +5299,7 @@ function installScriptMessageListener(): void {
         valueReadAllowed.then((ok) => (ok ? loadSnapshotForCheckPending(payload.id) : undefined)).catch((err) => {
           console.info('[SourceMonkey] check-pending storage snapshot failed:', err);
           return undefined;
-        });
+        }).finally(() => { snapshotDone = true; });
       Promise.all([decisionP, snapshotP]).then(
         async ([reply, gmSnapshot]) => {
           // A frame's copy prints the script's header warnings only when
@@ -5253,14 +5314,14 @@ function installScriptMessageListener(): void {
               : reply),
             ...(startupLogs ? { startupLogs: true as const } : {}),
           };
-          try { sendResponse(enriched); } catch { /* gone */ }
+          answer(enriched);
         },
         (err) => {
           // Not run: the decision is what keeps it out of an sm-dev
           // run's tabs and honours a skip; see SKIP_REASON_NO_DECISION.
           console.info('[SourceMonkey] check-pending handler threw:', err);
           const detail = 'Internal error: SourceMonkey failed while deciding whether to run it. The details are in its service worker console';
-          try { sendResponse({ action: 'skip', reason: SKIP_REASON_NO_DECISION, detail }); } catch { /* gone */ }
+          answer({ action: 'skip', reason: SKIP_REASON_NO_DECISION, detail });
         },
       );
       return true;

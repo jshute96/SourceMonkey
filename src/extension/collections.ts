@@ -51,7 +51,7 @@ import {
 } from './script-store.js';
 import {
   addCollection, updateAllCollections, updateCollection, updateScript,
-  backfillCollectionDisplayNames, markFirstRunComplete, moveCollection, reconcileScriptMembership, removeCollection,
+  backfillCollectionDisplayNames, markFirstRunComplete, moveCollection, reconcileScriptMembership, removeCollection, syncAfterUserScriptsAllowed,
   removeScript, setAllScriptsEnabled, setCollectionEnabledExclusive, setScriptEnabledExclusive,
 } from './worker-client.js';
 import { identityKey } from './script-identity.js';
@@ -150,10 +150,10 @@ import {
   loadGithubAuthToken,
 } from '../github-auth.js';
 import {
-  extensionDetailsLink,
   isFileSchemeAccessAllowed,
   renderFileAccessBanner,
 } from './file-access.js';
+import { probeUserScriptsApi, USER_SCRIPTS_OFF_HEADING, userScriptsFixLine } from './user-scripts-access.js';
 
 // The page needs its own copy of the cached GitHub token for the reads
 // it still makes itself (the collection dialog's location probe).
@@ -1372,10 +1372,7 @@ async function render(): Promise<void> {
   // registration call throws — meaning no scripts actually inject even
   // though the badge still counts matches. Other failures (revoked permission, etc.)
   // surface their raw message so the user has something to grep for.
-  const userScriptsState = await probeUserScriptsApi();
-  if (!userScriptsState.usable) {
-    bannerSlot.appendChild(renderUserScriptsBanner(userScriptsState.error));
-  }
+  await syncUserScriptsBanner();
 
   let collections = await getCollections();
   // One-shot backfill so older collection rows (pre-displayName) pick
@@ -1393,10 +1390,10 @@ async function render(): Promise<void> {
 
   // Last of the three banners, because it is the most situational: it
   // appears only once a refresh has actually failed to save, where the
-  // other two describe a setting that is wrong right now. Unlike them it
-  // can also come and go WITHOUT a reload — a failed refresh raises it,
-  // the next successful one clears it — so it owns a sync of its own
-  // that the repaint calls too.
+  // other two describe a setting that is wrong right now. It comes and
+  // goes WITHOUT a reload (a failed refresh raises it, the next
+  // successful one clears it), so it owns a sync of its own that the
+  // repaint calls too.
   await syncStorageBanner(new Set(collections.map((s) => s.id)));
 
   const allScripts = await getAllScriptMetas();
@@ -2996,33 +2993,13 @@ function cssEscape(value: string): string {
   return value.replace(/["\\]/g, '\\$&');
 }
 
-// Probe whether chrome.userScripts is callable. Presence of the
-// namespace only confirms the permission is in the manifest; the user
-// still has to flip the per-extension toggle before any call works.
-// Returns the raw error message so the banner can surface anything
-// that isn't the routine "toggle is off" case.
-async function probeUserScriptsApi(): Promise<{ usable: true } | { usable: false; error?: string }> {
-  // Deliberately NOT recased to a message of ours. This value shares a
-  // slot with Chrome's verbatim `err.message` below and renders as
-  // `Chrome reported: <it>`, so it is written to read as Chrome's own
-  // report rather than as SourceMonkey's sentence — the API-flavoured
-  // wording is the point. See docs/diagnostics.md#wording.
-  if (!chrome.userScripts) return { usable: false, error: 'chrome.userScripts is not available' };
-  try {
-    await chrome.userScripts.getScripts();
-    return { usable: true };
-  } catch (err) {
-    return { usable: false, error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
 // Put the storage banner in the slot, or take it out, to match the
 // current refresh-error map.
 //
 // Replaces only its own element, leaving the file-access and
-// user-scripts banners alone: those two are probed once per render and
-// re-running them on every repaint would mean an API call per structural
-// storage write.
+// user-scripts banners alone: those are probed on render (and the
+// user-scripts one on returning to the tab), and re-running them on every
+// repaint would mean an API call per structural storage write.
 const STORAGE_BANNER_ID = 'storage-banner';
 
 async function syncStorageBanner(liveIds: ReadonlySet<string>): Promise<void> {
@@ -3087,33 +3064,75 @@ async function buildStorageBanner(liveIds: ReadonlySet<string>): Promise<HTMLEle
   return div;
 }
 
+// Put the "Allow User Scripts" banner in the slot, or take it out, to
+// match a fresh probe. Placed after the file-access banner and before the
+// storage one, since a recheck can add it after both are drawn.
+const USER_SCRIPTS_BANNER_ID = 'user-scripts-banner';
+
+// The last probe's answer, null before the first.
+let userScriptsUsable: boolean | null = null;
+
+async function syncUserScriptsBanner(): Promise<void> {
+  const state = await probeUserScriptsApi();
+  const wasUsable = userScriptsUsable;
+  userScriptsUsable = state.usable;
+  const old = document.getElementById(USER_SCRIPTS_BANNER_ID);
+  if (state.usable) {
+    old?.remove();
+    // Turned on while this page was open: nothing is registered yet,
+    // and nothing else would tell the worker to register it.
+    if (wasUsable === false) await syncAfterUserScriptsAllowed();
+    return;
+  }
+  const banner = renderUserScriptsBanner(state.error);
+  banner.id = USER_SCRIPTS_BANNER_ID;
+  if (old) old.replaceWith(banner);
+  else bannerSlot.insertBefore(banner, document.getElementById(STORAGE_BANNER_ID));
+}
+
+// Recheck when the person comes back, so the banner goes away once
+// they've turned the toggle on in the extension settings, without a
+// reload. Coming back to this tab fires `visibilitychange`; coming back
+// to this window from another one fires only `focus`. Both run one
+// recheck, since a return can fire both.
+//
+// Not before the first render is done: it draws the banners in order,
+// and a recheck finishing in the middle would put this one first.
+let recheckOnReturn: ReturnType<typeof setTimeout> | null = null;
+function recheckUserScriptsWhenBack(): void {
+  if (recheckOnReturn !== null) return;
+  recheckOnReturn = setTimeout(() => {
+    recheckOnReturn = null;
+    initialRenderDone.then(syncUserScriptsBanner).catch((err) => {
+      console.info('[SourceMonkey] user scripts recheck failed', describeError(err));
+    });
+  }, 50);
+}
+window.addEventListener('focus', recheckUserScriptsWhenBack);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') recheckUserScriptsWhenBack();
+});
+
 function renderUserScriptsBanner(error?: string): HTMLElement {
   const div = document.createElement('div');
-  div.className = 'banner';
+  // Red: nothing runs until it's fixed. The popup's bar matches.
+  div.className = 'banner banner-error';
 
   const heading = document.createElement('strong');
-  heading.textContent = 'User scripts are not allowed yet.';
+  heading.textContent = USER_SCRIPTS_OFF_HEADING;
   div.appendChild(heading);
 
-  const explain = document.createElement('p');
-  explain.textContent =
-    'SourceMonkey can find matching scripts (the toolbar badge counts ' +
-    'them), but Chrome won\'t actually inject anything until you turn ' +
-    'on "Allow User Scripts" for this extension. Open its details ' +
-    'page, enable the toggle, then reload this page:';
-  div.appendChild(explain);
-
-  div.appendChild(extensionDetailsLink());
-
-  // Include the raw API error so non-routine failures (e.g. quota,
-  // revoked permission, malformed pattern bubbling up at getScripts
-  // time) aren't masked by the generic "toggle is off" copy.
+  // The raw API error, so a failure other than the toggle being off
+  // (a revoked permission, say) isn't masked by the toggle advice.
   if (error) {
     const detail = document.createElement('p');
     detail.className = 'banner-detail';
     detail.textContent = `Chrome reported: ${error}`;
     div.appendChild(detail);
   }
+
+  const fix = userScriptsFixLine('p');
+  div.appendChild(fix);
 
   return div;
 }

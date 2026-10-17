@@ -25,7 +25,8 @@ export function findMissingScripts(
   state: TabMatchState,
   rejected: ReadonlySet<string> = new Set(),
 ): MatchedScript[] {
-  if (state.scriptsSkipped) return [];
+  // Nothing was injected, so no script on it is a mystery to explain.
+  if (state.scriptsSkipped || state.loadedWithoutUserscripts) return [];
   const atLoad = state.loadMatchIds ? new Set(state.loadMatchIds) : null;
   return state.matches.filter((m) =>
     (!atLoad || atLoad.has(m.id)) && !state.actual[m.id] && !rejected.has(m.id) && !skippedOnDocument(state, m.id));

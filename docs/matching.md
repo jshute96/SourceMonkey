@@ -270,12 +270,16 @@ From `computeBadge`:
     this is settled, which is why it takes the error color.
 - `NOT_LOADED` — expected, no `sm:start`, and none is coming because
   the document was loaded with "Reload page with no userscripts"
-  (`scriptsSkipped`), or one of its per-script forms.
+  (`scriptsSkipped`), or one of its per-script forms. Also on a page
+  loaded while user scripts were disabled, while they still are.
   - Also a refinement of `MISSING`, settled by the user, so it
-    outranks `REJECTED`.
+    outranks `REJECTED`. (Not the user-scripts-disabled case, which
+    `REJECTED` outranks, as it does `UNTRACKED`.)
 - `UNTRACKED` — expected, no `sm:start`, on a page that loaded before
   this copy of the extension started (see
-  [Pages open before the extension started](#pages-open-before-the-extension-started)).
+  [Pages open before the extension started](#pages-open-before-the-extension-started)),
+  or while user scripts were disabled (see
+  [Pages loaded while user scripts were disabled](#pages-loaded-while-user-scripts-were-disabled)).
   - Also a refinement of `MISSING`, but not provisional: no report is
     coming. `REJECTED` outranks it, since a reload won't cure that.
 - `MISSING` — expected by the matcher but no `sm:start` yet.
@@ -334,10 +338,12 @@ Click for details. Double-click for collections.
 | `Reload needed to add N scripts.` | The popup's `PENDING`: enabled or installed since the page loaded, or matching only the URL it moved to | purple |
 | `Reload needed to remove N scripts.` | The popup's `STILL_RUNNING`: disabled or removed since the page loaded | purple |
 | `Page loaded before SourceMonkey started. Reload needed for N scripts.` | `UNTRACKED` | purple |
+| `Page loaded while user scripts were disabled. Reload needed for N scripts.` | `UNTRACKED`, on a page marked `loadedWithoutUserscripts` | purple |
 | `N expected scripts are not running.` | `MISSING` | orange `#f57c00` |
 | `N unexpected scripts are running.` | `UNEXPECTED` | orange |
 | `N scripts have warnings.` | Running with a warning (see [status-popup.md](status-popup.md#warnings)) | none |
 | `N scripts skipped on this load.` | `NOT_LOADED` | grey `#757575`, if no script is running |
+| `User scripts are not allowed yet.` (alone) | A page loaded while user scripts were disabled, while they still are | red |
 
 - Lines use the singular for one (`1 script has errors.`).
 - Warnings take no color: a header warning shows on every load, so
@@ -377,6 +383,28 @@ Click for details. Double-click for collections.
 - A sync's refresh of the open tabs (`refreshAllOpenTabs`) leaves a tab
   with no record alone, rather than making one that would show every
   script as `MISSING`.
+
+### Pages loaded while user scripts were disabled
+
+- With "Allow User Scripts" off, Chrome injects nothing, though matching
+  still works. A page that loads then has no scripts running.
+- So the commit marks its record `loadedWithoutUserscripts`, when a
+  `chrome.userScripts` call fails at that moment (`userScriptsUsable`).
+  - Asked at the load: a later look can't tell what Chrome injected
+    then.
+- Not `MISSING`, which would be orange and log a "never started"
+  warning for each script blaming the page. Instead, by whether user
+  scripts are disabled now (asked only for such a page):
+  - Still disabled: its matching scripts are `NOT_LOADED` ("Not run:
+    user scripts are disabled"), and the badge is red. Its tooltip
+    reads `User scripts are not allowed yet.` and nothing else: a
+    reload wouldn't help yet.
+  - Enabled since: `UNTRACKED`, as on a page that loaded before the
+    extension started, purple, with its own wording.
+- Chrome sends no event when the toggle changes, so such a page's badge
+  is redrawn when it comes to the front (`tabs.onActivated`,
+  `windows.onFocusChanged`): coming back from enabling them is the case
+  it's for.
 
 ### Reload with no userscripts
 

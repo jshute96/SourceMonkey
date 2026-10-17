@@ -112,12 +112,22 @@ interpolates the same `message` the Log row uses.
 | `collection refresh: <path>: <summary>` | no | log |
 | `collection refresh failed: <path>: <err>` | no | info |
 | `refreshing all collections (mode)` | no | log |
+| `check-pending: <logId> asked tab=<n> frame=<n>` | yes | log |
+| `check-pending: <logId> tab=<n> frame=<n> answered <action> in <ms>ms` | yes | log |
+| `check-pending: <logId> tab=<n> frame=<n> not answered after 5000ms (<what it waits on>); …` | no | info |
+| `the user script world had no messaging set up; setting it up again` | no | info |
 | `start <logId> tab=<n> <url>` | no | log |
 | `swapped <logId> tab=<n> <url> (loadedAt …)` | no | log |
 | `abandoned <logId> tab=<n> <url> (reason=…)` | no | log |
 | `error <logId> tab=<n> <url>: <msg>` | no | info |
 | `migrated N collections and M scripts to the collection:* key spelling` | no | log |
 | `collection-key migration failed <err>` | no | info |
+
+The `check-pending` lines trace a wrapper asking the worker whether it
+may run. The wrapper gives up after 10s and doesn't run, so every
+script on the page shows as Missing. An answer that slow is never
+normal, so its line isn't gated: it names what the worker was still
+waiting on.
 
 The last two fire at most once per JS context, and only on a profile
 written before the August 2026 sources → collections rename — see

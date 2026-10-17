@@ -20,10 +20,10 @@ function script(id, extra = {}) {
   return { id, name: id, collectionId: 'A', enabled: true, identity: null, version: null, headerWarnings: false, ...extra };
 }
 
-function summary({ st, scripts, rejected = {}, injectable = true, deletedIds }) {
-  const badge = st ? computeBadge(st, new Set(Object.keys(rejected))) : null;
+function summary({ st, scripts, rejected = {}, injectable = true, deletedIds, userScriptsDisabled }) {
+  const badge = st ? computeBadge(st, new Set(Object.keys(rejected)), userScriptsDisabled) : null;
   const view = buildPopupView({
-    url: URL_, injectable, state: st, badgeRows: badge?.rows ?? [], rejected,
+    url: URL_, injectable, state: st, badgeRows: badge?.rows ?? [], rejected, userScriptsDisabled,
     matchingIds: new Set(scripts.map((s) => s.id)),
     scripts, collections: COLLS, menuCommands: new Map(), deletedIds,
     manualRunnableIds: new Set(scripts.filter((s) => s.manual).map((s) => s.id)),
@@ -175,4 +175,24 @@ test('a page loaded before the extension started: purple, with its own line', ()
   assert.deepEqual(lines(s), ['Page loaded before SourceMonkey started. Reload needed for 2 scripts.']);
   assert.equal(s.color, BADGE_PURPLE);
   assert.equal(s.count, 2);
+});
+
+test('a page loaded while user scripts were disabled: purple, with its own line', () => {
+  const s = summary({
+    st: { documentId: 'd', url: URL_, matches: [m('a')], actual: {}, loadMatchIds: ['a'], loadedWithoutUserscripts: true },
+    scripts: [script('a')],
+  });
+  assert.deepEqual(lines(s), ['Page loaded while user scripts were disabled. Reload needed for 1 script.']);
+  assert.equal(s.color, BADGE_PURPLE);
+});
+
+test('a page loaded while user scripts are still disabled: red, saying so and nothing else', () => {
+  const s = summary({
+    st: { documentId: 'd', url: URL_, matches: [m('a')], actual: {}, loadMatchIds: ['a'], loadedWithoutUserscripts: true },
+    scripts: [script('a')],
+    userScriptsDisabled: true,
+  });
+  assert.deepEqual(lines(s), ['User scripts are not allowed yet.']);
+  assert.equal(s.color, BADGE_RED);
+  assert.equal(s.count, 1);
 });

@@ -98,6 +98,9 @@ export interface PopupMenuCommand {
 
 export interface PopupViewInput {
   url: string;
+  // The page loaded while user scripts were disabled, and they still
+  // are: nothing can run on it until they're enabled.
+  userScriptsDisabled?: boolean;
   // False for a page no script can run on (chrome://, about:, …).
   injectable: boolean;
   state: TabMatchState | null;
@@ -163,6 +166,8 @@ export interface PopupGroup {
 export interface PopupView {
   url: string;
   injectable: boolean;
+  // As in the input. The toolbar says so in place of everything else.
+  userScriptsDisabled?: boolean;
   smDev: boolean;
   // `Reload required: …`, or null.
   banner: string | null;
@@ -279,6 +284,17 @@ export function manualRunsText(runs: number): string {
 // OK's tooltip for a script running only in the page's iframes.
 const FRAMES_OK_TOOLTIP = 'Running in frames on this page';
 
+// The heading of every surface that says user scripts are disabled: the
+// collections page's banner, the popup's bar and the toolbar tooltip.
+export const USER_SCRIPTS_OFF_HEADING = 'User scripts are not allowed yet.';
+
+// NOT_LOADED's tooltip on such a page while they still are.
+const NOT_RUN_USERSCRIPTS_DISABLED = 'Not run: user scripts are disabled';
+
+// UNTRACKED's tooltip on a page that loaded while user scripts were disabled.
+const LOADED_WITHOUT_USERSCRIPTS_TOOLTIP =
+  'This page loaded while user scripts were disabled, so its scripts didn\'t run. Reload to run them.';
+
 // STILL_RUNNING's tooltip for a script removed since the page loaded.
 const REMOVED_TOOLTIP = 'Removed since this page loaded. It keeps running until a reload.';
 
@@ -292,6 +308,7 @@ const MOVED_ONLY_TOOLTIP =
 const SM_DEV_KEPT_OUT = 'Not run: the sm-dev run controlling this tab kept it out';
 
 function notLoadedReason(state: TabMatchState, nameOf: (id: string) => string): string {
+  if (state.loadedWithoutUserscripts) return NOT_RUN_USERSCRIPTS_DISABLED;
   if (state.scriptsSkipped) return 'Not run: the page was reloaded with no userscripts';
   if (state.skipOnly !== undefined) return `Not run: the page was reloaded with only ${nameOf(state.skipOnly)}`;
   if (state.skipWithout !== undefined) return 'Not run: the page was reloaded without this script';
@@ -314,12 +331,15 @@ export interface BannerCauses {
   removed?: boolean;
   // The page loaded before the extension started (UNTRACKED).
   loadedBefore?: boolean;
+  // The page loaded while user scripts were disabled (UNTRACKED too).
+  loadedWithoutUserscripts?: boolean;
 }
 
 // The reload banner's text, naming the most specific cause.
 export function bannerText(c: BannerCauses): string | null {
   // First: it explains every other cause there may be.
   if (c.loadedBefore) return 'Reload required: Page loaded before SourceMonkey started';
+  if (c.loadedWithoutUserscripts) return 'Reload required: Page loaded while user scripts were disabled';
   if (c.enabled && (c.disabled || c.removed)) return 'Reload required: Enabled scripts changed';
   if (c.enabled) return 'Reload required: Scripts enabled';
   if (c.disabled && c.removed) return 'Reload required: Scripts disabled and removed';
@@ -338,6 +358,7 @@ export function buildPopupView(input: PopupViewInput): PopupView {
   const smDev = state?.smDevAllow !== undefined;
   const view: PopupView = {
     url: input.url,
+    ...(input.userScriptsDisabled ? { userScriptsDisabled: true } : {}),
     injectable: input.injectable,
     smDev,
     banner: null,
@@ -462,7 +483,10 @@ export function buildPopupView(input: PopupViewInput): PopupView {
       else causes.missing = true;
     }
     if (status === 'UNEXPECTED') causes.unexpected = true;
-    if (status === 'UNTRACKED') causes.loadedBefore = true;
+    if (status === 'UNTRACKED') {
+      if (state?.loadedWithoutUserscripts && !state.loadedBefore) causes.loadedWithoutUserscripts = true;
+      else causes.loadedBefore = true;
+    }
 
     let tooltip: string | null = null;
     if (status) {
@@ -474,6 +498,7 @@ export function buildPopupView(input: PopupViewInput): PopupView {
         // A manual script isn't kept out by a reload mode, only by the claim.
         text = s.manual ? SM_DEV_KEPT_OUT : notLoadedReason(state, nameOf);
       }
+      if (status === 'UNTRACKED' && state?.loadedWithoutUserscripts && !state.loadedBefore) text = LOADED_WITHOUT_USERSCRIPTS_TOOLTIP;
       if (status === 'INVALID' && s.invalid) text = `${DEFAULT_TOOLTIPS.INVALID}: ${s.invalid}`;
       if (movedOnly) text = MOVED_ONLY_TOOLTIP;
       if (status === 'STILL_RUNNING' && s.enabled) {
