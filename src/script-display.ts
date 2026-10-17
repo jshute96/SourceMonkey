@@ -461,7 +461,7 @@ export function requireBasename(url: string, ref: string): string {
 
 // What the viewer's Location row reads for a pinned script — one
 // imported from another manager's backup with no upstream to name (see
-// docs/import-export-tampermonkey.md). Naming the manager matters: the
+// docs/import.md). Naming the manager matters: the
 // user knows they imported from Tampermonkey, so "no external
 // location" reads as a fact about that script rather than as something
 // SourceMonkey failed to work out.

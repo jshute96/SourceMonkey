@@ -1893,7 +1893,7 @@ Left from its design:
     (`src/extension/script-store.ts`), and the boot log replay in
     `src/extension/script-updater.ts`. Both want `mapWithConcurrency`.
 - Tampermonkey import follow-ups (see
-  [docs/import-export-tampermonkey.md](docs/import-export-tampermonkey.md)):
+  [docs/import.md](docs/import.md)):
   - **Re-import merges instead of duplicating.** Every import creates a
     fresh collection, so importing twice gives you the same scripts
     twice. `StoredScript.importedFrom.uuid` already records the foreign

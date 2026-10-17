@@ -7,7 +7,7 @@
 // `script-store.ts`.
 //
 // The format itself is documented in
-// docs/import-export-tampermonkey.md; this file only implements it.
+// docs/export-format.md; this file only implements it.
 // Two properties of that format drive most of the code here:
 //
 //   - `source` is base64 of the script's UTF-8 bytes, not plain text.

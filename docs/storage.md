@@ -331,7 +331,7 @@ keys would look like a wiped profile.
     container it has no scan step; unlike one it has no upstream at all,
     so the collection never refreshes. A fresh id per import run, so
     repeat imports each get their own section. See
-    [import-export-tampermonkey.md](import-export-tampermonkey.md).
+    [import.md](import.md).
 - `lastRefreshedAt` — epoch ms of the most recent refresh.
 - `scriptIds` — child script IDs in scan order (a directory by path, a
   manifest as listed), or install order for a container. The
@@ -386,7 +386,7 @@ keys would look like a wiped profile.
     backup named, or a synthetic `sourcemonkey://imported/…` stand-in
     when it named none — the row's own value either way, since the
     collection path can't derive it. See
-    [import-export-tampermonkey.md](import-export-tampermonkey.md#per-script-location).
+    [import.md](import.md#per-script-location).
 - `status` — `'ok' | 'invalid'`. A script whose file has vanished is
   not a status — the row is dropped (see
   [Vanished entries](#vanished-entries)).
@@ -1585,7 +1585,7 @@ Refresh after adding.
 An **Import** button sits beside Add. It opens a dialog explaining how
 to export from Tampermonkey, takes the resulting file, and creates one
 import collection from it — see
-[import-export-tampermonkey.md](import-export-tampermonkey.md#importing-into-sourcemonkey).
+[import.md](import.md#current-implementation).
 Per-script problems in a partly-readable backup are listed on the page
 after the dialog closes, since the import itself succeeded.
 

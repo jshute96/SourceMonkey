@@ -65,7 +65,7 @@ export interface LocationRow {
   // real, encoded URL.
   //
   // Absent for a pinned script — one imported from another manager's
-  // backup with no upstream (see docs/import-export-tampermonkey.md).
+  // backup with no upstream (see docs/import.md).
   // There the row states that fact instead of naming a place, so it
   // renders as plain text: an anchor with nothing behind it invites a
   // click that can only disappoint, and there is nothing worth copying.

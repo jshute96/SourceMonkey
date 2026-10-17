@@ -715,7 +715,8 @@ For userscript repos to install, so their coding agents know how to use `sm-dev`
 | `docs/deep-link.md` | Design of the external-page → extension-page redirect (GitHub URL + `webNavigation` + allowlisted `page` param) |
 | `docs/install-capture.md` | How `.user.js` link clicks become installs: what Chrome does on its own, the capture, the prompt, the bypass |
 | `docs/script-identity.md` | How two rows are recognised as the same script, and the "Other versions" panel built on it |
-| `docs/import-export-tampermonkey.md` | Moving scripts to/from Tampermonkey: why it's file-based, its import/export formats, and its Utilities page |
+| `docs/export-format.md` | Userscript managers' backup formats (Tampermonkey JSON and zip, Violentmonkey zip), field by field, compared |
+| `docs/import.md` | Importing scripts from a backup: the design in progress (menus, imported scripts, preview dialog) and the current implementation |
 | `docs/script-enablement.md` | Keeping one copy of each script active: exclusive toggles, active times, restores, preference order |
 | `docs/file-changes.md` | Files changed behind SourceMonkey's back: the drop-on-refresh rule per collection kind, the paint-time chips, the collection's "refresh pending" chip |
 | `docs/local-delete.md` | Deleting a local copy: what can be deleted and why, the dialog, dependency files, order and failure |

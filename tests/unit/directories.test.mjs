@@ -831,7 +831,7 @@ test('a run\'s test collection path round-trips its run', () => {
 
 // ---------- Import collections and pinned script URLs ----------
 //
-// See docs/import-export-tampermonkey.md. `import:<uuid>` is the one
+// See docs/import.md. `import:<uuid>` is the one
 // collection path with no location behind it, and a pinned `fileUrl` is
 // the one script URL that names no place.
 

@@ -1661,7 +1661,7 @@ async function createLocationCollection(
 // Every import creates its OWN collection (`import:<uuid>`), so
 // importing the same backup twice yields two sections rather than
 // merging. Recognising a re-import is a follow-up; `importedFrom` is
-// the handle it will use. See docs/import-export-tampermonkey.md.
+// the handle it will use. See docs/import.md.
 export async function importCollection(
   imported: readonly ImportedScript[],
   displayName: string,
@@ -2728,7 +2728,7 @@ export async function refreshCollection(
   // anything else here would either mark every imported script
   // `missing` (there's no listing to find them in) or refetch the rows
   // that happen to carry a URL, which is per-script Refresh's job, not
-  // the collection's. See docs/import-export-tampermonkey.md.
+  // the collection's. See docs/import.md.
   if (isImportCollection(collection.path)) {
     return { collection, scripts: existingScripts };
   }

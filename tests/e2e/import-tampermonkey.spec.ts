@@ -4,7 +4,7 @@
 // vs located split, the enable mirroring, and the fact that a Refresh
 // All afterwards leaves the imported bodies alone.
 //
-// The backup format is documented in docs/import-export-tampermonkey.md.
+// The backup format is documented in docs/export-format.md.
 
 import { test, expect } from '../fixtures/extension';
 import type { SmApi } from '../fixtures/sw-api';

@@ -107,7 +107,7 @@ export function collectionKind(path: string): CollectionKind {
 // duplicate-path check and each stands as its own section. Like
 // containers they have no scan step; unlike containers their bodies
 // have no collection-level upstream, so the collection never refreshes.
-// See docs/import-export-tampermonkey.md.
+// See docs/import.md.
 const IMPORT_PATH_PREFIX = 'import:';
 
 export function importCollectionPath(importId: string): string {

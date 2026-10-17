@@ -202,7 +202,7 @@ export function collectionBubbleKey(path: string): string {
 // full URL/path the user installed).
 //
 // A pinned imported script — one with no upstream (see
-// docs/import-export-tampermonkey.md) — gets its own chip: it loads from
+// docs/import.md) — gets its own chip: it loads from
 // nowhere, so none of the three schemes is true of it.
 export function makeSchemeChip(location: string): HTMLElement {
   const scheme = scriptSchemeKind(location);

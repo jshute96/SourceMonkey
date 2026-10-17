@@ -210,7 +210,7 @@ export interface StoredScript {
   versionProbes?: VersionProbe[];
   // Where this row came from when it was handed to us in another
   // manager's backup file rather than fetched (see
-  // docs/import-export-tampermonkey.md). Absent on every row that came
+  // docs/import.md). Absent on every row that came
   // from a real location. The foreign `uuid` is what a future
   // "re-import updates instead of duplicating" pass would match on;
   // nothing reads it today.

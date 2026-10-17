@@ -108,8 +108,8 @@ details live in the topic-specific docs linked below.
   for Tampermonkey's exported backup, the one channel by which another
   manager's scripts can reach us. Chrome gives an extension no way to
   read another extension's state, so migration is a file the user
-  carries across. See
-  [import-export-tampermonkey.md](import-export-tampermonkey.md).
+  carries across. See [import.md](import.md) and
+  [export-format.md](export-format.md).
 - **File-access permission UI** (`src/extension/file-access.ts`) — the
   "Allow access to file URLs" probe plus the shared banner every page
   raises when the toggle is what blocked a local read. See
@@ -455,9 +455,11 @@ takes effect:
 - [updates.md](updates.md) — how a script updates from its install
   source, `@updateURL` / `@downloadURL` probing, `@version` ordering,
   the OUTDATED status.
-- [import-export-tampermonkey.md](import-export-tampermonkey.md) —
-  moving scripts to and from Tampermonkey: why it has to be file-based,
-  its backup format, and what an import carries across.
+- [import.md](import.md) — importing scripts from another manager's
+  backup or our own export: the preview dialog and what an import
+  carries across.
+- [export-format.md](export-format.md) — the backup formats
+  Tampermonkey and Violentmonkey write, field by field, compared.
 - [script-viewer.md](script-viewer.md) — userscript viewer page, header parsing,
   syntax highlighting.
 - [match-rules.md](match-rules.md) — what `@match`/`@include`/`@exclude`

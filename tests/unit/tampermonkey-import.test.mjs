@@ -1,6 +1,6 @@
 // Unit tests for the Tampermonkey backup parser (src/extension/tampermonkey-import.ts).
 //
-// The format is described in docs/import-export-tampermonkey.md. The
+// The format is described in docs/export-format.md. The
 // fixtures here are hand-built rather than captured from a real export
 // so each test states exactly the one field it is about.
 

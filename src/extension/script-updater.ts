@@ -583,7 +583,7 @@ async function probeOneScript(
   // different reason: the probe would work fine, and that is the
   // problem. OUTDATED means "somewhere else is ahead of you", and every
   // control that would let the user act on it is correctly withheld
-  // from a pinned script (see docs/import-export-tampermonkey.md). A
+  // from a pinned script (see docs/import.md). A
   // badge that reports a gap nothing can close is not information, it
   // is a permanent complaint.
   if (isPinnedScriptUrl(script.fileUrl)) {

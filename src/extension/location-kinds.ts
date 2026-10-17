@@ -124,7 +124,7 @@ export type ScriptSchemeKind = ContainerKind | 'scratch' | 'imported';
 
 // The scheme chip's kind for a container script: where it came from.
 // A scratch script has no location; its only copy is in storage. A
-// pinned imported script (docs/import-export-tampermonkey.md) loads
+// pinned imported script (docs/import.md) loads
 // from nowhere either, but its copy came from another manager's backup.
 export function scriptSchemeKind(location: string): ScriptSchemeKind {
   if (isScratchUrl(location)) return 'scratch';

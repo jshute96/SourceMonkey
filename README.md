@@ -235,7 +235,7 @@ collection itself has no location, so Refresh All leaves it alone.
 Each import makes its own collection, so importing twice gives you two.
 
 Details:
-[docs/import-export-tampermonkey.md](docs/import-export-tampermonkey.md).
+[docs/import.md](docs/import.md).
 
 ### Installing scripts from a `.user.js` link
 

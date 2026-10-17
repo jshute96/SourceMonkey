@@ -882,7 +882,7 @@ function render(script: StoredScript, snapshot?: StoreSnapshot): void {
   // Imported rows are resolved differently, because a synthetic
   // `import:<uuid>` collection path can't produce a location: a located
   // one carries its own URL on the row, and a pinned one has none at
-  // all (see docs/import-export-tampermonkey.md).
+  // all (see docs/import.md).
   const pinnedLocation = isPinnedScriptUrl(script.fileUrl);
   // A pinned script has nowhere to refresh from, and `refreshScript`
   // returns it untouched — so the button would spin and change nothing.
