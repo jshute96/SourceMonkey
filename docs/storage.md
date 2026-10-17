@@ -1556,12 +1556,20 @@ Refresh after adding.
 `src/extension/collection-dialog.ts`, one `<dialog>` per page, shared by the
 collections page (Add, Edit) and the install page ("New collection…").
 
-- **Fields**: Name (its placeholder says whether it is required — no
-  location — or optional, meaning "the name inferred from the
-  location"), *Directory or manifest* (the location; read-only in edit,
-  absent where none can be given), Type (**reported, never chosen** —
-  see below), and **Allow local file overrides** (see
-  [local-file-overrides.md](local-file-overrides.md#per-collection-opt-out)).
+- **Fields**:
+  - Name: its placeholder says whether it is required (no location) or
+    optional, meaning "the name inferred from the location".
+  - The location, labelled *Directory or manifest* in Add and
+    *Directory* or *Manifest*, whichever it is, in Edit, where it's
+    read-only. Absent where none can be given.
+    - A copy button beside it copies it: a local one as a plain path
+      (a `file://` URL decoded), anything else as given.
+    - An open button opens it in a new tab: an http(s) or `file://`
+      URL as given, an absolute path as `file://`. Disabled for
+      anything else.
+  - Type: **reported, never chosen** (see below).
+  - **Allow local file overrides** (see
+    [local-file-overrides.md](local-file-overrides.md#per-collection-opt-out)).
 - **The Type row** shows the collection bubble the form would produce,
   in the same colours (and with a tooltip each) the collections page
   uses:

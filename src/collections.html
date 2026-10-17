@@ -137,6 +137,10 @@
       .status-cell a:hover { text-decoration: underline; }
       .empty { color: #666; font-style: italic; }
       .error { color: #b00; }
+      /* A collection's failure line: a hint can start a line of its own,
+         and the address it couldn't read is a link. */
+      p.error[data-message-kind] { white-space: pre-line; }
+      p.error[data-message-kind] a { color: inherit; }
       /* The banner box itself is in styles.css (shared with the
          viewer). These are the collections-page-only parts: a roomier
          gap before the collection list, and the raw-API-error line in the

@@ -821,9 +821,35 @@ const SECTION_MESSAGE_KINDS = ['scan', 'refresh'] as const;
 type SectionMessageKind = typeof SECTION_MESSAGE_KINDS[number];
 
 function makeSectionMessage(kind: SectionMessageKind, text: string): HTMLElement {
-  const p = makeMessage('error', text);
+  const p = makeMessage('error', '');
   p.dataset.messageKind = kind;
+  fillWithLinks(p, text);
   return p;
+}
+
+// `text` into `el`, with each http(s) URL in it as a link (a failed
+// read names the address it read). Punctuation right after a URL stays
+// text: `Could not read <url>: HTTP 404` puts a colon there.
+//
+// Skipped when `el` already shows `text`: a repaint would otherwise
+// rebuild a link the pointer or focus is on.
+function fillWithLinks(el: HTMLElement, text: string): void {
+  if (el.dataset.text === text) return;
+  el.dataset.text = text;
+  el.textContent = '';
+  let at = 0;
+  for (const match of text.matchAll(/https?:\/\/\S+/g)) {
+    const url = match[0].replace(/[.,;:!?)\]]+$/, '');
+    el.append(text.slice(at, match.index));
+    const a = document.createElement('a');
+    a.href = url;
+    a.textContent = url;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    el.append(a);
+    at = match.index + url.length;
+  }
+  el.append(text.slice(at));
 }
 
 // Add, update, or drop one of a section's message lines to match `text`
@@ -842,7 +868,7 @@ function syncSectionMessage(
     return;
   }
   if (prior) {
-    prior.textContent = text;
+    fillWithLinks(prior, text);
     return;
   }
   // Insert after whichever earlier line is present, so the kinds keep a

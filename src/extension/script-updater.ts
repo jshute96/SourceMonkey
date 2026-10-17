@@ -1067,7 +1067,9 @@ export function summarizeCollectionOutcome(
       nextScripts, mode,
       // Same no-echo phrasing as the collections page's banner, since
       // `scanError` usually starts with its own `Could not read …`.
-      `This collection did not load: ${scanError}. Still running the cached copy.`,
+      // A message that already ends its sentence (a GitHub hint) gets no
+      // second period.
+      `This collection did not load: ${/[.!?]$/.test(scanError) ? scanError : `${scanError}.`} Still running the cached copy.`,
     );
     console.log(`[SourceMonkey] collection refresh: ${label}: scan failed: ${scanError}`);
     return;

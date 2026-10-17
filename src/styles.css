@@ -184,6 +184,29 @@ dialog.sm-dialog.delete-dialog { width: 680px; }
 .sm-dialog .dlg-slot { min-width: 0; }
 .sm-dialog .dlg-slot select { width: 100%; font: inherit; padding: 4px 7px; }
 .sm-dialog .dlg-label[hidden] { display: none; }
+/* The location box with its copy and open-in-a-new-tab buttons. It and
+   its label centre on each other: the label can take two lines. */
+.sm-dialog .dlg-location { display: flex; gap: 6px; align-items: center; min-width: 0; align-self: center; }
+.sm-dialog .dlg-location-label { align-self: center; padding-top: 0; }
+.sm-dialog .dlg-location[hidden] { display: none; }
+.sm-dialog .dlg-location input { flex: 1; min-width: 0; }
+/* Its two buttons are one pair: the open button takes the copy
+   button's look (square, white, its border and hover) rather than the
+   page's grey, padded `.icon-btn`. */
+.sm-dialog .dlg-location .copy-btn,
+.sm-dialog .dlg-location .dlg-open-location {
+  width: var(--icon-btn-size);
+  min-width: 0;
+  height: var(--icon-btn-size);
+  padding: 0;
+  border: 1px solid #bbb;
+  border-radius: 3px;
+  background: #fff;
+  color: #444;
+}
+.sm-dialog .dlg-location button:hover:not(:disabled) { background: #eee; }
+.sm-dialog .dlg-location button:active:not(:disabled) { background: #ddd; }
+.sm-dialog .dlg-location button:disabled { cursor: default; opacity: 0.5; }
 .sm-dialog input[type="text"],
 .sm-dialog textarea {
   width: 100%;

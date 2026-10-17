@@ -188,7 +188,7 @@ export async function collectionList(manager: ManagerControl, out: (line: string
     out(ui`  ${collectionMarked(c)} (${c.kind}): ${notes.join(', ')}`);
     // Not when its name is its location, as a directory's is by default.
     if (c.location !== undefined && c.location !== c.name) out(ui`      ${url(c.location)}`);
-    if (c.error) out(asError(`      Failed to load: ${c.error}`));
+    if (c.error) out(asError(indentLines(`      Failed to load: ${c.error}`, '      ')));
     const pending = pendingText(c, disk);
     if (pending) out(`      ${pending}`);
   }
@@ -495,7 +495,7 @@ async function collectionVerb(ctx: ManagerContext, verb: string, subject: string
       const notes = [`${result.updated.length} updated`, `${result.unchanged} unchanged`, ...(result.removed.length > 0 ? [`${result.removed.length} removed`] : []),
         ...(failed.length > 0 ? [`${failed.length} failed`] : [])];
       ctx.out(ui`Refreshed ${collectionMarked(result.collection)}: ${notes.join(', ')}`);
-      if (result.collection.error) ctx.out(asError(`  Failed to load: ${result.collection.error}`));
+      if (result.collection.error) ctx.out(asError(indentLines(`  Failed to load: ${result.collection.error}`, '  ')));
       for (const s of result.updated) {
         ctx.out(ui`  Updated ${scriptMarked(s, view)}${s.status === 'invalid' ? ': INVALID' : ''}`);
         if (s.error) ctx.out(`      ${s.error}`);
@@ -1258,4 +1258,10 @@ async function scriptShow(ctx: ManagerContext, picked: ManagedScript, collection
     const lines = typeof value === 'string' ? [value] : value;
     lines.forEach((line, i) => ctx.out(ui`  ${i === 0 ? ui`${heading(name)}:` : ''}${' '.repeat(Math.max(0, width - (i === 0 ? name.length + 1 : 0)))}${line}`));
   }
+}
+
+// A message's later lines, indented to sit under its first (a GitHub
+// read's hint starts a line of its own).
+function indentLines(text: string, indent: string): string {
+  return text.replace(/\n/g, `\n${indent}`);
 }

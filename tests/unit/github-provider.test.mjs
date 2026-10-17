@@ -225,7 +225,7 @@ test('normalizeGithubInput appends a private-repo hint on 404', async () => {
     ),
     // No token configured → hint points at the Options page so the
     // user has a concrete next step rather than a dead end.
-    /set a GitHub token on the Options page/,
+    /Set a GitHub token on the Options page/,
   );
 });
 
@@ -252,13 +252,13 @@ test('normalizeGithubInput hint differs when a token is already configured', asy
     // 401: token rejected
     await assert.rejects(
       withFetch(make(401), () => normalizeGithubInput('https://github.com/foo/bar')),
-      /token rejected/,
+      /Token rejected/,
     );
 
     // 429: rate-limit explicit. Hint should mirror 403's "rate limit" guidance.
     await assert.rejects(
       withFetch(make(429), () => normalizeGithubInput('https://github.com/foo/bar')),
-      /rate limit/,
+      /Rate limit/,
     );
   } finally {
     _setGithubAuthTokenForTests('');
@@ -355,7 +355,7 @@ test('scanGithubDir surfaces HTTP errors from the Contents API with a rate-limit
     withFetch(fakeFetch, () =>
       scanGithubDir('https://github.com/foo/bar/tree/main/dir'),
     ),
-    /HTTP 403.*rate limit/,
+    /HTTP 403\.\nLikely the unauthenticated 60\/hr API rate limit/,
   );
 });
 

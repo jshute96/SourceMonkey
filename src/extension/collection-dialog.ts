@@ -51,6 +51,9 @@ import { collectionSupportsLocalFiles } from '../local-file-overrides.js';
 import { dlog } from '../debug-log.js';
 import { previewUrl } from '../script-display.js';
 import { openExtensionTab } from './page-links.js';
+import { setGlyphButton, setGlyphButtonLabel } from './glyph.js';
+import { makeCopyButton } from './copy-button.js';
+import { isFileUrl, isHttpUrl, isManifestCollection, pathToFileUrl } from '../file-locations.js';
 
 export interface CollectionDialogRequest {
   mode: 'create' | 'edit';
@@ -149,7 +152,10 @@ interface DialogElements {
   form: HTMLFormElement;
   title: HTMLElement;
   locationLabel: HTMLElement;
+  locationRow: HTMLElement;
   location: HTMLInputElement;
+  copyLocation: HTMLButtonElement;
+  openLocation: HTMLButtonElement;
   name: HTMLInputElement;
   typeBubble: HTMLElement;
   typeHint: HTMLElement;
@@ -197,7 +203,7 @@ function buildDialog(): DialogElements {
   name.autocomplete = 'off';
   form.append(nameLabel, name);
 
-  const locationLabel = el<HTMLLabelElement>('label', 'dlg-label', 'Directory or manifest');
+  const locationLabel = el<HTMLLabelElement>('label', 'dlg-label dlg-location-label', 'Directory or manifest');
   locationLabel.htmlFor = 'collection-dialog-location';
   const location = el<HTMLInputElement>('input');
   location.type = 'text';
@@ -207,7 +213,22 @@ function buildDialog(): DialogElements {
   // Short, because the label beside it already says what kind of
   // directory or manifest is wanted.
   location.placeholder = 'Absolute path or URL';
-  form.append(locationLabel, location);
+  // Opens what the box names in a new tab: its directory listing,
+  // manifest or GitHub page. Enabled while the box holds something a
+  // link can be made from (`locationLink`).
+  const openLocation = el<HTMLButtonElement>('button', 'dlg-open-location');
+  openLocation.type = 'button';
+  // Retitled per value (`locationNoun`).
+  setGlyphButton(openLocation, '#sm-open', 'Open in a new tab');
+  // Copies what the box names: a local location as its plain path (a
+  // `file://` URL loses the prefix), anything else as given.
+  const copyLocation = makeCopyButton({
+    label: 'Copy',
+    text: () => canonicalCollectionInput(location.value.trim()),
+  });
+  const locationRow = el<HTMLElement>('div', 'dlg-location');
+  locationRow.append(location, copyLocation, openLocation);
+  form.append(locationLabel, locationRow);
 
   form.appendChild(el('span', 'dlg-label', 'Type'));
   const typeRow = el<HTMLElement>('div', 'dlg-type');
@@ -255,7 +276,7 @@ function buildDialog(): DialogElements {
 
   document.body.appendChild(dialog);
   return {
-    dialog, form, title, locationLabel, location, name, typeBubble, typeHint,
+    dialog, form, title, locationLabel, locationRow, location, copyLocation, openLocation, name, typeBubble, typeHint,
     localFilesLabel, localFiles, localFilesHint, error, errorAction, cancel, ok,
   };
 }
@@ -341,8 +362,13 @@ async function runDialog(
   ui.ok.textContent = editing ? 'Save' : wording.ok;
   ui.location.value = editing ? locationFieldValue(editing.path) : request.prefill?.location ?? '';
   ui.location.disabled = !!editing;
+  // Editing, the location is fixed, so its label names the one it is.
+  // Adding, it offers both, over two lines to keep the column narrow.
+  if (!editing) ui.locationLabel.replaceChildren('Directory or ', el('br'), 'manifest');
+  else ui.locationLabel.textContent = collectionKind(editing.path) === 'manifest' ? 'Manifest' : 'Directory';
   ui.locationLabel.hidden = !showLocation;
   ui.location.hidden = !showLocation;
+  ui.locationRow.hidden = !showLocation;
   // Blank for a new location collection: the inferred name is what a
   // blank means, and echoing the path into the field would only invite
   // editing a value that isn't the user's.
@@ -532,9 +558,28 @@ async function runDialog(
   };
 
   // ---- wiring (replaced on every open, so stale closures can't fire) ----
+  const syncOpenLocation = (): void => {
+    ui.openLocation.disabled = locationLink(ui.location.value) === '';
+    ui.copyLocation.disabled = ui.location.value.trim() === '';
+    // Named by what the box holds: "Copy filename", "Open URL in a new tab".
+    const noun = locationNoun(ui.location.value);
+    setGlyphButtonLabel(ui.openLocation, noun ? `Open ${noun.open} in a new tab` : 'Open in a new tab');
+    const copyLabel = noun ? `Copy ${noun.copy}` : 'Copy';
+    ui.copyLocation.title = copyLabel;
+    ui.copyLocation.setAttribute('aria-label', copyLabel);
+  };
+  syncOpenLocation();
+  ui.openLocation.onclick = () => {
+    const link = locationLink(ui.location.value);
+    if (!link) return;
+    openExtensionTab(link).catch((err) => {
+      dlog(`[SourceMonkey] could not open ${link}: ${describeError(err)}`);
+    });
+  };
   ui.location.oninput = () => {
     warnedEmpty = false;
     forgetRefusals();
+    syncOpenLocation();
     refresh();
   };
   ui.name.oninput = () => refresh();
@@ -656,4 +701,29 @@ function namePlaceholderFor(bubbleKey: string): string {
 // name for a different job (a script's own location, decoded).
 function locationFieldValue(path: string): string {
   return collectionKind(path) === 'scripts' ? '' : path;
+}
+
+// What the location box names, as a link a tab can open: an http(s) or
+// file:// URL as given, an absolute path as a file:// URL. '' for
+// anything else, which disables the button.
+function locationLink(value: string): string {
+  const v = value.trim();
+  if (isHttpUrl(v) || isFileUrl(v)) {
+    try {
+      return new URL(v).href;
+    } catch {
+      return '';
+    }
+  }
+  return v.startsWith('/') ? pathToFileUrl(v) : '';
+}
+
+// What the location box holds, in the words its buttons use: a URL, or
+// a local file (a manifest) or directory. Null when it's empty.
+function locationNoun(value: string): { copy: string; open: string } | null {
+  const v = value.trim();
+  if (!v) return null;
+  if (isHttpUrl(v)) return { copy: 'URL', open: 'URL' };
+  if (isManifestCollection(v)) return { copy: 'filename', open: 'file' };
+  return { copy: 'directory', open: 'directory' };
 }

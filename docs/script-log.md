@@ -304,7 +304,8 @@ What gets fanned out:
 
 - **Scan failure** (`scanError`: unreadable listing / manifest / bad
   URL) — `This collection did not load: <reason>. Still running the
-  cached copy.`. `refreshCollection` deliberately leaves every script row
+  cached copy.`. No second period when `<reason>` already ends a
+  sentence, as a GitHub hint does. `refreshCollection` deliberately leaves every script row
   untouched in this case, so without this the per-script outcome pass
   would report no change for rows that were never actually checked.
 - **A refresh that read fine but couldn't be saved** — the shared

@@ -325,6 +325,9 @@ verdicts about a script's content:
   - Phrased so it doesn't echo what follows it. `scanError` values
     usually open with their own `Could not read <url>: …`, so a
     `could not …:` wrapper would say "could not" twice running.
+  - A GitHub read's failure adds a hint as a sentence on its own line
+    (`githubStatusError`). The collections page keeps the line break
+    and links the address, and sm-dev indents the hint under its line.
 - **Errors GM APIs throw back into script code** — the audience is the
   script's author, so `GM_openInTab: url required` stays as it is. Only
   *our* internals get rewritten, and a failure in our plumbing gets the

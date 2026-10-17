@@ -159,7 +159,7 @@ async function fetchGithubDefaultBranch(owner: string, repo: string): Promise<st
   // asked for.
   if (!response.ok) {
     throw new Error(
-      `Could not read ${apiUrl}: HTTP ${response.status}${githubAuthHint(response.status)}`,
+      githubStatusError(apiUrl, response.status),
     );
   }
   let json: unknown;
@@ -228,24 +228,37 @@ function githubContentsApiUrl(p: ParsedGithubUrl, subPath: string): string {
 // token doesn't have access to the repo or is missing a scope.
 // The hint text branches on whether a token is configured so the
 // user gets a next-step pointer rather than stale advice.
+//
+// A sentence of its own on a new line, after the status line's period
+// (`githubStatusError`). The collections page, the dialog, the Log tab
+// and sm-dev show the line break; a surface that collapses whitespace
+// shows a space.
 function githubAuthHint(status: number): string {
   const hasToken = !!getGithubAuthToken();
   if (status === 404) {
     if (hasToken) {
-      return ' (repo / path not found, or your token can\'t see this repo; check the token\'s repo access on github.com)';
+      return 'Repo not found, or your token can\'t see this repo. Check the token\'s repo access on github.com.';
     }
-    return ' (repo / path not found, or repo is private; set a GitHub token on the Options page to fetch private repos)';
+    return 'Repo not found, or repo is private. Set a GitHub token on the Options page to fetch private repos.';
   }
   if (status === 403 || status === 429) {
     if (hasToken) {
-      return ' (rate limit hit, or your token lacks the required scope; authenticated requests get 5000/hour against api.github.com)';
+      return 'Rate limit hit, or your token lacks the required scope. Authenticated requests get 5000/hour against api.github.com.';
     }
-    return ' (likely the unauthenticated 60/hr API rate limit; set a GitHub token on the Options page to raise it to 5000/hr)';
+    return 'Likely the unauthenticated 60/hr API rate limit. Set a GitHub token on the Options page to raise it to 5000/hr.';
   }
   if (status === 401) {
-    return ' (token rejected; re-check the value on the Options page)';
+    return 'Token rejected. Re-check the value on the Options page.';
   }
   return '';
+}
+
+// A failed GitHub API read: the status, then the hint for it, if any.
+function githubStatusError(apiUrl: string, status: number): string {
+  const hint = githubAuthHint(status);
+  return hint
+    ? `Could not read ${apiUrl}: HTTP ${status}.\n${hint}`
+    : `Could not read ${apiUrl}: HTTP ${status}`;
 }
 
 interface GithubContentsEntry {
@@ -281,7 +294,7 @@ async function fetchGithubContents(apiUrl: string): Promise<GithubContentsEntry[
     // status for both unauthenticated). Surface the status plus the
     // private-repo hint so the user has something concrete to act on.
     throw new Error(
-      `Could not read ${apiUrl}: HTTP ${response.status}${githubAuthHint(response.status)}`,
+      githubStatusError(apiUrl, response.status),
     );
   }
   let json: unknown;
