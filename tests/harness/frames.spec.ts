@@ -102,8 +102,10 @@ test('frames: ids, the scripts in each frame, menus and match', async ({ page, f
   ]);
   // A command from an iframe names it. Each script's are in the order
   // they were registered, which the frames race for: compared as a set.
+  // A caption every document registers is one command, named for none.
   const menuLines = (await run('menu')).filter((l) => l.startsWith('    M')).map((l) => l.replace(/^ {4}M\d+: /, ''));
   expect(menuLines.sort()).toEqual([
+    'Every frame: mark all',
     'Every frame: mark top',
     `Every frame: mark frame-a (${a})`,
     `Every frame: mark frame-b (${b})`,
