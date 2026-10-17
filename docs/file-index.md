@@ -366,6 +366,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/worker-writes.spec.ts` | Page writes run in the worker: enable clicks from its row cache, the cache's upkeep, the settings allowlist |
 | `tests/e2e/container-collections.spec.ts` | Container-collection lifecycle: auto-create / reuse on add, duplicate rejection, refresh refetches every child |
 | `tests/e2e/collection-dialog.spec.ts` | The collection dialog from the collections page: Add-field routing, inferred type / name, readability probe, live refusals, Edit rename and options, scheme chips |
+| `tests/e2e/install-log.spec.ts` | A new script's first Log lines: the install, its load failure and header warnings; none for siblings |
 | `tests/e2e/install-target.spec.ts` | The install page's "Install into" dropdown: groups and order, renamed / missing default, install into a chosen or new collection, second copy of one URL |
 | `tests/e2e/move-script.spec.ts` | The move-script dialog from the viewer's Collection row: destination list, id preserved, stacked create dialog, disabled destination, button placement |
 | `tests/e2e/frames.spec.ts` | Scripts in iframes: one popup row per script, "Active in frames", menu commands per frame, frames ending, `@noframes` updates |

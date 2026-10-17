@@ -182,7 +182,7 @@ test.describe('collections', () => {
     await sm.appendScriptLog(goingAway.id, {
       level: 'info', source: 'test', message: 'hello',
     });
-    expect(await sm.getScriptLog(goingAway.id)).toHaveLength(1);
+    expect((await sm.getScriptLog(goingAway.id)).map((e) => e.message)).toContain('hello');
 
     scriptsDir.remove('b.user.js');
     await sm.updateCollection(collection!.id, 'manual');

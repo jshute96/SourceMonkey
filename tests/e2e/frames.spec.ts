@@ -87,7 +87,9 @@ test.describe('scripts in iframes', () => {
     // The Log says where a run in a frame was, and on which page, with
     // one row per page for a script's frames, counting them.
     const PAGE = String.raw`http://127\.0\.0\.1:\d+/frames/frames\.html`;
-    const messages = async (id: string) => (await sm.getScriptLog(id)).map((e) => e.message);
+    // The install's own lines aren't about runs.
+    const messages = async (id: string) => (await sm.getScriptLog(id))
+      .filter((e) => e.source !== 'add').map((e) => e.message);
     // Order isn't fixed: a frame's script can start before the page's.
     await expect.poll(() => messages(ids[B_ONLY]!)).toEqual([
       expect.stringMatching(new RegExp(String.raw`^Started in an iframe at http://localhost:\d+/frames/frame-b\.html on ${PAGE}$`)),

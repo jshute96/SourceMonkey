@@ -29,6 +29,7 @@ import { dlog } from '../debug-log.js';
 import {
   createCollection,
   describeError,
+  emitInitialLoadLog,
   getCollections,
   refreshCollection,
   setScriptsEnabled,
@@ -573,6 +574,10 @@ export async function registerLocalCopy(
   const refreshed = await refreshCollection(collection.id);
   const row = refreshed?.scripts.find((s) => s.relativePath === fileName);
   if (!row) throw new Error(COPY_NOT_FOUND_AFTER_REFRESH);
+  // A new copy is an install, so its Log starts with one. A row that was
+  // already listed (a replaced copy, or one a new collection's own add
+  // scanned in and logged) has its Log already.
+  if (!collection.scriptIds.includes(row.id)) await emitInitialLoadLog(row, true);
   // Without its bodies: the page only needs which row it is.
   return { script: withoutBodies(await enableCopy(row)), collection: refreshed?.collection ?? collection };
 }

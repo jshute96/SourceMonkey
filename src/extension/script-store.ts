@@ -131,8 +131,8 @@ import {
   mayUseReservedName,
   RESERVED_COLLECTION_NAME,
 } from './collection-display.js';
-import { appendScriptLog, forgetScriptLogs, type LogLevel } from './script-log.js';
-import { displayLocation, stripSriFragment, type LoadState } from '../script-display.js';
+import { appendScriptLog, forgetScriptLogs, type AppendLogInput, type LogLevel } from './script-log.js';
+import { displayLocation, formatBytes, stripSriFragment, type LoadState } from '../script-display.js';
 import { setRefreshError, pruneRefreshErrors } from './refresh-error.js';
 import {
   mapWithConcurrency,
@@ -163,6 +163,7 @@ import {
   type ScriptMeta,
   type ScriptStatus,
   setScriptError,
+  type StartupLog,
   type StoredScript,
   validateHeader,
 } from '../script-build.js';
@@ -249,6 +250,31 @@ export function loadStateLogEntry(
     return { level: 'warning', state: 'refresh-failed', message: `Refresh failed: ${script.refreshError}` };
   }
   return null;
+}
+
+// Map a StartupLog level (page-console-flavored: log/info/warn/error)
+// to the per-script LogEntry level (info/warning/error). 'log' and
+// 'info' both land as 'info' because the Log tab doesn't render a
+// separate 'log' level.
+function startupLogLevelToLogLevel(level: StartupLog['level']): 'info' | 'warning' | 'error' {
+  if (level === 'warn') return 'warning';
+  if (level === 'error') return 'error';
+  return 'info';
+}
+
+// A `StartupLog` as the Log tab's own entry shape. Every replay path —
+// the new-content one in `emitScriptOutcomeLog`, the once-per-session
+// one in `ensureStartupLogsInLogTab` and the add path's
+// `emitInitialLoadLog` — goes through here so a field added
+// to StartupLog can't reach one of them and not the others. `location`
+// is exactly such a field.
+export function startupLogEntry(sl: StartupLog): AppendLogInput {
+  return {
+    level: startupLogLevelToLogLevel(sl.level),
+    source: 'parser',
+    message: sl.message,
+    ...(sl.location ? { location: sl.location } : {}),
+  };
 }
 
 // Log lines for local stand-ins that started, stopped, or changed on
@@ -1577,17 +1603,15 @@ async function createLocationCollection(
   if (!created) return null;
   const { id, seed } = created;
   const refreshed = await refreshCollection(id, { adding: true });
-  // The updater-driven refresh paths already emit per-script Log
-  // entries when a script's load state goes bad. This initial-add path
-  // bypasses the updater, so anything that lands already broken would
-  // otherwise have an empty Log tab. Emit once per non-OK script here
-  // so the user can always click the row's badge and read what went
-  // wrong. Awaited so the loglevel sentinel write lands before the
-  // caller's `getAllMaxLogLevels` read — otherwise the first paint of
-  // the row would briefly show OK and only flip on the storage-change
-  // listener.
+  // The updater-driven refresh paths write their own per-script Log
+  // entries. This initial-add path bypasses the updater, so each new
+  // script's install line, failure and warnings are written here (see
+  // `emitInitialLoadLog`). Awaited so the loglevel sentinel write
+  // lands before the caller's `getAllMaxLogLevels` read — otherwise
+  // the first paint of the row would briefly show OK and only flip on
+  // the storage-change listener.
   if (refreshed) {
-    await Promise.all(refreshed.scripts.map(emitInitialLoadLog));
+    await Promise.all(refreshed.scripts.map((s) => emitInitialLoadLog(s, true)));
   }
   return { kind: 'newCollection', collection: refreshed?.collection ?? seed };
 }
@@ -1886,7 +1910,7 @@ async function addScriptToContainer(
     throw err;
   }
   if (refreshed) {
-    await Promise.all(refreshed.scripts.map(emitInitialLoadLog));
+    await Promise.all(refreshed.scripts.map((s) => emitInitialLoadLog(s, s.id === scriptId)));
   }
   const finalCollection = refreshed?.collection ?? nextContainer;
   if (isNew) return { kind: 'newCollection', collection: finalCollection };
@@ -2043,29 +2067,52 @@ export async function moveScript(
   }
 }
 
-// Copy a freshly-added script's load failure — and any local stand-in
-// it picked up — into its Log tab. (Named for what it does now: it
-// also runs for a perfectly healthy script that resolved a stand-in.)
+// Write a freshly-added script's first Log lines: the install itself,
+// any local stand-in it picked up, its load failure, and its parse-time
+// warnings.
 //
 // The updater-driven refresh paths do this themselves; the add path
-// bypasses the updater, so without this a script that lands broken on
-// its very first load would show a red badge over an empty Log, and a
-// script running a local file in place of a declared URL would never
-// have said so.
+// bypasses the updater, so without this a newly installed script would
+// start with an empty Log: no record of the install, a red badge with
+// nothing to click through to, and header warnings that only the page
+// console ever showed.
 //
-// Plain append. Adding a single file to an *existing* container
-// refreshes every sibling, and we run over all of them — so a sibling
+// Adding a single file to an *existing* container refreshes every
+// sibling, and we run over all of them with `installed` false for the
+// siblings. Those get only the stand-in and failure lines: a sibling
 // that is still broken logs that again. It was genuinely re-read, so
 // saying so is honest, and the add path is a deliberate user action
-// rather than something that fires on its own.
-async function emitInitialLoadLog(script: StoredScript): Promise<void> {
+// rather than something that fires on its own. They weren't installed
+// now, and their content didn't change, so they get no install line or
+// parser restatement.
+export async function emitInitialLoadLog(script: StoredScript, installed: boolean): Promise<void> {
+  const failure = loadStateLogEntry(script);
+  if (installed) {
+    // No size when nothing was fetched: such a row's `size` is null.
+    const size = script.size != null ? ` (${formatBytes(script.size)})` : '';
+    // `state: 'ok'` only when it loaded: an invalid row's failure line
+    // below carries its state, and an OK beside it would contradict it.
+    await appendScriptLog(script.id, {
+      level: 'info',
+      ...(failure ? {} : { state: 'ok' as const }),
+      source: 'add',
+      message: `Installed${size}`,
+    });
+  }
   // `undefined` prior: everything this row loaded is news at add time.
   for (const entry of localFileLogMessages(undefined, script)) {
     await appendScriptLog(script.id, { ...entry, source: 'add' });
   }
-  const entry = loadStateLogEntry(script);
-  if (!entry) return;
-  await appendScriptLog(script.id, { ...entry, source: 'add' });
+  if (failure) await appendScriptLog(script.id, { ...failure, source: 'add' });
+  // After the failure, unlike a refresh (which stops there): a row that
+  // is invalid on a failed `@require` still has a header whose warnings
+  // hold, and at install time they are part of what the user is asking
+  // about.
+  if (installed) {
+    for (const entry of script.startupLogs ?? []) {
+      await appendScriptLog(script.id, startupLogEntry(entry));
+    }
+  }
 }
 
 // A row with no name that one can be inferred for: a user-created

@@ -40,6 +40,7 @@ import {
   getCollectionWithScriptMeta,
   loadStateLogEntry,
   localFileLogMessages,
+  startupLogEntry,
   refreshAllCollections,
   refreshScript,
   refreshCollection,
@@ -49,7 +50,6 @@ import {
   type ParseCheckMode,
   type RefreshBatch,
   type ScriptMeta,
-  type StartupLog,
   type StoredScript,
   type StoredCollection,
 } from './script-store.js';
@@ -839,8 +839,8 @@ export function emitScriptOutcomeLog(
     // appear AFTER the "Loaded new content" line so it's clear which
     // version the warning belongs to. A dependency-only change too: the
     // line above starts the badge over, and the header's warnings still
-    // hold (a row that was invalid on a failed `@require` never logged
-    // them at all).
+    // hold (a row that was invalid on a failed `@require` didn't log
+    // them on any refresh while it stayed so).
     for (const entry of next.startupLogs ?? []) {
       logScriptEvent(scriptId, startupLogEntry(entry));
     }
@@ -938,30 +938,6 @@ function hasReportableOutcome(
 function recoveryMessage(prior: ScriptMeta): string {
   if (prior.status === 'invalid') return 'Loads cleanly again (was invalid)';
   return 'Refresh succeeded again (collection is reachable)';
-}
-
-// Map a StartupLog level (page-console-flavored: log/info/warn/error)
-// to the per-script LogEntry level (info/warning/error). 'log' and
-// 'info' both land as 'info' because the Log tab doesn't render a
-// separate 'log' level.
-function startupLogLevelToLogLevel(level: StartupLog['level']): 'info' | 'warning' | 'error' {
-  if (level === 'warn') return 'warning';
-  if (level === 'error') return 'error';
-  return 'info';
-}
-
-// A `StartupLog` as the Log tab's own entry shape. Both replay paths —
-// the new-content one in `emitScriptOutcomeLog` and the once-per-session
-// one in `ensureStartupLogsInLogTab` — go through here so a field added
-// to StartupLog can't reach one of them and not the other. `location`
-// is exactly such a field.
-function startupLogEntry(sl: StartupLog): AppendLogInput {
-  return {
-    level: startupLogLevelToLogLevel(sl.level),
-    source: 'parser',
-    message: sl.message,
-    ...(sl.location ? { location: sl.location } : {}),
-  };
 }
 
 // Sentinel key in chrome.storage.session that records "we've already

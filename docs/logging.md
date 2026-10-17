@@ -246,12 +246,17 @@ still drives the Log-tab mirror.
 
 ### Mirror to the Log tab
 
-When the refresh pipeline records a "Loaded new content" entry for a
-script (see `emitScriptOutcomeLog` in `src/extension/script-updater.ts`), it
-also walks `script.startupLogs` and appends one Log-tab entry per
-diagnostic, with `source: 'parser'`. Result: every persisted version
-of a script lands one diagnostic row immediately after its load row,
-regardless of how many times the SW restarts in between.
+- When the refresh pipeline records a "Loaded new content" entry for
+  a script (see `emitScriptOutcomeLog` in
+  `src/extension/script-updater.ts`), it also walks
+  `script.startupLogs` and appends one Log-tab entry per diagnostic,
+  with `source: 'parser'`.
+- An install does the same after its `Installed` row (and after its
+  load failure, if any), in `emitInitialLoadLog`
+  (`src/extension/script-store.ts`).
+- Result: every persisted version of a script lands one diagnostic
+  row right after its load row, regardless of how many times the SW
+  restarts in between.
 
 ### Boot replay
 

@@ -142,9 +142,9 @@ Load pipeline (service-worker side, never carries a `tabId`):
 | --- | --- | --- |
 | `manual-refresh` | `emitScriptOutcomeLog` | The user clicked Refresh / Refresh All. |
 | `background-refresh` | same | An opportunistic check, triggered by a page navigation. |
-| `add` | `emitInitialLoadLog` | Failed on its first load, when the script was added. |
+| `add` | `emitInitialLoadLog` | The script was installed: the install line, and a failure on its first load. |
 | `extension-startup` | `ensureLoadStateInLogTab`, `ensureOutdatedInLogTab` | Restated after a browser restart — see below. |
-| `parser` | `ensureStartupLogsInLogTab`, and the refresh paths | Parse-time diagnostics from `script.startupLogs`: when new content lands, restated on a manual no-change refresh, and replayed at boot. |
+| `parser` | `ensureStartupLogsInLogTab`, the refresh paths, and `emitInitialLoadLog` | Parse-time diagnostics from `script.startupLogs`: at install, when new content lands, restated on a manual no-change refresh, and replayed at boot. |
 | `version-probe` | `probeOneScript` | An `@updateURL` / `@downloadURL` elsewhere declares a newer `@version`. |
 
 Registration:
@@ -498,9 +498,22 @@ tracked in `TODO.md`.
       [injection.md](injection.md#rejected-registrations).
 - **Add** (`emitInitialLoadLog` in
   `src/extension/script-store.ts`, source `add`):
+  - `Installed (<size>)` (info) for each newly installed script, with
+    `state: 'ok'` unless it landed broken. No size when nothing could
+    be fetched.
+    A new local copy (`registerLocalCopy` in
+    `src/extension/local-copy.ts`) counts as an install; replacing one
+    doesn't.
   - The same load-failure entry, for a script that lands broken on its
-    very first load. The add path bypasses the updater, so without
-    this a brand-new INVALID row would have an empty Log.
+    very first load.
+  - Its parse-time diagnostics (source `parser`), after the failure if
+    there is one: a row invalid on a failed `@require` still has
+    header warnings that hold.
+  - The add path bypasses the updater, so without this a new script
+    would start with an empty Log.
+  - Adding a file to an existing container re-reads its siblings too.
+    They get only the failure entry, if still broken: no install line
+    or parser rows, since they weren't installed and didn't change.
 - **Boot replay** (`replayScriptLogsAtBoot`, source `extension-startup`):
   - The same load-failure entry, restated once per Chrome session for
     any row that is *still* broken. `chrome.storage.session` is wiped
@@ -518,10 +531,11 @@ tracked in `TODO.md`.
     finds nothing newer, or is skipped as still-fresh. See
     [updates.md](updates.md).
 - **Parser** (`extractStartupLogs` in `src/script-build.ts`, replayed
-  by `emitScriptOutcomeLog` in `src/extension/script-updater.ts`):
+  by `emitScriptOutcomeLog` in `src/extension/script-updater.ts` and
+  `emitInitialLoadLog` in `src/extension/script-store.ts`):
   - `Ignoring unsupported @grant <names>` (warning) — emitted
     once per loaded content version, immediately after the
-    `Loaded new content` row. Detection happens at parse time and is
+    `Installed` or `Loaded new content` row. Detection happens at parse time and is
     persisted on `StoredScript.startupLogs`, so SW restarts don't
     re-fire the row. Also mirrored into the page DevTools console via
     the wrapper's [startup-log channel](logging.md#page-console-startup-logs)
