@@ -15,14 +15,14 @@ skill in [`.claude/skills/corpus-testing/`](../../.claude/skills/corpus-testing/
 
 | File | In git | Contents | Written by | Read by |
 |------|:------:|----------|------------|---------|
-| `corpus.json` | yes | One record per script: its GreasyFork `listing` stats, plus test findings | `add-scripts.mjs` (listings), `record-results.mjs` (findings) | every tool |
+| `corpus.json` | yes | One record per script (its GreasyFork `listing` stats, plus test findings), and the hand-added tag definitions | `add-scripts.mjs` (listings), `record-results.mjs` (findings, tag definitions) | every tool |
 | `files/` | no | Downloaded scripts and their `@require` / `@resource` files (~270 MB) | `download-scripts.mjs` | `build-db.mjs`, `record-results.mjs` |
 | `download-report.json` | no | Last download run's counts and failures | `download-scripts.mjs` | you |
 | `corpus.db` | no | SQLite database of listings, parsed headers, dependencies and findings; rebuilt from scratch each run | `build-db.mjs` | `render-analysis.mjs`, ad hoc SQL |
 | `analysis.sql` | yes | The queries behind `analysis.html` | you | `render-analysis.mjs` |
 | `analysis.html` | yes | Corpus statistics report | `render-analysis.mjs` | you |
 | `results.html` | yes | Static page that reads `corpus.json` and shows a sortable, filterable table of every script's validity, test status, tags and notes | you (hand-written) | you, in a browser |
-| `corpus-help.js` | yes | One-sentence description of each test status, n/a reason, fail blame and tag, shown as its tooltip | you | `results.html`, `show-on-GreasyFork.user.js` |
+| `corpus-help.js` | yes | One-sentence description of each test status, n/a reason, fail blame and built-in tag, shown as its tooltip | you | `results.html`, `show-on-GreasyFork.user.js` |
 
 `corpus.json` is the source of truth. Everything not in git can be rebuilt
 from it.
@@ -146,8 +146,9 @@ node $A --add --label-all wiki --label-with-rank --all-pages \
 
 ## Listing fields
 
-Each record is keyed by GreasyFork's integer script ID. Its `listing` block
-holds:
+`corpus.json` holds `tags`, the [hand-added tag](#hand-added-tags)
+definitions, and `scripts`, a record per script keyed by GreasyFork's
+integer script ID. Each record's `listing` block holds:
 
 | Field | Source in the API's script data |
 |-------|---------------------------------|
@@ -345,7 +346,8 @@ node $R show 14178                     # one record, plus its path under files/
 node $R set 14178 --test pass --note "Redirect links rewritten on a bing.com search"
 node $R set 14178 --test fail --blame sourcemonkey --note-file /tmp/why.md
 node $R set 14178 --test n/a --reason requires-login --note "Every matched page needs an account"
-node $R set 14178 --tag needs-GM_cookie
+node $R tag add needs-webgl "Draws with WebGL, which the test browser lacks"   # define a tag before using it
+node $R set 14178 --tag needs-webgl
 node $R set 14178 --replace-note 1 --note "Better wording"   # notes number from 1, in the order show lists them
 node $R set 14178 --remove-note 2
 ```
@@ -379,7 +381,7 @@ Beside `listing`, a record can hold:
 | `sites` | `validate` | What its `@match` / `@include` lines target, for the results page: a site, a host pattern, a regex, or `*` |
 | `valid` | `validate` | The latest offline verdict: `status` (`ok` / `invalid` / `tool error`), `error`, `warnings` (`warn`-level diagnostics only), derived `tags`, `date`, `version` |
 | `test` | `set --test` | The latest run on the target site: `status`, `reason` or `blame`, `date`, `version` |
-| `tags` | `set --tag` / `--untag` | Hand-added labels |
+| `tags` | `set --tag` / `--untag`, `tag rename` / `merge` | [Hand-added tags](#hand-added-tags), each defined in `corpus.json`'s `tags` or built in |
 | `notes` | `set --note` | `{ date, version, text }` list, oldest first; `text` is markdown. `--replace-note` / `--remove-note` fix one |
 
 - **Test statuses:**
@@ -478,19 +480,28 @@ support but that don't make it invalid:
 - `ignored-header:@<tag>`: a header another manager acts on and SourceMonkey
   ignores ([supported-headers.md](../../docs/supported-headers.md)).
 
+### Hand-added tags
+
 Hand-added `tags` are for what only running the script shows, such as an
-unsupported feature the checks can't see. Give a new one a description in
-`corpus-help.js`, which `results.html` and `show-on-GreasyFork.user.js` show
-as the tag's tooltip. A tag names a problem that still exists: once a
-SourceMonkey gap is fixed and its scripts re-tested, the tag comes off them
-and out of `corpus-help.js`.
+unsupported feature the checks can't see.
+
+- Each is defined in `corpus.json`'s `tags`, with a one-sentence description
+  that `results.html` and `show-on-GreasyFork.user.js` show as its tooltip.
+- `set --tag` takes only a defined tag, or a built-in one (from
+  `corpus-help.js`) as what made the test fail.
+- `record-results.mjs tag` manages the definitions: `list`, `add`, `update`
+  (the description), `rename`, `merge` (one tag's uses onto another) and
+  `remove`. It refuses built-in names.
+- A tag names a problem that still exists: once a SourceMonkey gap is fixed
+  and its scripts re-tested, the tag comes off them, and `tag remove` drops
+  its definition.
 
 ### Parallel writers
 
-Several agents can record results at once:
+Multiple agents can record results at once:
 
 - Every write re-reads `corpus.json` under a lock (`corpus.json.lock`),
-  changes only the named record, and replaces the file by rename.
+  changes only what the command names, and replaces the file by rename.
 - Readers never see a half-written file, and concurrent writes don't lose each
   other's changes.
 - A lock left by a crashed writer is broken after 30 seconds.

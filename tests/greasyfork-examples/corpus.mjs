@@ -14,6 +14,9 @@ import { fileURLToPath } from 'node:url';
 /** The corpus record file: the GreasyFork listing plus every test finding. */
 export const CORPUS_JSON = fileURLToPath(new URL('./corpus.json', import.meta.url));
 
+/** Descriptions of the statuses and built-in tags the tools produce. */
+export const CORPUS_HELP_JS = fileURLToPath(new URL('./corpus-help.js', import.meta.url));
+
 /**
  * Handle `--help` / `-h` for a tool: when `argv` has either, print the
  * comment block at the top of the tool's source (its usage docs, so the two
@@ -36,9 +39,46 @@ export function helpText(moduleUrl) {
   return `${lines.join('\n').trim()}\n`;
 }
 
-/** Read the corpus: `{ "<id>": record }`. */
+/**
+ * Read the corpus: `{ tags: { name: description }, scripts: { "<id>": record } }`.
+ * `tags` defines the hand-added tags; the built-in ones are in corpus-help.js.
+ */
 export async function readCorpus(file = CORPUS_JSON) {
-  return JSON.parse(await readFile(file, 'utf8'));
+  const corpus = JSON.parse(await readFile(file, 'utf8'));
+  if (!corpus || typeof corpus.scripts !== 'object' || typeof corpus.tags !== 'object') {
+    throw new Error(`${file} is not a corpus file: it needs "tags" and "scripts" objects`);
+  }
+  return corpus;
+}
+
+/** An empty corpus, as a new corpus file starts. */
+const emptyCorpus = () => ({ tags: {}, scripts: {} });
+
+/**
+ * Read corpus-help.js: `{ test, detail, tag }`. It's a script for results.html,
+ * holding one strict-JSON object, so the object is parsed out of it.
+ */
+export function readCorpusHelp(file = CORPUS_HELP_JS) {
+  const text = readFileSync(file, 'utf8');
+  const start = text.indexOf('{', text.indexOf('CORPUS_HELP ='));
+  return JSON.parse(text.slice(start, text.lastIndexOf('}') + 1));
+}
+
+/**
+ * Whether `tag` is built in: one corpus-help.js describes, by its own entry
+ * or a `prefix:*` template. The tools produce these, so hand-added tags can't
+ * redefine them.
+ */
+export function isBuiltinTag(help, tag) {
+  return builtinTagEntry(help, tag) !== null;
+}
+
+/** The corpus-help.js entry that describes `tag` (its own or `prefix:*`), or null. */
+export function builtinTagEntry(help, tag) {
+  if (Object.hasOwn(help.tag, tag)) return tag;
+  const colon = tag.indexOf(':');
+  const pattern = colon > 0 ? tag.slice(0, colon) + ':*' : null;
+  return pattern && Object.hasOwn(help.tag, pattern) ? pattern : null;
 }
 
 /** The label for GreasyFork's top-installs listing, ranked by installs when last read. */
@@ -72,7 +112,7 @@ export function setLabel(record, label, rank) {
  */
 export function listingRows(corpus) {
   const rank = (row) => row.rank ?? Infinity;
-  return Object.entries(corpus)
+  return Object.entries(corpus.scripts)
     .filter(([, record]) => record.listing)
     .map(([id, record]) => ({ id: Number(id), ...record.listing, rank: labelRank(record, TOP_LABEL) ?? null }))
     .sort((a, b) => rank(a) - rank(b) || a.id - b.id);
@@ -134,7 +174,7 @@ export async function updateCorpus(file, mutate) {
     }
   }
   try {
-    const corpus = (await exists(file)) ? await readCorpus(file) : {};
+    const corpus = (await exists(file)) ? await readCorpus(file) : emptyCorpus();
     const result = await mutate(corpus);
     await writeCorpus(file, corpus);
     return result;
@@ -144,9 +184,12 @@ export async function updateCorpus(file, mutate) {
 }
 
 async function writeCorpus(file, corpus) {
+  const tags = {};
+  for (const name of Object.keys(corpus.tags).sort()) tags[name] = corpus.tags[name];
   // Integer-like keys enumerate in numeric order, so records stay sorted by id.
-  const out = {};
-  for (const [id, record] of Object.entries(corpus)) out[id] = canonicalRecord(record);
+  const scripts = {};
+  for (const [id, record] of Object.entries(corpus.scripts)) scripts[id] = canonicalRecord(record);
+  const out = { tags, scripts };
   const tmp = `${file}.tmp-${process.pid}-${randomBytes(4).toString('hex')}`;
   await writeFile(tmp, JSON.stringify(out, null, 2) + '\n', 'utf8');
   await rename(tmp, file);

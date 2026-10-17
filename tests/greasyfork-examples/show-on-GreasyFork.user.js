@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SourceMonkey test status on Greasy Fork
 // @namespace    https://github.com/jshute96/SourceMonkey
-// @version      0.6.2
+// @version      0.7.1
 // @description  Shows SourceMonkey's corpus test results next to each script's stats on Greasy Fork
 // @match        https://greasyfork.org/*
 // @grant        GM_xmlhttpRequest
@@ -32,7 +32,7 @@
   const CORPUS_URL = BASE + 'corpus.json';
   const HELP_URL = BASE + 'corpus-help.js';
   // Bump to rebuild the stored copies, after changing what they hold.
-  const CACHE_FORMAT = 5;
+  const CACHE_FORMAT = 6;
 
   const log = (...args) => console.log('[show-on-GreasyFork]', ...args);
 
@@ -87,8 +87,8 @@
     }
   `);
 
-  // The fields the panel uses, keyed by script ID, with short names to keep
-  // the stored copy small. A field with no value is left out: an
+  // The corpus's tag definitions, and for its scripts, the fields the panel
+  // uses, keyed by script ID, with short names to keep the stored copy small. A field with no value is left out: an
   // `undefined` would make SourceMonkey store the whole object in its
   // larger typed form.
   //   e:  validation error, only for an invalid script
@@ -101,7 +101,7 @@
   function summarize(corpus) {
     const entries = {};
     const put = (o, key, value) => { if (value != null) o[key] = value; };
-    for (const [id, rec] of Object.entries(corpus)) {
+    for (const [id, rec] of Object.entries(corpus.scripts)) {
       const o = {};
       const invalid = rec.valid?.status === 'invalid';
       if (invalid) {
@@ -121,7 +121,7 @@
       if (rec.tags?.length) o.g = rec.tags;
       entries[id] = o;
     }
-    return entries;
+    return { tags: corpus.tags, scripts: entries };
   }
 
   // The response to a request, rejecting with a short message for the
@@ -182,7 +182,9 @@
 
   function loadCorpus() {
     return cachedLoad('corpus', CORPUS_URL, 'json', (corpus) => {
-      if (!corpus || typeof corpus !== 'object') throw new Error('corpus.json is not valid JSON.');
+      if (typeof corpus?.scripts !== 'object' || typeof corpus.tags !== 'object') {
+        throw new Error('corpus.json is not in the corpus format.');
+      }
       return summarize(corpus);
     });
   }
@@ -307,8 +309,7 @@
       if (rec.v && pageVersion && rec.v !== pageVersion) when += `, older version ${rec.v}`;
       line(body, when, 'smts-muted');
     }
-    // Tags name what went wrong; on a pass they're only quirks.
-    const names = [...(rec.vg || []), ...(rec.t && rec.t !== 'pass' ? rec.g || [] : [])];
+    const names = [...(rec.vg || []), ...(rec.g || [])];
     if (names.length) {
       const tags = el('div', 'smts-tags');
       for (const name of names) {
@@ -353,7 +354,8 @@
   const targets = findTargets();
   if (!targets.length) return;
   Promise.all([loadCorpus(), loadHelp()]).then(
-    ([map, help]) => ({ map, help }),
+    // Hand-added tags are defined in the corpus; corpus-help.js has the built-in ones.
+    ([corpus, help]) => ({ map: corpus.scripts, help: { ...help, tag: { ...corpus.tags, ...help.tag } } }),
     (error) => ({ error }),
   ).then((result) => {
     // Without results, one panel says so, on the first script, rather

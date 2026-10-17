@@ -165,20 +165,23 @@ with numbers where there are any. Bullets for separate facts, prefixed
 ### Tags
 
 Tags mark a reason that recurs across scripts. Reuse an existing one when
-it fits; the list, with descriptions, is in
-`tests/greasyfork-examples/corpus-help.js`. For example:
+it fits; `record-results.mjs tag list` lists them with descriptions. For
+example:
 
 - `trusted-types`: fails where the site enforces Trusted Types.
 - `http-only-match`: matches only `http://` on a site that now redirects
   to https.
 
 Tags name problems that still exist. Once a SourceMonkey gap is fixed and
-its scripts re-tested, its tag comes off them and out of `corpus-help.js`;
+its scripts re-tested, its tag comes off them and its definition goes;
 the notes keep the history.
 
-A new tag is fine when nothing fits. Keep it short and kebab-case, and
-report it with a one-sentence description, so it can be added to
-`results.html`.
+A new tag is fine when nothing fits. Define it before using it, short and
+kebab-case, with a one-sentence description, and report it:
+
+```sh
+node $R tag add needs-webgl "Draws with WebGL, which the test browser lacks"
+```
 
 ## Finishing
 

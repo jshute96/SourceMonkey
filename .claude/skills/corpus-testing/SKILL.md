@@ -22,7 +22,7 @@ Where things are:
 - The `SourceMonkey-dev` skill: how to drive `sm-dev` itself.
 - The `SourceMonkey-friction` skill: log tool friction when the work is done.
 - `results.html` (served by `serve-results.mjs`, or any static server for
-  the folder): the results table, with each tag's description from `corpus-help.js`.
+  the folder): the results table, with each tag's description as its tooltip.
 
 Every `.mjs` tool takes `--help`.
 
@@ -116,7 +116,7 @@ In each agent's prompt:
 - Tell it to record its own results with `record-results.mjs` (safe to
   run in parallel).
 - Tell it not to edit results.html, TODO.md or the friction log, but to
-  report new tags, SourceMonkey gaps and friction back to you to merge.
+  report new tags, SourceMonkey gaps and friction back to you.
 
 Keep notes as reports arrive (a scratchpad file), since there are many.
 
@@ -126,11 +126,11 @@ When every agent has reported:
 
 1. **Check completeness.** Every ID has a `test`; `scripts/sm-dev list`
    shows no leftover runs; `git status` shows no stray files.
-2. **Merge duplicate tags.** Agents invent tags independently; two names for
+2. **Merge duplicate tags.** Agents define tags independently; two names for
    one problem (`idle-after-load` / `onload-after-idle`) become one with
-   `set ID --untag old --tag new`.
-3. **Describe new tags** in `tests/greasyfork-examples/corpus-help.js`, one
-   sentence each. Keep its object strict JSON.
+   `tag merge old new`.
+3. **Check new tags' descriptions** with `tag list`, and fix one with
+   `tag update NAME DESCRIPTION`.
 4. **Check blames against each other.** One agent's `sourcemonkey` blame can
    contradict another's evidence (for example our cross-manager tests showing
    Tampermonkey behaves the same). Re-record with `set ID --test fail --blame
@@ -168,7 +168,7 @@ For each one:
   new note is appended, so say what changed: "Re-tested after <commit>
   (<fix>): now passes; ..." or "still fails: ...".
 - Untag the fixed gap's tag (`--untag`), and once no script carries it,
-  remove its entry from `tests/greasyfork-examples/corpus-help.js`.
+  drop its definition with `tag remove`.
 - A script can fail for a second reason once the first is gone. Record that
   as its own failure, with its own blame.
 

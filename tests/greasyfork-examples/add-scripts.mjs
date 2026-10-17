@@ -420,7 +420,7 @@ async function show(opts, ids, corpus, known) {
 async function add(opts, ids, corpus, known) {
   const rows = await addableRows(ids, corpus, known);
   const plan = labelPlan(opts, ids);
-  const { added, labeled } = await updateCorpus(opts.corpus, (latest) => {
+  const { added, labeled } = await updateCorpus(opts.corpus, ({ scripts: latest }) => {
     let count = 0;
     for (const row of rows) {
       // Another writer may have added it since we read the corpus.
@@ -450,7 +450,8 @@ async function main() {
     for (const id of ids) console.log(id);
     return;
   }
-  const corpus = await readCorpus(opts.corpus);
+  // The script records, keyed by ID; tag definitions don't matter here.
+  const corpus = (await readCorpus(opts.corpus)).scripts;
   if (opts.mode === 'compare') await compare(ids, corpus, known);
   else if (opts.mode === 'show') await show(opts, ids, corpus, known);
   else await add(opts, ids, corpus, known);

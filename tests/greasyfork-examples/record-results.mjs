@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Record individual facts about one corpus script at a time in corpus.json, as
 // they're learned: the result of trying it on its target site, a tag, a dated
-// note. It doesn't compute anything over the corpus; the one bulk command is
-// `validate`, which records the corpus validator's verdict for every script.
+// note. It also defines the hand-added tags. It doesn't compute anything over
+// the corpus; the one bulk command is `validate`, which records the corpus
+// validator's verdict for every script.
 //
 // This is the only tool that writes findings. Every write goes through
 // updateCorpus(), so parallel agents can record results at once.
@@ -31,10 +32,24 @@
 //                              --replace-note N  the note replaces note N (from 1, in the
 //                                           order show lists them) instead of adding one
 //                              --remove-note N   drop note N (from 1)
-//                              --tag T / --untag T  (repeatable)
+//                              --tag T / --untag T  (repeatable); T must be
+//                                           defined (`tag add`) or built in
 //                              --version V  default: the @version of the copy in files/ now
 //                              --date D     default: today (YYYY-MM-DD)
+//   tag list                 the built-in tags, then the hand-added ones, each
+//                            with how many scripts carry it and its description,
+//                            then any tag in use that has no definition
+//   tag add NAME DESCRIPTION define a new hand-added tag (short, kebab-case)
+//   tag update NAME DESCRIPTION  change a tag's description
+//   tag rename OLD NEW       rename a tag and its uses; NEW must not exist yet
+//   tag merge FROM INTO      move FROM's uses onto INTO (an existing tag) and
+//                            drop FROM's definition
+//   tag remove NAME          drop a tag's definition, once no script uses it
 //   help                     print this (so does --help or -h, anywhere)
+//
+// Built-in tags are the ones `validate` derives, described in corpus-help.js.
+// `set --tag` can give one to a test (as what made it fail), but `tag` can't
+// define or change them.
 //
 // Global, before or after the command: --corpus PATH (default corpus.json here),
 // --root PATH (download root).
@@ -50,7 +65,8 @@ import { resolveGrants } from '../../dist/gm-api-catalog.js';
 import { describeDiagnostic } from '../../dist/diagnostic-location.js';
 import { matchPatternProblem } from '../../dist/url-match.js';
 import {
-  CORPUS_JSON, checkRoot, findExisting, labelRank, listingRows, patternTarget, printHelp, readCorpus, updateCorpus,
+  CORPUS_JSON, builtinTagEntry, checkRoot, findExisting, isBuiltinTag, labelRank, listingRows, patternTarget, printHelp, readCorpus,
+  readCorpusHelp, updateCorpus,
 } from './corpus.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -96,6 +112,7 @@ const COMMAND_OPTIONS = {
   'show': [],
   'list': ['untested', 'test', 'valid', 'tag', 'label', 'limit'],
   'set': ['test', 'reason', 'blame', 'note', 'note-file', 'replace-note', 'remove-note', 'tag', 'untag', 'version', 'date'],
+  'tag': [],
 };
 
 function parseArgs(command, argv) {
@@ -236,11 +253,11 @@ async function importValidation(opts, results, unchecked = []) {
   let changed = 0;
   await updateCorpus(opts.corpus, (live) => {
     for (const id of unchecked) {
-      const record = live[id];
+      const record = live.scripts[id];
       if (record) { delete record.valid; delete record.sites; delete record.version; delete record.file; }
     }
     for (const [id, update] of updates) {
-      const record = live[id] ?? (live[id] = {});
+      const record = live.scripts[id] ?? (live.scripts[id] = {});
       if (update.version) record.version = update.version;
       else delete record.version;
       record.file = update.file;
@@ -293,7 +310,7 @@ async function runValidator(opts) {
  * `validate` last recorded. Undefined when it isn't downloaded or declares none.
  */
 async function downloadedVersion(opts, id) {
-  const listing = (await readCorpus(opts.corpus))[id]?.listing;
+  const listing = (await readCorpus(opts.corpus)).scripts[id]?.listing;
   if (!listing) return undefined;
   await checkRoot(opts.root);
   const file = await findExisting(opts.root, listing.script_url);
@@ -327,9 +344,16 @@ async function setFinding(opts) {
 
   const date = opts.date ?? today();
   const fileVersion = opts.version === undefined ? await downloadedVersion(opts, id) : undefined;
+  const help = opts.tag.length ? readCorpusHelp() : null;
   await updateCorpus(opts.corpus, (corpus) => {
-    const record = corpus[id];
+    const record = corpus.scripts[id];
     if (!record) throw new Error(`No script ${id} in the corpus`);
+    // Checked here, under the lock, so a tag another writer just added counts.
+    for (const tag of opts.tag) {
+      if (!Object.hasOwn(corpus.tags, tag) && !isBuiltinTag(help, tag)) {
+        throw new Error(`No tag "${tag}" is defined. Define it first with \`tag add ${tag} DESCRIPTION\`.`);
+      }
+    }
     const version = opts.version ?? fileVersion ?? record.version;
     const stamp = version ? { date, version } : { date };
     if (opts.test) {
@@ -373,7 +397,7 @@ async function show(opts) {
   const [id] = opts.positional;
   if (!/^\d+$/.test(id ?? '')) throw new Error('The show command needs a numeric script id');
   const corpus = await readCorpus(opts.corpus);
-  const record = corpus[id];
+  const record = corpus.scripts[id];
   if (!record) throw new Error(`No script ${id} in the corpus`);
   console.log(JSON.stringify(record, null, 2));
   await checkRoot(opts.root);
@@ -395,13 +419,13 @@ async function list(opts) {
   let shown = 0;
   let rows = listingRows(corpus);
   if (opts.label !== undefined) {
-    const hasLabel = (row) => corpus[row.id].labels?.some((entry) => entry.label === opts.label);
-    const rank = (row) => labelRank(corpus[row.id], opts.label) ?? Infinity;
+    const hasLabel = (row) => corpus.scripts[row.id].labels?.some((entry) => entry.label === opts.label);
+    const rank = (row) => labelRank(corpus.scripts[row.id], opts.label) ?? Infinity;
     rows = rows.filter(hasLabel).sort((a, b) => rank(a) - rank(b) || a.id - b.id);
   }
   for (const row of rows) {
     if (shown >= limit) break;
-    const record = corpus[row.id];
+    const record = corpus.scripts[row.id];
     if (opts.untested && record.test) continue;
     if (opts.test && record.test?.status !== opts.test) continue;
     if (opts.valid && record.valid?.status !== opts.valid) continue;
@@ -413,6 +437,157 @@ async function list(opts) {
       String(row.id), String(row.total_installs ?? ''), record.valid?.status ?? '-', record.test?.status ?? '-', row.name,
     ]));
     shown++;
+  }
+}
+
+// ---------- tag definitions ----------
+
+/** How many scripts carry each hand-added tag (`tags`, not validation's). */
+function tagUses(corpus) {
+  const uses = new Map();
+  for (const record of Object.values(corpus.scripts)) {
+    for (const tag of record.tags ?? []) uses.set(tag, (uses.get(tag) ?? 0) + 1);
+  }
+  return uses;
+}
+
+/**
+ * How many scripts carry each built-in tag, from validation or by hand, keyed
+ * by its corpus-help.js entry: a `prefix:*` entry counts all its tags.
+ */
+function builtinTagUses(corpus, help) {
+  const uses = new Map();
+  for (const record of Object.values(corpus.scripts)) {
+    const entries = new Set([...(record.valid?.tags ?? []), ...(record.tags ?? [])].map((tag) => builtinTagEntry(help, tag)));
+    for (const entry of entries) if (entry) uses.set(entry, (uses.get(entry) ?? 0) + 1);
+  }
+  return uses;
+}
+
+/** Print tags as a table: how many scripts carry each, its name and description. */
+function printTagTable(heading, rows) {
+  console.log(heading);
+  const width = Math.max(3, ...rows.map(([name]) => name.length));
+  console.log(`  ${'SCRIPTS'.padStart(7)}  ${'TAG'.padEnd(width)}  DESCRIPTION`);
+  for (const [name, count, text] of rows) console.log(`  ${String(count).padStart(7)}  ${name.padEnd(width)}  ${text}`);
+}
+
+/** Replace `from` with `to` in each script's hand-added tags. Returns how many changed. */
+function retag(corpus, from, to) {
+  let changed = 0;
+  for (const record of Object.values(corpus.scripts)) {
+    if (!record.tags?.includes(from)) continue;
+    record.tags = [...new Set(record.tags.map((tag) => (tag === from ? to : tag)))].sort();
+    changed++;
+  }
+  return changed;
+}
+
+const TAG_NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const scriptCount = (n) => `${n} ${n === 1 ? 'script' : 'scripts'}`;
+
+async function tagCommand(opts) {
+  const [action, ...args] = opts.positional;
+  const help = readCorpusHelp();
+  const want = (count, usage) => {
+    if (args.length !== count) throw new Error(`Usage: tag ${action}${usage && ' ' + usage}`);
+  };
+  const description = (text) => {
+    const trimmed = text.trim();
+    if (!trimmed) throw new Error('The description is empty');
+    return trimmed;
+  };
+  // A name `tag` may act on: defined in this corpus, not built in.
+  const defined = (corpus, name) => {
+    if (isBuiltinTag(help, name)) throw new Error(`The tag "${name}" is built in, described in corpus-help.js`);
+    if (!Object.hasOwn(corpus.tags, name)) throw new Error(`No tag "${name}" is defined`);
+  };
+  // A name `tag` may define.
+  const fresh = (corpus, name) => {
+    if (isBuiltinTag(help, name)) throw new Error(`The tag "${name}" is built in, described in corpus-help.js`);
+    if (!TAG_NAME.test(name)) throw new Error(`The tag name "${name}" isn't short kebab-case (like dead-asset)`);
+    if (Object.hasOwn(corpus.tags, name)) throw new Error(`The tag "${name}" is already defined`);
+  };
+
+  switch (action) {
+    case 'list': {
+      want(0, '');
+      const corpus = await readCorpus(opts.corpus);
+      const uses = tagUses(corpus);
+      const builtinUses = builtinTagUses(corpus, help);
+      printTagTable('Built-in tags (corpus-help.js):',
+        Object.entries(help.tag).map(([name, text]) => [name, builtinUses.get(name) ?? 0, text]));
+      console.log('');
+      printTagTable(`Tags defined in corpus (${path.basename(opts.corpus)}):`,
+        Object.entries(corpus.tags).map(([name, text]) => [name, uses.get(name) ?? 0, text]));
+      const missing = [...uses.keys()].filter((tag) => !Object.hasOwn(corpus.tags, tag) && !isBuiltinTag(help, tag));
+      if (missing.length) console.log(`\nIn use with no definition: ${missing.sort().join(', ')}`);
+      return;
+    }
+    case 'add': {
+      want(2, 'NAME DESCRIPTION');
+      const [name, text] = args;
+      await updateCorpus(opts.corpus, (corpus) => {
+        fresh(corpus, name);
+        corpus.tags[name] = description(text);
+      });
+      console.info(`Added tag ${name}`);
+      return;
+    }
+    case 'update': {
+      want(2, 'NAME DESCRIPTION');
+      const [name, text] = args;
+      await updateCorpus(opts.corpus, (corpus) => {
+        defined(corpus, name);
+        corpus.tags[name] = description(text);
+      });
+      console.info(`Updated tag ${name}`);
+      return;
+    }
+    case 'rename': {
+      want(2, 'OLD NEW');
+      const [from, to] = args;
+      const changed = await updateCorpus(opts.corpus, (corpus) => {
+        defined(corpus, from);
+        fresh(corpus, to);
+        corpus.tags[to] = corpus.tags[from];
+        delete corpus.tags[from];
+        return retag(corpus, from, to);
+      });
+      console.info(`Renamed tag ${from} to ${to}, on ${scriptCount(changed)}`);
+      return;
+    }
+    case 'merge': {
+      want(2, 'FROM INTO');
+      const [from, into] = args;
+      if (from === into) throw new Error('The tags to merge are the same');
+      const changed = await updateCorpus(opts.corpus, (corpus) => {
+        defined(corpus, from);
+        // INTO may be built in: a hand-added tag that turns out to be one the validator derives.
+        if (!Object.hasOwn(corpus.tags, into) && !isBuiltinTag(help, into)) throw new Error(`No tag "${into}" is defined`);
+        delete corpus.tags[from];
+        return retag(corpus, from, into);
+      });
+      console.info(`Merged tag ${from} into ${into}, on ${scriptCount(changed)}`);
+      return;
+    }
+    case 'remove': {
+      want(1, 'NAME');
+      const [name] = args;
+      await updateCorpus(opts.corpus, (corpus) => {
+        defined(corpus, name);
+        const count = tagUses(corpus).get(name);
+        if (count) {
+          throw new Error(`The tag "${name}" is still on ${scriptCount(count)}. Untag them first, or merge it into another tag.`);
+        }
+        delete corpus.tags[name];
+      });
+      console.info(`Removed tag ${name}`);
+      return;
+    }
+    default:
+      throw new Error(`${action ? `Unknown tag action "${action}"` : 'No tag action given'}. ` +
+        'Use one of: list, add, update, rename, merge, remove.');
   }
 }
 
@@ -438,6 +613,7 @@ async function main() {
     case 'set': return setFinding(opts);
     case 'show': return show(opts);
     case 'list': return list(opts);
+    case 'tag': return tagCommand(opts);
   }
 }
 

@@ -1,8 +1,10 @@
 // What the corpus's test statuses, their details (n/a reasons and fail
-// blames) and tags mean, one sentence each: the tooltips in results.html and
-// show-on-GreasyFork.user.js. Reasons and blames mirror REASONS and BLAMES in
-// record-results.mjs. Hand-added tags need an entry here to get one. A
-// `prefix:*` tag entry describes all tags `prefix:<name>` (the validator's
+// blames) and built-in tags mean, one sentence each: the tooltips in
+// results.html and show-on-GreasyFork.user.js. Reasons and blames mirror
+// REASONS and BLAMES in record-results.mjs. The built-in tags are the ones
+// `record-results.mjs validate` derives; hand-added tags are defined in
+// corpus.json instead (`record-results.mjs tag add`). A `prefix:*` tag entry
+// describes all tags `prefix:<name>` (the validator's
 // `unsupported-grant:GM_cookie`, say), with `{name}` replaced by the name.
 //
 // A script file rather than JSON so results.html can load it opened from
@@ -55,33 +57,6 @@ var CORPUS_HELP = {
     "invalid:unterminated-metadata-block": "Invalid: the metadata block is never closed. (Validation error)",
     "invalid:no-name": "Invalid: no @name. (Validation error)",
     "invalid:no-match": "Invalid: no @match or @include. (Validation error)",
-    "invalid:syntax-error": "Invalid: the script doesn't parse. (Validation error)",
-    "trusted-types": "Fails where the site enforces Trusted Types, e.g. by assigning innerHTML in the page world",
-    "connect-undeclared": "Uses GM_xmlhttpRequest with no @connect rule for a targeted site, so SourceMonkey will prompt for permission to access target sites",
-    "mutation-events": "Relies on mutation events like DOMNodeInserted, which Chrome removed in 2024",
-    "contextmenu-on-mousedown": "Expects the contextmenu event after mouseup, as on Windows. On Linux and macOS Chrome it comes on mousedown.",
-    "gm-reassign": "Assigns to a granted GM_* name (GM_xmlhttpRequest = GM.xmlHttpRequest). Works in the page world since c2dbb1f; still throws under @inject-into content, where SourceMonkey declares those names const",
-    "service-dead": "Depends on a third-party download or proxy service that no longer responds",
-    "http-only-match": "Matches only http:// on a site that now redirects to https, so it never runs on the real page in any manager",
-    "beforescriptexecute": "Relies on Firefox's beforescriptexecute event, which Chrome never fires",
-    "needs-flash": "Relies on Flash content (embed flashvars, SWF players) that browsers and sites no longer serve",
-    "needs-gm-webrequest": "Uses Tampermonkey's GM_webRequest (@webRequest), which SourceMonkey doesn't support",
-    "setclipboard-callback": "Passes a callback as GM_setClipboard's third argument, which Tampermonkey calls once the copy is done and SourceMonkey ignores",
-    "anti-tamper": "The site detects the script's changes to built-ins (comparing Object.prototype with its own clean about:blank iframes, say) and stops working, in every manager",
-    "sends-browsing-data": "Sends the URLs or contents of pages you visit to the author's server, beyond what its feature needs",
-    "openintab-data-url": "Opens a data: URL with GM_openInTab, which Tampermonkey opens and SourceMonkey refuses (it allows only http and https)",
-    "domain-moved": "Matches only a domain the site has left (like discordapp.com, now discord.com), so it never runs on the real pages",
-    "mixed-content": "Talks to a plain http:// or ws:// endpoint from an https page, which the browser blocks in every manager",
-    "shadow-dom-v0": "Uses Shadow DOM v0's createShadowRoot(), which Chrome removed in 2020, so it throws in every manager",
-    "dead-asset": "Loads an image, stylesheet or other asset from a URL that's gone (often an expired Discord attachment link), so its visible effect is missing in every manager",
-    "menu-no-callback": "Calls GM_registerMenuCommand with only a name (to show a divider like \"==== START ====\"), which Tampermonkey accepts without throwing and SourceMonkey rejects",
-    "dom-at-start": "Uses document.head or document.body at top level under @run-at document-start, before they exist; SourceMonkey runs at the true start, and Tampermonkey sometimes runs late enough to get away with it",
-    "start-late-on-reload": "Must run before DOMContentLoaded, which SourceMonkey's document-start code misses on a reload of a fast, cached page",
-    "gm-info-options": "Reads GM_info.script.options, which Tampermonkey provides and SourceMonkey doesn't",
-    "needs-site-jquery": "A page-world script that calls the site's jQuery ($), which the site no longer loads, so it throws in every manager",
-    "missed-dcl": "Does all its setup in a DOMContentLoaded listener while running at the default @run-at, after that event, so it never sets up in any manager",
-    "manager-gated": "Refuses to run unless GM_info names a specific manager or version",
-    "grant-none-override": "Declares @grant none alongside other @grant lines, so in every manager it gets no GM APIs and throws on its first GM_* call",
-    "mutation-loop": "Changes the DOM from its own MutationObserver callback each time, so the observer fires forever and the page hangs, in every manager"
+    "invalid:syntax-error": "Invalid: the script doesn't parse. (Validation error)"
   }
 };

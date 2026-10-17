@@ -242,7 +242,7 @@ async function main() {
       facts.size, facts.local_filename,
     );
     stats.scripts++;
-    insertFindings(id, corpus[id]);
+    insertFindings(id, corpus.scripts[id]);
 
     const downloaded = await readDownloaded(opts.root, row.script_url);
     if (!downloaded) { stats.missingBodies++; continue; }

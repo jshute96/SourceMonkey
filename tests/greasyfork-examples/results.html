@@ -169,7 +169,8 @@ const cls = (s) => 's-' + s.replace(/[^a-z]/g, '');
 // ---------- Tooltips ----------
 
 // What each status, detail and tag means: the shared ones from
-// corpus-help.js, plus the filter choices only this page has.
+// corpus-help.js, plus the filter choices only this page has. show() adds
+// the corpus's own tag definitions.
 const HELP = {
   valid: {
     'ok': 'Valid: SourceMonkey would install it. It may still have validation warnings.',
@@ -365,7 +366,9 @@ function selectTitle(select) {
 }
 
 function show(corpus, source) {
-  const data = Object.entries(corpus).filter(([, r]) => r.listing).map(([id, r]) => rowData(id, r));
+  // Hand-added tags are defined in the corpus; corpus-help.js has the built-in ones.
+  HELP.tag = { '(any)': HELP.tag['(any)'], ...corpus.tags, ...CORPUS_HELP.tag };
+  const data = Object.entries(corpus.scripts).filter(([, r]) => r.listing).map(([id, r]) => rowData(id, r));
   rows = data.map((d) => ({ d, tr: rowElement(d), notesTr: null }));
 
   const count = (pred) => data.filter(pred).length;
