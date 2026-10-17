@@ -108,6 +108,10 @@ with content up to a cap, then the script area scrolls.
   no frame, so it would have no edge over a white page.
   - Drawn on a fixed overlay at the viewport's edges, not as the body's
     border, which Chrome's sizing could clip on the right and bottom.
+  - At a fractional scale, the popup can end partway through a screen
+    pixel. Chrome shows only the whole pixels but places the overlay
+    as if the page went on to the next one, so its line was cut off.
+    `trimEdges` in `popup.ts` pulls the overlay in by that pixel.
 
 From top to bottom:
 

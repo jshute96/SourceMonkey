@@ -341,6 +341,31 @@ new ResizeObserver(() => {
   scriptsEl.style.setProperty('--gutter', scrolling ? '0px' : `${scrollbarWidth}px`);
 }).observe(scriptsEl);
 
+// At a fractional scale (`devicePixelRatio` 1.359375, say), a popup
+// of whole CSS px can end partway through a screen pixel: 223px is
+// 303.14 screen rows. Chrome shows only the whole rows (303, which
+// `visualViewport` reports), but places the fixed border overlay as if
+// the page went on to the next whole row (304). Its bottom line then
+// falls in the row that isn't shown. So the overlay ends short by the
+// rows not shown (none at a whole-number scale). Chrome resizes the
+// popup as its content changes, which fires `resize`.
+// - The small epsilon keeps float error from rounding up a product
+//   that should be whole (200 * 1.1 is 220.00000000000003).
+// - At most one screen pixel: anything more (a page scrollbar or pinch
+//   zoom in a tab, where `visualViewport` is smaller for other
+//   reasons) isn't this rounding.
+function trimEdges(): void {
+  const dpr = window.devicePixelRatio;
+  const trim = (laid: number, shown: number) => {
+    const rows = Math.ceil(laid * dpr - 1e-6) - Math.round(shown * dpr);
+    return `${Math.min(Math.max(rows, 0), 1) / dpr}px`;
+  };
+  document.body.style.setProperty('--edge-trim-x', trim(window.innerWidth, visualViewport!.width));
+  document.body.style.setProperty('--edge-trim-y', trim(window.innerHeight, visualViewport!.height));
+}
+trimEdges();
+window.addEventListener('resize', trimEdges);
+
 function measureScrollbar(): number {
   const probe = el('div', { style: 'position: absolute; visibility: hidden; overflow: scroll; width: 100px' });
   document.body.append(probe);

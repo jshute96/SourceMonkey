@@ -39,9 +39,11 @@
          popup over a white page would have no edge. Drawn on an overlay
          pinned to the viewport rather than as the body's border: Chrome
          can size the popup a pixel short of the body, which clipped the
-         right and bottom edges. The header bar's border colour. */
+         right and bottom edges. The header bar's border colour. The
+         right and bottom insets are set by popup.ts (`trimEdges`). */
       body::after {
-        content: ""; position: fixed; inset: 0; z-index: 30;
+        content: ""; position: fixed; z-index: 30;
+        inset: 0 var(--edge-trim-x, 0px) var(--edge-trim-y, 0px) 0;
         border: 1px solid var(--header-border); pointer-events: none;
       }
       .page-header { padding: 0 6px 0 10px; flex: none; }
