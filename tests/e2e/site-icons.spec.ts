@@ -88,9 +88,8 @@ test.describe('site-icon slot', () => {
 
     // Neither `.example` host resolves, so both of Two's icons end on
     // the globe — and two globes fold into one that names both sites,
-    // linked to the first. (The pre-collapse state is a race against
-    // the failing fetches; the real-icon collapse test below pins the
-    // estimate → re-fit sequence.)
+    // linked to the first. (The real-icon collapse test below pins
+    // what the slot shows before the fetches settle.)
     const twoIcon = rowFor('Two').locator('.site-icon a.site-icon-inner');
     await expect(twoIcon).toHaveCount(1);
     await expect(twoIcon).toHaveAttribute('href', 'https://www.a.example/x/');
@@ -118,7 +117,11 @@ test.describe('site-icon slot', () => {
     const OTHER = 'data:image/png;base64,OTHER000';
     const html = (icon: string) =>
       `<html><head><link rel="icon" href="${icon}"></head></html>`;
+    // Held until the test has looked at the slot mid-load.
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => { release = resolve; });
     await extensionContext.route('https://*.sm-dupe.invalid/**', async (route) => {
+      await released;
       const host = new URL(route.request().url()).host;
       await route.fulfill({
         contentType: 'text/html; charset=utf-8',
@@ -144,8 +147,14 @@ test.describe('site-icon slot', () => {
       await page.goto(`chrome-extension://${extensionId}/collections.html`);
       const section = page.locator(`section.collection[data-collection-id="${collection!.id}"]`);
       const icons = section.locator('tbody tr .site-icon a.site-icon-inner');
-      // Three sites → three slots at first; the two identical favicons
-      // then fold into one, whose tooltip names both sites.
+      // While the favicons load, three sites show as one globe rather
+      // than three that would then collapse.
+      await expect(icons).toHaveCount(1);
+      await expect(icons.locator('img')).toHaveCount(0);
+      await expect(section.locator('table.script-table')).toHaveCSS('--icon-cols', '1');
+      release();
+      // Then the two identical favicons fold into one, whose tooltip
+      // names both sites, and the distinct one joins it.
       await expect(icons).toHaveCount(2);
       await expect(icons.nth(0).locator('img')).toHaveAttribute('src', SAME);
       await expect(icons.nth(0)).toHaveAttribute(
@@ -153,12 +162,60 @@ test.describe('site-icon slot', () => {
       );
       await expect(icons.nth(0)).toHaveAttribute('href', 'https://maps.sm-dupe.invalid/');
       await expect(icons.nth(1).locator('img')).toHaveAttribute('src', OTHER);
-      // The column was sized for three and re-fits to two once the
+      // The column was sized for one and re-fits to two once the
       // favicons have settled.
       await expect(section.locator('table.script-table')).toHaveCSS('--icon-cols', '2');
       await page.close();
     } finally {
       await extensionContext.unroute('https://*.sm-dupe.invalid/**');
+    }
+  });
+
+  test('cached favicons are drawn at once on a later visit, with no globe first', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    await extensionContext.route('https://*.sm-cached.invalid/**', async (route) => {
+      const host = new URL(route.request().url()).host;
+      const icon = `data:image/png;base64,${host.split('.')[0].toUpperCase()}0000`;
+      await route.fulfill({
+        contentType: 'text/html; charset=utf-8',
+        body: `<html><head><link rel="icon" href="${icon}"></head></html>`,
+      });
+    });
+    try {
+      scriptsDir.write({
+        relativePath: 'cached.user.js',
+        meta: { name: 'Cached', match: ['https://one.sm-cached.invalid/*', 'https://two.sm-cached.invalid/*'] },
+        body: '',
+      });
+      const collection = await sm.addCollection(scriptsDir.path);
+      const slotSelector = `section.collection[data-collection-id="${collection!.id}"] tbody tr .site-icon`;
+
+      // The first visit fetches both favicons and caches them.
+      const first = await extensionContext.newPage();
+      await first.goto(`chrome-extension://${extensionId}/collections.html`);
+      await expect(first.locator(`${slotSelector} img`)).toHaveCount(2);
+      await first.close();
+
+      // The second records, from before the page's own scripts run,
+      // anything the slot ever shows other than its two favicons.
+      const second = await extensionContext.newPage();
+      await second.addInitScript((selector) => {
+        const seen: string[] = [];
+        (window as unknown as { smSeen: string[] }).smSeen = seen;
+        new MutationObserver(() => {
+          const slot = document.querySelector(selector);
+          if (!slot) return;
+          if (slot.querySelector('.site-icon-globe')) seen.push('globe');
+          if (slot.children.length !== 2) seen.push(`${slot.children.length} icons`);
+        }).observe(document, { childList: true, subtree: true });
+      }, slotSelector);
+      await second.goto(`chrome-extension://${extensionId}/collections.html`);
+      await expect(second.locator(`${slotSelector} img`)).toHaveCount(2);
+      expect(await second.evaluate(() => (window as unknown as { smSeen: string[] }).smSeen)).toEqual([]);
+      await second.close();
+    } finally {
+      await extensionContext.unroute('https://*.sm-cached.invalid/**');
     }
   });
 
@@ -739,7 +796,10 @@ test.describe('site-icon slot', () => {
       // real DB hit.
       const chromeFavicon = (pageUrl: string, exactPage: boolean) => extProbe.evaluate(
         async ([u, exact]) => {
-          const mod = await import('/site-icon.js') as typeof import('../../src/site-icon');
+          // Specifier through a variable: the module is resolved in the
+          // extension page, not from tests/ where TypeScript looks.
+          const spec = '/extension/site-icon.js';
+          const mod = await import(spec) as typeof import('../../src/extension/site-icon');
           return mod.fetchChromeFavicon(u as string, { exactPage: exact as boolean });
         },
         [pageUrl, exactPage],
@@ -784,5 +844,37 @@ test.describe('site-icon slot', () => {
       await extensionContext.unroute('https://login.sm-sso.invalid/**');
       await extensionContext.unroute('https://www.google.com/**');
     }
+  });
+
+  test('an @icon too large to show is a load-time warning on its line', async ({ sm }) => {
+    // Shown nowhere else: the slot just keeps its globe.
+    scriptsDir.writeRaw('big.png', 'x'.repeat(200 * 1024));
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: { name: 'Big icon', match: ['https://example.com/*'], extra: ['// @icon       big.png'] },
+      body: '',
+    });
+    const collection = await sm.addCollection(scriptsDir.path);
+    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
+    expect(script.status).toBe('ok');
+    const warning = (script.startupLogs ?? []).find((l) => l.message.startsWith('@icon '));
+    expect(warning).toMatchObject({
+      level: 'warn',
+      message: '@icon big.png: The file is larger than the 128 KB limit',
+      location: { file: 'a.user.js' },
+    });
+    expect(warning!.location!.line).toBeGreaterThan(1);
+
+    // Refreshes of an unchanged file start from the stored row, which
+    // already holds the warning: it must not pile up, and it goes once
+    // the icon is fixed.
+    await sm.updateCollection(collection!.id, 'manual');
+    await sm.updateCollection(collection!.id, 'opportunistic');
+    const iconLogs = async () => ((await sm.getCollectionWithScripts(collection!.id))!.scripts[0].startupLogs ?? [])
+      .filter((l) => l.message.startsWith('@icon '));
+    expect(await iconLogs()).toHaveLength(1);
+    scriptsDir.writeRaw('big.png', 'x'.repeat(1024));
+    await sm.updateCollection(collection!.id, 'manual');
+    expect(await iconLogs()).toHaveLength(0);
   });
 });

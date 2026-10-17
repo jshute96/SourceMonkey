@@ -72,7 +72,7 @@ test.describe('userscript viewer details panel', () => {
         name: 'Talker',
         match: ['https://example.com/*'],
         grant: ['GM_xmlhttpRequest'],
-        connect: ['api.example.org', '*.cdn.example.net', 'self'],
+        connect: ['api.example.org', '*.cdn.example.net', 'self', '*', 'foo*.com'],
       },
       body: '',
     });
@@ -85,11 +85,29 @@ test.describe('userscript viewer details panel', () => {
     const row = page.locator('#header-summary dt', { hasText: 'Network access' })
       .locator('+ dd');
     await expect(row.locator('li')).toHaveText([
-      'api.example.org', '*.cdn.example.net', 'self',
+      'api.example.org', '*.cdn.example.net', 'self', 'All sites', 'foo*.com',
     ]);
-    // Plain text, not links — a @connect value is a matching rule, not
-    // an address.
-    await expect(row.locator('a')).toHaveCount(0);
+    await expect(row.locator('li b')).toHaveText('All sites');
+    await expect(row.locator('li b')).toHaveAttribute('title', 'The script can access any site and act as you.');
+    // No prompt answers yet, so only the declared list has a heading.
+    await expect(row.locator('.list-heading')).toHaveText(['Declared in @connect:']);
+    // Each host links to its site, like a Match pattern, with an icon
+    // beside it. `*` reads "All sites", with no icon. The rest name no
+    // single site, so they stay plain text, and the globe's tooltip says
+    // what `self` covers.
+    await expect(row.locator('.pattern-icon')).toHaveCount(4);
+    await expect(row.locator('a.site-icon-inner')).toHaveCount(2);
+    await expect(row.locator('li a:not(.site-icon-inner)')).toHaveText([
+      'api.example.org', '*.cdn.example.net',
+    ]);
+    await expect(row.getByRole('link', { name: '*.cdn.example.net' }))
+      .toHaveAttribute('href', 'https://cdn.example.net/');
+    const globeTitles = await row.locator('span.site-icon-inner').evaluateAll(
+      (els) => els.map((el) => el.getAttribute('title')));
+    expect(globeTitles).toEqual([
+      'The sites in this script\'s @match and @include rules, and the page it is running on',
+      'Unable to extract link to target site',
+    ]);
 
     // It sits after the match targets, not before them. Both rows are
     // asserted present first — `indexOf` returns -1 for a row that
@@ -146,10 +164,9 @@ test.describe('userscript viewer details panel', () => {
     await page.close();
   });
 
-  // A unique log ID is the script's own basename, which the heading
-  // and the Location row both already say; the `#N` is the part
-  // written nowhere in the file, and it's what a stack trace names.
-  test('shows the Log ID row only for a script whose basename collides', async ({
+  // The log ID's `#E<n>` is written nowhere in the file; it's what a
+  // stack trace and sm-dev (`E<n>`) name the script by.
+  test('shows the Log ID row, with the script number, for every script', async ({
     extensionContext, extensionId, sm,
   }) => {
     const meta = { name: 'Dupe', match: ['https://example.com/*'] };
@@ -163,14 +180,15 @@ test.describe('userscript viewer details panel', () => {
 
     const page = await extensionContext.newPage();
 
+    const numbers = await sm.scriptNumbers();
     await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${solo.id}`);
-    await expect(page.locator('#header-summary dt', { hasText: 'Location' })).toHaveCount(1);
-    await expect(page.locator('#header-summary dt', { hasText: 'Log ID' })).toHaveCount(0);
+    await expect(page.locator('.log-id-cell')).toHaveText(`solo.user.js#E${numbers[solo.id]}`);
+    // The tooltip's last line names the number sm-dev uses.
+    await expect(page.locator('#header-summary dt', { hasText: 'Log ID' }))
+      .toHaveAttribute('title', new RegExp(`\\nE${numbers[solo.id]} is the script's ID in sm-dev\\.$`));
 
     await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${dupe.id}`);
-    // Which number it drew depends on UUID ordering, so assert the
-    // shape rather than a specific one.
-    await expect(page.locator('.log-id-cell')).toHaveText(/^dupe\.user\.js#[12]$/);
+    await expect(page.locator('.log-id-cell')).toHaveText(`dupe.user.js#E${numbers[dupe.id]}`);
     await page.close();
   });
 

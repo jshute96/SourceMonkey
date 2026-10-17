@@ -22,6 +22,43 @@ SourceMonkey is generally compatible with
 [Tampermonkey](https://www.tampermonkey.net/) and other common
 userscript managers.
 
+### Testing your userscripts
+
+Userscripts are hard to test. The hard part is not the script, it is
+the manager around it: `@match`, `@grant`, `@require` loading, and the
+`GM_*` APIs. A test harness normally fakes all of that, and a fake is
+the one thing that cannot tell you your script works.
+
+SourceMonkey ships a harness that uses its own code instead. A repo of
+userscripts installs SourceMonkey as a package and gets two things:
+
+- **A Playwright fixture.** A script under test is checked by the
+  extension's own install pipeline and run in the real SourceMonkey
+  extension, in a browser the fixture launches. A test drives what the
+  script did through the manager: read what it stored, fire a menu
+  command, answer a network request.
+- **`sm-dev`, a command-line tool.** Run a script in SourceMonkey
+  against a live page and watch what it does, re-pushing as you save.
+  Check which selectors still resolve after a site changes. Save a page
+  so a test can replay it without logging in. It also fetches and loads
+  Tampermonkey or Violentmonkey, to run and manage scripts under them.
+
+See [docs/harness-guide.md](docs/harness-guide.md) to use it, and
+[docs/harness-design.md](docs/harness-design.md) for how it works.
+
+For coding agents, [skills/SourceMonkey-dev](skills/SourceMonkey-dev/SKILL.md)
+is a skill with recipes for developing and testing with these tools.
+[skills/SourceMonkey-friction](skills/SourceMonkey-friction/SKILL.md)
+is optional: it has agents record a friction log of problems hit using
+these tools, as feedback for improving them later. Both ship in the
+package, so a userscript repo can link them in:
+
+```sh
+mkdir -p .claude/skills
+ln -s ../../node_modules/sourcemonkey/skills/SourceMonkey-dev .claude/skills/
+ln -s ../../node_modules/sourcemonkey/skills/SourceMonkey-friction .claude/skills/
+```
+
 ### Example userscripts
 
 [`tests/examples`](tests/examples/README.md) includes example scripts
@@ -66,9 +103,9 @@ load it.
    The permission toggles persist across browser restarts, and
    SourceMonkey shows a banner with a link to the toggle whenever one is
    missing.
-3. Click the SourceMonkey toolbar icon to open the **collections page**.
-   On first run it seeds a few default collections so the page isn't empty;
-   remove them like any other collection.
+3. Double-click the SourceMonkey toolbar icon to open the **collections page**.
+   On first run it seeds a default collection of examples so the page isn't
+   empty; remove it like any other collection.
 
 ## Using SourceMonkey
 
@@ -126,7 +163,10 @@ viewer lists the copies in an **Other versions** panel at the top of the page,
 where each one can be enabled, updated, opened, or removed. Clicking another
 copy's row switches the page to it in place, leaving the panel as it is. Enabling one
 copy disables the others, since two enabled copies of a script both run —
-ctrl-click a checkbox (cmd-click on a Mac) to override that. The panel's
+ctrl-click a checkbox (cmd-click on a Mac) to override that. The same rule holds
+everywhere a script or collection is turned on, including the collections page,
+the toolbar popup, and adding a collection; turning a collection back off restores
+the copies it displaced. The panel's
 **Compare** column says whether each copy's code matches the one on screen,
 and a **DIFF** button opens a **compare page** showing the two copies'
 header fields side by side and a diff of each file.
@@ -139,6 +179,7 @@ higher API rate limit).
 Details: [docs/storage.md](docs/storage.md) (status model),
 [docs/script-viewer.md](docs/script-viewer.md),
 [docs/script-identity.md](docs/script-identity.md),
+[docs/script-enablement.md](docs/script-enablement.md),
 [docs/compare.md](docs/compare.md),
 [docs/local-copy.md](docs/local-copy.md),
 [docs/local-delete.md](docs/local-delete.md),
@@ -169,7 +210,10 @@ location can be read before creating anything.
 Single scripts go into **scripts collections** — folders you create
 and name, or the defaults created on demand (`Scripts from local disk`,
 `Scripts from web`, `Scripts from GitHub`). One scripts collection can
-mix local, web, and GitHub scripts.
+mix local, web, and GitHub scripts. An `sm-dev test collection`
+holds the scripts an `sm-dev` run pushed, whose only copy
+is in SourceMonkey itself; it goes when the run ends (see
+[docs/harness-guide.md](docs/harness-guide.md)).
 
 Details: [docs/file-access.md](docs/file-access.md),
 [docs/http-collections.md](docs/http-collections.md).
@@ -295,7 +339,7 @@ To generate a manifest from a directory of userscripts, run
 
 Nothing polls on a timer. A script's source is re-checked at these
 moments, and any change is loaded immediately — the toolbar badge then
-turns purple with a "Reload to update" tooltip.
+turns purple, and its tooltip says a reload is needed.
 
 - **Loading a page** re-checks the scripts that run on it.
 - **Switching to a tab** re-checks the scripts on it that came from
@@ -331,24 +375,30 @@ Details: [docs/updates.md](docs/updates.md).
 
 As you browse, the toolbar icon shows how many scripts apply to the
 current page, colored by health: **green** all good, **orange**
-scripts missing or unexpected, **purple** a newer version is available
-(reload the page to update), **red** a script errored or Chrome refused to
-register it.
+scripts missing or unexpected, **purple** a reload is needed (a newer
+version is available, or scripts were turned on or off or deleted since
+the page loaded), **red** a script errored or Chrome refused to register it.
 
-Hovering the icon lists each script and its status.  Right-clicking also lists
-scripts and statuses.  Click one to open it in the viewer — or straight to
-its log, if it errored.
+Hovering the icon sums up the page: how many scripts are running, and
+any errors, warnings or reloads needed.
 
-When scripts register context menu commands (`GM_registerMenuCommand`),
-those also appear on the icon's right-click menu.
+Clicking the icon opens the **Active scripts** popup: the scripts that
+match the page, grouped by collection, with their status. From there
+you can:
 
-Chrome only shows six top-level entries in that menu.  Anything past
-that goes under a `More` submenu.
+- Turn scripts and collections on or off.
+- Run a script's own menu commands (`GM_registerMenuCommand`).
+- Run a manual script (`@run-at context-menu`), which runs only when
+  asked.
+- Open a script's page or its log.
+- Reload the page with no userscripts, with only one script, or
+  without one. Handy for finding which script is breaking a page; the
+  next ordinary reload runs them all again.
 
-The menu's last row, **Reload page with no userscripts**, reloads the
-page once with every script skipped — handy for checking whether a
-script is what's breaking a page.  The next ordinary reload runs them
-again.  Skipped scripts show as **NOT LOADED** with a **grey** badge.
+Double-clicking the icon opens the collections page. Its right-click
+menu does too, and can reload the page with no userscripts.
+
+Details: [docs/status-popup.md](docs/status-popup.md).
 
 ### Supported `GM_*` / `GM.*` APIs and headers
 
@@ -369,16 +419,12 @@ For the header tags SourceMonkey honors, see
 
 ### How scripts run
 
-Scripts run either in the page's own JavaScript world or in an isolated
-one, chosen the same way Tampermonkey and Violentmonkey choose: a
-script with no `@grant` (or `@grant none`) shares the page's world and
-can read its globals, like `window.jQuery`; anything else is isolated.
-A script that grants `unsafeWindow` runs in the page's world too, since
-`unsafeWindow` is the page's window, and its other `GM_*` APIs still
-work there — as does a script that simply uses `unsafeWindow` without
-granting it, which is how Tampermonkey and Violentmonkey read it as
-well. Set `@inject-into page` or `@inject-into content` to pick
-explicitly.
+Like in Tampermonkey and Violentmonkey, scripts run in the page's own
+JavaScript world, so they can read its globals by name.
+Unless it has `@grant none`, a script gets its own `window` showing the
+browser's built-ins, so what it writes there (or a library it loads)
+stays its own; `unsafeWindow` is the page's. Set `@inject-into content` or
+`@sandbox DOM` to run a script in an isolated world instead.
 
 Whatever a script throws is caught and reported against that script —
 including failures that happen later, from timers, event listeners, and
@@ -414,13 +460,37 @@ The built extension is written to `dist/`. Load it into Chrome via
 directory, then enable the toggles listed under [Getting
 started](#getting-started).
 
+`pnpm install` runs the same build (the package's `prepare` script), so
+a fresh checkout has a `dist/` as soon as its dependencies are in.
+
+The build writes two directories. `dist/` is the unpacked extension,
+and nothing else: you load it in Chrome, and
+`scripts/zip_extension.sh` packs it. `lib/` is the `sourcemonkey`
+package, which adds the development harness and the type declarations
+a consumer needs. See
+[docs/architecture.md](docs/architecture.md#two-outputs-dist-and-lib).
+
+`scripts/sm-dev` runs the harness's command line from this checkout
+(a repo that installs the package gets `sm-dev` on its path instead):
+
+```sh
+scripts/sm-dev --help
+scripts/sm-dev validate tests/examples
+```
+
+It runs what `lib/` has and never builds it, so run `pnpm run build`
+first, and again after changing the harness.
+
 ### Test
 
 ```sh
-pnpm test            # unit + e2e
-pnpm run test:unit   # node --test, fast
-pnpm run test:e2e    # Playwright with the extension loaded
-pnpm run test:headed # e2e with a visible browser
+pnpm test              # unit + e2e + sm-dev
+pnpm run test:unit     # node --test, fast
+pnpm run test:e2e      # Playwright with the extension loaded
+pnpm run test:headed   # e2e with a visible browser
+pnpm run test:sm-dev   # sm-dev and the harness fixture's own specs
+pnpm run test:vm-api   # whether the fetched Violentmonkey still answers sm-dev's calls
+pnpm run test:tm-api   # whether the fetched Tampermonkey still answers sm-dev's calls
 ```
 
 To narrow a run to one file:
@@ -462,22 +532,21 @@ for known per-manager divergences.
 
 ### Validate userscripts from the command line
 
-The install-time checks — header validation, `@require` / `@resource`
-loading, and the compile-only syntax check — also run as a CLI, over
-files on disk and with no browser involved:
+`sm-dev validate` runs the install-time checks (header validation,
+`@require` / `@resource` loading, and the compile-only syntax check)
+over files on disk, with no browser involved:
 
 ```sh
-pnpm run validate path/to/scripts/          # a directory, or single files
-pnpm run validate --offline-root DIR PATH   # dependencies from a local tree
-pnpm run validate --json out.json PATH      # per-script results
+scripts/sm-dev validate path/to/scripts/    # a directory, or single files
 ```
 
 It reports each script as `ok` or `invalid` with the same message the
-extension would show, grouped by failure type. `--offline-root` serves
-every `@require` / `@resource` URL out of a downloaded tree instead of
-the network, which is how the GreasyFork corpus
-(`tests/greasyfork-examples/`) gets checked in bulk. See
-[docs/offline-validation.md](docs/offline-validation.md).
+extension would show, plus any warnings. The GreasyFork corpus
+(`tests/greasyfork-examples/`) has its own bulk validator that serves
+dependencies from a downloaded tree; see
+[docs/corpus-validation.md](docs/corpus-validation.md). That corpus
+also tracks per-script test results; see its
+[README](tests/greasyfork-examples/README.md#test-results).
 
 ### Releasing
 
@@ -506,9 +575,12 @@ scripts/zip_extension.sh   # writes /tmp/SourceMonkey.zip
 
 ### Code layout
 
-- `src/` — extension source (TypeScript + manifest + HTML).
+- `src/` — source (TypeScript + manifest + HTML). See
+  [Source layout](docs/architecture.md#source-layout).
+  - `src/extension/` — modules only the extension loads.
+  - `src/harness/` — the Node-only development harness (`sm-dev`).
+  - Directly in `src/` — modules both use, plus the pages and manifest.
 - `scripts/build.mjs` — bundler-free build script.
-- `scripts/validate-userscripts.mjs` — offline validator CLI (above).
 - `scripts/zip_extension.sh` — builds and zips `dist/` for distribution.
 - `scripts/release-extension.sh` — cuts a tagged GitHub release with the
   zip attached.

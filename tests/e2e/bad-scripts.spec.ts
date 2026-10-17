@@ -33,7 +33,7 @@ import { fileURLToPath } from 'node:url';
 import type { BrowserContext, Page } from '@playwright/test';
 
 import { test, expect } from '../fixtures/extension';
-// The expectations are shared with the offline CLI's test — see the
+// The expectations are shared with `sm-dev validate`'s test — see the
 // header of that module for why they can't live in either test.
 import {
   BAD_CASES,
@@ -113,7 +113,7 @@ test.describe('bad-examples corpus', () => {
         } else {
           expect(at?.column, `unexpected error column for ${c.file}`).toBeUndefined();
         }
-        // The *rendered* form is asserted by the offline CLI's test
+        // The *rendered* form is asserted by `sm-dev validate`'s test
         // instead (`locationPattern`, same fixture). Splitting it that
         // way keeps each test on the thing it is actually about — the
         // browser stores structure, the CLI prints text — while the
@@ -128,7 +128,7 @@ test.describe('bad-examples corpus', () => {
     // does, pointing at the first offending `@grant` line.
     const grants = byFile.get('unknown-grant.user.js');
     expect(grants?.startupLogs, 'unknown-grant should record a startup log').toHaveLength(1);
-    expect(grants!.startupLogs![0].message).toMatch(/Ignoring @grant .* — unsupported APIs/);
+    expect(grants!.startupLogs![0].message).toMatch(/Ignoring unsupported @grant .*/);
     expect(grants!.startupLogs![0].location).toEqual({
       file: 'unknown-grant.user.js',
       line: markedErrorLine('unknown-grant.user.js'),
@@ -140,7 +140,7 @@ test.describe('bad-examples corpus', () => {
     const badMatch = byFile.get('invalid-match.user.js');
     expect(badMatch?.startupLogs, 'invalid-match should record a startup log').toHaveLength(1);
     expect(badMatch!.startupLogs![0].message)
-      .toMatch(/Ignoring @match https:\/\/example\.org — it has no path/);
+      .toMatch(/Ignoring @match https:\/\/www\.\*\.org\/\*, which uses "\*" inside its host/);
     expect(badMatch!.startupLogs![0].location).toEqual({
       file: 'invalid-match.user.js',
       line: markedErrorLine('invalid-match.user.js'),

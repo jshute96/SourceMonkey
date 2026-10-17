@@ -3,11 +3,11 @@
 //
 //   - `tests/e2e/bad-scripts.spec.ts` — adds the directory as a real
 //     collection in a real browser, and reads the stored rows back.
-//   - `tests/unit/validate-userscripts.test.mjs` — runs the offline
-//     CLI over the same directory under Node.
+//   - `tests/unit/harness/validate.test.mjs` — runs `sm-dev validate`
+//     over the same directory under Node.
 //
 // The table lives here rather than in either test because the point of
-// having both is that they must agree: the CLI's whole claim is that it
+// having both is that they must agree: `sm-dev validate`'s claim is that it
 // reproduces what the extension does at install time. Two copies of the
 // expectations would let them drift apart silently, which is precisely
 // the failure neither test could then detect.
@@ -77,7 +77,7 @@ export const BAD_CASES = [
   // Both require cases below fetch their `@require` fine — the failure
   // is in the code, not the load. They differ in WHEN we can see it:
   //
-  //   - unparsable: the install-time compile check (src/parse-check.ts)
+  //   - unparsable: the install-time compile check (src/extension/parse-check.ts)
   //     compiles the composed program without running it, so a syntax
   //     error is visible before the script is ever registered.
   //   - throwing: the library parses and only fails when it RUNS, and
@@ -104,7 +104,7 @@ export const BAD_CASES = [
   // unlike the missing-tag failures above, this text really is in the
   // file.
   { file: 'unusable-match.user.js',        expectedStatus: 'invalid',
-    errorMatcher: /@match https:\/\/example\.com has no path, so this script would never run on any page/,
+    errorMatcher: /@match https:\/\/www\.\*\.com\/\* uses "\*" inside its host, so this script would never run on any page/,
     errorIn: 'unusable-match.user.js' },
 
   // ---------- Where the error is ----------

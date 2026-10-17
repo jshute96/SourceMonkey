@@ -23,11 +23,14 @@
 // pair together.
 
 import { isDebugLoggingEnabled } from './debug-log.js';
+import { formatBytes } from './script-display.js';
 
 export interface PhaseTimer {
   // Close the current phase and name it. Elapsed is measured from the
-  // previous mark (or from the timer's start, for the first).
-  mark(phase: string): void;
+  // previous mark (or from the timer's start, for the first). `detail`
+  // is printed beside the phase (what it read or wrote, say); a thunk,
+  // like `note`'s, so a disabled timer never computes it.
+  mark(phase: string, detail?: string | (() => string)): void;
   // Attach a trailing fact — counts, sizes, whatever makes the numbers
   // interpretable. Repeat calls append.
   //
@@ -49,15 +52,21 @@ const NOOP: PhaseTimer = {
 class ActiveTimer implements PhaseTimer {
   private readonly start = performance.now();
   private last = this.start;
+  // Time spent computing details, left out of the phases and the total:
+  // sizing a big read means serializing it, which would otherwise be
+  // charged to the very step being measured.
+  private overhead = 0;
   private readonly phases: string[] = [];
   private readonly notes: string[] = [];
 
   constructor(private readonly label: string) {}
 
-  mark(phase: string): void {
+  mark(phase: string, detail?: string | (() => string)): void {
     const now = performance.now();
-    this.phases.push(`${phase} ${round(now - this.last)}`);
-    this.last = now;
+    const text = typeof detail === 'function' ? detail() : detail;
+    this.phases.push(`${phase} ${round(now - this.last)}${text ? ` [${text}]` : ''}`);
+    this.last = performance.now();
+    this.overhead += this.last - now;
   }
 
   note(text: string | (() => string)): void {
@@ -65,12 +74,12 @@ class ActiveTimer implements PhaseTimer {
   }
 
   done(): void {
-    const total = round(performance.now() - this.start);
+    const total = round(performance.now() - this.start - this.overhead);
     // Phases are a breakdown OF the total, so they read as a
     // parenthetical after it rather than as a separate list.
     const breakdown = this.phases.length > 0 ? ` (${this.phases.join(', ')})` : '';
-    const notes = this.notes.length > 0 ? ` — ${this.notes.join(', ')}` : '';
-    console.log(`[SourceMonkey] timing — ${this.label}: total ${total}ms${breakdown}${notes}`);
+    const notes = this.notes.length > 0 ? `; ${this.notes.join(', ')}` : '';
+    console.log(`[SourceMonkey] timing: ${this.label}: total ${total}ms${breakdown}${notes}`);
   }
 }
 
@@ -86,6 +95,16 @@ function round(ms: number): number {
 // put in a `note`, so the two halves of one line read alike.
 export function formatMs(ms: number): string {
   return `${round(ms)}ms`;
+}
+
+// What a storage read returned or a write sent, for a `mark` detail:
+// how many keys, and their size as JSON (about what Chrome stores).
+// Serializes them, so it is for the small reads and writes of one
+// operation, inside a detail thunk. A full scan asks Chrome for its
+// size instead (storage-scan.ts).
+export function storageSize(items: Record<string, unknown>): string {
+  const keys = Object.keys(items).length;
+  return `${keys} key${keys === 1 ? '' : 's'}, ${formatBytes(JSON.stringify(items).length)}`;
 }
 
 // The clock, for a caller timing something finer-grained than a phase —
@@ -123,7 +142,7 @@ export function startPhaseTimer(label: string): PhaseTimer {
 //
 // Global to the JS context rather than threaded through: reaching the
 // leaf call sites otherwise means a parameter through `applyFiles`,
-// `attachFiles` and both per-kind loaders, plus the offline validator
+// `attachFiles` and both per-kind loaders, plus the corpus validator
 // that shares them. For a debug-only diagnostic that is a bad trade.
 // The cost is that two concurrently refreshing collections land in one
 // bucket — which is why the report is emitted per REFRESH PASS, where
@@ -183,5 +202,5 @@ export function reportPhaseTotals(label: string): void {
   const parts = [...finished.entries()]
     .sort((a, b) => b[1].ms - a[1].ms)
     .map(([name, t]) => `${name} ${round(t.ms)}ms/${t.n}`);
-  console.log(`[SourceMonkey] timing — ${label} cumulative (concurrent, sums past wall clock): ${parts.join(', ')}`);
+  console.log(`[SourceMonkey] timing: ${label} cumulative (concurrent, sums past wall clock): ${parts.join(', ')}`);
 }

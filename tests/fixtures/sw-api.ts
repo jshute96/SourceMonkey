@@ -27,6 +27,24 @@ export interface SmApi {
     location: string,
     target: { collectionId: string } | { schemeDefault: true },
   ): Promise<{ id: string; path: string } | null>;
+  // An sm-dev run's scripts, in its test collection: text in,
+  // registered before the promise settles. See docs/sm-dev-design.md.
+  writeRunScript(args: { run: string; text: string; name?: string; files?: Record<string, { url: string; localUrl?: string; bytesBase64: string; contentType: string }> }): Promise<{
+    scriptId: string;
+    collectionId: string;
+    status: 'ok' | 'invalid';
+    errorMessage?: string;
+    errorLocation?: { file: string; line?: number; column?: number };
+    replaced: boolean;
+  }>;
+  // sm-dev's tab claims (src/extension/sm-dev-link.ts).
+  claimTab(tabId: number, runId: string, ttlMs: number): Promise<void>;
+  isSmDevMarked(tabId: number): Promise<boolean>;
+  renewRun(runId: string, ttlMs: number, tabs?: { tabId: number; scriptsOff?: boolean }[]): Promise<number>;
+  releaseRun(runId: string): Promise<void>;
+  sweepRunCollections(now: number): Promise<void>;
+  setTabScriptsOff(tabId: number, off: boolean): Promise<void>;
+  getStackLayout(scriptId: string): Promise<import('../../src/composed-source.js').StackLayout | null>;
   // Move an installed script from one scripts collection to another.
   // Resolves to the moved row, or null when the destination already
   // has it. Not unwrapped — it returns a script row, not a collection.
@@ -46,7 +64,7 @@ export interface SmApi {
   removeCollection(id: string): Promise<void>;
   getCollections(): Promise<{
     id: string; path: string; enabled: boolean; scriptIds: string[];
-    manifestSize?: number; manifestMtime?: number;
+    displayName?: string; manifestSize?: number; manifestMtime?: number;
   }[]>;
   getCollectionWithScripts(id: string): Promise<{
     collection: { id: string; path: string; enabled: boolean; scriptIds: string[]; scanError?: string };
@@ -58,6 +76,14 @@ export interface SmApi {
   // search order, as the options page would save them.
   setLocalRoots(paths: string[]): Promise<void>;
   setScriptEnabled(id: string, enabled: boolean): Promise<unknown>;
+  // When each script last became active / went inactive (script-enablement.md).
+  getEnablementTimes(): Promise<Record<string, { activeSince?: number; inactiveSince?: number }>>;
+  // Write rows straight into storage, under the store's write lock.
+  seedStorage(items: Record<string, unknown>): Promise<void>;
+  backfillUsesUnsafeWindow(): Promise<number>;
+  setScriptEnabledExclusive(id: string, enabled: boolean): Promise<void>;
+  getAllScriptMetas(): Promise<StoredScriptLike[]>;
+  rowCacheLoads(): Promise<number>;
   updateCollection(id: string, mode: Mode): Promise<unknown>;
   // `probe: 'force'` is what a genuine Refresh click passes. Pass it
   // when a test is modelling a click rather than a background check —
@@ -70,7 +96,19 @@ export interface SmApi {
   // resolving is not the same as the SW's `storage.onChanged` listener
   // having run.
   isCaptureEnabled(): Promise<boolean>;
+  // As after an extension reload: forget every tab's record, then
+  // mark the open pages as loaded before the extension started.
+  simulateExtensionStart(): Promise<void>;
   resetAllState(): Promise<void>;
+  // Run the storage format migration again, as a worker start would.
+  rerunStoreMigration(): Promise<void>;
+  // As a worker just started: the next write runs it.
+  forgetStoreMigration(): Promise<void>;
+  // One unused-blob check.
+  sweepUnusedBlobs(): Promise<{ checked: number; removed: number }>;
+  // Forget the record of what Chrome holds, the session copy too: the
+  // next sync is a full one.
+  forgetRegistrationState(): Promise<void>;
   // Forget when each script was last checked, so the next
   // opportunistic check isn't skipped by `UPDATE_MIN_INTERVAL_MS`.
   // Needed by tests that drive two checks of the same script inside
@@ -95,10 +133,16 @@ export interface SmApi {
   // The `loglevel:` sentinel behind WARNING / ERROR — only
   // script-originated entries move it (see docs/script-log.md).
   getMaxLogLevel(scriptId: string): Promise<'info' | 'warning' | 'error' | undefined>;
-  // Every PERSISTED GM value for a script, excluding the SW's in-flight
-  // overlay. The wrapper's write is batched, so this is what a test
-  // waits on instead of pausing.
+  // A script's GM values from the worker's value store, including writes
+  // not yet on disk. A page's write reaches the worker a message later,
+  // so this is what a test waits on instead of pausing.
   getGmValues(scriptId: string): Promise<Record<string, unknown>>;
+  // The channel key, for a test playing a page that has it.
+  channelKey(): Promise<string>;
+  // Resolves once every value write the worker has taken is on disk.
+  gmValuesSaved(): Promise<void>;
+  // Write values (wire form) as another tab of the script would.
+  writeGmValues(scriptId: string, writes: { key: string; value?: unknown; deleted?: boolean }[]): Promise<void>;
   // Seeds an entry directly. For tests that need a specific message,
   // level or timestamp without staging the event that would produce it.
   appendScriptLog(scriptId: string, input: {
@@ -135,30 +179,47 @@ export interface SmApi {
     matches: { id: string; name: string }[];
     cache: { entries: unknown[]; disabledCollections: string[] };
   }>;
-  // Dedup-aware log label (`foo.user.js`, `foo.user.js#2`). Which
-  // member of a dupe group gets which `#N` is decided by UUID sort, so
-  // a test that needs the label has to ask rather than predict it.
+  // The stored script numbers, by script id, after numbering new scripts.
+  scriptNumbers(): Promise<Record<string, number>>;
+  // The stored collection numbers, by collection id, after numbering new collections.
+  collectionNumbers(): Promise<Record<string, number>>;
+  // The script's log label (`foo.user.js#E4`). Its number is the
+  // service worker's to assign, so a test that needs the label has to
+  // ask rather than predict it.
   getScriptLogLabel(scriptId: string): Promise<string>;
   // GM_registerMenuCommand test surface.
   getActionContextMenu(tabId: number): Promise<{
     scriptId: string;
-    commands: { commandId: string; name: string }[];
+    commands: { commandId: string; name: string; documentId?: string }[];
   }[]>;
-  // Returns the planned action context-menu layout for the tab,
-  // including the 6-item-cap overflow split into a "More" submenu.
-  getActionContextMenuPlan(tabId: number): Promise<ActionMenuPlanLike>;
+  // The toolbar popup's view of the tab: what popup.html renders.
+  getPopupView(tabId: number): Promise<PopupViewLike>;
   fireActionContextMenuItem(
     tabId: number,
     scriptId: string,
     commandId: string,
+    // The document that registered it, for a command in a frame.
+    documentId?: string,
   ): Promise<{ ok: boolean; error?: string }>;
-  // Stands in for a click on the menu's "Reload page with no
-  // userscripts" row: reloads the tab with every wrapper told to skip.
+  // Answers a connection prompt by the id it was shown with. False when
+  // it isn't waiting.
+  answerConnectPrompt(promptId: string, choice: 'once' | 'cancel' | 'allow' | 'allow-all' | 'deny'): Promise<boolean>;
+  // The connection prompts waiting for an answer.
+  pendingConnectPrompts(): Promise<{ promptId: string; scriptId: string; tabId: number; host: string }[]>;
+  // Stands in for a popup "Run this script" click: runs a manual
+  // script (`@run-at context-menu`) on the tab now.
+  runManualScript(tabId: number, scriptId: string): Promise<{ ok: boolean; error?: string }>;
+  // Stands in for a click on the popup's "Reload page with no
+  // userscripts": reloads the tab with every wrapper told to skip.
   reloadWithoutScripts(tabId: number): Promise<void>;
   // Stands in for a toolbar-icon click in the given window (Playwright
   // can't click chrome.action). Pass null for the "no gesture window"
   // fallback path.
   openCollectionsPage(windowId: number | null): Promise<void>;
+  // Stands in for a toolbar-icon click on `tabId`: two inside the
+  // double-click window open the collections page, one opens the popup.
+  clickAction(tabId: number, windowId: number): Promise<void>;
+  closePopup(tabId: number): Promise<number>;
   // Fault-injection knob used by gm-storage-freshness.spec.ts to
   // verify the wrapper hard-aborts when the SW can't supply a
   // gmValues snapshot.
@@ -168,6 +229,10 @@ export interface SmApi {
   // the cross-tab broadcast across a simulated worker restart without
   // killing the worker the test is talking to.
   dropGmOpenersForTests(): Promise<void>;
+  // The worker's "should I run?" decision for a request from a document
+  // with no tab (the sender has only its URL). Gives `action` and, for a
+  // skip, `reason`.
+  checkPendingWithoutTabForTests(id: string, url: string, tld: boolean): Promise<{ action: string; reason?: string }>;
   // Makes the SW drop every cross-tab value broadcast, standing in for
   // one that never arrives. Stays armed until cleared with false.
   setDebugSuppressGmBroadcast(value: boolean): Promise<void>;
@@ -178,7 +243,7 @@ export interface SmApi {
   // fetched successfully since the last reset — cache hits excluded,
   // and listings done in an extension page not counted at all. A
   // navigation's checks share one listing across the page's scripts
-  // (see `RefreshBatch` in src/script-store.ts), and this is what makes
+  // (see `RefreshBatch` in src/extension/script-store.ts), and this is what makes
   // that visible.
   //
   // Counts collection scans too, so reset around the window under test
@@ -192,19 +257,29 @@ export interface SmApi {
   resetCollectionRowReads(): Promise<void>;
 }
 
-export interface ActionMenuPlanLike {
-  top: ActionMenuScriptLike[];
-  more: ActionMenuScriptLike[];
-  reloadWithoutScripts: boolean;
+// The parts of `PopupView` (src/extension/popup-view.ts) tests read.
+export interface PopupViewLike {
+  injectable: boolean;
+  smDev: boolean;
+  banner: string | null;
+  perScriptReload: boolean;
+  enabled: PopupGroupLike[];
+  frames: PopupGroupLike[];
+  manual: PopupGroupLike[];
+  disabled: PopupGroupLike[];
 }
 
-export interface ActionMenuScriptLike {
-  scriptId: string;
-  title: string;
-  commands: { commandId: string; title: string }[];
+export interface PopupGroupLike {
+  collection: { id: string; name: string; enabled: boolean };
+  rows: {
+    id: string; name: string; checked: boolean; active: boolean;
+    status: string | null; tooltip: string | null; versionLine: string | null;
+    commands: { commandId: string; name: string; documentId?: string }[];
+    runnable?: boolean;
+  }[];
 }
 
-// Mirrors the fields of `StoredScript` (src/script-store.ts) that specs
+// Mirrors the fields of `StoredScript` (src/extension/script-store.ts) that specs
 // read back. Deliberately a subset — it only has to be accurate about
 // what it declares, and it crosses `evaluate()` as plain JSON.
 export interface StoredScriptLike {
@@ -218,6 +293,8 @@ export interface StoredScriptLike {
   errorMessage?: string;
   errorLocation?: DiagnosticLocationLike;
   refreshError?: string;
+  // Whether the body uses `unsafeWindow` without granting it.
+  usesUnsafeWindow?: boolean;
   size: number | null;
   fsMtime?: number;
   loadedAt: number;
@@ -297,6 +374,8 @@ export interface TabStateSnapshot {
   badgeText: string;
   badgeColor: unknown;     // RGBA tuple from chrome.action.getBadgeBackgroundColor
   title: string;
+  // The popup's rows with a status, as `Name | STATUS` (`Hello | OK`).
+  rows: string[];
   record: TabRecordLike | null;
 }
 
@@ -374,15 +453,12 @@ export async function waitFor<T>(
   );
 }
 
-// Wait until the single registered script's persisted GM values satisfy
-// `predicate`. `GM_setValue` batches its write 150ms after the last one,
-// so "the page reported the value" is not "storage has it" — a test that
-// needs it durable waits for this rather than pausing.
-//
-// Reads persisted rows only, deliberately excluding the SW's in-flight
-// `gmValueOverlay`: a predicate that passes here has passed against what
-// actually survives, which is stronger than what production needs to
-// answer a check-pending.
+// Wait until the single registered script's GM values satisfy
+// `predicate`, with every write the worker has taken saved to disk
+// first. A page sends its writes a microtask after making them, so "the
+// page reported the value" is not "the worker has it": a test waits for
+// this rather than pausing. Waiting for the save too means a predicate
+// that passes has passed against what survives a worker restart.
 export async function waitForGmValues(
   api: SmApi,
   predicate: (values: Record<string, unknown>) => boolean,
@@ -390,7 +466,7 @@ export async function waitForGmValues(
 ): Promise<Record<string, unknown>> {
   const scriptIds = (await api.getCollections()).flatMap((s) => s.scriptIds);
   // Guarded rather than indexed blindly: with no script registered,
-  // `loadAllValues(undefined)` returns {} quite happily and the caller
+  // `getGmValues(undefined)` returns {} quite happily and the caller
   // burns the full timeout reporting a storage problem, when the real
   // failure was that nothing registered at all.
   if (scriptIds.length !== 1) {
@@ -398,7 +474,10 @@ export async function waitForGmValues(
       `waitForGmValues expects exactly one registered script, saw ${scriptIds.length}`,
     );
   }
-  return waitFor(() => api.getGmValues(scriptIds[0]), predicate, { label });
+  return waitFor(async () => {
+    await api.gmValuesSaved();
+    return api.getGmValues(scriptIds[0]);
+  }, predicate, { label });
 }
 
 // Convenience: wait until a tab's badge state matches `predicate`.

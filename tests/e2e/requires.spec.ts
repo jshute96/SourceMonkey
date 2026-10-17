@@ -123,23 +123,23 @@ test.describe('@require', () => {
     }
   });
 
-  test('non-.js @require URL flips the script to error', async ({ sm }) => {
-    // Write a sibling JSON file so the only failure surface is the
-    // suffix check (not "file missing").
-    fs.writeFileSync(path.join(scriptsDir.path, 'lib.json'), '{"x":1}');
+  test('a @require with no .js suffix loads', async ({ sm }) => {
+    // CDN shorthands (`cdn.jsdelivr.net/npm/sweetalert2@11`) name a
+    // package rather than a file, so nothing gates on the suffix.
+    fs.writeFileSync(path.join(scriptsDir.path, 'lib'), 'window.__SM_LIB = 1;');
     scriptsDir.write({
       relativePath: 'main.user.js',
       meta: {
-        name: 'Bad Suffix',
+        name: 'No Suffix',
         match: ['https://example.com/*'],
-        extra: ['// @require     lib.json'],
+        extra: ['// @require     lib'],
       },
       body: '',
     });
     const collection = await sm.addCollection(scriptsDir.path);
     const data = await sm.getCollectionWithScripts(collection!.id);
-    expect(data!.scripts[0].status).toBe('invalid');
-    expect(data!.scripts[0].errorMessage).toMatch(/must end in \.js/);
+    expect(data!.scripts[0].status).toBe('ok');
+    expect(data!.scripts[0].requires?.[0]?.source).toBe('window.__SM_LIB = 1;');
   });
 
   test('@require traversal is rejected before any fetch', async ({ sm }) => {
@@ -409,7 +409,7 @@ test.describe('@require', () => {
 
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
-    // document-idle waits for `load`, so the require observed a
+    // document-idle waits for readyState complete, so the require observed a
     // fully-loaded document — not the `loading` it would have seen
     // firing at document_start.
     await expect(page.locator('#target')).toHaveText('complete');
@@ -421,7 +421,7 @@ test.describe('@require', () => {
   }) => {
     // Everything the user wrote is ONE V8 script now, so an
     // unterminated block comment in a require makes the whole entry
-    // fail to parse and `__smRun` is never reached. Without the
+    // fail to parse and the registry's `run` is never reached. Without the
     // trailing sentinel entry that failure is completely invisible —
     // no error, no log, no badge, script just does nothing forever.
     // (Under separate entries the broken require died alone and the
@@ -484,9 +484,9 @@ test.describe('@require', () => {
     // install-time check that would otherwise stop this script from
     // registering.
     await sm.setParseCheckEnabled(false);
-    // The sentinel infers "js[2] failed to parse" from __smRun never
+    // The sentinel infers "js[2] failed to parse" from `run` never
     // being called. But the prelude registers a script's entry BEFORE
-    // running the in-page matcher, so on a non-matching page __smRun
+    // running the in-page matcher, so on a non-matching page `run`
     // is legitimately never called either. Without a `matched` check
     // the sentinel can't tell those apart.
     //

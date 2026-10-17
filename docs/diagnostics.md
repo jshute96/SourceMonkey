@@ -34,10 +34,11 @@ it, shared with the header diagnostics.
 | syntax error (parse check) | the offending token, in the file it was written in |
 | "The … metadata block is never closed" | the `// ==UserScript==` line that opened it |
 | "No `// ==UserScript==` metadata block" | the file, with no line — there is nothing to point at |
+| "This is a user style …" (no userscript block, but a `/* ==UserStyle==` one) | the file, with no line |
 | "No `@name`" / "No `@match` or `@include`" | the `// ==UserScript==` marker |
 | unknown `@grant` (a warning) | the first offending `@grant` line |
 | a `@match` Chrome's grammar refuses (a warning) | the `@match` line that declared it |
-| "`@match <pattern>` has no path, so this script would never run…" | the first offending `@match` line, when no pattern is usable |
+| `@match <pattern> uses "*" inside its host, so this script would never run…` | the first offending `@match` line, when no pattern is usable |
 | `@require` / `@resource` that won't load | the header line that declared it |
 
 The header messages are exported constants rather than inline literals,
@@ -45,14 +46,14 @@ so a rewording can't quietly stop matching what compares against them:
 
 | Constant | Module |
 |----------|--------|
-| `UNTERMINATED_METADATA_BLOCK`, `NO_METADATA_BLOCK` | `userscript-header.ts` |
-| `NO_NAME`, `NO_MATCH_OR_INCLUDE`, `SYNTAX_ERROR_PREFIX` | `script-store.ts` |
+| `UNTERMINATED_METADATA_BLOCK`, `NO_METADATA_BLOCK`, `USERSTYLE_NOT_SUPPORTED` | `userscript-header.ts` |
+| `NO_NAME`, `NO_MATCH_OR_INCLUDE`, `SYNTAX_ERROR_PREFIX` | `script-build.ts` |
 | `ignoredMatchMessage`, `unusableMatchMessage` | `url-match.ts` |
 
 The same rule covers anything that *recognizes* a message rather than
-prints it. `scripts/validate-userscripts.mjs` groups its survey by
-message, and used to do it with regexes over the wording — which went
-stale silently the first time these were recased, mislabelling whole
+prints it. The corpus validator (`validate-corpus.mjs`) groups its
+survey by message, and used to do it with regexes over the wording —
+which went stale silently the first time these were recased, mislabelling whole
 buckets without failing. It now imports `SYNTAX_ERROR_PREFIX`, and calls
 `isFetchFailureMessage` (`external-files.ts`) and
 `unusableMatchGroupKey` (`url-match.ts`) — each derived from the
@@ -120,7 +121,7 @@ what the row now says.
 
 ## Rendering it
 
-`appendDiagnostic` (`src/userscript.ts`) paints
+`appendDiagnostic` (`src/extension/userscript.ts`) paints
 `<message> (in <where>)` with the "where" a link.
 
 - It resolves `location.file` to a tab: `@require`s match a tab's
@@ -188,7 +189,7 @@ located warnings or an INVALID row before anything is registered (see
 parser, because a false positive would drop a pattern that works. What
 reaches REJECTED is the remainder: a malformed port, a host Chrome's
 canonicalizer rejects, or whatever it tightens next. See
-[file-index](file-index.md) for `src/script-rejection.ts`, which holds
+[file-index](file-index.md) for `src/extension/script-rejection.ts`, which holds
 the state, and [injection.md](injection.md#rejected-registrations) for
 the registration path that produces it.
 
@@ -211,7 +212,7 @@ verdict about a script's *fate* rather than its content.
   reader needs to know is that what they see on the page is not what is
   on disk, not that something is broken.
 - **One string, one place**: `describeRefreshError` in
-  `src/refresh-error.ts`, listed under
+  `src/extension/refresh-error.ts`, listed under
   [One string, one place](#one-string-one-place).
 - **The reason is ours, not Chrome's.** An out-of-quota write rejects
   with `Resource::kQuotaBytes quota exceeded` (the exact text varies by
@@ -238,6 +239,12 @@ Where it shows up:
 ## Wording
 
 One message per problem, phrased to survive every place it lands.
+
+- **sm-dev quotes code in backticks.** In sm-dev's messages, commands
+  to run, flags, and the user's own input given back go in backticks
+  (`` Use `tabs` to list them ``). At a terminal they show in color;
+  plain, a backtick pair stays only where it sets the text apart (see
+  [sm-dev-design.md](sm-dev-design.md#output-color-output-stylets)).
 
 - **Capitalized, no trailing period, subject included.** The same
   string appears alone in the message bar and the Log tab, *and* after
@@ -318,6 +325,9 @@ verdicts about a script's content:
   - Phrased so it doesn't echo what follows it. `scanError` values
     usually open with their own `Could not read <url>: …`, so a
     `could not …:` wrapper would say "could not" twice running.
+  - A GitHub read's failure adds a hint as a sentence on its own line
+    (`githubStatusError`). The collections page keeps the line break
+    and links the address, and sm-dev indents the hint under its line.
 - **Errors GM APIs throw back into script code** — the audience is the
   script's author, so `GM_openInTab: url required` stays as it is. Only
   *our* internals get rewritten, and a failure in our plumbing gets the
@@ -328,18 +338,20 @@ One capitalization convention, with carve-outs:
 - **Every message a user reads starts with a capital and ends without
   a period** — diagnostics, Log rows, banners, and the viewer's
   `setMessage` copy alike (`Install failed: …`, `This script is already
-  installed`, `Checked for updates — no change`).
+  installed`, `Checked for updates and found no change`).
   - "No period" is about a *single-sentence* message. Copy that is
     genuinely two sentences punctuates all of them, last one included —
     `Syntax error: … (in a.user.js, line 12). Installing it will store
     it as INVALID.`
-  - **A statement plus a fix is two sentences**, not one joined by an
-    em-dash: `This location is a manifest. Choose Manifest as the type.`
-    The dash reads as an aside, where the fix is the half the user acts
-    on. (An em-dash still fits a genuine aside, and the
-    subject-plus-shapes messages — `Location must be a URL or absolute
-    file path` — stay one sentence with no period.) Same for `Script not found in storage.
-    Open it from the collections page.`
+  - **A statement plus a fix is two sentences**, not one joined by a
+    dash: `This location is a manifest. Choose Manifest as the type.`
+    Same for `Script not found in storage. Open it from the
+    collections page.`
+  - The subject-plus-shapes messages (`Location must be a URL or
+    absolute file path`) stay one sentence with no period.
+  - **No em-dashes in any user-visible text** (messages, Log rows,
+    tooltips, UI copy, console diagnostics). Use a colon, comma,
+    parentheses, or two sentences instead.
   - Wrapping doesn't change that. `This file cannot be installed: No
     @name in the metadata block` is the intended reading: the prefix is
     its own clause, and the message keeps its capital wherever it lands.
@@ -369,10 +381,10 @@ constant, so the copies can't drift:
 | Helper | Covers |
 |--------|--------|
 | `gmXhrError` (`gm-connect.ts`) | every failure `GM_xmlhttpRequest` hands back to a script |
-| `connectBlockedMessage` (`gm-connect.ts`) | the pre-flight and post-redirect `@connect` denials |
+| `connectBlockedMessage`, `connectDeniedMessage`, `connectCancelledMessage`, `connectUnansweredMessage`, `connectPromptFailedMessage` (`gm-connect.ts`) | the pre-flight and post-redirect `@connect` refusals |
 | `NO_ORIGINATOR_TAB` (`background.ts`) | the GM handlers that reply when the calling tab can't be identified |
 | `NOTIFICATIONS_UNAVAILABLE` (`gm-notification.ts`) | both guards on `chrome.notifications` |
-| `LOCATION_SHAPES` (`directories.ts`) | the Add-field and preview validators' description of a valid location |
+| `LOCATION_SHAPES` (`file-locations.ts`) | the Add-field and preview validators' description of a valid location |
 | `gmValuesFailure` (`gm-bindings.ts`) | the injected console line and the `sm:error` payload |
 | `describeRejection` (`script-rejection.ts`) | the refused-registration sentence, in the Log row and the viewer's message bar |
 | `describeRefreshError` (`refresh-error.ts`) | the could-not-be-saved sentence, in the collection's section message |
@@ -389,11 +401,12 @@ part the reader could act on.
 Sharper wording makes a wrong attribution worse, so a message that
 names a culprit has to be reachable only when that culprit is real:
 
-- `isUrlConnectAllowed` returns `denied` alongside `reason`. A URL that
-  wouldn't parse fails the check without the header having refused
-  anything, so only `denied: true` goes through
-  `connectBlockedMessage` — otherwise a script with `@connect *` would
-  be told its own rules blocked a relative URL.
+- `decideConnect` answers `invalid` for a URL that wouldn't parse,
+  apart from `deny`. The header refused nothing there, so only `deny`
+  goes through `connectBlockedMessage`. Otherwise a script with
+  `@connect *` would be told its own rules blocked a malformed URL.
+- A host the user denied says so (`connectDeniedMessage`), not that
+  the rules blocked it: the rules asked, and the user answered.
 - `loadConnectPolicy` splits "this script is gone" (a race the user
   fixes by reloading) from "its header is missing" (ours). The first
   must not carry the `internal error:` prefix.
@@ -428,8 +441,8 @@ lines land in two consoles, and you need both:
 ### Reading it
 
 ```
-timing — collection refresh: total 34ms (read 3.9, scan 8.7, fetch 0.4,
-  rebuild 0.7, write 21) — /path/to/scripts, 5 scripts, 5 unchanged,
+timing: collection refresh: total 34ms (read 3.9, scan 8.7, fetch 0.4,
+  rebuild 0.7, write 21); /path/to/scripts, 5 scripts, 5 unchanged,
   rows written: 0
 ```
 
@@ -492,10 +505,116 @@ collection check cumulative (concurrent, sums past wall clock):
 
 `registration sync` should appear **once or twice** per Refresh All, not
 once per collection and never once per script. A long run of them is the
-symptom that led to `onlyProbesChanged` (see
+symptom that led to `onlyAnnotationsChanged` (see
 [injection.md](injection.md#lifecycle)): probe results are written one
 row at a time, and each write used to schedule its own re-registration.
 If they come back, that suppression is the first place to look.
+
+## Measuring an enable click
+
+With **Options → Debug logging** on, each enable or disable prints one
+line in the service worker's console, which saves them all
+([worker-writes.md](worker-writes.md)). The `registration sync` line
+follows. The viewer's versions table prints its own line in the page
+too.
+
+| Line | Printed by |
+|------|------------|
+| `enable script` / `disable script` | a script checkbox (collections page, viewer, popup, sm-dev), and an enable in the viewer's versions table |
+| `enable collection` / `disable collection` | a collection checkbox |
+| `enable all` / `disable all` | the collections page's bulk toggle |
+| `versions table enable` | a checkbox in the viewer's versions table, in the page: the round trip to the worker (`write`), then the redraw |
+| `turn off other copies` | an install or move that displaces other copies |
+| `enablement write` | any other enable write (only the write's own steps) |
+
+The shape of a line (numbers illustrative):
+
+```
+timing: enable script: total 24ms (find copies 0.3 [3 script(s)],
+  lock wait 0.1, re-read 0.5 [4 keys, 9 KB], plan 0.4, read rows 0.3
+  [3 keys, 9 KB], read collections 0.1 [1 key, 0.4 KB], write 9.8
+  [3 keys, 9 KB]); 2 change(s)
+```
+
+- **find copies**: which copies are related to the ones being changed
+  (the same location, or `@namespace` + `@name`). From the worker's
+  index over its row cache ([worker-writes.md](worker-writes.md#the-row-cache));
+  where there is none, a read of every row.
+- **read collection** (collection toggles and Enable all): the
+  collection and its scripts' rows.
+- **plan**: working out which copies to change.
+- **lock wait**: waiting behind other storage writes in the worker.
+- **re-read**: the related copies, their collections and the active
+  times, read inside the lock to plan from. From the worker's row
+  cache, so it stays small even while a sync is reading storage.
+- **read rows / read collections**: the rows the write changes,
+  re-read inside the lock. `read collection` is the toggled collection.
+- **write**: the one storage write. Every changed script row is
+  written whole; its bodies stay in their blobs.
+- **repaint** (`versions table enable`, in the page): the table redraw
+  the checkbox stays grey for.
+- Sizes are JSON lengths, roughly what Chrome stores and copies.
+  Computing them is left out of the step times.
+
+After any storage write, the collections page redraws and prints a
+`collections page repaint` line. Its note says which kind of pass ran.
+
+- **`N row(s)`**: only script rows changed, so only those are redrawn.
+  - **read scripts**: those rows.
+  - **read collections**: their collections' rows.
+  - **icons / paint**: cached favicons for them, then updating those
+    rows and the "could not save" banner.
+- **`all rows`**: anything else, or a change those rows can't take in
+  place (see `repaintScriptRows`).
+  - **read collections / banner**: the collection rows, and the "could
+    not save" banner's check.
+  - **read scripts**: every collection's script rows in one read,
+    without their bodies.
+  - **size**: asking Chrome how big those rows are.
+  - **icons / paint**: cached favicons, then updating the rows.
+  - A pass that started as a rows-only one and found it couldn't shows
+    its own `read scripts`, and maybe `read collections`, first.
+
+The `registration sync` line that follows has these steps:
+
+- **read / labels / read bodies / build-specs**: the changed rows
+  (and, as `read collections`, any collection rows the sync hadn't
+  seen); the log labels, and any rows a label change moved; the bodies
+  of those that will be registered; and what Chrome is given to
+  register.
+  - Rows come from the worker's row cache once it's loaded; bodies
+    still come from storage.
+  - The labels use the script numbers the worker assigned just before
+    the sync.
+  - A full sync reads rows and bodies under `read`. Its note says how
+    many specs Chrome already held exactly (no call), how many more went
+    without their code, and how many registrations it dropped.
+  - An incremental sync's note says how many specs it rebuilt the same
+    as it last placed them (`in place`, no call).
+- **list** (full syncs only): asking Chrome which registrations it
+  holds.
+- **compare** (full syncs only): which of them Chrome already holds
+  exactly, or with the same code.
+- **unregister / register**: the `chrome.userScripts` calls, removals
+  first.
+- **unregister after** (only when needed): removals Chrome may not hold,
+  and scripts it just refused that it already held.
+- **read rejections / write rejections**: the list of scripts Chrome
+  refused, which shows them as REJECTED. It is read alongside the
+  calls above, so `read rejections` is only the wait left after them.
+
+Around the steps:
+
+- A worker's first sync is incremental when it took the last worker's
+  record ([injection.md](injection.md#startup-the-record-or-a-full-reconcile)):
+  its scope is the rows that changed while no worker ran. A
+  `registration record` line before it says whether the record was
+  taken, and if not, why.
+- The console line after a sync names what is in place with
+  `chrome.userScripts`; after a full sync, how many registrations were
+  sent and how many Chrome already held. An incremental sync that
+  rebuilt some the same says how many it sent and how many it left; one
+  that sent nothing and dropped nothing prints no line.
 
 ## Measuring a missed reload swap
 
@@ -530,10 +649,10 @@ large *waited* is the per-script check below.
 | `reload fast-path cumulative` | one for the batch, breaking `rebuild` into its concurrent stages |
 
 ```
-timing — script check: total 731ms (read-script 38, read-collection 169,
+timing: script check: total 731ms (read-script 38, read-collection 169,
   stat 17, fetch 23, rebuild 450, write 34)
   — garmin/upload.user.js, 46 KB row, refetched
-timing — reload fast-path cumulative: parse-check 448ms/3, build 2.8ms/1, deps 0.3ms/3
+timing: reload fast-path cumulative: parse-check 448ms/3, build 2.8ms/1, deps 0.3ms/3
 ```
 
 - **read-script / read-collection** — two point reads, in series because
@@ -553,14 +672,29 @@ timing — reload fast-path cumulative: parse-check 448ms/3, build 2.8ms/1, deps
     something else held the thread.** Look for a storage scan next.
 - **stat** — the `file://` directory listing that supplies the
   size+mtime the skip check needs.
+  - **`read directly`**: a page-load check read the file itself instead,
+    which gives the same size+mtime and the body with it (see
+    [local-file-overrides.md](local-file-overrides.md#page-load-checks)).
+    `stat` then covers that read, and `fetch` costs nothing.
+- **`local-standin` / `dep-fetch`** in the cumulative line — the
+  stand-in lookups, and the file reads inside them. A script's lookups
+  run at once, so their sum can pass `deps`; on a page-load check the
+  known stand-ins' reads start with the script read, overlapping `stat`
+  too.
 - **`collection row shared with batch` / `listing shared with batch`** —
   the navigation-triggered checks for one page share both (see
   [injection.md](injection.md#shared-work-across-the-batch)), so only
   the first of a batch pays. The phases are still marked on the
   sharers: what they measure there is the wait for the batch's single
   read, which on one thread still queues behind the siblings' own work.
+- **read-bodies** — waiting for the script's stored code (its blobs),
+  whose read starts with the check and runs alongside `stat`. Usually
+  0; the read's own time is the `bodies` note. `read-script` itself is
+  the row from the worker's row cache, so usually no storage call.
 - **fetch** — `unchanged` means the size+mtime skip hit and no body was
   read; `refetched` means it missed.
+- **`nothing to write`** — the rebuilt row matched the stored one, so
+  `write` took neither the store's lock nor a storage call.
 - **rebuild** — header parse, hashing, the parse check, and the
   `@require` / `@resource` pass. The cumulative line says which:
   measured on a real 3-script page, `parse-check` was 448 of 450 ms and
@@ -586,8 +720,11 @@ numbers anyway, both because the worker is single-threaded:
 ### Storage scans
 
 ```
-timing — storage scan (registration sync): 183ms, 266 row(s)
+timing: storage scan (registration sync): 183ms, 266 keys, 4.1 MB
 ```
+
+The size comes from Chrome (`getBytesInUse`), not from serializing the
+rows, so measuring it costs this thread nothing.
 
 - A `chrome.storage.local.get(null)` returns **every row the extension
   owns** — script bodies, `@require` / `@resource` payloads, favicons,
@@ -597,8 +734,20 @@ timing — storage scan (registration sync): 183ms, 266 row(s)
   it does, unrelated pending callbacks in that context wait. So a scan
   inflates phases that have nothing to do with it.
 - The line names the caller, because that is the part a reader needs:
-  `match index`, `registration sync`, `all scripts`, `log id table`,
-  `key migration`, `gm value wipe`.
+  `all scripts`, `key migration`, `blob migration`, `gm value wipe`.
+- The same line also reports the narrow reads of every script row
+  (`scanStorageRows`). These list the keys and read only the rows, so
+  they skip the bodies and GM values:
+  - `row cache`: the worker's, which the match index, log labels,
+    numbers, registration sync, registration record and membership
+    repair read once loaded.
+  - Those readers' own scans, when the cache isn't loaded: `match
+    index`, `log id table`, `registration sync`, `registration record`,
+    `membership reconcile`.
+  - `new copies`, and `all script rows` (pages, and the worker before
+    its cache is on).
+  - The extension-update backfills: `startup log backfill`, `header
+    check backfill`, `retired header check`.
 - Measured on a 266-row profile, a scan costs **129–193 ms** whoever
   asks. That is the unit to price any new one against.
 
@@ -662,8 +811,8 @@ The lesson worth keeping:
   validator, especially what they do with a partial location.
 - `tests/e2e/rejected-registration.spec.ts` — the REJECTED state end to
   end, driven by a `@match` with a malformed port (valid to us, invalid
-  to Chrome — the empty-path case it used to use is now caught before
-  registration).
+  to Chrome — the empty-path case it used to use is now read as the
+  root page).
 - `tests/unit/url-match.test.mjs` — the `@match` grammar check, and the
   invariant that everything it flags is a pattern `matchPattern` could
   never match anyway.
@@ -680,8 +829,8 @@ The lesson worth keeping:
   - The expected locations live in `tests/fixtures/bad-script-cases.mjs`
     and are pinned twice: by `bad-scripts.spec.ts` against the stored
     `errorLocation` in Chromium, and by
-    `tests/unit/validate-userscripts.test.mjs` against the offline CLI's
-    report under Node. Both go through `locationPattern`, so the two
+    `tests/unit/harness/validate.test.mjs` against `sm-dev validate`'s
+    output under Node. Both go through `locationPattern`, so the two
     engines' answers stay checked against each other.
   - Lines are read off each example's `>>> the error` marker rather than
     written down, except for the header failures — those are about a tag

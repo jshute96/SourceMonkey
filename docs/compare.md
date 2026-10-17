@@ -2,7 +2,7 @@
 
 Two copies of one script, side by side: their header fields in one
 table, then a diff of each file they run. `src/compare.html` +
-`src/compare.ts`; the diff itself is `src/line-diff.ts`.
+`src/extension/compare.ts`; the diff itself is `src/extension/line-diff.ts`.
 
 ## How it is reached
 
@@ -124,7 +124,7 @@ table, then a diff of each file they run. `src/compare.html` +
   (with the `@@` seams, in Changes only).
 - A file only one side has is all `+` (or all `−` after a swap).
 
-### The algorithm (`src/line-diff.ts`)
+### The algorithm (`src/extension/line-diff.ts`)
 
 - Myers' O(ND) shortest-edit-script search over lines, the same
   algorithm `diff` and git use, with the common prefix and suffix

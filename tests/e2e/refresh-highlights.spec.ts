@@ -153,6 +153,33 @@ test.describe('refresh row highlights', () => {
     await page.close();
   });
 
+  test('a ghost stays under the row it was shown below, in name order', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // Rows are listed by name, but stored in path order. The names here
+    // reverse the paths, so a ghost anchored by stored order would land
+    // in the wrong place.
+    for (const [relativePath, name] of [['a.user.js', 'C'], ['b.user.js', 'B'], ['c.user.js', 'A']]) {
+      scriptsDir.write({ relativePath, meta: { name, match: ['https://example.com/*'] }, body: '' });
+    }
+    const collection = await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const section = page.locator(`section.collection[data-collection-id="${collection!.id}"]`);
+    const names = section.locator('tbody tr td.name-cell');
+    await expect(names).toHaveText([/A/, /B/, /C/]);
+
+    scriptsDir.remove('b.user.js');
+    await section.locator('button.refresh-collection').click();
+
+    await expect(section.locator('tbody tr[data-tombstone]')).toHaveCount(1);
+    await expect(names).toHaveText([/A/, /B/, /C/]);
+    await expect(section.locator('tbody tr').nth(1)).toHaveAttribute('data-tombstone', /./);
+    await page.close();
+  });
+
   test('a later refresh clears the ghost', async ({
     extensionContext, extensionId, sm,
   }) => {

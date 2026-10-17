@@ -302,6 +302,10 @@ on the collections page, right of Add.
   inline, with the file still selected so they can retry. (The
   drag-and-drop described above is Tampermonkey's own handler, on
   Tampermonkey's page — our dialog has no drop target.)
+- The page parses the file and hands the scripts to the service
+  worker's `importCollection` operation, which writes the rows and the
+  GM values: only the worker writes storage
+  ([worker-writes.md](worker-writes.md)).
 - Success creates a collection and lands on it, same as Add.
 
 v1 accepts the **JSON blob** only.
@@ -323,8 +327,8 @@ Each run creates a collection with `path` = `import:<uuid>`.
 - The unique path means re-importing never trips the duplicate-path
   check. It also means **repeat imports duplicate scripts**; merging on
   re-import is a follow-up, which is what `importedFrom` exists for.
-- `displayName` is written explicitly (`Imported from Tampermonkey —
-  <date>`) rather than inferred from the path.
+- `displayName` is written explicitly (`Imported from Tampermonkey
+  (<date>)`) rather than inferred from the path.
 - Classifies to its own `imported` bubble type.
 
 ### Pinned bytes: a collection with no scan
@@ -362,7 +366,7 @@ supply it in one of two ways:
     become live targets — leaving a pinned row wearing an OUTDATED
     badge with every control that could act on it correctly withheld.
     `probeOneScript` returns early for a pinned row instead.
-  - The viewer's Location row renders "Imported from Tampermonkey — no
+  - The viewer's Location row renders "Imported from Tampermonkey, with no
     external location" instead of the URL.
   - Refresh is refused rather than offered: `refreshScript` returns a
     pinned row untouched, so a button would spin and change nothing.
@@ -391,8 +395,8 @@ allow it.
 | `source` (base64) | Fed through `buildScriptFromText`, so header parse, validation, `contentHash`, matching, and parse diagnostics are judged by the same rules as a fetched script |
 | `name` | Synthesized filename (`My Script.user.js`), deduped with `-2` suffixes — this is what the Filename column and log IDs render |
 | `enabled` | Mirrored onto the row |
-| `position` | Order within the collection |
-| `storage.data` | Seeded into `gmval:<scriptId>:<key>` rows, so a script resumes with its settings rather than factory-reset |
+| `position` | Order of the collection's `scriptIds` (the collections page lists rows by name) |
+| `storage.data` | Written through the worker's value store into `gmval:<scriptId>:<key>` rows, so a script resumes with its settings rather than factory-reset |
 | `uuid` | Kept in `importedFrom` for the future re-import merge |
 | `requires` / `resources` bodies | **Not** used. TM stores absolute URLs, so the normal `external-files.ts` prefetch runs and the result matches every other collection |
 

@@ -337,6 +337,35 @@ test.describe('collections page live updates', () => {
     await page.close();
   });
 
+  test('a scan failure links the address it read, and its hint starts a line', async ({
+    extensionContext, extensionId, getServiceWorker, sm,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: { name: 'A', match: ['https://example.com/*'] },
+      body: '',
+    });
+    const collection = (await sm.addCollection(scriptsDir.path))!;
+    // A GitHub read's failure, as the worker stores it. The tests have
+    // no GitHub to fail against.
+    const key = `collection:${collection.id}`;
+    const sw = await getServiceWorker();
+    const row = await sw.evaluate(async (k) => (await chrome.storage.local.get(k))[k], key);
+    const url = 'https://api.github.com/repos/x/y/contents/z?ref=main';
+    await sm.seedStorage({
+      [key]: { ...(row as object), scanError: `Could not read ${url}: HTTP 404.\nRepo not found, or repo is private.` },
+    });
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const error = page.locator(`section.collection[data-collection-id="${collection.id}"] p.error`);
+    await expect(error.locator('a')).toHaveAttribute('href', url);
+    expect(await error.innerText()).toBe(
+      `This collection did not load: Could not read ${url}: HTTP 404.\nRepo not found, or repo is private.`,
+    );
+    await page.close();
+  });
+
   test('a collection removed elsewhere drops its section', async ({
     extensionContext, extensionId, sm,
   }) => {
@@ -573,7 +602,9 @@ test.describe('viewer live updates', () => {
     // Collection disabled from the collections page / another tab: the viewer's
     // Enable toggle greys out without a reload.
     await sm.setCollectionEnabled(collection!.id, false);
-    await expect(checkbox).toBeDisabled();
+    // The viewer hears of it through a storage change, which can be slow
+    // to arrive when the whole suite runs in parallel.
+    await expect(checkbox).toBeDisabled({ timeout: 15_000 });
     await expect(label).toHaveClass(/toggle-disabled/);
 
     await page.close();

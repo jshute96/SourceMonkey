@@ -82,14 +82,6 @@
       .bulk-toggle:hover:not(:disabled) { background: #f0f0f0; }
       .bulk-toggle:disabled { cursor: not-allowed; opacity: 0.5; }
       .script-table th.toggle-cell { white-space: nowrap; width: 1%; padding-right: 3px; }
-      /* Dupe-basename suffix (e.g. " #2") shown after the script's
-         name link. Empty for unique basenames so the column stays
-         clean. */
-      /* `white-space: nowrap` keeps the suffix itself intact now that
-         the name cell wraps — it may land on its own continuation
-         line, but never splits into `#` + `2`. */
-      .log-id-suffix { color: #555; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; white-space: nowrap; }
-      .log-id-suffix:not(:empty)::before { content: ' '; }
       /* Column of site favicons to the left of the name link. One
          16px icon per distinct site the script targets (see
          `MAX_SITE_ICONS`), side by side with a 2px gap. Each icon is
@@ -145,11 +137,16 @@
       .status-cell a:hover { text-decoration: underline; }
       .empty { color: #666; font-style: italic; }
       .error { color: #b00; }
+      /* A collection's failure line: a hint can start a line of its own,
+         and the address it couldn't read is a link. */
+      p.error[data-message-kind] { white-space: pre-line; }
+      p.error[data-message-kind] a { color: inherit; }
       /* The banner box itself is in styles.css (shared with the
          viewer). These are the collections-page-only parts: a roomier
-         gap before the collection list, and the raw-API-error line the
-         "Allow User Scripts" banner appends. */
+         gap before the collection list, and the raw-API-error line in the
+         "Allow User Scripts" banner. */
       .banner { margin-bottom: 1em; }
+      .banner.banner-error .banner-detail { color: #b71c1c; }
       .banner .banner-detail { color: #92400e; font-size: 0.85em; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin-top: 0.5em; }
       /* Inline busy spinner for individual controls (toggles, add form).
          `@keyframes sm-spin` is in styles.css, shared with the dialog
@@ -246,6 +243,8 @@
          the chip and checkbox have nothing to strike through. */
       .script-table tr.row-removed .tombstone-name,
       .script-table tr.row-removed td.size-cell { text-decoration: line-through; }
+      /* Sizes line up on their units. */
+      .script-table .size-cell { text-align: right; font-variant-numeric: tabular-nums; }
       /* The favicon stays — it's what the eye finds the row by — but
          muted, so a dead row never draws attention ahead of a live one. */
       .script-table tr.row-removed .site-icon { filter: grayscale(1); opacity: 0.55; }
@@ -271,7 +270,7 @@
           <button id="open-options" type="button" title="Open the options page">Options</button>
           <!-- The label ships in the markup so the button is never blank:
                collections.js is a deferred module, and `setGlyphButton`
-               (src/collections.ts) replaces this text with the same word
+               (src/extension/collections.ts) replaces this text with the same word
                beside a glyph once it runs. -->
           <button id="refresh-all" type="button">Refresh All</button>
         </div>
@@ -315,6 +314,6 @@
       <div id="collections"></div>
     </div>
 
-    <script src="collections.js" type="module"></script>
+    <script src="extension/collections.js" type="module"></script>
   </body>
 </html>

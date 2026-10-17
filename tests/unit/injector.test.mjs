@@ -1,4 +1,4 @@
-// Tests for src/injector.ts (compiled to dist/injector.js).
+// Tests for src/extension/injector.ts (compiled to dist/extension/injector.js).
 //
 // Only the pure helpers are exercised here — the chrome.userScripts
 // runtime sync (syncRegistrations) is glue I/O and is covered by the
@@ -7,6 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { evalWithGate, eventName, gated, KEY, registryOf, stubGate } from './channel-helpers.mjs';
 
 // chrome.storage stub — buildGmBindingsForScript reads chrome.storage.local
 // at register time for storage-granting scripts to bake in the initial
@@ -51,6 +52,7 @@ globalThis.chrome = globalThis.chrome ?? {
         for (const k of keys) if (localStore.has(k)) out[k] = localStore.get(k);
         return out;
       },
+      getKeys: async () => [...localStore.keys()],
       set: async (obj) => { for (const [k, v] of Object.entries(obj)) localStore.set(k, v); },
     },
     session: {
@@ -81,22 +83,25 @@ import {
   buildBridgeSpec,
   buildConfigBlob,
   buildRegistrationSpec,
+  scratchEvalHookKey,
+  NO_PAGE_MATCH,
   buildSwapEvalBody,
   collectActiveSpecs,
   normalizeDeclaredRunAt,
-  resolveWorld,
   wrapCombinedEntry,
   wrapPreludeEntry,
-} from '../../dist/injector.js';
+} from '../../dist/extension/injector.js';
+import { resolveWorld, runsSandboxed } from '../../dist/script-world.js';
 import {
-  USER_SOURCE_START_LINE,
   composeRequiredBody,
-  composeSource,
+  stackLayout,
 } from '../../dist/composed-source.js';
 import { remapStackRef } from '../../dist/source-map.js';
+import { MISSING_BLOB_MESSAGE } from '../../dist/extension/script-blobs.js';
+import { remapStackText } from '../../dist/stack-link.js';
 import { buildRequireSourceUrl, buildSourceUrl } from '../../dist/script-source-url.js';
 import { WRAPPER_BRIDGE, WRAPPER_PRELUDE } from '../../dist/generated-wrappers.js';
-import { urlMatchesScript } from '../../dist/url-match.js';
+import { matchPattern, urlMatchesScript } from '../../dist/url-match.js';
 
 // ---------- normalizeDeclaredRunAt ----------
 
@@ -110,8 +115,11 @@ test('normalizeDeclaredRunAt: recognized values pass through (lowercased)', () =
 test('normalizeDeclaredRunAt: missing / unknown values default to document-idle', () => {
   assert.equal(normalizeDeclaredRunAt(undefined), 'document-idle');
   assert.equal(normalizeDeclaredRunAt(''), 'document-idle');
-  assert.equal(normalizeDeclaredRunAt('context-menu'), 'document-idle');
   assert.equal(normalizeDeclaredRunAt('whatever'), 'document-idle');
+});
+
+test('normalizeDeclaredRunAt: context-menu passes through, for a manual run', () => {
+  assert.equal(normalizeDeclaredRunAt(' Context-Menu '), 'context-menu');
 });
 
 test('normalizeDeclaredRunAt: case-insensitive', () => {
@@ -135,8 +143,10 @@ test('buildConfigBlob: emits a queue-or-init call with the cfg object', () => {
   });
   // Both transport branches are present — direct init() when prelude
   // is already loaded, queue-push otherwise.
-  assert.match(blob, /self\.__smPrelude\.init/);
-  assert.match(blob, /self\.__smCfgQueue=self\.__smCfgQueue\|\|\[\]/);
+  assert.match(blob, /r\.prelude\.init/);
+  assert.match(blob, /r\.cfgQueue=r\.cfgQueue\|\|\[\]/);
+  // The registry comes from the gate, for the channel key.
+  assert.ok(blob.includes(`document.__smGate`) && blob.includes(JSON.stringify(KEY)));
   // The cfg literal carries the script identity.
   assert.match(blob, /"id":"abc"/);
   assert.match(blob, /"name":"Foo"/);
@@ -186,11 +196,11 @@ test('buildConfigBlob: a startup log\'s location never reaches the page', () => 
     matching: null,
     startupLogs: [{
       level: 'warn',
-      message: 'Ignoring @grant GM_nope — unsupported APIs',
+      message: 'Ignoring unsupported @grant GM_nope',
       location: { file: '/home/someone/private/x.user.js', line: 4 },
     }],
   });
-  assert.match(blob, /"message":"Ignoring @grant GM_nope — unsupported APIs"/);
+  assert.match(blob, /"message":"Ignoring unsupported @grant GM_nope"/);
   assert.doesNotMatch(blob, /"location"/);
   assert.doesNotMatch(blob, /home\/someone/);
 });
@@ -224,24 +234,27 @@ test('wrapCombinedEntry: no requires → head on line 1, body lines preserved, n
     script: scriptWith({ bodyText: 'LINE1\nLINE2\nLINE3' }),
   });
   const lines = wrapped.split('\n');
-  assert.match(lines[0], /^self\.__smRun\("abc",function\(__smE\)\{.*LINE1$/);
+  assert.match(lines[0], /^\(function\(__smReg\)\{__smReg\.run\("abc",function\(__smE\)\{.*LINE1$/);
   assert.equal(lines[1], 'LINE2');
   assert.equal(lines[2], 'LINE3');
   assert.doesNotMatch(wrapped, /sourceMappingURL/);
   assert.match(wrapped, /\/\/# sourceURL=sourcemonkey:\/\/SourceMonkey\/x\/Foo\.user\.js/);
 });
 
-test('wrapCombinedEntry: defers execution via self.__smRun and exposes per-script vars', () => {
+test('wrapCombinedEntry: defers execution via the registry\'s run and exposes per-script vars', () => {
   const wrapped = wrapCombinedEntry({
     ...COMBINED_ARGS,
     script: scriptWith({ bodyText: 'BODY' }),
   });
-  assert.match(wrapped, /^self\.__smRun\("abc",function\(__smE\)\{/);
+  assert.match(wrapped, /^\(function\(__smReg\)\{__smReg\.run\("abc",function\(__smE\)\{/);
+  // The registry (and the channel key in its expression) comes in at the
+  // end, outside the wrap function's source.
+  assert.match(wrapped, /\}\)\}\)\(\(function\(k\)\{.*\}\)\("__SM_KEY__"\)\);\n\/\/# sourceURL=/);
   assert.match(wrapped, /var __smDecision=__smE\.decision;/);
   assert.match(wrapped, /var __smName=__smE\.cfg\.name;/);
   assert.match(wrapped, /var __smId=__smE\.cfg\.id;/);
   assert.match(wrapped, /var __smLoadedAt=__smE\.cfg\.loadedAt;/);
-  assert.match(wrapped, /var __smSend=self\.__smPrelude\.send;/);
+  assert.match(wrapped, /var __smSend=__smE\.send;/);
 });
 
 test('wrapCombinedEntry: splices gmBindings + gmPrelude before the user source', () => {
@@ -273,8 +286,160 @@ test('wrapCombinedEntry: requires and body land in ONE shared scope', () => {
     __smPrelude: { send: () => {} },
     __smRun: (_id, fn) => { got = fn({ decision: {}, cfg: { name: 'n', id: 'abc', loadedAt: 0 } }); },
   };
-  new Function('self', wrapped)(stub);
+  new Function('self', 'window', 'document', wrapped)(stub, stub, gated(stub));
   assert.equal(got, 'from-require:ok');
+});
+
+test('wrapCombinedEntry: the user program shadows our bindings instead of clashing', () => {
+  // Our `const`s sit in the wrap function; the user program runs in a
+  // scope nested inside it. So `const window = unsafeWindow` no longer
+  // puts our `const unsafeWindow = window;` in its TDZ, and the
+  // redeclarations real scripts make are ordinary shadowing.
+  const wrapped = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    requireUrls: ['sourcemonkey://SourceMonkey/x/cdn/lib.js'],
+    gmBindings: 'const unsafeWindow = window; const GM_info = "ours"; const GM_setValue = 1; ',
+    script: scriptWith({
+      bodyText: [
+        'const window = unsafeWindow;',
+        'let GM_info = "mine";',
+        'var GM_setValue = 2;',
+        'var __smE = 3;',
+        'function GM_addStyle() { return "own"; }',
+        'return [window.app, GM_info, GM_setValue, __smE, GM_addStyle(), lib].join(",");',
+      ].join('\n'),
+      requires: [req('const self = "lib-self"; const lib = self;')],
+    }),
+  });
+  let got;
+  const stub = {
+    __smPrelude: { send: () => {} },
+    __smRun: (_id, fn) => { got = fn({ decision: {}, cfg: { name: 'n', id: 'abc', loadedAt: 0 } }); },
+  };
+  new Function('self', 'window', 'document', wrapped)(stub, { app: 'page' }, { __smGate: stubGate(stub) });
+  assert.equal(got, 'page,mine,2,3,own,lib-self');
+});
+
+test('wrapCombinedEntry: a leading "use strict" applies, as in TM and VM', () => {
+  // The script is the nested scope's first statement, so its directive
+  // is a real one and the program is strict: a plain call gets
+  // undefined as `this`, not the global object.
+  const wrapped = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    script: scriptWith({ bodyText: '"use strict";\nreturn (function () { return this; })() === undefined;' }),
+  });
+  let got = 'unset';
+  const stub = {
+    __smPrelude: { send: () => {} },
+    __smRun: (_id, fn) => { got = fn({ decision: {}, cfg: { name: 'n', id: 'abc', loadedAt: 0 } }); },
+  };
+  new Function('self', 'window', 'document', wrapped)(stub, stub, gated(stub));
+  assert.equal(got, true);
+});
+
+test('wrapCombinedEntry: the eval hook sees the program\'s scope, keeps "use strict", and adds no lines', () => {
+  // sm-dev's eval hook: a direct eval in the user program's scope, kept
+  // under the key. It goes after the directive, so the program stays
+  // strict, on the same line, so nothing moves.
+  const key = '__smDevEval:unit-test';
+  const wrapped = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    requireUrls: ['sourcemonkey://SourceMonkey/x/cdn/lib.js'],
+    gmBindings: 'const GM_info = "ours"; ',
+    evalHookKey: key,
+    script: scriptWith({
+      bodyText: '"use strict";\nconst secret = 42;\nreturn (function () { return this; })() === undefined;',
+      requires: [req('"use strict"; // the first file\'s directive counts\nconst lib = "L";')],
+    }),
+  });
+  let got = 'unset';
+  const stub = {
+    __smPrelude: { send: () => {} },
+    __smRun: (_id, fn) => { got = fn({ decision: {}, cfg: { name: 'n', id: 'abc', loadedAt: 0 } }); },
+  };
+  new Function('self', 'window', 'document', wrapped)(stub, stub, gated(stub));
+  assert.equal(got, true);
+  const hook = globalThis[key][COMBINED_ARGS.scriptId];
+  assert.equal(hook('[GM_info, lib, secret].join()'), 'ours,L,42');
+  assert.equal(Object.keys(globalThis).includes(key), false);
+  const plain = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    requireUrls: ['sourcemonkey://SourceMonkey/x/cdn/lib.js'],
+    script: scriptWith({ bodyText: 'L1\nL2', requires: [req('lib')] }),
+  });
+  const hooked = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    requireUrls: ['sourcemonkey://SourceMonkey/x/cdn/lib.js'],
+    evalHookKey: key,
+    script: scriptWith({ bodyText: 'L1\nL2', requires: [req('lib')] }),
+  });
+  assert.equal(hooked.split('\n').length, plain.split('\n').length);
+  assert.notEqual(hooked, plain);
+});
+
+test('wrapCombinedEntry: the eval hook goes into the script\'s own IIFE, not a library\'s', () => {
+  const key = '__smDevEval:unit-iife-req';
+  const wrapped = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    requireUrls: ['sourcemonkey://SourceMonkey/x/cdn/lib.js'],
+    evalHookKey: key,
+    script: scriptWith({
+      bodyText: '(function () {\n  const mine = "script";\n})();',
+      requires: [req('(function () { var libLocal = "lib"; globalThis.unitLib = 1; })();')],
+    }),
+  });
+  const stub = {
+    __smPrelude: { send: () => {} },
+    __smRun: (_id, fn) => { fn({ decision: {}, cfg: { name: 'n', id: 'abc', loadedAt: 0 } }); },
+  };
+  new Function('self', 'window', 'document', wrapped)(stub, stub, gated(stub));
+  const hook = globalThis[key][COMBINED_ARGS.scriptId];
+  assert.equal(hook('mine'), 'script');
+  assert.equal(hook('typeof libLocal'), 'undefined');
+});
+
+test('buildRegistrationSpec: only sm-dev\'s scripts get an eval hook', async () => {
+  const mine = await buildRegistrationSpec(scriptWith({ bodyText: 'x' }));
+  assert.doesNotMatch(mine.js[2].code, /__smDevEval/);
+  const scratch = await buildRegistrationSpec(scriptWith({ bodyText: 'x', fileUrl: 'scratch:///run-1a2b/t.user.js' }));
+  assert.match(scratch.js[2].code, /__smDevEval:run-1a2b/);
+  const asked = await buildRegistrationSpec(scriptWith({ bodyText: 'x' }), undefined, undefined, { evalHookKey: '__smDevEval:h' });
+  assert.match(asked.js[2].code, /__smDevEval:h/);
+});
+
+test('scratchEvalHookKey: a test collection\'s scripts only', () => {
+  assert.equal(scratchEvalHookKey('scratch:///run-ab12/a.user.js'), '__smDevEval:run-ab12');
+  assert.equal(scratchEvalHookKey('file:///a.user.js'), undefined);
+});
+
+test('wrapCombinedEntry: the nested scope adds no lines', () => {
+  // Line N of the body must stay generated line N (no requires), and the
+  // entry keeps the same number of lines, so the source map and the
+  // viewer's stack mapping need no adjustment.
+  const wrapped = wrapCombinedEntry({
+    ...COMBINED_ARGS,
+    script: scriptWith({ bodyText: 'L1\nL2' }),
+  });
+  const lines = wrapped.split('\n');
+  assert.match(lines[0], /L1$/);
+  assert.equal(lines[1], 'L2');
+  assert.match(lines[2], /^\};return __smReg\.prelude\.callAs\(__smU\);\}\)\}\)\(\(function\(k\)/);
+  assert.match(lines[3], /^\/\/# sourceURL=/);
+});
+
+test('buildSwapEvalBody: the swapped body shadows our bindings too', async () => {
+  // The swap evals the bindings and the body in one call, so it needs
+  // the same nested scope as the registered entry. Isolated, so it
+  // evals here without a prelude; the sandboxed form is covered in
+  // tests/e2e/sandbox-window.spec.ts.
+  const script = makeScript({
+    header: { tags: [{ tag: 'name', value: 'X' }, { tag: 'grant', value: 'GM_setValue' }, { tag: 'inject-into', value: 'content' }] },
+    bodyText: 'const GM_info = "mine"; var GM_setValue = 2; return [GM_info, GM_setValue].join(",");',
+  });
+  const { body } = await buildSwapEvalBody(script, '0.0.0', 'a.user.js');
+  assert.match(body, /const GM_info = /);
+  assert.match(body, /const GM_setValue = /);
+  assert.equal(evalWithGate(body), 'mine,2');
 });
 
 test('wrapCombinedEntry: a `;` separator defeats ASI hazards at the seam', () => {
@@ -589,7 +754,7 @@ test('buildSwapEvalBody: prepends resource.init so a swapped body sees its @reso
     resources: [{ name: 'r', bytesBase64: 'YQ==', contentType: 'text/plain', url: 'https://cdn/r', ref: 'r', size: 1, contentHash: '', loadedAt: 0 }],
   });
   const { body } = await buildSwapEvalBody(script, '0.0.0');
-  assert.match(body, /__SM_GM__\.resource\.init\(/);
+  assert.match(body, /__smReg\.gm\.resource\.init\(/);
   assert.match(body, /"r":\{"b64":"YQ=="/);
 });
 
@@ -598,6 +763,8 @@ test('buildSwapEvalBody: a swapped body with @requires shares their scope', asyn
   // registration uses, so the swap path gets shared scope for free —
   // but nothing exercised it end-to-end with a require present.
   const script = makeScript({
+    // `@grant none`: no sandbox, which `evalWithGate` has no prelude for.
+    header: { tags: [{ tag: 'name', value: 'Hello' }, { tag: 'grant', value: 'none' }] },
     bodyText: 'return tag("ok");',
     requires: [{
       url: 'https://cdn/x.js', source: 'const tag = (s) => "from-require:" + s;',
@@ -605,9 +772,9 @@ test('buildSwapEvalBody: a swapped body with @requires shares their scope', asyn
     }],
   });
   const { body } = await buildSwapEvalBody(script, '0.0.0', 'a.user.js');
-  // The swap eval is a single (0,eval) of this string, so evaluating
-  // it in one scope is exactly what the prelude does.
-  assert.equal(new Function(`${body}`)(), 'from-require:ok');
+  // The swap eval is a single (0,eval) of this string, exactly what the
+  // prelude does. Its completion value is the nested scope's result.
+  assert.equal(evalWithGate(body), 'from-require:ok');
   // It carries the same inline source map a fresh registration emits,
   // so devtools splits a hot-swapped script back into its original
   // files instead of showing concatenated line numbers.
@@ -663,19 +830,19 @@ test('buildSwapEvalBody: MAIN-world script still gets GM_info prepended', async 
   });
   const { body } = await buildSwapEvalBody(script, '0.0.0');
   assert.match(body, /const GM_info = /);
-  // No __SM_GM__ in MAIN, so non-info bindings aren't included.
-  assert.doesNotMatch(body, /__SM_GM__/);
+  // No GM runtime in MAIN, so non-info bindings aren't included.
+  assert.doesNotMatch(body, /__smReg\.gm/);
 });
 
 test('buildSwapEvalBody: passes through plain body when no header (defensive)', async () => {
   // Headerless scripts aren't a production case (validateHeader
   // rejects them), but the helper should still return something
   // eval-able rather than throwing. No preamble and no requires means
-  // the body passes through untouched — same shape the registered
-  // path emits after its wrap head.
+  // the body passes through untouched inside the nested user-program
+  // scope — same shape the registered path emits after its wrap head.
   const script = { ...makeScript(), header: null };
   const { body } = await buildSwapEvalBody(script, '0.0.0');
-  assert.equal(body, 'console.log("hi");');
+  assert.match(body, /^const __smReg=\(function\(k\)\{.*\}\)\("__SM_KEY__"\); const __smU=\(\)=>\{console\.log\("hi"\);\n\};__smReg\.prelude\.callAs\(__smU\);$/);
 });
 
 // ---------- buildRegistrationSpec ----------
@@ -692,7 +859,7 @@ test('buildRegistrationSpec: drops a @match Chrome would refuse, keeping the res
   // anyway, and the reason is already a warning in the script's Log.
   const spec = await buildRegistrationSpec(makeScript({
     matching: {
-      matches: ['https://example.com/*', 'https://example.com', 'https://www.*.com/*'],
+      matches: ['https://example.com/*', 'https://*.example.*/*', 'https://www.*.com/*'],
       excludes: [],
       includes: [],
     },
@@ -740,7 +907,7 @@ test('buildRegistrationSpec: unusable @match with a regex @include still falls b
   // `@match` at all.
   const spec = await buildRegistrationSpec(makeScript({
     matching: {
-      matches: ['https://example.com'],
+      matches: ['https://www.*.com/*'],
       excludes: [],
       includes: ['/^https:\\/\\/foo\\..*$/'],
     },
@@ -752,7 +919,7 @@ test('buildRegistrationSpec: nothing usable at all registers nothing', async () 
   // `validateHeader` stores such a script `invalid`, so this is the
   // belt-and-braces case: no spec rather than a spec Chrome refuses.
   const spec = await buildRegistrationSpec(makeScript({
-    matching: { matches: ['https://example.com'], excludes: [], includes: [] },
+    matching: { matches: ['https://www.*.com/*'], excludes: [], includes: [] },
   }));
   assert.equal(spec, null);
 });
@@ -774,26 +941,55 @@ test('buildRegistrationSpec: @include glob → includeGlobs; /regex/ form goes t
   assert.match(cfg.code, /"matching"/);
 });
 
+test('buildRegistrationSpec: .tld rules register as coarse globs, narrowed in-page', async () => {
+  // Chrome would register `www.google.tld` as a literal host no page
+  // has, so a `.tld` @match or @include registers as a glob with `.*`
+  // in its place, and the in-page matcher, which reads `.tld`, decides.
+  // A `.tld` @exclude is in-page only.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: {
+      matches: ['https://example.com/*', '*://*.imdb.tld/*'],
+      excludes: ['https://www.google.tld/search*', 'https://example.com/admin/*'],
+      includes: ['*://www.google.tld/*', '*://example.org/*'],
+    },
+  }));
+  assert.deepEqual(spec.matches, ['https://example.com/*', NO_PAGE_MATCH]);
+  assert.deepEqual(spec.includeGlobs, ['*://*imdb.*/*', '*://www.google.*/*', '*://example.org/*']);
+  assert.deepEqual(spec.excludeGlobs, ['https://example.com/admin/*']);
+  assert.match(spec.js[0].code, /"matching"/);
+});
+
+test('buildRegistrationSpec: a .tld @match alone still registers', async () => {
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: { matches: ['*://www.google.tld/*'], excludes: [], includes: [] },
+  }));
+  assert.deepEqual(spec.matches, [NO_PAGE_MATCH]);
+  assert.deepEqual(spec.includeGlobs, ['*://www.google.*/*']);
+  assert.match(spec.js[0].code, /"matching"/);
+});
+
 test('buildRegistrationSpec: glob-only @include still gets a matches pattern', async () => {
-  // Chrome refuses a registration without `matches`, so an
-  // `@include`-only script rides in on `<all_urls>`.
+  // Chrome refuses a registration without `matches`, and ORs it with
+  // includeGlobs, so an `@include`-only script gets a stand-in no page
+  // has, and the globs alone say where Chrome injects. The wrapper's
+  // matcher still checks the glob in-page; its block has to be in the
+  // config blob.
   const spec = await buildRegistrationSpec(makeScript({
     matching: { matches: [], excludes: [], includes: ['*://example.com/*'] },
   }));
-  assert.deepEqual(spec.matches, ['<all_urls>']);
+  assert.deepEqual(spec.matches, [NO_PAGE_MATCH]);
   assert.deepEqual(spec.includeGlobs, ['*://example.com/*']);
-  // Chrome ORs includeGlobs with matches, so `<all_urls>` runs the
-  // script everywhere — the wrapper's matcher is what holds it to the
-  // glob. Its block has to be in the config blob.
   const cfg = spec.js[0];
   assert.ok('code' in cfg);
   assert.match(cfg.code, /"matching"/);
 });
 
-test('buildRegistrationSpec: @match beside a glob @include leaves matching to Chrome', async () => {
+test('buildRegistrationSpec: @match beside a glob @include adds the any-host stand-in', async () => {
   // Chrome ORs includeGlobs with matches (measured — see
-  // tests/e2e/include-only.spec.ts), which is what the header means,
-  // so this shape needs no wrapper-side matcher.
+  // tests/e2e/include-only.spec.ts), which is what the header means.
+  // NO_PAGE_MATCH keeps every page's host covered by `matches`, which
+  // Chrome needs to deliver messages to the page without crashing it;
+  // the wrapper-side matcher then guards its (unlikely) path.
   const spec = await buildRegistrationSpec(makeScript({
     matching: {
       matches: ['https://example.com/*'],
@@ -801,25 +997,99 @@ test('buildRegistrationSpec: @match beside a glob @include leaves matching to Ch
       includes: ['*://other.example/*'],
     },
   }));
-  assert.deepEqual(spec.matches, ['https://example.com/*']);
+  assert.deepEqual(spec.matches, ['https://example.com/*', NO_PAGE_MATCH]);
   assert.deepEqual(spec.includeGlobs, ['*://other.example/*']);
   const cfg = spec.js[0];
   assert.ok('code' in cfg);
-  assert.doesNotMatch(cfg.code, /"matching"/);
+  assert.match(cfg.code, /"matching"/);
 });
 
-test('buildRegistrationSpec: all @match patterns refused + glob @include falls back to <all_urls>', async () => {
-  // `https://example.com` (no path) is a pattern Chrome's grammar
-  // refuses, so it never reaches the spec — leaving the script with
-  // globs only, which is the fallback case.
+test('buildRegistrationSpec: @match alone gets no stand-in', async () => {
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: { matches: ['https://example.com/*'], excludes: [], includes: [] },
+  }));
+  assert.deepEqual(spec.matches, ['https://example.com/*']);
+  assert.equal(spec.includeGlobs, undefined);
+});
+
+test('buildRegistrationSpec: a glob @include registers wide enough to ignore case', async () => {
+  // Chrome lowercases a URL's scheme and host, so those stay exact once
+  // lowercased; a path with letters can only widen, for the wrapper to
+  // narrow.
   const spec = await buildRegistrationSpec(makeScript({
     matching: {
-      matches: ['https://example.com'],
+      matches: [],
+      excludes: [],
+      includes: ['*://WWW.Example.com/Page*', 'https://example.org/*', '*Example.net*', 'https://*.google.tld/Maps*',
+        'http://LocalHost:3000/App*', '*Foo/bar*'],
+    },
+  }));
+  assert.deepEqual(spec.includeGlobs, ['*://www.example.com/????*', 'https://example.org/*', '*example.net*', 'https://*.google.*/????*',
+    'http://localhost:3000/???*', '*???/???*']);
+});
+
+// How Chrome tests an `includeGlobs` entry: `*` any text, `?` any one
+// character, case-sensitive, against the URL with its scheme and host
+// lowercased.
+function chromeGlobMatches(glob, url) {
+  const body = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
+  return new RegExp('^' + body + '$').test(new URL(url).href);
+}
+
+test('buildRegistrationSpec: Chrome injects wherever the script matches, in any case', async () => {
+  // Registering narrower than our own reading would leave a script the
+  // badge expects never injected: the wrapper can only narrow.
+  const scripts = [
+    { matches: [], excludes: [], includes: ['*Foo/bar*'] },
+    { matches: [], excludes: [], includes: ['http://*Foo/x*'] },
+    { matches: [], excludes: [], includes: ['*example.com/redirect?to=http://Foo*'] },
+    { matches: [], excludes: [], includes: ['*://WWW.Example.com/Page*', '*Example.net*'] },
+    { matches: [], excludes: [], includes: ['https://*.google.tld/Maps*'] },
+    { matches: ['*://www.Google.tld/*', 'HTTPS://Example.org/A*'], excludes: [], includes: [] },
+  ];
+  const urls = [
+    'https://example.com/Foo/bar', 'http://example.com/Foo/x', 'https://example.com/Redirect?to=http://FOO',
+    'https://www.example.com/PAGE/1', 'https://www.example.net/X', 'https://maps.google.de/maps',
+    'https://www.google.de/Q', 'https://example.org/A1',
+  ];
+  for (const matching of scripts) {
+    const spec = await buildRegistrationSpec(makeScript({ matching }));
+    for (const url of urls) {
+      if (!urlMatchesScript(url, matching)) continue;
+      const injected = spec.matches.some((m) => m === '<all_urls>' || matchPattern(m, url))
+        || (spec.includeGlobs ?? []).some((g) => chromeGlobMatches(g, url));
+      assert.ok(injected, `${JSON.stringify(matching)} should inject on ${url}`);
+    }
+  }
+});
+
+test('buildRegistrationSpec: an @exclude is always checked in the page, and a `?` one only there', async () => {
+  // Chrome would read the `?` as a one-character wildcard, excluding
+  // more than the header says. The others go to Chrome too, which reads
+  // them case-sensitively: narrower than ours, so never wrong.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: {
+      matches: ['https://example.com/*'],
+      excludes: ['*/Admin*', '*?id=1*'],
+      includes: [],
+    },
+  }));
+  assert.deepEqual(spec.excludeGlobs, ['*/Admin*']);
+  assert.match(spec.js[0].code, /"matching"/);
+});
+
+test('buildRegistrationSpec: all @match patterns refused + glob @include gets the stand-in', async () => {
+  // `https://www.*.com/*` is a pattern Chrome's grammar refuses, so it
+  // never reaches the spec — leaving the script with globs only, which
+  // is the stand-in case.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: {
+      matches: ['https://www.*.com/*'],
       excludes: [],
       includes: ['*://example.com/*'],
     },
   }));
-  assert.deepEqual(spec.matches, ['<all_urls>']);
+  assert.deepEqual(spec.matches, [NO_PAGE_MATCH]);
   assert.deepEqual(spec.includeGlobs, ['*://example.com/*']);
   const cfg = spec.js[0];
   assert.ok('code' in cfg);
@@ -846,6 +1116,18 @@ test('buildRegistrationSpec: regex-only @include registers <all_urls> and defers
   }));
   assert.deepEqual(spec.matches, ['<all_urls>']);
   assert.equal(spec.includeGlobs, undefined);
+});
+
+test('buildRegistrationSpec: a regex @include beside a @match still registers <all_urls>', async () => {
+  // Registering only the @match would never inject on a page just the
+  // regex covers.
+  const spec = await buildRegistrationSpec(makeScript({
+    matching: { matches: ['https://a.test/*'], excludes: [], includes: ['/^https:\\/\\/b\\.test\\//'] },
+  }));
+  assert.deepEqual(spec.matches, ['<all_urls>']);
+  const cfg = spec.js[0];
+  assert.ok('code' in cfg);
+  assert.match(cfg.code, /"matching"/);
 });
 
 test('buildRegistrationSpec: pure @match script omits the wrapper-side matcher block', async () => {
@@ -904,7 +1186,7 @@ test('buildRegistrationSpec: js[] shape is [config, prelude, combined, seal]', a
   // gives them back their devtools identity.
   // The prelude stays inline (not a separate singleton registration):
   // cross-registration order isn't guaranteed by chrome.userScripts,
-  // and the combined entry's self.__smRun() call has no safety net.
+  // and the combined entry's run() call has no safety net.
   assert.equal(spec.js.length, 4);
   assert.ok('code' in spec.js[0]);
   // Config blob carries a per-script `__config.js` sourceURL.
@@ -926,7 +1208,7 @@ test('buildRegistrationSpec: js[] shape is [config, prelude, combined, seal]', a
   // Trailing sentinel: its own script, so it still runs when the
   // combined entry fails to parse.
   assert.ok('code' in spec.js[3]);
-  assert.match(spec.js[3].code, /^self\.__smSealed\("script-1"\);/);
+  assert.match(spec.js[3].code, /\("__SM_KEY__"\)\.sealed\("script-1"\);/);
 });
 
 test('buildRegistrationSpec: js[] shape with no requires is [config, prelude, combined, seal]', async () => {
@@ -972,11 +1254,11 @@ test('buildRegistrationSpec: @grant none → MAIN world', async () => {
   assert.equal(spec.world, 'MAIN');
 });
 
-test('buildRegistrationSpec: any real @grant → USER_SCRIPT world', async () => {
+test('buildRegistrationSpec: a granted script runs in MAIN world, as in TM and VM', async () => {
   const spec = await buildRegistrationSpec(makeScript({
     header: { tags: [{ tag: 'name', value: 'X' }, { tag: 'grant', value: 'GM_setValue' }] },
   }));
-  assert.equal(spec.world, 'USER_SCRIPT');
+  assert.equal(spec.world, 'MAIN');
 });
 
 test('buildRegistrationSpec: @inject-into page wins over @grant', async () => {
@@ -1029,7 +1311,7 @@ test('buildRegistrationSpec: ONE GM binding block serves the requires and the bo
   // Emitted ahead of the first require, so library top-level code
   // sees it too.
   assert.ok(combined.indexOf('const GM_setValue') < combined.indexOf('A();'));
-  assert.match(combined, /__SM_GM__\.storage\.set\("script-1"/);
+  assert.match(combined, /__smReg\.gm\.storage\.set\("script-1"/);
 });
 
 test('buildRegistrationSpec: @require entries get GM_info even without any other @grant', async () => {
@@ -1042,7 +1324,7 @@ test('buildRegistrationSpec: @require entries get GM_info even without any other
   }));
   const combined = spec.js[2];
   assert.ok('code' in combined);
-  assert.match(combined.code, /const GM_info = Object\.freeze/);
+  assert.match(combined.code, /const GM_info = \{/);
   assert.ok(combined.code.indexOf('const GM_info') < combined.code.indexOf('P();'));
 });
 
@@ -1065,7 +1347,14 @@ function assertAllEntriesParse(spec, label) {
 function runCombined(spec, extraSelf = {}) {
   let out;
   const stub = {
-    __smPrelude: { send: () => {} },
+    // A granted page-world script runs `with` a sandbox; a plain object
+    // holding its bindings stands in for the prelude's Proxy here.
+    __smPrelude: {
+      send: () => {},
+      sandbox: (exposed) => ({ ...exposed }),
+      scopeOf: (s) => s,
+      callAs: (fn, t) => Reflect.apply(fn, t, []),
+    },
     // A storage grant makes the GM prelude call storage.init off a
     // snapshot the SW attaches to the check-pending reply; without one
     // it bails before the body runs.
@@ -1081,7 +1370,8 @@ function runCombined(spec, extraSelf = {}) {
   stub.window = stub.window ?? stub;
   // The GM bindings reference `window` as a bare identifier, so it has
   // to be a real binding in the evaluated scope, not just `self.window`.
-  new Function('self', 'window', spec.js[2].code)(stub, stub.window);
+  // The registry's gate is on `document`.
+  new Function('self', 'window', 'document', spec.js[2].code)(stub, stub.window, { __smGate: stubGate(stub) });
   return out;
 }
 
@@ -1238,8 +1528,8 @@ test('buildRegistrationSpec: two scripts sharing an @require URL bake their OWN 
   const requireB = specB.js[2];
   assert.ok('code' in requireA);
   assert.ok('code' in requireB);
-  assert.match(requireA.code, /__SM_GM__\.storage\.set\("script-A"/);
-  assert.match(requireB.code, /__SM_GM__\.storage\.set\("script-B"/);
+  assert.match(requireA.code, /__smReg\.gm\.storage\.set\("script-A"/);
+  assert.match(requireB.code, /__smReg\.gm\.storage\.set\("script-B"/);
   // Sanity: each only references its own id.
   assert.doesNotMatch(requireA.code, /"script-B"/);
   assert.doesNotMatch(requireB.code, /"script-A"/);
@@ -1247,7 +1537,7 @@ test('buildRegistrationSpec: two scripts sharing an @require URL bake their OWN 
 
 test('buildRegistrationSpec: MAIN-world script gets GM_info only (no other bindings)', async () => {
   // @grant none + no grants both land in MAIN world (resolveWorld);
-  // we don't have a USER_SCRIPT-world __SM_GM__ runtime there, so
+  // we don't have a USER_SCRIPT-world GM runtime there, so
   // only GM_info — which is a baked literal with no runtime
   // dependency — is exposed. Other GM_* would ReferenceError, which
   // is the documented limitation.
@@ -1258,20 +1548,20 @@ test('buildRegistrationSpec: MAIN-world script gets GM_info only (no other bindi
   // Shape: [config, prelude, combined, seal]
   const mainEntry = spec.js[2];
   assert.ok('code' in mainEntry);
-  assert.match(mainEntry.code, /const GM_info = Object\.freeze/);
-  assert.doesNotMatch(mainEntry.code, /__SM_GM__/);
+  assert.match(mainEntry.code, /const GM_info = \{/);
+  assert.doesNotMatch(mainEntry.code, /__smReg\.gm/);
 });
 
 test('buildRegistrationSpec: passes script.startupLogs through to the config blob', async () => {
   const script = makeScript({
     id: 'forwarded',
-    startupLogs: [{ level: 'warn', message: 'Ignoring @grant GM_audio — unsupported APIs' }],
+    startupLogs: [{ level: 'warn', message: 'Ignoring unsupported @grant GM_audio' }],
   });
   const spec = await buildRegistrationSpec(script);
   const cfg = spec.js[0];
   assert.ok('code' in cfg);
   assert.match(cfg.code, /"startupLogs":\[/);
-  assert.match(cfg.code, /Ignoring @grant GM_audio — unsupported APIs/);
+  assert.match(cfg.code, /Ignoring unsupported @grant GM_audio/);
 });
 
 // ---------- resolveWorld ----------
@@ -1305,43 +1595,30 @@ test('resolveWorld: @inject-into content → USER_SCRIPT regardless of @grant', 
   assert.equal(resolveWorld(h), 'USER_SCRIPT');
 });
 
-test('resolveWorld: @inject-into auto falls through to @grant logic', () => {
-  assert.equal(
-    resolveWorld(makeHeader([{ tag: 'inject-into', value: 'auto' }])),
-    'MAIN',
-  );
-  assert.equal(
-    resolveWorld(makeHeader([
-      { tag: 'inject-into', value: 'auto' },
-      { tag: 'grant', value: 'GM_setValue' },
-    ])),
-    'USER_SCRIPT',
-  );
+test('resolveWorld: @inject-into auto and grants leave a script in MAIN', () => {
+  for (const tags of [
+    [{ tag: 'inject-into', value: 'auto' }],
+    [{ tag: 'inject-into', value: 'auto' }, { tag: 'grant', value: 'GM_setValue' }],
+    [{ tag: 'grant', value: 'GM_getValue' }, { tag: 'grant', value: 'GM_setValue' }],
+    [{ tag: 'grant', value: 'none' }, { tag: 'grant', value: 'GM_setValue' }],
+    [{ tag: 'grant', value: 'aoh72931' }],
+  ]) {
+    assert.equal(resolveWorld(makeHeader(tags)), 'MAIN', JSON.stringify(tags));
+  }
 });
 
-test('resolveWorld: multi @grant — "none" anywhere → MAIN, real grants only → USER_SCRIPT', () => {
-  assert.equal(
-    resolveWorld(makeHeader([
-      { tag: 'grant', value: 'none' },
-      { tag: 'grant', value: 'none' },
-    ])),
-    'MAIN',
-  );
-  // `none` wins, as it does for the bindings in resolveGrants.
-  assert.equal(
-    resolveWorld(makeHeader([
-      { tag: 'grant', value: 'none' },
-      { tag: 'grant', value: 'GM_setValue' },
-    ])),
-    'MAIN',
-  );
-  assert.equal(
-    resolveWorld(makeHeader([
-      { tag: 'grant', value: 'GM_getValue' },
-      { tag: 'grant', value: 'GM_setValue' },
-    ])),
-    'USER_SCRIPT',
-  );
+test('resolveWorld: @sandbox — raw and JavaScript are MAIN, DOM is isolated', () => {
+  const sb = (v, ...more) => resolveWorld(makeHeader([
+    { tag: 'grant', value: 'GM_setValue' }, { tag: 'sandbox', value: v }, ...more,
+  ]));
+  assert.equal(sb('raw'), 'MAIN');
+  assert.equal(sb('JavaScript'), 'MAIN');
+  assert.equal(sb('DOM'), 'USER_SCRIPT');
+  assert.equal(sb('dom'), 'USER_SCRIPT');
+  assert.equal(sb('bogus'), 'MAIN');
+  // @inject-into is read first.
+  assert.equal(sb('DOM', { tag: 'inject-into', value: 'page' }), 'MAIN');
+  assert.equal(sb('raw', { tag: 'inject-into', value: 'content' }), 'USER_SCRIPT');
 });
 
 test('resolveWorld: @inject-into value is case-insensitive', () => {
@@ -1390,6 +1667,38 @@ test('prelude matcher: @match passes', async () => {
   assert.equal(match('https://example.com/x', { matches: ['https://example.com/*'], excludes: [], includes: [] }), true);
 });
 
+test('prelude matcher: a regex and a glob ignore case, as urlMatchesScript does', async () => {
+  const match = await loadPreludeMatcher();
+  const url = 'https://example.com/page';
+  for (const [m, expected] of [
+    [{ matches: [], excludes: [], includes: ['/EXAMPLE\\.COM\\/PAGE/'] }, true],
+    [{ matches: ['https://example.com/*'], excludes: ['/PAGE/'], includes: [] }, false],
+    [{ matches: [], excludes: [], includes: ['*EXAMPLE.COM*'] }, true],
+    [{ matches: ['https://example.com/*'], excludes: ['*/PAGE'], includes: [] }, false],
+  ]) {
+    assert.equal(match(url, m), expected, JSON.stringify(m));
+    assert.equal(urlMatchesScript(url, m), expected, JSON.stringify(m));
+  }
+});
+
+test('prelude matcher: reads a bare origin and a `*` stuck to a host as url-match.ts does', async () => {
+  const match = await loadPreludeMatcher();
+  for (const [pattern, url, expected] of [
+    ['https://example.com', 'https://example.com/', true],
+    ['https://example.com', 'https://example.com/page', false],
+    ['*://*example.com/*', 'https://www.example.com/x', true],
+    ['*://*example.com/*', 'https://fooexample.com/', false],
+    ['*://localhost:*/*', 'http://localhost:3000/', true],
+    ['www.google.tld/*', 'https://www.google.de/', true],
+    ['//example.com/*', 'https://example.com/', false],
+    ['*//example.com/*', 'https://example.com/', false],
+  ]) {
+    const m = { matches: [pattern], excludes: [], includes: [] };
+    assert.equal(match(url, m), expected, `${pattern} ${url}`);
+    assert.equal(urlMatchesScript(url, m), expected, `${pattern} ${url}`);
+  }
+});
+
 test('prelude matcher: /regex/ @include matches when glob would not', async () => {
   const match = await loadPreludeMatcher();
   const m = { matches: [], excludes: [], includes: ['/^https:\\/\\/foo\\.example\\.com\\/.*$/'] };
@@ -1410,7 +1719,6 @@ test('prelude matcher: agrees with url-match.ts on the lenient shapes', async ()
     ['*.example.com/*', 'https://www.example.com/x'],
     ['*.example.com/*', 'http://example.com/'],
     ['example.com/p/*', 'http://example.com/p/1'],
-    ['//example.com/*', 'https://example.com/'],
     ['http*://example.com/*', 'http://example.com/'],
     ['*s://example.com/*', 'https://example.com/'],
     ['f*://example.com/*', 'ftp://example.com/x'],
@@ -1433,6 +1741,52 @@ test('prelude matcher: agrees with url-match.ts on the lenient shapes', async ()
     const m = { matches: [pattern], excludes: [], includes: [] };
     assert.equal(match(url, m), false, `${pattern} should not match ${url}`);
     assert.equal(urlMatchesScript(url, m), false);
+  }
+});
+
+test('prelude matcher: @match ignores the #hash, @include and @exclude see it, as urlMatchesScript does', async () => {
+  // The bug this pins: Chrome injected a script with an exact @match on
+  // a URL with a hash, and the regex @include (which ships the matcher
+  // in-page) made the recheck here reject it.
+  const match = await loadPreludeMatcher();
+  const url = 'https://example.com/foo#part';
+  const cases = [
+    [{ matches: ['https://example.com/foo'], excludes: [], includes: ['/nomatch/'] }, true],
+    [{ matches: ['https://example.com/foo#part'], excludes: [], includes: [] }, false],
+    [{ matches: [], excludes: [], includes: ['*#part'] }, true],
+    [{ matches: [], excludes: [], includes: ['https://example.com/foo'] }, false],
+    [{ matches: ['https://example.com/*'], excludes: ['*#part'], includes: [] }, false],
+  ];
+  for (const [m, expected] of cases) {
+    assert.equal(match(url, m), expected, JSON.stringify(m));
+    assert.equal(urlMatchesScript(url, m), expected, JSON.stringify(m));
+  }
+});
+
+test('prelude matcher: reads .tld loosely, never narrower than url-match.ts', async () => {
+  // The exact reading needs the public suffix list, which stays out of
+  // the page: the worker's check-pending reply applies it. So the
+  // prelude may say yes where url-match.ts says no, never the reverse,
+  // and leaves a `.tld` @exclude to the worker entirely.
+  const match = await loadPreludeMatcher();
+  // [matching, url, prelude, exact]
+  const cases = [
+    [{ matches: [], excludes: [], includes: ['*://www.google.tld/*'] }, 'https://www.google.co.uk/', true, true],
+    [{ matches: [], excludes: [], includes: ['*://www.google.tld/*'] }, 'https://www.google.evil.com/', true, false],
+    [{ matches: [], excludes: [], includes: ['*://www.google.tld/*'] }, 'https://www.google.local/', true, false],
+    [{ matches: [], excludes: [], includes: ['*://www.google.tld/*'] }, 'https://www.googlex.com/', false, false],
+    [{ matches: ['https://*.imdb.tld/title/*'], excludes: [], includes: [] }, 'https://m.imdb.de/title/tt1', true, true],
+    [{ matches: ['https://*.imdb.tld/title/*'], excludes: [], includes: [] }, 'https://imdb.com.evil.io/title/tt1', true, false],
+    [{ matches: ['https://*.imdb.tld/title/*'], excludes: [], includes: [] }, 'https://imdb.com/name/nm1', false, false],
+    [{ matches: [], excludes: [], includes: ['http://www.google.tld*'] }, 'http://www.google.de/x', true, true],
+    [{ matches: ['*://*/*'], excludes: ['https://www.google.tld/search*'], includes: [] }, 'https://www.google.fr/search?q=1', true, false],
+    [{ matches: ['*://*/*'], excludes: ['https://www.google.tld/search*'], includes: [] }, 'https://www.google.fr/maps', true, true],
+    [{ matches: ['*://*.tld/*'], excludes: [], includes: [] }, 'https://example.com/', false, false],
+    [{ matches: [], excludes: [], includes: ['*://*.tld/*'] }, 'https://example.com/', false, false],
+  ];
+  for (const [m, url, prelude, exact] of cases) {
+    assert.equal(match(url, m), prelude, `prelude: ${JSON.stringify(m)} / ${url}`);
+    assert.equal(urlMatchesScript(url, m), exact, `url-match: ${JSON.stringify(m)} / ${url}`);
   }
 });
 
@@ -1474,10 +1828,22 @@ test('buildBridgeSpec: emits a USER_SCRIPT spec on the union of the MAIN-world s
   assert.deepEqual(bridge.matches, ['https://y/*', 'https://z/*']);
   assert.deepEqual(bridge.includeGlobs, ['*://g/*']);
   assert.equal(bridge.runAt, 'document_start');
-  assert.match(bridge.js[0].code, /sourcemonkey-bridge-sync/);
+  assert.match(bridge.js[0].code, /sourcemonkey-sync-/);
   // Tagged with a page-wide sourceURL so devtools shows it under a
   // friendly name rather than a UUID.
   assert.match(bridge.js[0].code, /sourceURL=sourcemonkey:\/\/SourceMonkey\/__bridge\.js/);
+});
+
+test('buildBridgeSpec: a child frame asks about a sandboxed page only if a MAIN-world script runs there', () => {
+  // `sm:main-blocked` wakes the worker; in a child frame where every
+  // MAIN-world script is @noframes, none would run, so the bridge
+  // doesn't send it.
+  const main = (id, allFrames) => ({ id, world: 'MAIN', matches: ['https://y/*'], js: [{ code: '' }], runAt: 'document_idle', allFrames });
+  const flag = (specs) => /var SM_MAIN_IN_FRAMES = (true|false);/.exec(buildBridgeSpec(specs).js[0].code)[1];
+  assert.equal(flag([main('a', false)]), 'false');
+  assert.equal(flag([main('a', false), main('b', true)]), 'true');
+  // The isolated world's own scripts don't count.
+  assert.equal(flag([main('a', false), { ...main('b', true), world: 'USER_SCRIPT' }]), 'false');
 });
 
 // ---------- wrapPreludeEntry ----------
@@ -1499,8 +1865,9 @@ test('wrapPreludeEntry: appends the page-wide prelude sourceURL', () => {
 // us drive synthetic events through it and observe what reaches the SW
 // and what it posts back.
 //
-// Page -> SW is a `sourcemonkey-bridge-sync` CustomEvent on
-// `document`; SW -> page (replies, pushes) is window.postMessage.
+// Page -> SW is a `sourcemonkey-sync-<key>` CustomEvent on `document`;
+// SW -> page (replies, pushes) is one too, which `posted` records as
+// `{type, ...detail}`.
 function setupBridgeHarness(opts = {}) {
   const sent = [];
   const posted = [];
@@ -1523,8 +1890,9 @@ function setupBridgeHarness(opts = {}) {
   };
   const fakeDocument = {
     addEventListener(type, fn, _capture) {
-      if (type === 'sourcemonkey-bridge-sync') syncListener = fn;
+      if (type === eventName('sync')) syncListener = fn;
     },
+    dispatchEvent(ev) { posted.push({ type: ev.type, ...JSON.parse(ev.detail) }); return true; },
   };
   // eslint-disable-next-line no-new-func
   new Function('window', 'document', 'chrome', WRAPPER_BRIDGE)(fakeWindow, fakeDocument, fakeChrome);
@@ -1596,7 +1964,7 @@ test('wrapper-bridge: a requestId selects request/reply and posts the SW answer 
   assert.equal(sent[0].__viaBridge, true);
   await Promise.resolve();
   assert.equal(posted.length, 1);
-  assert.equal(posted[0].__sm, 'sourcemonkey-bridge-reply');
+  assert.equal(posted[0].type, eventName('reply'));
   assert.equal(posted[0].requestId, 'req-7');
   assert.deepEqual(posted[0].reply, { action: 'run-new', body: 'x' });
 });
@@ -1615,8 +1983,9 @@ test("wrapper-bridge: the reply is keyed on the envelope's id, not the payload's
 });
 
 test('wrapper-bridge: a failed SW call still answers the requestId', async () => {
-  // The awaiter has to settle on something; `{action:"run"}` is the
-  // reading every caller wants (run normally / treat as not-ok).
+  // The awaiter has to settle on something, and it says the call
+  // failed: never `{action:"run"}`, which a waiting sm:check-pending
+  // would take as leave to run.
   const { posted, dispatch } = setupBridgeHarness({
     sendMessage: () => Promise.reject(new Error('worker gone')),
   });
@@ -1625,7 +1994,7 @@ test('wrapper-bridge: a failed SW call still answers the requestId', async () =>
   await Promise.resolve();
   assert.equal(posted.length, 1);
   assert.equal(posted[0].requestId, 'req-8');
-  assert.deepEqual(posted[0].reply, { action: 'run' });
+  assert.deepEqual(posted[0].reply, { bridgeError: 'Asking SourceMonkey failed: worker gone' });
 });
 
 test('wrapper-bridge: a sendMessage that throws still answers the requestId', async () => {
@@ -1634,7 +2003,7 @@ test('wrapper-bridge: a sendMessage that throws still answers the requestId', as
   });
   dispatch({ type: 'sm:gm-batch-write', scriptId: 's1', writes: [] }, 'req-9');
   assert.equal(posted.length, 1, 'replied synchronously');
-  assert.deepEqual(posted[0].reply, { action: 'run' });
+  assert.deepEqual(posted[0].reply, { bridgeError: 'Asking SourceMonkey failed: extension context invalidated' });
 });
 
 test('wrapper-bridge: fire-and-forget swallows a rejected sendMessage', async () => {
@@ -1663,7 +2032,7 @@ test('wrapper-bridge: fire-and-forget swallows a rejected sendMessage', async ()
 test('wrapper-bridge: silently no-ops when chrome.runtime is unavailable', () => {
   let syncListener = null;
   const fakeDocument = {
-    addEventListener(type, fn) { if (type === 'sourcemonkey-bridge-sync') syncListener = fn; },
+    addEventListener(type, fn) { if (type === eventName('sync')) syncListener = fn; },
   };
   // eslint-disable-next-line no-new-func
   new Function('window', 'document', 'chrome', WRAPPER_BRIDGE)({ addEventListener() {} }, fakeDocument, {});
@@ -1760,13 +2129,11 @@ function markerScript() {
   });
 }
 
-// What the viewer computes, from the stored script alone.
+// What the viewer (and sm-dev) computes, from the stored script alone.
 function viewerSegments(script, label) {
-  return composeSource(script, {
-    requireUrls: (script.requires ?? []).map((r) => buildRequireSourceUrl(label, r.url)),
-    mainUrl: buildSourceUrl(label),
-    startLine: USER_SOURCE_START_LINE,
-  }).segments;
+  const layout = stackLayout(script, label);
+  assert.equal(layout.entryUrl, buildSourceUrl(label));
+  return layout.segments;
 }
 
 function assertRoundTrip(code, script, label) {
@@ -1821,6 +2188,30 @@ test('registered entry: the body marker maps to its real line in the stored file
   assert.equal(storedBody.split('\n')[got.line - 1], 'BODY_MARKER;');
 });
 
+test('remapStackText: a stack from the registered entry names each file at its own line', async () => {
+  // The plain-text form sm-dev prints, end to end: real generated
+  // lines in, the require's URL and line (and the body's) out.
+  const script = markerScript();
+  const label = 'a.user.js';
+  const spec = await buildRegistrationSpec(script, '0.0.0', label);
+  const entryUrl = buildSourceUrl(label);
+  const code = spec.js[2].code;
+  const stack = [
+    'Error: boom',
+    `    at f (${entryUrl}:${generatedLineOf(code, 'A_MARKER;')}:3)`,
+    `    at ${entryUrl}:${generatedLineOf(code, 'BODY_MARKER;')}:1`,
+    '    at https://example.com/app.js:10:2',
+  ].join('\n');
+  const storedBody = composeRequiredBody({ ...script, requires: [] });
+  const bodyLine = storedBody.split('\n').indexOf('BODY_MARKER;') + 1;
+  assert.equal(remapStackText(stack, [stackLayout(script, label)]), [
+    'Error: boom',
+    `    at f (${buildRequireSourceUrl(label, 'https://cdn/a.js')}:2:3)`,
+    `    at ${entryUrl}:${bodyLine}:1`,
+    '    at https://example.com/app.js:10:2',
+  ].join('\n'));
+});
+
 // ---------- registerWithFallback: every refused attempt is logged ----------
 //
 // The Log is a transcript of what happened, and "we offered the spec
@@ -1828,7 +2219,7 @@ test('registered entry: the body marker maps to its real line in the stored file
 // would make a live refusal indistinguishable from a stale one, and
 // would leave the row explaining nothing after a "Clear log".
 
-const { getScriptLog, _flushScriptLogQueueForTests } = await import('../../dist/script-log.js');
+const { getScriptLog, _flushScriptLogQueueForTests } = await import('../../dist/extension/script-log.js');
 
 const SPEC_A = { id: 'a', matches: ['https://e/*'], js: [{ code: '1' }] };
 
@@ -1874,7 +2265,7 @@ test('registerWithFallback: a cleared log refills on the next attempt', async ()
   await syncOnce([SPEC_A], new Set(['a']));
   assert.equal(await rejectionRows(), 1);
 
-  const { clearScriptLog } = await import('../../dist/script-log.js');
+  const { clearScriptLog } = await import('../../dist/extension/script-log.js');
   await clearScriptLog('a');
   assert.equal(await rejectionRows(), 0);
 
@@ -1911,7 +2302,7 @@ test('registerWithFallback: logging survives a service-worker restart', async ()
   assert.equal(await rejectionRows(), 1);
 
   // Re-import with the module state thrown away, as a fresh SW would.
-  const reloaded = await import(`../../dist/injector.js?sw=${Date.now()}`);
+  const reloaded = await import(`../../dist/extension/injector.js?sw=${Date.now()}`);
   userScripts.register = async (batch) => { throw new Error(`bad spec: ${batch[0].id}`); };
   await reloaded.registerWithFallback([SPEC_A]);
   await _flushScriptLogQueueForTests('a');
@@ -1924,7 +2315,7 @@ test('registerWithFallback: logging survives a service-worker restart', async ()
 // viewer read to show REJECTED. It has to describe the CURRENT
 // registration set, not the history of everything ever refused.
 
-const { readRejections } = await import('../../dist/script-rejection.js');
+const { readRejections } = await import('../../dist/extension/script-rejection.js');
 
 const SPEC_B = { id: 'b', matches: ['https://f/*'], js: [{ code: '1' }] };
 
@@ -1979,15 +2370,18 @@ const {
   retryRejectedRegistrations,
   _setRetryNowForTests,
   REJECTION_RETRY_MIN_INTERVAL_MS,
-} = await import('../../dist/injector.js');
+} = await import('../../dist/extension/injector.js');
 
 // The retry rebuilds specs from the store, so it needs a script row to
 // find. Only the fields collectActiveSpecs reads matter here.
-function seedStore(scriptId, { matches = ['https://e/*'], grants = [] } = {}) {
+// `injectInto: 'content'` for a script the test needs in the isolated
+// world: a granted script runs in the page otherwise.
+function seedStore(scriptId, { matches = ['https://e/*'], grants = [], injectInto } = {}) {
   const script = {
     id: scriptId,
     collectionId: 'src-1',
     relativePath: `bad-${scriptId}.user.js`,
+    fileUrl: `file:///bad-${scriptId}.user.js`,
     status: 'ok',
     enabled: true,
     size: 10,
@@ -1997,7 +2391,11 @@ function seedStore(scriptId, { matches = ['https://e/*'], grants = [] } = {}) {
     leadingText: '',
     matching: { matches, includes: [], excludes: [] },
     header: {
-      tags: [{ tag: 'name', value: 'Bad' }, ...grants.map((value) => ({ tag: 'grant', value }))],
+      tags: [
+        { tag: 'name', value: 'Bad' },
+        ...grants.map((value) => ({ tag: 'grant', value })),
+        ...(injectInto ? [{ tag: 'inject-into', value: injectInto }] : []),
+      ],
       startLine: 1,
     },
   };
@@ -2107,8 +2505,11 @@ test('retryRejectedRegistrations: a caller is never dropped for arriving late', 
 const {
   syncRegistrations,
   forgetRegistrationState,
+  forgetRegistrationStateAsNewWorkerForTests,
+  lastSyncKindForTests,
+  setBeforeSync,
   _forgetRegistrationForTests,
-} = await import('../../dist/injector.js');
+} = await import('../../dist/extension/injector.js');
 
 // Restore the module-wide stubs to the state the rest of the file
 // expects — including `register`'s loud default, so a later test that
@@ -2249,6 +2650,7 @@ function fakeRegistrationSet(initial = []) {
   const seed = { matches: ['https://seed/*'] };
   const held = new Map(initial.map((id) => [id, { id, ...seed }]));
   const calls = [];
+  const updates = new Map();
   const merge = (prior, spec) => {
     const next = { ...prior, ...spec };
     // An empty array is "unspecified" to Chrome, so the old value
@@ -2276,6 +2678,7 @@ function fakeRegistrationSet(initial = []) {
       if (!held.has(s.id)) throw new Error(`No script with ID '${s.id}' is registered`);
     }
     for (const s of batch) {
+      updates.set(s.id, s);
       const merged = merge(held.get(s.id), s);
       // Delete then set: a Map preserves insertion order, so this is
       // how the fake reproduces "an updated script moves to the end".
@@ -2297,21 +2700,33 @@ function fakeRegistrationSet(initial = []) {
     order: () => [...held.keys()],
     ids: () => [...held.keys()].sort(),
     spec: (id) => held.get(id),
-    reset: () => { calls.length = 0; },
+    // What the last `update` for `id` was sent, as opposed to what Chrome
+    // holds after merging it in.
+    sentUpdate: (id) => updates.get(id),
+    reset: () => { calls.length = 0; updates.clear(); },
   };
 }
 
-// Count `chrome.storage.local.get(null)` calls — the read that pulled
-// every script body and the favicon cache into memory on every sync.
+// Count whole-store reads: a `chrome.storage.local.get(null)`, or the
+// key listing a full sync starts from to read every script row (but no
+// bodies). A scoped sync reads only the rows it names.
 function countFullReads() {
   const inner = chrome.storage.local.get;
+  const innerKeys = chrome.storage.local.getKeys;
   const seen = { full: 0, keyed: 0 };
   chrome.storage.local.get = async (key) => {
     if (key === null || key === undefined) seen.full++;
     else seen.keyed++;
     return inner(key);
   };
-  seen.restore = () => { chrome.storage.local.get = inner; };
+  chrome.storage.local.getKeys = async () => {
+    seen.full++;
+    return innerKeys();
+  };
+  seen.restore = () => {
+    chrome.storage.local.get = inner;
+    chrome.storage.local.getKeys = innerKeys;
+  };
   return seen;
 }
 
@@ -2330,11 +2745,40 @@ test('syncRegistrations: a scoped sync re-registers only the scripts that moved'
   const reads = countFullReads();
   t.after(reads.restore);
   // Only `b` was edited.
+  localStore.set('script:b', { ...localStore.get('script:b'), bodyText: 'y', loadedAt: 2 });
   await syncRegistrations({ scriptIds: ['b'], collectionIds: [] });
 
   assert.deepEqual(chrome_.calls, ['update:b'], 'only the edited script is re-offered');
   assert.deepEqual(chrome_.ids(), ['a', 'b', BRIDGE_SCRIPT_ID].sort(), 'the set is unchanged');
   assert.equal(reads.full, 0, 'a scoped sync must not read every row');
+});
+
+test('syncRegistrations: a scoped sync sends nothing for a row change its registration does not show', async (t) => {
+  // A refresh that only moved the file's modified time rewrites the
+  // row, but the registration built from it is the same, so Chrome gets
+  // no call.
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a');
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+  // A full sync records no registration hash, so the first scoped sync
+  // of a script sends it. That one records it.
+  localStore.set('script:a', { ...localStore.get('script:a'), bodyText: 'y', loadedAt: 2 });
+  await syncRegistrations({ scriptIds: ['a'], collectionIds: [] });
+
+  chrome_.reset();
+  localStore.set('script:a', { ...localStore.get('script:a'), fsMtime: 123 });
+  await syncRegistrations({ scriptIds: ['a'], collectionIds: [] });
+  assert.deepEqual(chrome_.calls, [], 'nothing sent for an unchanged registration');
+  assert.deepEqual(chrome_.ids(), ['a', BRIDGE_SCRIPT_ID].sort(), 'the set is unchanged');
+
+  // And a real change after it is still sent.
+  localStore.set('script:a', { ...localStore.get('script:a'), bodyText: 'z', loadedAt: 3 });
+  await syncRegistrations({ scriptIds: ['a'], collectionIds: [] });
+  assert.deepEqual(chrome_.calls, ['update:a']);
 });
 
 test('syncRegistrations: our own specs go in first, runtimes before the bridge', async (t) => {
@@ -2343,7 +2787,7 @@ test('syncRegistrations: our own specs go in first, runtimes before the bridge',
   localStore.clear();
   forgetRegistrationState();
   seedStore('a', { matches: ['https://a.example/*'], grants: ['unsafeWindow', 'GM_setValue'] });
-  seedStore('b', { matches: ['https://b.example/*'], grants: ['GM_setValue'] });
+  seedStore('b', { matches: ['https://b.example/*'], grants: ['GM_setValue'], injectInto: 'content' });
   const chrome_ = fakeRegistrationSet();
   await syncRegistrations();
   assert.deepEqual(chrome_.order(), [GM_RUNTIME_SCRIPT_ID, GM_RUNTIME_MAIN_SCRIPT_ID, BRIDGE_SCRIPT_ID, 'a', 'b']);
@@ -2357,7 +2801,7 @@ test('syncRegistrations: a scoped sync re-offers the MAIN runtime and the bridge
   // The MAIN runtime is registered under its own id, and every piece of
   // own-spec bookkeeping has to know it — a predicate that only knew
   // the USER_SCRIPT id once left this script with `GM_setValue` bound
-  // to a `window.__SM_GM__` that never reached its page.
+  // to a runtime that never reached its page.
   t.after(resetUserScriptStubs);
   sessionStore.clear();
   localStore.clear();
@@ -2376,9 +2820,16 @@ test('syncRegistrations: a scoped sync re-offers the MAIN runtime and the bridge
   );
   assert.deepEqual(chrome_.spec(GM_RUNTIME_MAIN_SCRIPT_ID).matches.sort(), ['https://a.example/*', 'https://b.example/*']);
   assert.deepEqual(chrome_.spec(BRIDGE_SCRIPT_ID).matches.sort(), ['https://a.example/*', 'https://b.example/*']);
+  // Only the patterns moved, so their code isn't sent again, and what
+  // Chrome holds still has it.
+  for (const id of [GM_RUNTIME_MAIN_SCRIPT_ID, BRIDGE_SCRIPT_ID]) {
+    assert.equal('js' in chrome_.sentUpdate(id), false, `${id} update sent no code`);
+    assert.ok(chrome_.spec(id).js?.[0]?.code?.length > 0, `${id} still has its code`);
+  }
 
   // An edit that doesn't move the union re-offers neither.
   chrome_.reset();
+  localStore.set('script:b', { ...localStore.get('script:b'), bodyText: 'y', loadedAt: 2 });
   await syncRegistrations({ scriptIds: ['b'], collectionIds: [] });
   assert.deepEqual(chrome_.calls, ['update:b']);
 
@@ -2388,6 +2839,26 @@ test('syncRegistrations: a scoped sync re-offers the MAIN runtime and the bridge
   localStore.set('script:b', { ...localStore.get('script:b'), enabled: false });
   await syncRegistrations({ scriptIds: ['a', 'b'], collectionIds: [] });
   assert.deepEqual(chrome_.ids(), []);
+});
+
+test('syncRegistrations: swapping one copy for another drops the old one before registering the new', async (t) => {
+  // Registering first left a moment in which a page loading got both
+  // copies, and ran the script twice.
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a', { matches: ['https://a.example/*'] });
+  seedStore('b', { matches: ['https://a.example/*'] });
+  localStore.set('script:b', { ...localStore.get('script:b'), enabled: false });
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+  chrome_.reset();
+
+  localStore.set('script:a', { ...localStore.get('script:a'), enabled: false });
+  localStore.set('script:b', { ...localStore.get('script:b'), enabled: true });
+  await syncRegistrations({ scriptIds: ['a', 'b'], collectionIds: [] });
+  assert.deepEqual(chrome_.calls.filter((c) => c.endsWith(':a') || c.endsWith(':b')), ['unregister:a', 'register:b']);
 });
 
 test('syncRegistrations: a refused own spec is rebuilt from what Chrome accepted, and never filed as a script', async (t) => {
@@ -2601,13 +3072,13 @@ test('syncRegistrations: dropping the last @exclude really drops it', async (t) 
   assert.deepEqual(chrome_.calls, ['unregister:a', 'register:a']);
 });
 
-test('syncRegistrations: a registration another context placed can still be dropped', async (t) => {
-  // `state.registered` is this context's belief, and the collections
-  // page and the viewer place registrations in theirs. A removal that
-  // consulted the belief would leave a script the page-side retry
-  // placed injecting after the user disabled it — and unlike a wrong
-  // belief about presence, that one never self-corrects, because
-  // removal has no second call to disagree with it.
+test('syncRegistrations: a registration the record has lost can still be dropped', async (t) => {
+  // `state.registered` is this worker's belief about Chrome's set, and
+  // it can be wrong (a reset, a record lost with a stopped worker). A
+  // removal that consulted the belief would leave such a script
+  // injecting after the user disabled it — and unlike a wrong belief
+  // about presence, that one never self-corrects, because removal has
+  // no second call to disagree with it.
   t.after(resetUserScriptStubs);
   sessionStore.clear();
   localStore.clear();
@@ -2617,9 +3088,7 @@ test('syncRegistrations: a registration another context placed can still be drop
   const chrome_ = fakeRegistrationSet();
   await syncRegistrations();
 
-  // Simulate the other context: drop `b` from OUR record while leaving
-  // it registered, exactly as a page-side `retryRejectedRegistrations`
-  // that the worker never heard about would.
+  // Drop `b` from OUR record while leaving it registered.
   _forgetRegistrationForTests('b');
   chrome_.reset();
 
@@ -2678,8 +3147,8 @@ test('syncRegistrations: a scoped sync with no record of the set reconciles full
   assert.equal(reads.full, 1, 'with nothing to diff against, read everything');
   assert.deepEqual(chrome_.ids(), ['a', BRIDGE_SCRIPT_ID].sort(), 'the stray is dropped');
   assert.deepEqual(
-    chrome_.calls, [`register:${BRIDGE_SCRIPT_ID}`, 'update:a', 'unregister:gone'],
-    'our own registration goes first, a staying script is updated in place, removals last',
+    chrome_.calls, ['unregister:gone', `register:${BRIDGE_SCRIPT_ID}`, 'update:a'],
+    'removals first, then our own registration, and a staying script is updated in place',
   );
 });
 
@@ -2750,4 +3219,480 @@ test('registerWithFallback: a spec Chrome genuinely refuses is offered once', as
   await _flushScriptLogQueueForTests('a');
   assert.deepEqual(offered, ['a+b', 'a', 'b'], 'the batch, then one attempt per spec');
   assert.deepEqual(Object.keys(await readRejections()), ['a']);
+});
+
+// ---------- run (document-start skip of check-pending) ----------
+
+test('buildRegistrationSpec: a scratch script tells its wrapper its sm-dev run', async () => {
+  const cfgOf = async (fileUrl) => (await buildRegistrationSpec(makeScript({ fileUrl }))).js[0].code;
+  assert.match(await cfgOf('scratch:///R1-ab12/a.user.js'), /"run":"R1-ab12"/);
+  assert.doesNotMatch(await cfgOf('file:///a.user.js'), /"run"/);
+});
+
+// A row in storage format 2: its body in a `blob:` row (script-blobs.ts).
+function seedBlobRow(scriptId, body) {
+  seedStore(scriptId);
+  const { bodyText: _body, ...row } = localStore.get(`script:${scriptId}`);
+  const hash = `hash-${scriptId}-${body.length}`;
+  localStore.set(`script:${scriptId}`, { ...row, bodyBlobRef: { hash, size: body.length } });
+  localStore.set(`blob:${hash}`, { encoding: 'text', data: body });
+}
+
+// The `blob:` keys every `chrome.storage.local.get` asked for.
+function recordBlobReads() {
+  const inner = chrome.storage.local.get;
+  const keys = [];
+  chrome.storage.local.get = async (key) => {
+    if (key == null) keys.push('(everything)');
+    else for (const k of Array.isArray(key) ? key : [key]) if (k.startsWith('blob:')) keys.push(k);
+    return inner(key);
+  };
+  keys.restore = () => { chrome.storage.local.get = inner; };
+  return keys;
+}
+
+test('syncRegistrations: a sync that only drops a script reads no bodies', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedBlobRow('a', 'one();');
+  seedBlobRow('b', 'two();');
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+  assert.ok(chrome_.spec('a').js.some((c) => c.code.includes('one();')), 'the body came from its blob');
+
+  const reads = recordBlobReads();
+  t.after(reads.restore);
+  localStore.set('script:a', { ...localStore.get('script:a'), enabled: false });
+  await syncRegistrations({ scriptIds: ['a'], collectionIds: [] });
+  assert.deepEqual(chrome_.ids(), ['b', BRIDGE_SCRIPT_ID].sort());
+  assert.deepEqual([...reads], [], 'a disabled script needs no code');
+
+  localStore.set('script:a', { ...localStore.get('script:a'), enabled: true });
+  await syncRegistrations({ scriptIds: ['a'], collectionIds: [] });
+  assert.deepEqual(chrome_.ids(), ['a', 'b', BRIDGE_SCRIPT_ID].sort());
+  assert.deepEqual([...reads], ['blob:hash-a-6'], 'enabling it reads its own body only');
+});
+
+test('syncRegistrations: a full sync reads only the bodies of scripts it registers', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedBlobRow('a', 'one();');
+  seedBlobRow('b', 'two();');
+  localStore.set('script:b', { ...localStore.get('script:b'), enabled: false });
+  fakeRegistrationSet();
+  const reads = recordBlobReads();
+  t.after(reads.restore);
+  await syncRegistrations();
+  assert.deepEqual([...reads], ['blob:hash-a-6']);
+});
+
+test('syncRegistrations: a full sync sends nothing for what Chrome holds, and leaves out code it holds', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a', { grants: ['GM_getValue'], injectInto: 'content' });
+  seedStore('b', { grants: ['GM_getValue'], injectInto: 'content' });
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+
+  // A fresh worker, after `b` changed while the last one was gone: new
+  // code, on a new site, which the GM runtime's patterns follow.
+  forgetRegistrationState();
+  localStore.set('script:b', {
+    ...localStore.get('script:b'),
+    bodyText: 'changed();',
+    matching: { matches: ['https://f/*'], includes: [], excludes: [] },
+  });
+  chrome_.reset();
+  await syncRegistrations();
+  // The runtime is sent, so `a` is too, though Chrome holds it: sent
+  // after the runtime, it stays behind it in Chrome's order. Its code
+  // is left out.
+  assert.equal('js' in chrome_.sentUpdate('a'), false, 'helpers stay first; no code');
+  assert.equal(chrome_.sentUpdate(BRIDGE_SCRIPT_ID), undefined, 'a helper held as specified: no call');
+  const order = (await userScripts.getScripts()).map((s) => s.id);
+  assert.ok(order.indexOf(GM_RUNTIME_SCRIPT_ID) < order.indexOf('a'), 'the runtime still before a');
+  assert.ok(chrome_.sentUpdate('b').js.some((c) => c.code.includes('changed();')), 'changed code is sent');
+  assert.equal('js' in chrome_.sentUpdate(GM_RUNTIME_SCRIPT_ID), false, 'new patterns, same code: no code');
+  assert.ok(chrome_.spec(GM_RUNTIME_SCRIPT_ID).matches.includes('https://f/*'));
+  assert.ok(chrome_.spec('a').js.length > 0, 'Chrome keeps the code it had');
+});
+
+test('syncRegistrations: a script whose body is missing is not registered, and is saved invalid', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  localStore.set('storeFormat', 2);
+  seedBlobRow('a', 'one();');
+  seedBlobRow('b', 'two();');
+  localStore.delete('blob:hash-a-6');
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+  assert.deepEqual(chrome_.ids(), ['b', BRIDGE_SCRIPT_ID].sort(), 'a full sync skips it');
+  const row = localStore.get('script:a');
+  assert.equal(row.status, 'invalid');
+  assert.equal(row.errorMessage, MISSING_BLOB_MESSAGE);
+  assert.equal(row.bodyText, undefined, 'saved as a small row');
+
+  // An incremental sync, for a body lost while the script ran.
+  localStore.delete('blob:hash-b-6');
+  await syncRegistrations({ scriptIds: ['b'], collectionIds: [] });
+  assert.deepEqual(chrome_.ids(), [], 'an incremental sync drops it');
+  assert.equal(localStore.get('script:b').status, 'invalid');
+});
+
+test('syncRegistrations: a new worker takes the last record and syncs only the rows that changed', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a');
+  seedStore('b');
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+  assert.ok(sessionStore.has('registrationRecordStale'), 'marked stale until saved');
+
+  // The worker stopped; `b` changed before the next one started.
+  await forgetRegistrationStateAsNewWorkerForTests();
+  assert.ok(sessionStore.has('registrationRecord'), 'the record was saved');
+  assert.ok(!sessionStore.has('registrationRecordStale'), 'and the marker cleared');
+  localStore.set('script:b', { ...localStore.get('script:b'), bodyText: 'changed();' });
+  // A probe-only write is not a change the sync reads.
+  localStore.set('script:a', { ...localStore.get('script:a'), versionProbes: [{ url: 'u', version: '2' }] });
+  chrome_.reset();
+  await syncRegistrations();
+  assert.equal(lastSyncKindForTests(), 'incremental');
+  assert.equal(chrome_.sentUpdate('a'), undefined, 'unchanged: not touched');
+  assert.ok(chrome_.sentUpdate('b').js.some((c) => c.code.includes('changed();')));
+});
+
+test('syncRegistrations: a new worker reconciles in full when the registration set was wiped', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a');
+  fakeRegistrationSet();
+  await syncRegistrations();
+
+  await forgetRegistrationStateAsNewWorkerForTests();
+  // The whole set wiped while no worker ran.
+  await userScripts.unregister({ ids: (await userScripts.getScripts()).map((s) => s.id) });
+  await syncRegistrations();
+  assert.equal(lastSyncKindForTests(), 'full');
+  assert.ok((await userScripts.getScripts()).some((s) => s.id === 'a'), 'registered again');
+});
+
+test('syncRegistrations: with nothing registered, a record is taken only while Chrome holds nothing', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a');
+  localStore.set('script:a', { ...localStore.get('script:a'), enabled: false });
+  fakeRegistrationSet();
+  await syncRegistrations();
+  assert.deepEqual(await userScripts.getScripts(), []);
+  await forgetRegistrationStateAsNewWorkerForTests();
+  await syncRegistrations();
+  assert.equal(lastSyncKindForTests(), 'incremental', 'taken');
+
+  // Something registered that the record doesn't know of.
+  await forgetRegistrationStateAsNewWorkerForTests();
+  await userScripts.register([{ id: 'stray', matches: ['https://x/*'], js: [{ code: '' }] }]);
+  await syncRegistrations();
+  assert.equal(lastSyncKindForTests(), 'full', 'not taken');
+});
+
+test('syncRegistrations: a new worker reconciles in full when a helper holds other patterns', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a', { grants: ['GM_getValue'], injectInto: 'content' });
+  fakeRegistrationSet();
+  await syncRegistrations();
+  await forgetRegistrationStateAsNewWorkerForTests();
+  await userScripts.update([{ id: GM_RUNTIME_SCRIPT_ID, matches: ['https://elsewhere/*'] }]);
+  await syncRegistrations();
+  assert.equal(lastSyncKindForTests(), 'full');
+});
+
+test('syncRegistrations: a new worker reconciles in full when the record may be stale', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a');
+  fakeRegistrationSet();
+  await syncRegistrations();
+  await forgetRegistrationStateAsNewWorkerForTests();
+  // A worker that changed Chrome's set and stopped before saving.
+  sessionStore.set('registrationRecordStale', true);
+  await syncRegistrations();
+  assert.equal(lastSyncKindForTests(), 'full');
+});
+
+test('syncRegistrations: a collection turned off while no worker ran drops its scripts on restore', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a');
+  seedStore('b');
+  fakeRegistrationSet();
+  await syncRegistrations();
+  await forgetRegistrationStateAsNewWorkerForTests();
+  localStore.set('collection:src-1', { ...localStore.get('collection:src-1'), enabled: false });
+  await syncRegistrations();
+  assert.equal(lastSyncKindForTests(), 'incremental');
+  const ids = (await userScripts.getScripts()).map((s) => s.id);
+  assert.ok(!ids.includes('a') && !ids.includes('b'), 'both unregistered');
+});
+
+test('syncRegistrations: fingerprints stay current across two restarts', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a');
+  seedStore('b');
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+  await forgetRegistrationStateAsNewWorkerForTests();
+  localStore.set('script:b', { ...localStore.get('script:b'), bodyText: 'changed();' });
+  await syncRegistrations();
+  assert.equal(lastSyncKindForTests(), 'incremental');
+
+  // Nothing changed since: the next worker sends Chrome nothing.
+  await forgetRegistrationStateAsNewWorkerForTests();
+  chrome_.reset();
+  await syncRegistrations();
+  assert.equal(lastSyncKindForTests(), 'incremental');
+  assert.equal(chrome_.sentUpdate('a'), undefined);
+  assert.equal(chrome_.sentUpdate('b'), undefined);
+});
+
+test('syncRegistrations: a record is not taken after the state was forgotten on purpose', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a');
+  fakeRegistrationSet();
+  await syncRegistrations();
+  forgetRegistrationState();
+  await syncRegistrations();
+  assert.equal(lastSyncKindForTests(), 'full');
+});
+
+test('syncRegistrations: a full sync places everything again when a helper is behind a user script', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a', { grants: ['GM_getValue'], injectInto: 'content' });
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+  const order = async () => (await userScripts.getScripts()).map((s) => s.id);
+  assert.ok((await order()).indexOf(GM_RUNTIME_SCRIPT_ID) < (await order()).indexOf('a'));
+
+  // An update moves a registration to the end of Chrome's list.
+  const runtime = (await userScripts.getScripts({ ids: [GM_RUNTIME_SCRIPT_ID] }))[0];
+  await userScripts.update([{ id: runtime.id, matches: runtime.matches }]);
+  assert.ok((await order()).indexOf(GM_RUNTIME_SCRIPT_ID) > (await order()).indexOf('a'));
+
+  forgetRegistrationState();
+  chrome_.reset();
+  await syncRegistrations();
+  assert.ok(chrome_.sentUpdate('a'), 'held as specified, but placed again');
+  assert.ok((await order()).indexOf(GM_RUNTIME_SCRIPT_ID) < (await order()).indexOf('a'), 'helpers first again');
+});
+
+test('syncRegistrations: the one-at-a-time fallback sends nothing for what Chrome holds', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a');
+  seedStore('b');
+  seedStore('c');
+  const chrome_ = fakeRegistrationSet();
+  await syncRegistrations();
+
+  // A batch refused as a whole, as one bad spec would make it.
+  const update = userScripts.update;
+  let refusedBatches = 0;
+  userScripts.update = async (batch) => {
+    if (batch.length > 1) {
+      refusedBatches++;
+      throw new Error('refused');
+    }
+    return update(batch);
+  };
+  forgetRegistrationState();
+  localStore.set('script:b', { ...localStore.get('script:b'), bodyText: 'changed();' });
+  localStore.set('script:c', { ...localStore.get('script:c'), bodyText: 'other();' });
+  chrome_.reset();
+  await syncRegistrations();
+  assert.ok(refusedBatches > 0, 'the batch went one at a time');
+  assert.equal(chrome_.sentUpdate('a'), undefined, 'held as specified: no call');
+  assert.ok(chrome_.sentUpdate('b').js.some((c) => c.code.includes('changed();')));
+  assert.ok(chrome_.sentUpdate('c').js.some((c) => c.code.includes('other();')));
+});
+
+test('syncRegistrations: an incremental sync takes the numbers beforeSync assigned, without reading them', async (t) => {
+  t.after(resetUserScriptStubs);
+  sessionStore.clear();
+  localStore.clear();
+  forgetRegistrationState();
+  seedStore('a');
+  const chrome_ = fakeRegistrationSet();
+  setBeforeSync(async () => new Map([['a', 7]]));
+  t.after(() => setBeforeSync(null));
+  await syncRegistrations();
+
+  const inner = chrome.storage.local.get;
+  const asked = [];
+  chrome.storage.local.get = async (key) => {
+    asked.push(...(Array.isArray(key) ? key : [key]));
+    return inner(key);
+  };
+  t.after(() => { chrome.storage.local.get = inner; });
+  localStore.set('script:a', { ...localStore.get('script:a'), bodyText: 'changed();' });
+  await syncRegistrations({ scriptIds: ['a'], collectionIds: [] });
+  assert.equal(asked.includes('scriptNumbers'), false, 'the numbers are not read again');
+  assert.ok(chrome_.spec('a').js.some((c) => c.code.includes('bad-a%23E7/')), 'the label carries the number');
+});
+
+// ---------- Frames (docs/frames.md) ----------
+
+test('buildRegistrationSpec: every matching frame, unless @noframes, whatever its value', async () => {
+  const withTags = (...tags) => scriptWith({ header: { tags: [{ tag: 'name', value: 'Foo' }, ...tags] } });
+  assert.equal((await buildRegistrationSpec(withTags())).allFrames, true);
+  // A flag, as in TM: any value still keeps the script to the top frame.
+  for (const value of ['', 'true', 'false']) {
+    assert.equal((await buildRegistrationSpec(withTags({ tag: 'noframes', value }))).allFrames, false, `@noframes ${value}`);
+  }
+});
+
+test('the helpers go into frames, whatever their scripts\' @noframes', async () => {
+  const spec = await buildRegistrationSpec(scriptWith({
+    header: { tags: [{ tag: 'name', value: 'Foo' }, { tag: 'noframes', value: '' }, { tag: 'grant', value: 'unsafeWindow' }] },
+  }));
+  assert.equal(spec.world, 'MAIN');
+  assert.equal(buildBridgeSpec([spec]).allFrames, true);
+});
+
+// ---------- The sandbox window (page-world scripts but @grant none) ----------
+
+const SANDBOXED_HEADER = { tags: [
+  { tag: 'name', value: 'Foo' },
+  { tag: 'grant', value: 'GM_setValue' },
+  { tag: 'inject-into', value: 'page' },
+] };
+
+test('runsSandboxed: a page-world script without @grant none', () => {
+  const h = (...tags) => ({ header: makeHeader([{ tag: 'name', value: 'X' }, ...tags]) });
+  const grant = (v) => ({ tag: 'grant', value: v });
+  const into = (v) => ({ tag: 'inject-into', value: v });
+  assert.equal(runsSandboxed(h(grant('GM_setValue'), into('page'))), true);
+  assert.equal(runsSandboxed(h(grant('unsafeWindow'))), true);
+  assert.equal(runsSandboxed(h(grant('GM_setValue'))), true);
+  assert.equal(runsSandboxed(h(grant('GM_setValue'), into('content'))), false, 'isolated');
+  assert.equal(runsSandboxed(h(grant('GM_setValue'), { tag: 'sandbox', value: 'DOM' })), false, 'isolated');
+  assert.equal(runsSandboxed(h(grant('none'))), false);
+  assert.equal(runsSandboxed(h(grant('none'), grant('GM_setValue'))), false);
+  // As TM and VM run one (measured).
+  assert.equal(runsSandboxed(h()), true, 'grantless');
+  assert.equal(runsSandboxed(h(into('content'))), false, 'grantless, isolated');
+  assert.equal(runsSandboxed({ header: null }), false);
+});
+
+// A stand-in for the prelude's sandbox: records what the wrap hands it.
+function sandboxStub() {
+  const calls = { exposed: null };
+  const sandbox = { mine: 'sandbox' };
+  const scope = { fromScope: 'scope' };
+  return {
+    calls, sandbox,
+    prelude: {
+      send: () => {},
+      sandbox: (exposed) => { calls.exposed = exposed; return sandbox; },
+      scopeOf: (s) => (s === sandbox ? scope : null),
+      callAs: (fn, t) => Reflect.apply(fn, t, []),
+    },
+  };
+}
+
+test('wrapCombinedEntry: a sandboxed script runs `with` its scope, `this` the sandbox, on the same lines', async () => {
+  const script = makeScript({
+    header: SANDBOXED_HEADER,
+    bodyText: 'void 1;\nreturn [this.mine, fromScope, typeof GM_setValue];',
+  });
+  const spec = await buildRegistrationSpec(script);
+  assert.equal(spec.world, 'MAIN');
+  const code = spec.js[2].code;
+  // Defined on the head line and called on the closing one, so its
+  // call frame is past the end of the script's own lines.
+  assert.match(code, /with\(__smW\)\{const __smU=function\(\)\{void 1;\n/);
+  assert.match(code, /\n\};return __smC\(__smU,__smS\)\}\}\)\}\)\(/);
+  const stub = sandboxStub();
+  const out = runCombined(spec, { __smPrelude: stub.prelude });
+  assert.deepEqual(out, ['sandbox', 'scope', 'function']);
+  // `unsafeWindow` is always on the sandbox, as in TM and VM.
+  assert.deepEqual(Object.keys(stub.calls.exposed).sort(), ['GM', 'GM_info', 'GM_setValue', 'unsafeWindow']);
+});
+
+test('wrapCombinedEntry: a sandboxed script\'s window.close goes on its sandbox only', async () => {
+  const header = { tags: [...SANDBOXED_HEADER.tags, { tag: 'grant', value: 'window.close' }] };
+  const spec = await buildRegistrationSpec(makeScript({ header, bodyText: 'return 1;' }));
+  const replacement = () => {};
+  const made = [];
+  const stub = sandboxStub();
+  runCombined(spec, {
+    __smPrelude: stub.prelude,
+    __SM_GM__: {
+      storage: { init: () => {} },
+      windowControl: {
+        make: (id, method) => { made.push([id, method]); return replacement; },
+        enable: () => { throw new Error('installed on the world\'s window'); },
+      },
+    },
+  });
+  assert.deepEqual(made, [['script-1', 'close']]);
+  assert.equal(stub.calls.exposed.close, replacement);
+});
+
+test('wrapCombinedEntry: a @grant none page-world script keeps the arrow scope', async () => {
+  const spec = await buildRegistrationSpec(makeScript({
+    header: { tags: [{ tag: 'name', value: 'Foo' }, { tag: 'grant', value: 'none' }] },
+  }));
+  // Called through the prelude's strict `callAs`, so a stack walk stops
+  // there.
+  assert.match(spec.js[2].code, /const __smU=\(\)=>\{/);
+  assert.match(spec.js[2].code, /\n\};return __smReg\.prelude\.callAs\(__smU\);/);
+  assert.doesNotMatch(spec.js[2].code, /with\(/);
+});
+
+test('buildSwapEvalBody: a sandboxed script gets the same scope, without `return`', async () => {
+  const script = makeScript({
+    header: SANDBOXED_HEADER,
+    bodyText: 'void 1;\n[this.mine, fromScope]',
+  });
+  const { body } = await buildSwapEvalBody(script, '0.0.0');
+  assert.match(body, /with\(__smW\)\{const __smU=function\(\)\{void 1;\n/);
+  assert.match(body, /\n\};__smC\(__smU,__smS\)\}/);
+  // Global code, as the indirect eval runs it: sloppy, so `with` parses.
+  const stub = sandboxStub();
+  const run = new Function('self', 'window', 'document', `return eval(${JSON.stringify(body.replace('[this.mine', 'return [this.mine'))});`);
+  const self = { __smPrelude: stub.prelude, __SM_GM__: {} };
+  const out = run(self, {}, { __smGate: stubGate(self) });
+  assert.deepEqual(out, ['sandbox', 'scope']);
 });

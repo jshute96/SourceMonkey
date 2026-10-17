@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name        SourceMonkey example: @inject-into content
+// @name        SourceMonkey example: headers-inject-into: @inject-into content
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.0
+// @version     1.0.2
 // @description Runs in an isolated USER_SCRIPT world; can't see page globals.
-// @match       *://*/headers-inject-into/headers-inject-into.html
+// @match       *://*/*headers-inject-into/headers-inject-into.html
 // @match       file:///*/headers-inject-into/headers-inject-into.html
 // @run-at      document-end
 // @inject-into content

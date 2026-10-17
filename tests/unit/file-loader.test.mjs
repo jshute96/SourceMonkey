@@ -17,7 +17,6 @@ import assert from 'node:assert/strict';
 
 import {
   fetchResourceBytes,
-  isJsResourceUrl,
   resolveScriptResource,
   resolveScriptResourceDetailed,
 } from '../../dist/file-loader.js';
@@ -217,41 +216,6 @@ test('resolveScriptResource: scheme-bearing but malformed URLs return null', () 
   );
 });
 
-// ---------- isJsResourceUrl ----------
-
-test('isJsResourceUrl: accepts a plain .js URL', () => {
-  assert.equal(isJsResourceUrl('https://cdn.example.com/lib.js'), true);
-});
-
-test('isJsResourceUrl: ignores query / fragment', () => {
-  assert.equal(isJsResourceUrl('https://cdn.example.com/lib.js?v=3'), true);
-  assert.equal(isJsResourceUrl('https://cdn.example.com/lib.js#sha256=abc'), true);
-});
-
-test('isJsResourceUrl: accepts uppercase / mixed-case .JS', () => {
-  // Some Windows-origin and CDN-hosted libraries use a capital
-  // extension; TM/VM accept them, so we should too.
-  assert.equal(isJsResourceUrl('https://cdn.example.com/Lib.JS'), true);
-  assert.equal(isJsResourceUrl('file:///home/me/scripts/LIB.Js'), true);
-});
-
-test('isJsResourceUrl: rejects non-.js suffixes', () => {
-  assert.equal(isJsResourceUrl('https://cdn.example.com/lib.json'), false);
-  assert.equal(isJsResourceUrl('https://cdn.example.com/lib.js.txt'), false);
-  assert.equal(isJsResourceUrl('https://cdn.example.com/'), false);
-});
-
-test('isJsResourceUrl: rejects trailing-slash on a .js path', () => {
-  // `lib.js/` is a directory, not a script.
-  assert.equal(isJsResourceUrl('https://cdn.example.com/lib.js/'), false);
-});
-
-test('isJsResourceUrl: malformed URL returns false', () => {
-  assert.equal(isJsResourceUrl('not a url'), false);
-  assert.equal(isJsResourceUrl(''), false);
-});
-
-
 // ---------- resolveScriptResourceDetailed: which rule rejected it ----------
 
 const SCRIPT_URL_FILE = 'file:///home/me/scripts/foo.user.js';
@@ -265,6 +229,12 @@ test('resolveScriptResourceDetailed: an escaping relative path and a bad scheme 
   // The scheme travels with the reason so the message can name what
   // the author actually wrote.
   assert.equal(scheme.scheme, 'ftp:');
+});
+
+test('resolveScriptResourceDetailed: a scratch script has no folder for a relative path', () => {
+  const scratch = 'scratch:///foo.user.js';
+  assert.deepEqual(resolveScriptResourceDetailed('lib/x.js', scratch), { failed: true, reason: 'relative-in-scratch' });
+  assert.deepEqual(resolveScriptResourceDetailed('https://example.com/x.js', scratch), { kind: 'http', url: 'https://example.com/x.js' });
 });
 
 test('resolveScriptResourceDetailed: a remote script may climb out of its own directory', () => {
@@ -426,3 +396,13 @@ test('fetchResourceBytes: a scheme we do not fetch says so', async () => {
   assert.deepEqual(res, { failed: true, reason: 'unsupported-scheme' });
 });
 
+
+// A `file://` read's `Last-Modified`, in the units of Chrome's directory
+// listing: whole seconds, so a direct read and a listing agree.
+test('fsMtimeFromLastModified: whole seconds, or nothing for a missing or bad header', async () => {
+  const { fsMtimeFromLastModified } = await import('../../dist/file-locations.js');
+  assert.equal(fsMtimeFromLastModified('Mon, 05 Oct 2026 05:46:16 GMT'), 1791179176);
+  assert.equal(fsMtimeFromLastModified(null), undefined);
+  assert.equal(fsMtimeFromLastModified(''), undefined);
+  assert.equal(fsMtimeFromLastModified('not a date'), undefined);
+});

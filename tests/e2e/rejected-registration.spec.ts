@@ -29,7 +29,7 @@
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
-import { waitForTabState } from '../fixtures/sw-api';
+import { hasBadgeColor, waitForTabState } from '../fixtures/sw-api';
 
 // Chrome's own wording for the failure this suite provokes. Matched
 // loosely (the id and index vary) so a Chrome rephrasing doesn't fail
@@ -258,14 +258,14 @@ test.describe('rejected registrations', () => {
 
     const state = await waitForTabState(
       sm, tabId,
-      (s) => s.title.includes('REJECTED'),
-      'badge to read REJECTED',
+      // Red, as final as a thrown error, not the amber "still waiting"
+      // that MISSING means. Part of the wait: the rows are read live,
+      // so they can show REJECTED before the badge repaints.
+      (s) => s.rows.includes('Bad Match | REJECTED') && hasBadgeColor(s, '#d32f2f'),
+      'badge to read REJECTED, in red',
     );
-    expect(state.title).toContain('Bad Match | REJECTED');
-    // Red — as final as a thrown error, not the amber "still waiting"
-    // that MISSING means.
-    const [r, g, b] = state.badgeColor as number[];
-    expect([r, g, b]).toEqual([0xd3, 0x2f, 0x2f]);
+    expect(state.rows).toContain('Bad Match | REJECTED');
+    expect(state.title).toContain('\nChrome rejected 1 script.\n');
     await page.close();
   });
 

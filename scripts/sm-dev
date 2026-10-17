@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+#
+# `sm-dev` in this checkout. The same tool a repo of userscripts gets on
+# its PATH when it installs the `sourcemonkey` package: the package's
+# `bin` entry points at lib/harness/cli.js, which pnpm links into that
+# repo's node_modules/.bin. Here there is no such link, so this is it.
+#
+#   scripts/sm-dev run tests/examples/gm-storage/gm-storage.user.js
+#   scripts/sm-dev --help
+#
+# Runs what lib/ has, and never builds it: a build swaps in a new lib/,
+# which would change the code under any sm-dev session already running.
+# Build with `pnpm run build`.
+
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
+if [[ ! -f "$root/lib/harness/cli.js" ]]; then
+  echo "sm-dev isn't built: The file lib/harness/cli.js is missing. Run pnpm run build." >&2
+  exit 1
+fi
+exec node "$root/lib/harness/cli.js" "$@"

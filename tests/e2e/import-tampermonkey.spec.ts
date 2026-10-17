@@ -94,7 +94,7 @@ test.describe('import from Tampermonkey', () => {
     const section = page.locator('section.collection');
     await expect(section).toHaveCount(1);
     await expect(section.locator('h2 .collection-display-name'))
-      .toHaveText(/^Imported from Tampermonkey — /);
+      .toHaveText(/^Imported from Tampermonkey \(.+\)$/);
     await expect(section.locator('h2 .collection-type-bubble')).toHaveText('imported');
     await expect(section.locator('tbody tr')).toHaveCount(2);
 
@@ -185,7 +185,7 @@ test.describe('import from Tampermonkey', () => {
     const viewer = await extensionContext.newPage();
     await viewer.goto(`chrome-extension://${extensionId}/userscript.html?script=${script.id}`);
     const locationRow = viewer.locator('.location-none');
-    await expect(locationRow).toHaveText('Imported from Tampermonkey — no external location');
+    await expect(locationRow).toHaveText('Imported from Tampermonkey, with no external location');
     // Nothing to open and nothing to copy, so neither affordance is drawn.
     await expect(viewer.locator('.filename-cell a')).toHaveCount(0);
     await viewer.close();

@@ -8,7 +8,7 @@
 // pure half of the probe module; its fetching half lives in
 // `version-probe-fetch.js` and is deliberately not reachable here.)
 
-import type { StoredScript } from './script-store.js';
+import type { StoredScript } from './script-build.js';
 import { getValue, joinFullSource, type ParsedHeader } from './userscript-header.js';
 import { outdatedProbe, probeLabel, type VersionProbe } from './version-probe.js';
 import { describeDiagnostic } from './diagnostic-location.js';
@@ -25,10 +25,11 @@ const ABSOLUTE_URL_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
 // and losing the whole string is far worse than leaving one escape
 // undecoded.
 // Tooltip on a script's enable checkbox, wherever one is drawn: the
-// collections page's per-row toggle, the viewer's controls row, and the
-// "Other versions" panel. The viewer's panel appends a multi-enable hint
-// to it (see `enableTitle` in related-versions.ts); everyone else shows
-// it bare.
+// collections page's per-row toggle, the viewer's controls row, the
+// "Other versions" panel, and the toolbar popup's rows. The viewer and
+// the popup append a multi-enable hint to it where other copies exist
+// (see `enableTitle` in solo-click.ts); the collections page shows it
+// bare.
 export const ENABLE_TITLE = 'Enable this script';
 
 export function decodeForDisplay(text: string): string {
@@ -80,13 +81,20 @@ export function scriptBasename(urlOrPath: string): string {
   }
 }
 
-// The trailing `#N` a log ID carries when several scripts share a
-// basename, or '' when it's unique. Anchored to the `#<digits>` shape
-// rather than the first `#` in the string: log IDs are decoded
-// filenames, so a script whose URL carries a `%23` has a literal `#`
-// mid-name and would otherwise render half its own name as a suffix.
-export function logIdDupeSuffix(logId: string): string {
-  return /#\d+$/.exec(logId)?.[0] ?? '';
+// The trailing suffix a log ID carries: the script's number (`#E4`),
+// or `#N` for an unnumbered script sharing its basename; '' for none.
+// Anchored to that shape rather than the first `#` in the string: log
+// IDs are decoded filenames, so a script whose URL carries a `%23` has
+// a literal `#` mid-name and would otherwise render half its own name
+// as a suffix.
+export function logIdSuffix(logId: string): string {
+  return /#E?\d+$/.exec(logId)?.[0] ?? '';
+}
+
+/** The script number a log ID ends with (`foo.user.js#E4` → 4), or null for none. */
+export function logIdScriptNumber(logId: string): number | null {
+  const n = /#E(\d+)$/.exec(logId)?.[1];
+  return n === undefined ? null : Number(n);
 }
 
 // The name to show for a script in badges, menus, the collections list,
@@ -106,6 +114,15 @@ export function scriptDisplayName(
   fallback?: string,
 ): string {
   return headerDisplayName(script.header) || fallback || displayLocation(script.relativePath);
+}
+
+// The order scripts are listed in wherever names are shown in a list:
+// case-insensitive, with numbers compared by value ("Item 9" before
+// "Item 10"). Shared so every list orders the same scripts alike.
+const nameCollator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
+
+export function compareScriptNames(a: string, b: string): number {
+  return nameCollator.compare(a, b);
 }
 
 // The `@name` a header declares, or '' when it declares none usable.
@@ -157,12 +174,33 @@ export function appendWithSlashBreaks(el: HTMLElement, text: string): void {
   });
 }
 
-// Format a byte count for the size column. Returns "1.2 KB", "950 B",
-// etc. — short enough to fit comfortably alongside filename + status.
+// Format a byte count for the size column. Returns "12 KB", "950 B",
+// "1.4 MB", etc. — short enough to fit comfortably alongside filename +
+// status. Whole KB: a tenth of a KB is never the interesting part. The
+// MB switch is on the ROUNDED KB, so 1023.6 KB reads "1.0 MB", not
+// "1024 KB".
 export function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  const kb = Math.round(size / 1024);
+  if (kb < 1024) return `${kb} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// Storage use against a quota, both in MB: `9.9 MB of 10 MB (99%)`.
+// One unit on both sides, since `10,106 KB of 10 MB` reads as over the
+// limit at a glance. Rounded DOWN, so a store that still has room never
+// reads as `10.0 MB of 10 MB (100%)`.
+export function formatStorageUsage(used: number, quota: number): string {
+  const tenths = Math.floor((used / (1024 * 1024)) * 10) / 10;
+  const percent = Math.floor((used / quota) * 100);
+  return `${tenths.toFixed(1)} MB of ${formatQuota(quota)} (${percent}%)`;
+}
+
+// A storage quota: `10 MB` for a whole number of MB (Chrome's is), not
+// `10.0 MB`.
+export function formatQuota(bytes: number): string {
+  const mb = bytes / (1024 * 1024);
+  return Number.isInteger(mb) ? `${mb} MB` : `${mb.toFixed(1)} MB`;
 }
 
 // Text shown in the "Size" cell. Size is independent of status:
@@ -286,7 +324,7 @@ export function viewerUrl(scriptId: string, tab?: 'log'): string {
   return `userscript.html?${params.toString()}${tab === 'log' ? '#Log' : ''}`;
 }
 
-// The compare page for two copies of a script (src/compare.ts). The
+// The compare page for two copies of a script (src/extension/compare.ts). The
 // right-hand side is the base: the copy on screen, or the download a
 // preview is showing; `other` is the copy to hold up against it.
 export function compareUrl(
@@ -434,8 +472,8 @@ const IMPORT_MANAGER_NAMES: Record<string, string> = {
 export function pinnedLocationText(manager?: string): string {
   const name = manager ? IMPORT_MANAGER_NAMES[manager] : undefined;
   return name
-    ? `Imported from ${name} — no external location`
-    : 'Imported — no external location';
+    ? `Imported from ${name}, with no external location`
+    : 'Imported, with no external location';
 }
 
 // Why Refresh is unavailable on a pinned script. Shared because two
@@ -450,3 +488,29 @@ export const PINNED_NO_REFRESH_TITLE =
 // collection has no location of its own to re-list.
 export const IMPORT_NO_REFRESH_TITLE =
   'This collection was imported from a backup and has no location to refresh from';
+// ---------- Changes on disk ----------
+
+// What a local collection's disk holds that its rows don't: what the
+// collections page's "refresh pending" chip counts, and sm-dev's
+// `onDisk` gives.
+export interface PendingOnDisk {
+  modified: number;
+  deleted: number;
+  added: number;
+  // The collection's manifest file itself has changed.
+  manifest?: true;
+}
+
+// The counts in words, per kind, since each is a different thing to go
+// and check: `1 file modified, 2 new files`. Empty when nothing differs.
+export function pendingSummary(counts: PendingOnDisk): string {
+  const files = (n: number) => `${n} ${n === 1 ? 'file' : 'files'}`;
+  const parts: string[] = [];
+  if (counts.manifest) parts.push('the manifest changed');
+  if (counts.modified > 0) parts.push(`${files(counts.modified)} modified`);
+  if (counts.deleted > 0) parts.push(`${files(counts.deleted)} deleted`);
+  if (counts.added > 0) parts.push(`${counts.added} new ${counts.added === 1 ? 'file' : 'files'}`);
+  if (parts.length === 0) return '';
+  const text = parts.join(', ');
+  return `${text[0].toUpperCase()}${text.slice(1)}`;
+}

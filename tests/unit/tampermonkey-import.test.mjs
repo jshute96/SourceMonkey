@@ -1,4 +1,4 @@
-// Unit tests for the Tampermonkey backup parser (src/tampermonkey-import.ts).
+// Unit tests for the Tampermonkey backup parser (src/extension/tampermonkey-import.ts).
 //
 // The format is described in docs/import-export-tampermonkey.md. The
 // fixtures here are hand-built rather than captured from a real export
@@ -14,7 +14,7 @@ import {
   importCollectionName,
   importedScriptFilename,
   parseTampermonkeyBackup,
-} from '../../dist/tampermonkey-import.js';
+} from '../../dist/extension/tampermonkey-import.js';
 
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
 
@@ -299,8 +299,7 @@ test('importedScriptFilename: leading dots are dropped so it is not a hidden fil
 
 test('importCollectionName: names the manager and dates the run', () => {
   const name = importCollectionName(new Date(2026, 7, 8));
-  assert.match(name, /^Imported from Tampermonkey — /);
-  assert.ok(name.length > 'Imported from Tampermonkey — '.length);
+  assert.match(name, /^Imported from Tampermonkey \(.+\)$/);
 });
 
 test('a stringified position still orders the script', () => {

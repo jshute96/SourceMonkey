@@ -3,7 +3,7 @@
 SourceMonkey accepts userscripts from `http(s)://` URLs in addition to
 local `file://` paths, and supports a JSON **manifest** format that
 works for both local and remote collections. Implemented in
-`src/directories.ts` (URL detection, fetchers, scanners) and consumed
+`src/extension/directories.ts` (URL detection, fetchers, scanners) and consumed
 by the [script store](storage.md). Companion to
 [file-access.md](file-access.md) for the local-filesystem story.
 
@@ -318,6 +318,11 @@ same way for all kinds.
 
 ## Module surface
 
+The pure classifiers live in `src/file-locations.ts` and
+`src/extension/location-kinds.ts` (`containerKindForSingleFileInput`),
+re-exported through `directories.ts`. Pages that only label locations,
+like the toolbar popup, import them without the fetch and scan code.
+
 Collection-kind classifiers (all scheme-agnostic — they classify by the
 input's pathname suffix, regardless of `http://`, `file://`, or raw
 path form):
@@ -363,7 +368,7 @@ needed for I/O — used everywhere instead of branching on scheme):
   pass through. See
   [install-capture.md](install-capture.md#one-file-one-installed-row).
 
-GitHub helpers (live in `src/github-provider.ts`):
+GitHub helpers (live in `src/extension/github-provider.ts`):
 
 - `parseGithubUrl(s)` — splits a `(blob|tree)/<ref>/<path>` URL into
   `{owner, repo, kind, ref, path}` (null on no match).

@@ -25,7 +25,6 @@ import { test as base, chromium, type BrowserContext } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { extensionIdFromPath } from './extension-id';
 import { makeSwApi } from './sw-api';
 import {
   createFixtureServer,
@@ -99,10 +98,8 @@ function normalize(v: unknown): string | undefined {
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const EXTENSION_PATH = path.resolve(__dirname, '../../dist');
 const FIXTURE_PAGES_DIR = path.resolve(__dirname, 'pages');
 const EXAMPLES_DIR = path.resolve(__dirname, '../examples');
-const SOURCEMONKEY_EXTENSION_ID = extensionIdFromPath(EXTENSION_PATH);
 
 export interface SetupApi {
   /**
@@ -190,13 +187,9 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   extensionContext: [
     async ({ manager }, use) => {
       if (manager === 'sourcemonkey') {
-        const launched = await launchSourceMonkeyContext({
-          extensionPath: EXTENSION_PATH,
-          extensionId: SOURCEMONKEY_EXTENSION_ID,
-        });
+        const launched = await launchSourceMonkeyContext();
         await use(launched.ctx);
-        await launched.ctx.close();
-        launched.cleanup();
+        await launched.close();
         return;
       }
 

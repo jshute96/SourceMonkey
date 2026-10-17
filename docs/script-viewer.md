@@ -6,14 +6,26 @@ Two related pieces:
   `// ==UserScript== … // ==/UserScript==` block into a structured
   form. Used by the [script store](storage.md) for validation and by
   the viewer below for the summary.
-- **Viewer page** (`src/userscript.html` + `src/userscript.ts`) —
+- **Viewer page** (`src/userscript.html` + `src/extension/userscript.ts`) —
   renders one script, installed or not. Its two reusable pieces live
   next door: the details `<dl>` in
-  [`src/script-details.ts`](../src/script-details.ts), the tabbed code
-  view in [`src/code-tabs.ts`](../src/code-tabs.ts) (with the
-  linkifier in [`src/code-links.ts`](../src/code-links.ts)).
+  [`src/extension/script-details.ts`](../src/extension/script-details.ts), the tabbed code
+  view in [`src/extension/code-tabs.ts`](../src/extension/code-tabs.ts) (with the
+  linkifier in [`src/extension/code-links.ts`](../src/extension/code-links.ts)).
 
 ## Header parser
+
+### Marker lines
+
+A marker line is `//`, optional spaces or tabs, then `==UserScript==`
+or `==/UserScript==`. Anything else can come before or after on the
+line, as VM matches it.
+
+- GreasyFork serves scripts opening with `/// ==UserScript==` or
+  closing with `// ==/UserScript==////`, and TM and VM install both.
+- Each marker takes its whole line, so text after the closing marker
+  stays in the header (it's part of that comment) and the body starts
+  on the next line.
 
 ### `splitHeaderBody(source)`
 
@@ -27,7 +39,8 @@ Returns `{leadingText, headerText, bodyText, error?}`:
 - `bodyText` — everything after the closing marker (a single
   trailing newline is stripped so the body doesn't lead with a blank
   line).
-- `error` — `NO_METADATA_BLOCK` or `UNTERMINATED_METADATA_BLOCK`
+- `error` — `NO_METADATA_BLOCK`, `USERSTYLE_NOT_SUPPORTED` (no userscript
+  block, but a `/* ==UserStyle==` one) or `UNTERMINATED_METADATA_BLOCK`
   (exported from the same module, since the message doubles as the
   discriminant). On error, `leadingText = ''`, `headerText = ''`, and
   `bodyText = source`.
@@ -143,8 +156,8 @@ Both name the script the same way, pivoted for where they're read.
 2. **Other versions panel** (`#other-versions`) — every installed copy
    of this script, when there is more than one to talk about. Built by
    `renderRelatedVersions` in
-   [`src/related-versions.ts`](../src/related-versions.ts) over the
-   lookup in [`src/script-identity.ts`](../src/script-identity.ts).
+   [`src/extension/related-versions.ts`](../src/extension/related-versions.ts) over the
+   lookup in [`src/extension/script-identity.ts`](../src/extension/script-identity.ts).
    - Two sections: **This URL** (same absolute `fileUrl`) and **Same
      script from a different URL** (same `@namespace` + `@name`).
    - Per row: enable toggle, type bubble + collection name linking to
@@ -217,11 +230,11 @@ Both name the script the same way, pivoted for where they're read.
    - `refreshError` never gets one — the fetch failed, so there is no
      new content to point into.
 5. **Details panel** (`#header-summary` → `<dl>`) — built by
-   `renderDetails` in [`src/script-details.ts`](../src/script-details.ts).
+   `renderDetails` in [`src/extension/script-details.ts`](../src/extension/script-details.ts).
    Row order is fixed and a row is omitted when its value is absent, so
    the panel doesn't reshuffle between modes.
    - **Every label carries a tooltip**, from the one table in
-     [`src/details-tooltips.ts`](../src/details-tooltips.ts). Several
+     [`src/extension/details-tooltips.ts`](../src/extension/details-tooltips.ts). Several
      rows report something the label can't convey — what we checked but
      deliberately didn't act on, what a value is *not*, where a name
      shows up outside this page — so the tooltip corrects the likely
@@ -244,13 +257,12 @@ Both name the script the same way, pivoted for where they're read.
      `@namespace`, `@run-at`, `@icon`, `@noframes`, and the rest.
    - **`@grant` gets no row**, which is a judgement about our GM
      surface rather than a general one:
-     - `GM_xmlhttpRequest` is the API that reaches other origins, and it
-       does nothing without `@connect`.
-       - A script declaring no `@connect` is blocked from every
-         cross-origin request (see [GM-APIs.md](GM-APIs.md)), leaving it
-         no further than the page's own `fetch`.
-       - So `Network access` already carries that story, and carries it
-         more precisely than a grant name would.
+     - `GM_xmlhttpRequest` is the API that reaches other origins. Past
+       the page's own origin, it reaches only the hosts `@connect`
+       names, or that the user allowed when asked (see
+       [connect-permissions.md](connect-permissions.md)).
+       - `Network access` lists both, so it carries that story more
+         precisely than a grant name would.
      - Most other grants act within reach the page already has:
        `GM_addStyle`, `GM_addElement`, `GM_registerMenuCommand`,
        `GM_getResourceText`, the value store.
@@ -286,7 +298,7 @@ Both name the script the same way, pivoted for where they're read.
        see [architecture.md](architecture.md#cross-page-navigation)).
        Same bubble/name combo the collections page renders. Installed mode only; row omitted if the parent
        collection row has vanished. See
-       [`src/collection-display.ts`](../src/collection-display.ts).
+       [`src/extension/collection-display.ts`](../src/extension/collection-display.ts).
      - `Location` — anchor wrapping the resolved location. Display form
        depends on collection kind:
        - `file://` → bare fs path
@@ -299,7 +311,7 @@ Both name the script the same way, pivoted for where they're read.
          bare fs path isn't navigable). The href always keeps the
          *encoded* form, and the tooltip shows it.
        - **Copy button** (`makeCopyButton` in
-         [`src/copy-button.ts`](../src/copy-button.ts), shared with the
+         [`src/extension/copy-button.ts`](../src/extension/copy-button.ts), shared with the
          `Local overrides` entries). Copies the raw location, not the
          decoded display text; the icon swaps to a checkmark for ~1.2 s
          on success.
@@ -324,13 +336,13 @@ Both name the script the same way, pivoted for where they're read.
        so reading them together is what shows when they disagree. An
        anchor when the value parses as an absolute http(s) URL, plain
        text otherwise.
-   - `Log ID` — short file-derived handle used in every SW log line.
-     See [logging.md](logging.md). Installed mode only.
-     - **Only when it carries a `#N` dupe suffix.** Without one the log
-       ID is the script's own basename, which the `Location` row already
-       says. The `#N` is the part written nowhere in the file, and it's
-       what a stack trace or `//# sourceURL=` names — so a reader holding a `foo.user.js#2` can ask whether
-       that's this one.
+   - `Log ID` — short handle used in every SW log line: the basename
+     and the script's number (`foo.user.js#E4`). See
+     [logging.md](logging.md). Installed mode only, and always shown.
+     - The `#E4` is written nowhere in the file, and it's what a stack
+       trace, a `//# sourceURL=` and sm-dev (`E4`) name the script by.
+     - The row's tooltip ends with a line naming the number sm-dev uses
+       (`E4 is the script's ID in sm-dev.`).
      - A script added by URL shows its decoded filename — see
        [names-and-paths.md](names-and-paths.md).
    - Parsed-header fields, continued — one row per tag, each pattern
@@ -339,9 +351,28 @@ Both name the script the same way, pivoted for where they're read.
      - `Network access` (`@connect`) — directly under the match
        targets, because it's the same question asked outward: those
        rows say which pages the script reads, this one says where it
-       may send what it read. Same face as the rows around it, and
-       deliberately unlinked — a `@connect` value is a matching rule
-       (`self`, `*`, `*.example.com`), not an address.
+       may send what it read.
+       - Rendered like Match: always bullets, each value with its
+         site's icon and a link to it (`connectLinkUrl`, see Link
+         rendering).
+       - `*` shows as **All sites**, like the prompt answer, with no
+         icon.
+       - `self` and other values that name no single site stay plain
+         text beside the globe. For `self` its tooltip says what it
+         covers.
+       - Split into two lists, each under a heading shown only when
+         its list is non-empty: `Declared in @connect:` for the header
+         values, `Undeclared in @connect:` for the prompt answers.
+       - The prompt answers (installed scripts only) read
+         `<host>: **Allowed**` or `<host>: **Denied**`, with "Allow all sites"
+         shown as `**All sites**: **Allowed**`.
+       - Each answer's host is linked like a header value. An allowed
+         host gets its favicon; a denied one keeps the globe, so
+         opening the page never contacts a site the user refused.
+       - Each answer has a Reset button that clears it, so the next
+         request asks again. The row repaints from the storage change
+         (`connectGrants:<id>` in local storage).
+       - The row shows whenever there is a value or an answer.
    - `Local overrides` — every `@require` / `@resource` whose body was read
      from a local stand-in instead of the URL it declares, one entry per
      file. Shown in both modes; **absent whenever nothing was
@@ -361,7 +392,7 @@ Both name the script the same way, pivoted for where they're read.
      has never loaded); in preview, the byte length of the fetched
      text.
      - Suffixed with what the script loads alongside itself, when it
-       loads anything: `12.4 KB (plus 2 @require files: 125 KB, 1
+       loads anything: `12 KB (plus 2 @require files: 125 KB, 1
        @resource file: 4 KB)`. The script's own bytes understate what a
        page pays to run it when the script pulls in a jQuery.
      - Counts entries that **actually loaded and reported a size**, not
@@ -388,7 +419,7 @@ Both name the script the same way, pivoted for where they're read.
        the message bar) when the injector's `injector-rejections` map
        changes.
 6. **Tab strip** (`#tabs`) — one tab per source file, plus the Log tab.
-   Owned by `CodeTabsView` in [`src/code-tabs.ts`](../src/code-tabs.ts):
+   Owned by `CodeTabsView` in [`src/extension/code-tabs.ts`](../src/extension/code-tabs.ts):
    - Main script first, labeled with the basename of `relativePath`
      (decoded when that path is a URL).
    - Then one tab per `@require` in declaration order, labeled with
@@ -446,7 +477,7 @@ Both name the script the same way, pivoted for where they're read.
 Clicking Refresh:
 
 1. Disables the button and spins its glyph in place
-   (`setGlyphButtonBusy`, src/glyph.ts). The tooltip becomes
+   (`setGlyphButtonBusy`, src/extension/glyph.ts). The tooltip becomes
    "Refreshing…"; the button itself neither changes size nor moves
    what sits beside it.
    - Under `prefers-reduced-motion` the glyph doesn't spin — it dims,
@@ -483,7 +514,7 @@ what keeps a wrapping name from dragging it onto the last wrapped line.
   `relativePath` is relative to its collection root, so there is
   nothing to move.
 
-Clicking it opens the **move dialog** (`src/move-dialog.ts`), which
+Clicking it opens the **move dialog** (`src/extension/move-dialog.ts`), which
 owns the whole action the way the collection dialog owns Create: the
 destination dropdown, the refusals, the `moveScript` call, and any
 failure in its own error slot.
@@ -498,9 +529,9 @@ failure in its own error slot.
   pre-selected, so Move is greyed until a destination is picked — see
   [script-identity.md](script-identity.md#the-same-dropdown-for-a-move).
   It comes from the last "Other versions" paint, not a fresh store
-  read: `readStoreSnapshot` is a `storage.local.get(null)` over every
-  row in the store, which is a visible pause on a click, and the panel
-  below has already paid it. `moveScript` re-checks under the write
+  read: `readStoreSnapshot` reads every script row in the store,
+  which can be a visible pause on a click, and the panel below has
+  already paid it. `moveScript` re-checks under the write
   lock, so a stale entry costs a message, never a bad move.
 - **A destination that already holds this script** is disabled too,
   marked *(already installed)*. No message goes with either case: the
@@ -522,7 +553,7 @@ failure in its own error slot.
 
 **Local copy…** sits in the controls row under the heading, between the
 **Enabled** box and **Refresh**, and appears for every installed
-script. It opens the copy dialog (`src/copy-dialog.ts`), which writes an
+script. It opens the copy dialog (`src/extension/copy-dialog.ts`), which writes an
 editable copy into the *Scripts copied in Downloads* collection under
 the browser's Downloads folder.
 
@@ -546,8 +577,9 @@ its own Refresh. A `chrome.storage.onChanged` listener re-hydrates and
 re-renders when:
 
 - a **`script:*`** row changes — this script (status, content, size,
-  enabled), or a sibling whose add/remove shifts this script's dedup
-  `#N` log ID;
+  enabled), or a sibling whose add/remove shifts an unnumbered `#N`;
+- the **`scriptNumbers`** row changes — a new script gets its number
+  just after it is added;
 - **this script's parent `collection:*`** row changes, but only in a field
   this page shows — `enabled` (greys the Enable toggle), `displayName`
   or `path` (the Collection row). The re-hydrate re-reads the collection
@@ -737,7 +769,7 @@ every row underneath the click that selected it.
 
 The viewer keeps `location.hash` in sync with the selected tab +
 highlight so a URL can be copied or bookmarked and reopened in the
-same place. Pure parser / builder live in `src/script-url-hash.ts`.
+same place. Pure parser / builder live in `src/extension/script-url-hash.ts`.
 
 Fragment grammar:
 
@@ -849,7 +881,7 @@ Banner (`#banner-slot`) states what this file is; the action row
   `chrome.extension.isAllowedFileSchemeAccess()`. If the toggle really
   is off, `#banner-slot` gets the **"File access is disabled."**
   banner — the same one the collections page shows, from
-  [`src/file-access.ts`](../src/file-access.ts) — with a click-through
+  [`src/extension/file-access.ts`](../src/extension/file-access.ts) — with a click-through
   to `chrome://extensions/?id=<our id>`.
 - Both modes raise it, because both can hit the toggle:
   - **Preview** — the fetch behind `Could not fetch this script: …`.
@@ -1051,7 +1083,7 @@ The viewer uses **Prism.js**, vendored from `node_modules/prismjs` by
 
 ### Userscript-header syntax highlighting extension
 
-[`src/prism-userscript.ts`](../src/prism-userscript.ts) extends
+[`src/extension/prism-userscript.ts`](../src/extension/prism-userscript.ts) extends
 Prism's JavaScript grammar (via
 `Prism.languages.insertBefore('javascript', 'comment', …)`) with a
 `userscript-header` token that wraps the entire
@@ -1141,16 +1173,17 @@ so the body header and the details panel agree.
 
 ### Same-directory fallback
 
-A script that ships beside the page it acts on says so with a
-host-wildcard pair, and neither member names a site:
+A script that ships beside the page it acts on often names that page
+with patterns that name no site, such as any of these:
 
 ```
 // @match *://*/gm-menu/gm-menu.html
+// @match *://*/*gm-menu/gm-menu.html
 // @match file:///*/gm-menu/gm-menu.html
 ```
 
-`sameDirLinkUrl` (in `src/match-targets.ts`) links these to the page
-sitting next to the script. Given the script's own directory `D`:
+`sameDirLinkUrl` (in `src/match-targets.ts`) links each such pattern
+to the page sitting next to the script. Given the script's own directory `D`:
 
 - The pattern must name **no host** — `*`, or the empty host of a
   `file://` pattern. A concrete host is `matchTargetInfo`'s job.
@@ -1160,14 +1193,18 @@ sitting next to the script. Given the script's own directory `D`:
   the check is what keeps `ftp://*/…` from linking.
 - Its **last path segment must be a concrete filename** — non-empty,
   no `*`, no `?` or `#`, and carrying an extension.
-- The **directory segments after the last wildcard segment** must form
-  a non-empty run matching the tail of `D` exactly.
+- The **directory segments after the last wildcard segment** must
+  match the tail of `D` exactly.
+- Literal text ending that wildcard segment (`gm-menu` in `*gm-menu`)
+  must end the directory of `D` just before that run.
+- At least one of those two must be present, to anchor on.
 
 The link is then `D` + that filename.
 
 | Pattern (script in `…/examples/gm-menu/`) | Link |
 | --- | --- |
 | `*://*/gm-menu/gm-menu.html` | `<D>/gm-menu.html` |
+| `*://*/*gm-menu/gm-menu.html` | same URL |
 | `file:///*/gm-menu/gm-menu.html` | same URL |
 | `*://*/examples/gm-menu/gm-menu.html` | same URL (longer overlap) |
 | `*://*/gm-menu.html` | *(no link)* — nothing to anchor on |
@@ -1178,11 +1215,12 @@ The link is then `D` + that filename.
 Notes:
 
 - The **scheme and origin come from the script**, not the pattern, so
-  the `*://` and `file://` members of a pair collapse to one URL —
+  `*://` and `file://` patterns for the same page give one URL —
   and the rule works the same for an HTTP-hosted script.
-- Requiring at least one matching directory is what makes this a
-  deduction: `*://*/page.html` says only "a file with this name,
-  somewhere", which is no evidence it sits beside the script.
+- Requiring at least one matching directory (or directory suffix,
+  like `*gm-menu`) is what makes this a deduction: `*://*/page.html`
+  says only "a file with this name, somewhere", which is no evidence
+  it sits beside the script.
 - The result is `D` plus one literal filename, so no pattern can walk
   out of the script's own directory. It's resolved through the URL
   parser, so a filename carrying a space is escaped like the directory
@@ -1201,7 +1239,7 @@ Notes:
 - Site-icon discovery does *not* use it — a page beside the script
   isn't a site, and probing it for a favicon would be noise.
 
-### Hosting-site pages (`src/script-sites.ts`)
+### Hosting-site pages (`src/extension/script-sites.ts`)
 
 What we fetch from a userscript-hosting site is its *raw code* URL,
 which is not a page a person wants to open. Each supported site
@@ -1236,7 +1274,7 @@ pure rewrite — no network call, no stored field.
 
 ### Code box (post-Prism walk)
 
-`linkifyCodeBlock` in `src/userscript.ts` runs after
+`linkifyCodeBlock` in `src/extension/userscript.ts` runs after
 `Prism.highlightElement` in two passes:
 
 1. **Header pass** — finds each `.userscript-header` span left by

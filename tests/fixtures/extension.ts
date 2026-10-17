@@ -3,7 +3,7 @@
 //
 // MV3 extensions can't be triggered by clicking the toolbar from Playwright,
 // so tests invoke functions through `serviceWorker.evaluate(...)`, which
-// calls into `self.SourceMonkey` (set up in src/background.ts).
+// calls into `self.SourceMonkey` (set up in src/extension/background.ts).
 
 import { test as base, type BrowserContext, type Worker } from '@playwright/test';
 import fs from 'node:fs';
@@ -12,6 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extensionIdFromPath } from './extension-id';
 import { makeSwApi } from './sw-api';
+import { SM_DEV_MARKERS } from '../../lib/sm-dev-protocol.js';
 import {
   createFixtureServer,
   launchSourceMonkeyContext,
@@ -26,7 +27,7 @@ const EXTENSION_PATH = path.resolve(__dirname, '../../dist');
 const FIXTURE_PAGES_DIR = path.resolve(__dirname, 'pages');
 // Mounted as a fallback root so `tests/examples/<api>/<api>.html` is
 // reachable at `/<api>/<api>.html` from the fixture server. Keeps the
-// example userscripts' `@match *://*/<api>/<api>.html` patterns working
+// example userscripts' `@match *://*/*<api>/<api>.html` patterns working
 // against both the test harness and a standalone http-server.
 const EXAMPLES_DIR = path.resolve(__dirname, '../examples');
 export const EXTENSION_ID = extensionIdFromPath(EXTENSION_PATH);
@@ -68,6 +69,11 @@ type TestFixtures = {
   // Typed proxy over the `self.SourceMonkey` SW surface. Wipes storage
   // between tests so each test starts from a known-clean slate.
   sm: ReturnType<typeof makeSwApi>;
+  // The browser marked as one sm-dev is connected to, for the test, as a
+  // run marks it (`markBrowser` in src/harness/extension-link.ts), so a
+  // claimed tab's `document-start` wrappers ask the SW. For a test that
+  // claims tabs itself.
+  smDevMarked: void;
 };
 
 // Two flavours of the same fixture set, differing only in who handles
@@ -76,7 +82,11 @@ type TestFixtures = {
 // downloads through `chrome.downloads` — the local-copy feature reads
 // the saved file's real path back from the download item — need
 // Chrome's own download manager instead (`testWithBrowserDownloads`).
-function makeTest(browserDownloads: boolean) {
+//
+// Playwright also turns off Chrome's back/forward cache. Specs about
+// pages restored from it use `testWithBackForwardCache`, whose browser
+// keeps it.
+function makeTest(browserDownloads: boolean, backForwardCache = false) {
   return base.extend<TestFixtures, WorkerFixtures>({
   fixtureServer: [
     async ({}, use) => {
@@ -103,13 +113,11 @@ function makeTest(browserDownloads: boolean) {
   extensionContext: [
     async ({ downloadsDir }, use) => {
       const launched = await launchSourceMonkeyContext({
-        extensionPath: EXTENSION_PATH,
-        extensionId: EXTENSION_ID,
         downloads: downloadsDir ? { dir: downloadsDir } : undefined,
+        backForwardCache,
       });
       await use(launched.ctx);
-      await launched.ctx.close();
-      launched.cleanup();
+      await launched.close();
     },
     { scope: 'worker' },
   ],
@@ -119,10 +127,18 @@ function makeTest(browserDownloads: boolean) {
   },
 
   extensionId: async ({ getServiceWorker }, use) => {
-    // Service worker URL looks like: chrome-extension://<id>/background.js
+    // Service worker URL looks like: chrome-extension://<id>/extension/background.js
     const sw = await getServiceWorker();
     const id = new URL(sw.url()).host;
     await use(id);
+  },
+
+  smDevMarked: async ({ extensionContext }, use) => {
+    const marker = await extensionContext.addInitScript({
+      content: `window.addEventListener(${JSON.stringify(SM_DEV_MARKERS.present)}, (e) => e.preventDefault());`,
+    });
+    await use();
+    await marker.dispose();
   },
 
   sm: async ({ getServiceWorker }, use) => {
@@ -142,5 +158,17 @@ function makeTest(browserDownloads: boolean) {
 
 export const test = makeTest(false);
 export const testWithBrowserDownloads = makeTest(true);
+export const testWithBackForwardCache = makeTest(false, true);
 
 export const expect = test.expect;
+
+// Close any collections tab left open, before a test that waits for a
+// link to open one. The link focuses an open collections tab rather
+// than opening another (src/extension/page-links.ts), and tests in one
+// worker share `extensionContext`, so a tab an earlier test left behind
+// (one opened by a link it clicked, say) means no new tab appears.
+export async function closeCollectionsTabs(context: BrowserContext): Promise<void> {
+  for (const page of context.pages()) {
+    if (page.url().includes('/collections.html')) await page.close();
+  }
+}

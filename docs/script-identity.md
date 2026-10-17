@@ -3,8 +3,8 @@
 How SourceMonkey decides that two installed rows are *the same script*,
 and what the UI does with that.
 
-- Lookup: [`src/script-identity.ts`](../src/script-identity.ts)
-- Panel: [`src/related-versions.ts`](../src/related-versions.ts)
+- Lookup: [`src/extension/script-identity.ts`](../src/extension/script-identity.ts)
+- Panel: [`src/extension/related-versions.ts`](../src/extension/related-versions.ts)
 
 ## Three separate notions, deliberately
 
@@ -29,7 +29,7 @@ A script can be all three at once, or only one.
   collection copy against a single-file copy.
 - `fileUrl` is the absolute form the load pipeline already builds for
   every collection kind — `scriptFileUrl` in
-  [`src/directories.ts`](../src/directories.ts) resolves manifest
+  [`src/extension/directories.ts`](../src/extension/directories.ts) resolves manifest
   entries against the manifest URL, joins directory entries onto the
   collection root, and maps GitHub dirs to raw URLs.
 - `canonicalCollectionInput` collapses a `file://` URL to its bare path, so
@@ -153,27 +153,32 @@ sweeping from the copy on **screen**. See
 
 ### Enabling is exclusive; disabling is not
 
+This section covers the viewer's checkboxes and installs. The rule as
+it applies everywhere (collections page, popup, collection toggles,
+"Enable all"), and the active times behind it, are in
+[script-enablement.md](script-enablement.md).
+
 The rule applies to **every** enable checkbox the viewer shows: each
 panel row, on the details page and the preview alike, and the
 controls-row toggle at the top of the details page. `enableChanges` +
-`otherRunningCopies` are shared by all of them, so they cannot drift.
+`otherActiveCopies` are shared by all of them, so they cannot drift.
 The controls-row toggle has no table around it to read the copies from,
 so it runs its own lookup; if that read fails it still writes the copy
 the user clicked rather than blocking on something it needs only for
 the *other* rows.
 
 - **Clicking an unchecked box enables that copy and disables every
-  other copy that is running** — across both sections, since the point
+  other copy that is active** — across both sections, since the point
   is that one copy of this script runs, not one per section. Two
   enabled copies at one URL both register and both run, which is almost
   never wanted.
-- **Clicking a checked box just disables it.** That leaves none running,
+- **Clicking a checked box just disables it.** That leaves none active,
   which is an ordinary thing to want, and there is no other copy that
   should be promoted in its place.
 - **Installing counts as enabling.** A fresh install lands enabled, so
-  it sweeps the other running copies off on its way to the new script's
+  it sweeps the other active copies off on its way to the new script's
   page. So does a **local copy** ([local-copy.md](local-copy.md)): the
-  copy the user just made for editing is the one they want running.
+  copy the user just made for editing is the one they want active.
   - Both Install controls do it — the preview's header button and the
     panel's offer section.
   - And so does the collections page's **Add** field, which previews any
@@ -182,10 +187,10 @@ the *other* rows.
   - **Single-file installs only.** The preview keeps an Install button
     for other shapes too, and those add a whole collection — no one
     script for the rule to be about.
-  - **Only when the new copy will actually run.** It must have landed
-    `ok` — a row stored `invalid` can't run — and its container
-    collection must be enabled. Switching a working copy off in favour
-    of one that can't run would leave nothing running at all.
+  - **Only when the new copy is active**: its container collection
+    must be enabled.
+  - **Even when the new copy landed `invalid`**: it is the one asked
+    for ([script-enablement.md](script-enablement.md#a-copy-that-cant-run)).
   - **A duplicate Install doesn't sweep.** Nothing new landed, so
     nothing was enabled; the message says the script is already
     installed and the panel in the same box is where to choose between
@@ -198,7 +203,13 @@ the *other* rows.
     where the sweep is the whole effect of the click. Two copies that
     really are meant to run together are one checkbox away on the page
     Install lands on.
-- **A copy under a disabled collection is spared.** It isn't running, so it
+- **One sweep for a copy newly active.** Install, local copy, a move
+  into an enabled collection, and sm-dev's `script enable`, `install`
+  and `move` ([sm-dev-managers.md](sm-dev-managers.md)) all call
+  `turnOffOtherCopies` (`script-identity.ts`).
+  - A run's test collection is left out both ways: the run keeps its
+    scripts off other tabs itself, and only the run changes them.
+- **A copy under a disabled collection is spared.** It isn't active, so it
   isn't competing — and its own checkbox is rendered disabled, so a
   flip made here could not be undone from this panel at all. Turning it
   off would silently destroy the user's stored intent for whenever they
@@ -224,9 +235,15 @@ the *other* rows.
   `storage.onChanged` is not enough: a preview has no such listener,
   and a batch that turns out to be a no-op writes nothing and fires no
   event.
-- **The whole batch is one write.** `setScriptsEnabled`, not a loop of
-  `setScriptEnabled`: the bulk call lands as a single
-  `chrome.storage.local.set` and fires one `storage.onChanged`. A loop
+- **The write decides again.** An enable that turns other copies off
+  goes through `enableWithin` (`script-enablement.ts`), given every
+  copy in the panel. Inside the store's write lock it turns off each of
+  those that is active in storage at that moment, since a write that
+  landed after the panel was drawn may have changed which (see
+  [script-enablement.md](script-enablement.md#decided-at-write-time)).
+- **The whole batch is one write**, not a loop of `setScriptEnabled`:
+  it lands as a single `chrome.storage.local.set` and fires one
+  `storage.onChanged`. A loop
   fired one per copy, and each one rehydrated the viewer from a
   half-applied state — the Enabled checkbox visibly flipped back and
   forth as the batch went through. It also spares the background worker
@@ -242,7 +259,7 @@ the *other* rows.
   the collections page uses (with *Collection is disabled* when the
   parent is off). Both are single constants — `ENABLE_TITLE` in
   `src/script-display.ts` and `COLLECTION_OFF_TITLE` in
-  `src/collection-display.ts` — so no surface can drift. It does not
+  `src/extension/collection-display.ts` — so no surface can drift. It does not
   name the copy — the Collection and Location cells are an inch to the
   right — and it does not swap to "Disable" when checked, which would
   make one control read two ways for no gain.
@@ -316,7 +333,7 @@ the *other* rows.
   - **Two glyphs, not one**: a plain can for a row that only drops
     SourceMonkey's record, and a can badged with a disk (in red) for a
     local copy, whose button deletes the file too. Both come from
-    `src/delete-icon.ts`; see [local-delete.md](local-delete.md).
+    `src/extension/delete-icon.ts`; see [local-delete.md](local-delete.md).
   - **Live only for scripts in a container collection** (a scripts
     collection — the built-in *Scripts from …* defaults or one the user
     made), which the user installed one at a time.
@@ -654,7 +671,7 @@ installed yet) and the panel's offer section (some copy exists). The
 two carry different ids — `install-target` and `install-target-offer` —
 because the callout is hidden rather than emptied when the section
 takes over. Built by
-`buildInstallSelect` in `src/related-versions.ts` from `installOptions`.
+`buildInstallSelect` in `src/extension/related-versions.ts` from `installOptions`.
 
 - **Three groups**, separated by rules:
   1. the **built-in default** for the script's scheme — `Scripts from
@@ -698,7 +715,7 @@ takes over. Built by
 ### The opening click never picks
 
 Both dropdowns (and the move dialog's) run through
-`guardSelectOpeningClick` in `src/select-open-guard.ts`, which opens the
+`guardSelectOpeningClick` in `src/extension/select-open-guard.ts`, which opens the
 list on the mouse *release* instead of the press.
 
 - **The hazard**: the popup is drawn by Chrome, and when the list

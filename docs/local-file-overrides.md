@@ -5,7 +5,7 @@ developed against a copy on your own disk.
 
 Owned by [`src/local-file-overrides.ts`](../src/local-file-overrides.ts).
 Applied in two places — [`src/external-files.ts`](../src/external-files.ts)
-for `@require` / `@resource`, and [`src/site-icon.ts`](../src/site-icon.ts)
+for `@require` / `@resource`, and [`src/extension/site-icon.ts`](../src/extension/site-icon.ts)
 for `@icon` (see [below](#every-file-a-script-declares-is-treated-alike)
 for why they aren't one). See [requires.md](requires.md),
 [resources.md](resources.md), and [site-icons.md](site-icons.md) for the
@@ -74,10 +74,11 @@ ref   https://cdn.example.com/lib/util.js
   `util.js` in the root.
 - **First readable wins.** The probe and the real read are the same
   fetch, so a hit costs nothing extra.
-- **A root's directory listing gates the probes.** Before any candidate
-  is read, the root is listed once (Chrome serves an HTML listing for a
-  `file://` directory) and a candidate whose first segment — `lib/`,
-  `cdn.example.com/`, or the bare filename — isn't in it is skipped.
+- **A root's directory listing gates the probes.** Before a candidate
+  under it is read, the root is listed once (Chrome serves an HTML
+  listing for a `file://` directory) and a candidate whose first
+  segment — `lib/`, `cdn.example.com/`, or the bare filename — isn't in
+  it is skipped.
   - Why: every probe of a missing file is logged as a failed request in
     the worker's DevTools Network panel, and the unfiltered list ran to
     a couple of dozen per script per refresh, which reads as breakage.
@@ -88,9 +89,10 @@ ref   https://cdn.example.com/lib/util.js
     candidates: "can't tell" falls through to the probe rather than
     hiding a stand-in. (Empty is ambiguous — it is also what an
     unrecognized listing format parses to.)
+  - A root is listed only when the search reaches it, so a hit in an
+    earlier root lists no later one.
   - Cost of a miss: one listing per root per pass, shared by every
-    dependency under that root and by the navigation batch's own stat
-    of the script folder, plus one read per surviving candidate —
+    dependency under that root, plus one read per surviving candidate —
     usually none. A root that fails to list is not retried in the pass.
 - **A ref that names no file matches nothing.** A path that is empty or
   ends in `/` yields no candidates at all: the suffix would name a
@@ -157,17 +159,23 @@ anyway; the de-dupe is about the list, not the probing.)
   only change what the *next* refresh resolves to. http(s) collections and
   the web / GitHub containers are skipped — they resolve over the
   network, so a root cannot change their outcome.
-- Cached in a module variable in each context that resolves — service
-  worker, collections page, viewer.
-  - Loaded once at startup, then kept current via `storage.onChanged`,
-    the same shape as `debug-log.ts`.
-  - `localSearchRoots` is synchronous because render paths call it, so
-    ordering is the caller's job: the resolve path and both page
-    bootstraps `await localRootsReady()` first.
-  - Without that await, a refresh racing SW startup would resolve as
-    though no roots were set — and persist the result.
+- Cached in a module variable in each context that reads the roots.
+  - The service worker resolves with them: refreshes and installs run
+    there.
+  - Extension pages read them for display (icons, the preview), but
+    no longer refresh.
+- Loaded once at startup, then kept current via `storage.onChanged`,
+  the same shape as `debug-log.ts`.
+  - The worker's `writeSetting` also sets the worker's copy at once, so
+    the refreshes Save starts straight after see the new roots without
+    waiting for the change event.
   - An initial read still in flight will not overwrite a newer value
     that landed while it waited.
+- `localSearchRoots` is synchronous because render paths call it, so
+  ordering is the caller's job: the resolve path and the pages
+  that read them `await localRootsReady()` first.
+  - Without that await, a refresh racing SW startup would resolve as
+    though no roots were set, and persist the result.
 
 #### Validation
 
@@ -237,11 +245,9 @@ Traversal is closed:
   offered.
 - A root is therefore a floor, not a starting point for climbing.
 
-Existing gates still run on the **declared** URL, before any stand-in is
-considered — so a local file can't launder a ref past them:
-
-- the `@require` `.js` suffix gate;
-- `resolveScriptResource`'s scheme and containment rules.
+`resolveScriptResource`'s scheme and containment rules still run on the
+**declared** URL, before any stand-in is considered, so a local file
+can't launder a ref past them.
 
 ## Every file a script declares is treated alike
 
@@ -254,7 +260,7 @@ They do NOT share one call site, though:
 
 - `@require` / `@resource` resolve in
   [`src/external-files.ts`](../src/external-files.ts).
-- `@icon` resolves in [`src/site-icon.ts`](../src/site-icon.ts), which
+- `@icon` resolves in [`src/extension/site-icon.ts`](../src/extension/site-icon.ts), which
   has its own bounded fetch, `image/*` gate, and caches.
 
 Both call `localFileCandidates` and take the first candidate that reads.
@@ -298,26 +304,66 @@ exception:
   fast path: it describes a file that may since have been deleted, and
   keeping it would serve a stand-in that no longer exists.
 
-Cost when enabled, for scripts in a local collection only:
+- **A changed stand-in bumps the script's `loadedAt`**, as any changed
+  dependency does. That is what lets a reload swap in the edited
+  library, and marks open tabs for a reload, as a script edit would.
+
+Cost when enabled, for scripts in a local collection only, on the
+checks that search:
 
 - Up to one listing **per root** per refresh, plus a read for each
   candidate the listing doesn't rule out (see the gate under
   [The rule](#the-rule)).
+- Roots are listed only as the search reaches them, so a hit in an
+  early root lists none of the later ones.
 - A nested script has two implicit roots (its own folder and its
   collection's), so a miss lists both.
-- A hit short-circuits the rest, and `ensureFetch` dedups within a pass.
+- `ensureFetch` dedups within a pass.
 - A script with local roots also skips the whole-list `preserve`
   shortcut, so it re-runs resolution every opportunistic refresh — the
   price of edits showing up without a Refresh click.
+- A stand-in's modified time (for the "modified" chip) comes from the
+  read's `Last-Modified`, which Chrome sets to what the folder's
+  listing would report, so it costs no listing.
+
+### Page-load checks {#page-load-checks}
+
+The checks a committed navigation starts (the reload fast path and the
+opportunistic sweep) don't search. Their batch carries
+`localLookup: 'known'`, and each file is read at the path the last
+check found. A same-document navigation (`pushState`) still searches:
+its checks are off the user's path and rate-limited.
+
+- **The script file** is read directly, with no listing of its folder.
+  The read gives the same size and modified time a listing would, so
+  the unchanged skip works as before. Only a read that fails lists the
+  folder, to tell a deleted file from one that won't read.
+- **A stand-in found last time** is read at that path, started
+  alongside the script read. One that no longer reads falls back to the
+  search.
+- **A file with no stand-in last time** isn't looked for. The same
+  goes for `@icon`, whose check records the stand-in it used.
+- **Why:** each listing costs more than the rest of such a check. On a
+  script with two stand-ins and two configured roots, the reload check
+  went from about 50 ms to about 13 ms in the test browser.
+- **What it gives up:** a stand-in that appears, or one nearer than the
+  one in use, isn't seen on a page load. A searching check picks it up:
+  - Refresh, of the script or its collection;
+  - saving the roots in Options, or changing a collection's local-files
+    option, which both refresh the affected collections;
+  - a focus check. Only one that runs: a focus check within 10 s of a
+    page load's check is rate-limited, and one that arrives while a
+    page load's check is running joins it.
 
 ### A stand-in that appears later
 
-The candidate probe runs every pass, so creating the local file is
-picked up on the next opportunistic refresh — no Refresh click needed.
-True for installed scripts, whose fetch cache lives for one refresh
-pass. Not true in the install preview or for `@icon`, both of which
-memoize for the life of the page — see the caveats under
-[Surfacing it](#surfacing-it) and [`@icon` caching](#icon-caching).
+The searching checks (focus, Refresh, a collection refresh) probe the
+candidates every pass, so creating the local file is picked up on the
+next of those, with no Refresh click needed. A page load doesn't search
+(see [Page-load checks](#page-load-checks)). Not true in the install
+preview or for `@icon`, both of which memoize for the life of the page;
+see the caveats under [Surfacing it](#surfacing-it) and
+[`@icon` caching](#icon-caching).
 
 ## Storage
 
@@ -329,9 +375,10 @@ Both `StoredRequire` and `StoredResource` gain these fields:
 
 - `localUrl?` — the `file://` URL actually read, present only when a
   stand-in was used. Its presence *is* "this entry was overridden".
-- `fsMtime?` — the stand-in's directory-listing mtime when it was
-  read, set beside `localUrl` (one listing per folder per pass, from
-  the same cache the candidate gate uses). With the entry's `size`, it
+- `fsMtime?` — the stand-in's modified time when it was read, set
+  beside `localUrl`. It comes from the read's `Last-Modified`, which
+  equals the folder listing's mtime in whole seconds, so it costs no
+  listing. With the entry's `size`, it
   lets a page report the file edited without re-reading it
   ([file-changes.md](file-changes.md)).
 - `url` keeps the **declared** URL either way. It is the dedup key, it
@@ -383,6 +430,9 @@ be silent, so several surfaces say so:
   - Every code tab has the URL tooltip, the main script's included:
     labels are bare basenames, so "which file is this" is a fair
     question on any of them. Only the chip is override-specific.
+  - A file sm-dev pushed gets a `snapshot` chip instead, saying it's a
+    copy taken at the push (see
+    [sm-dev-design.md](sm-dev-design.md#files-read-from-disk)).
 - **Details panel `Local overrides` row** — one entry per overridden file,
   naming the kind (`@require` / `@resource`), the local path we read,
   and a copy button for it. The declaration it replaced is the entry's
@@ -409,8 +459,8 @@ be silent, so several surfaces say so:
 - **A stand-in that has been deleted or edited but not yet noticed** —
   the row still names it, and holds its old bytes, until the next
   refresh. A `deleted` or `modified` chip beside the path in the
-  `Local overrides` row says so (the entry records the file's listing
-  mtime as `fsMtime` for the comparison). See
+  `Local overrides` row says so (the entry records the file's modified
+  time as `fsMtime` for the comparison). See
   [file-changes.md](file-changes.md).
 
 The install preview does all of this too: the parse check resolves every

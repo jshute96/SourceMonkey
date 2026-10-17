@@ -124,7 +124,8 @@ test.describe('registration sync window', () => {
       }).SourceMonkey;
       const key = `script:${id}`;
       const row = (await chrome.storage.local.get(key))[key] as Record<string, unknown>;
-      await chrome.storage.local.set({ [key]: { ...row, bodyText: 'const edited = 1;' } });
+      // An inline body, which reads as it is in place of the row's blob.
+      await (self as unknown as { SourceMonkey: { seedStorage(items: Record<string, unknown>): Promise<void> } }).SourceMonkey.seedStorage({ [key]: { ...row, bodyBlobRef: undefined, bodyText: 'const edited = 1;' } });
       // Sample the registration set while the sync runs. The worker is
       // single-threaded, so each sample lands at one of the sync's
       // await points — exactly where the old wipe left the set empty.

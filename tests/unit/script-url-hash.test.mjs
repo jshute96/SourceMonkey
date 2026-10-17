@@ -1,10 +1,10 @@
 // Tests for the pure URL-fragment helpers used by the viewer's
-// hash-navigation. Compiled output lives at dist/script-url-hash.js.
+// hash-navigation. Compiled output lives at dist/extension/script-url-hash.js.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseHash, buildHash } from '../../dist/script-url-hash.js';
+import { parseHash, buildHash } from '../../dist/extension/script-url-hash.js';
 
 test('parseHash: empty and "#" both map to empty', () => {
   assert.deepEqual(parseHash(''), { kind: 'empty' });

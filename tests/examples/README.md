@@ -8,7 +8,7 @@ and pairs:
   optional details, and placeholder outputs. The userscript fills in
   the content.
 - `<api>.user.js` — a real userscript with the metadata header,
-  `@match`-ed at `*://*/<api>/<api>.html` (and a `file:///` variant)
+  `@match`-ed at `*://*/*<api>/<api>.html` (and a `file:///` variant)
   so it picks up the page regardless of how it's served.
 - `<api>.spec.ts` — the Playwright e2e coverage for this example.
   Lives next to the page + userscript so per-API work stays in one
@@ -45,13 +45,13 @@ buttons in an inline `<script>` and the userscript only observes.
   cannot cause or intercept on its own.
 - Its `@match` patterns carry a trailing `*`
   (`.../window-onurlchange.html*`) because the demo changes the query
-  string and fragment; without it a reload at the pushed URL would no
+  string; without it a reload at the pushed URL would no
   longer match.
 
 ### Multi-script directories
 
 Header-variation pages (`headers-run-at/`, `headers-inject-into/`)
-and negative-case pages (`xmlhttp-denied/`) follow a small variant
+and the `@connect` page (`xmlhttp-connect/`) follow a small variant
 of the layout above:
 
 - Still **one** `<dir>.html` and **one** `<dir>.spec.ts`.
@@ -61,8 +61,11 @@ of the layout above:
   `<ul id="log">` on the page, typically tagged with a
   `data-script="<variant>"` attribute the spec can target.
 - Variant files are named by what they vary (`start.user.js`,
-  `end.user.js`, `no-connect.user.js`, …), not by the directory
+  `end.user.js`, `connect-none.user.js`, …), not by the directory
   stem.
+- Variants a manager can't install go in a subdirectory the spec
+  installs separately, so it can skip them there: `use-strict/with-require/`
+  holds the relative-`@require` pair TM can't take.
 
 The aim is double-purpose:
 
@@ -101,8 +104,9 @@ node scripts/serve-examples.mjs --port 9000
 
 Then visit `http://127.0.0.1:8080/index.html` for the index, or jump
 straight to e.g. `http://127.0.0.1:8080/gm-info/gm-info.html`. The
-`@match *://*/<api>/<api>.html` pattern matches under any host and
-port.
+`@match *://*/*<api>/<api>.html` pattern matches under any host and
+port, and at any depth under the server root (the leading `*` in the
+path covers a prefix like `/SourceMonkey/tests/examples/`).
 
 The serve script is a static-file server plus one special route:
 `/__slow/<file>?ms=N` answers after N ms. `headers-run-at/` uses it
@@ -130,14 +134,23 @@ events.
 | `gm-clipboard/`            | `GM_setClipboard`                                                 | form-driven   |
 | `gm-xmlhttp/`              | `GM_xmlhttpRequest`                                               | form-driven   |
 | `gm-open-in-tab/`          | `GM_openInTab`                                                    | form-driven   |
+| `gm-tab/`                  | `GM_getTab` / `GM_saveTab` / `GM_getTabs`                         | form-driven   |
 | `gm-notification/`         | `GM_notification`                                                 | button-driven |
 | `gm-download/`             | `GM_download`                                                     | button-driven |
+| `gm-menu/`                 | `GM_registerMenuCommand` / `GM_unregisterMenuCommand`             | button-driven |
+| `gm-resource/`             | `GM_getResourceText` / `GM_getResourceURL`                        | pure read     |
 | `window-onurlchange/`      | `@grant window.onurlchange` (the `urlchange` event)               | page-wired    |
 | `window-close-focus/`      | `@grant window.close` / `@grant window.focus`                     | button-driven |
+| `run-at-context-menu/`     | `@run-at context-menu` (runs only when asked)                     | button-driven |
+| `unsafe-window/`           | `unsafeWindow`: granted, isolated, and used with no grant         | multi-script  |
+| `frames/`                  | Scripts in same- and cross-origin iframes, `@noframes`            | multi-script  |
 | `headers-run-at/`          | `@run-at` (`document-start` / `-end` / `-idle` variants)           | multi-script  |
 | `headers-inject-into/`     | `@inject-into` (`page` MAIN-world vs `content` USER_SCRIPT-world)  | multi-script  |
+| `headers-match-hash/`      | `#hash` in `@match` / `@include` / `@exclude`, per manager        | multi-script  |
+| `headers-include-regex/`   | Regex `@include` / `@exclude`: slashes, flags, case                | multi-script  |
 | `require-scope/`           | `@require` scope in both worlds (SM-only: relative ref)            | multi-script  |
-| `xmlhttp-denied/`          | `GM_xmlhttpRequest` + `@connect` denial vs allow                  | multi-script  |
+| `use-strict/`              | Top-level `'use strict'`, in both worlds and with a `@require`     | multi-script  |
+| `xmlhttp-connect/`         | `GM_xmlhttpRequest` + `@connect`: declared, undeclared, prompt     | multi-script  |
 
 ## Page conventions
 
@@ -171,7 +184,7 @@ prose paragraphs. Mirrors the project-wide doc convention.
 
 1. Create `<api>/<api>.html`, `<api>/<api>.user.js`, and
    `<api>/<api>.spec.ts`.
-2. Use both `@match *://*/<api>/<api>.html` and
+2. Use both `@match *://*/*<api>/<api>.html` and
    `@match file:///*/<api>/<api>.html` so the script matches under
    any local server port and any host, plus direct file:// opens.
 3. Follow the *Page conventions* layout above. Header-demo dirs
@@ -179,8 +192,10 @@ prose paragraphs. Mirrors the project-wide doc convention.
    they demonstrate a userscript header, not a `GM_*` API.
 4. Link `examples.css` (`../examples.css` from a per-api dir) for
    consistent styling.
-5. Add a row to the table above and a link in `index.html`.
-6. In `<api>.spec.ts`, import the fixture from
+5. Name each userscript `SourceMonkey example: <dir>: <what it shows>`,
+   so a directory's scripts sort together in a manager's list.
+6. Add a row to the table above and a link in `index.html`.
+7. In `<api>.spec.ts`, import the fixture from
    `../../fixtures/manager` and call
    `await setup.installScriptsFrom(__dirname)` — that registers the
    dir's userscripts with whichever manager the run is targeting.

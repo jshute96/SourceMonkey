@@ -1,6 +1,6 @@
 // End-to-end coverage of the "Other versions" panel (`#other-versions`,
-// src/related-versions.ts) and the lookup
-// behind it (src/script-identity.ts).
+// src/extension/related-versions.ts) and the lookup
+// behind it (src/extension/script-identity.ts).
 //
 // The unit tests cover the matching rules against fabricated rows;
 // what only a real run can prove is that the absolute URLs the store
@@ -732,6 +732,9 @@ test.describe('other-versions panel', () => {
     // collection so there is something to disable before installing `b`.
     await sm.addCollection(write('other.user.js', 'Unrelated Script'));
     await sm.addCollection(dir.path);
+    // Adding the folder left only one of its two copies on; tick both,
+    // so the assertions below can tell a sweep from no sweep.
+    for (const s of await allScripts(sm)) await sm.setScriptEnabled(s.id, true);
     await sm.syncNow();
 
     const container = (await sm.getCollections()).find((s) => s.path !== dir.path)!;
@@ -843,6 +846,9 @@ test.describe('other-versions panel', () => {
     await page.goto(`chrome-extension://${extensionId}/${viewer(middle)}`);
     await page.locator(`${PANEL} tr[data-script-id="${last}"]`).click();
     await page.waitForURL(`**/${viewer(last)}`);
+    // The swap moves the URL before it redraws the panel, so until the
+    // current row moves too, `tr.is-current` is still the middle copy.
+    await expect(page.locator(`${PANEL} tr.is-current`)).toHaveAttribute('data-script-id', last);
 
     await page.locator(`${PANEL} tr.is-current .versions-remove`).click();
     await page.waitForURL(`**/${viewer(first)}`);

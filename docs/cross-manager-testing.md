@@ -17,7 +17,8 @@ built from this repo.
 
 ## Running the suite
 
-- `pnpm run test:e2e` — SM project only (default for `pnpm test` too).
+- `pnpm run test:e2e` — SM project only (`pnpm test` runs it, then
+  the `sm-dev` project).
 - `pnpm run test:e2e:tm` / `pnpm run test:e2e:vm` — TM / VM project,
   **headless**.
   - Launches its own Chromium against that manager's persistent profile.
@@ -218,12 +219,50 @@ node scripts/sync-manager-scripts.mjs --allow-downgrade     # also install older
 ```
 
 It prints a clear plan per script (`INSTALL` / `UPDATE` / `SKIP`)
-before doing any work, and a final re-read for confirmation. This is
-the easiest way to (a) prime a fresh profile with every example script
-and (b) debug install issues when a manager's UI changes.
+before doing any work, and a final re-read for confirmation.
 
-Under VM the CLI also starts a throwaway static server over the scripts
-directory, for the same install-URL reason described above.
+This is the easiest way to (a) prime a fresh profile with every
+example script and (b) debug install issues when a manager's UI
+changes.
+
+- It also lists installed examples that no local file is named for any
+  more (`[STALE]`): ones renamed or deleted. It doesn't remove them;
+  see [Removing stale copies](#removing-stale-copies).
+- Under VM the CLI also starts a throwaway static server over the
+  scripts directory, for the same install-URL reason described above.
+
+## Removing stale copies
+
+Installed examples are matched by `@name`, so a renamed example
+installs as a new script beside the old copy, and both run on the
+example pages. Tests then fail by seeing everything twice (`Expected:
+1, Received: 2`, two log lines, two inserted elements).
+
+`sm-dev` can list and uninstall a manager's scripts in the test
+profile's browser:
+
+1. Start the profile's browser headless on its CDP port (9223 for
+   TM, 9224 for VM; see the table above), with Playwright's Chromium:
+
+   ```sh
+   CHROME=$(find ~/.cache/ms-playwright/chromium-*/chrome-linux*/chrome | sort -V | tail -1)
+   "$CHROME" --headless=new --user-data-dir="$PWD/.chrome-tampermonkey-profile" \
+     --no-first-run --no-default-browser-check --remote-debugging-port=9223 about:blank &
+   ```
+
+   Or `scripts/open-test-browser.sh tampermonkey` for a headed one.
+2. List the installed scripts with their `E` IDs:
+   `scripts/sm-dev --manager tm --browser 9223 script list`.
+   Current examples' names start with their folder
+   (`SourceMonkey example: gm-dom: ...`); a copy under any other name
+   is stale.
+3. Remove each stale one:
+   `scripts/sm-dev --manager tm --browser 9223 script E46 uninstall --force`.
+   `--force` is required, since it removes a real installed script.
+4. Close the browser (the headless suites need the profile free).
+
+For VM, use `.chrome-violentmonkey-profile`, port 9224 and
+`--manager vm`.
 
 ## Diagnostic scripts
 

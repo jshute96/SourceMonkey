@@ -1,4 +1,4 @@
-// Tests for the pure helpers in src/script-store.ts. The storage I/O
+// Tests for the pure helpers in src/extension/script-store.ts. The storage I/O
 // layer (chrome.storage.local) is not exercised here — those functions
 // are thin wrappers around the helpers tested below.
 
@@ -6,10 +6,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  IMPLICIT_UNSAFE_WINDOW_INFO,
+  backfillHeaderProblems,
+  retiredHeaderProblemIds,
+  RETIRED_CONTEXT_MENU_UNSUPPORTED,
+  backfillStartupLogs,
   backfillUsesUnsafeWindow,
   distillMatching,
   extractStartupLogs,
+  noConnectInfo,
+  unsupportedRunAtWarning,
   validateHeader,
   buildScriptFromText,
   applyFetchError,
@@ -21,7 +26,7 @@ import {
   sameStoredValue,
   NO_MATCH_OR_INCLUDE,
   NO_NAME,
-} from '../../dist/script-store.js';
+} from '../../dist/extension/script-store.js';
 import {
   parseHeader,
   NO_METADATA_BLOCK,
@@ -101,6 +106,17 @@ test('validateHeader complains about a missing @name', async () => {
   });
 });
 
+test('validateHeader accepts @run-at context-menu (a manual script), with no run-at warning', () => {
+  const header = parseHeader(`// ==UserScript==
+// @name X
+// @match https://e/*
+// @run-at  Context-Menu
+// ==/UserScript==
+`);
+  assert.equal(validateHeader(header), null);
+  assert.deepEqual(extractStartupLogs(header, 'x.user.js'), []);
+});
+
 test('validateHeader complains about no matching patterns', async () => {
   assert.deepEqual(validateHeader(parseHeader(NO_MATCH)), {
     message: NO_MATCH_OR_INCLUDE,
@@ -120,11 +136,11 @@ test('validateHeader complains about a null header', async () => {
 test('validateHeader rejects a script whose every @match is unusable', async () => {
   const problem = validateHeader(parseHeader(`// ==UserScript==
 // @name  X
-// @match https://example.com
-// @match https://other.example
+// @match https://www.*.com/*
+// @match https://other.*.example/*
 // ==/UserScript==
 `));
-  assert.match(problem.message, /@match https:\/\/example\.com has no path/);
+  assert.match(problem.message, /@match https:\/\/www\.\*\.com\/\* uses "\*" inside its host/);
   assert.match(problem.message, /never run on any page/);
   assert.equal(problem.line, 3);
 });
@@ -188,7 +204,7 @@ test('extractStartupLogs emits a warn entry naming each unknown @grant in declar
   assert.deepEqual(extractStartupLogs(header, 'x.user.js'), [
     {
       level: 'warn',
-      message: 'Ignoring @grant GM_webRequest, GM_audio — unsupported APIs',
+      message: 'Ignoring unsupported @grant GM_webRequest, GM_audio',
       location: { file: 'x.user.js', line: 5 },
     },
   ]);
@@ -208,7 +224,7 @@ test('extractStartupLogs surfaces unknown names even when @grant none also appea
   assert.deepEqual(extractStartupLogs(header, 'x.user.js'), [
     {
       level: 'warn',
-      message: 'Ignoring @grant GM_typo — unsupported APIs',
+      message: 'Ignoring unsupported @grant GM_typo',
       location: { file: 'x.user.js', line: 5 },
     },
   ]);
@@ -221,24 +237,98 @@ test('extractStartupLogs warns once per unusable @match, each on its own line', 
   const header = parseHeader(`// ==UserScript==
 // @name X
 // @match https://good.example/*
-// @match https://bare.example
+// @match https://www.*.example/*
 // @match httpx://other.example/*
 // ==/UserScript==
 `);
   assert.deepEqual(extractStartupLogs(header, 'x.user.js'), [
     {
       level: 'warn',
-      message: 'Ignoring @match https://bare.example — it has no path; '
-        + 'add a trailing "/*" to match all pages on that host',
+      message: 'Ignoring @match https://www.*.example/*, which uses "*" inside its host; '
+        + '"*" has to be the whole host or its first label, as in *.example.com',
       location: { file: 'x.user.js', line: 4 },
     },
     {
       level: 'warn',
-      message: 'Ignoring @match httpx://other.example/* — it names the unsupported '
+      message: 'Ignoring @match httpx://other.example/*, which names the unsupported '
         + 'scheme "httpx"; use one of *, http, https, file, ftp ("*" covers http and https)',
       location: { file: 'x.user.js', line: 5 },
     },
   ]);
+});
+
+test('extractStartupLogs notes when GM_xmlhttpRequest is granted with no @connect', () => {
+  // Both spellings are one API, so one row, on the first one's line.
+  const header = parseHeader(`// ==UserScript==
+// @name X
+// @match https://e/*
+// @grant GM_setValue
+// @grant GM.xmlHttpRequest
+// @grant GM_xmlhttpRequest
+// ==/UserScript==
+`);
+  assert.deepEqual(extractStartupLogs(header, 'x.user.js'), [
+    { level: 'info', message: noConnectInfo('GM.xmlHttpRequest'), location: { file: 'x.user.js', line: 5 } },
+  ]);
+  assert.equal(
+    noConnectInfo('GM_xmlhttpRequest'),
+    'This script has no @connect lines, so SourceMonkey asks before its GM_xmlhttpRequest requests reach another site. '
+      + 'Add @connect for each host it contacts, or @connect * to allow any host.',
+  );
+});
+
+test('extractStartupLogs notes when no @connect line is usable', () => {
+  // `*.` parses to no rule, so enforcement asks about all hosts: the
+  // note has to agree.
+  const header = parseHeader(`// ==UserScript==
+// @name X
+// @match https://e/*
+// @grant GM_xmlhttpRequest
+// @connect *.
+// ==/UserScript==
+`);
+  assert.deepEqual(extractStartupLogs(header, 'x.user.js').map((l) => l.message), [
+    noConnectInfo('GM_xmlhttpRequest'),
+  ]);
+});
+
+test('extractStartupLogs says nothing about @connect when it is declared or not needed', () => {
+  const withConnect = parseHeader(`// ==UserScript==
+// @name X
+// @match https://e/*
+// @grant GM_xmlhttpRequest
+// @connect example.com
+// ==/UserScript==
+`);
+  assert.deepEqual(extractStartupLogs(withConnect, 'x.user.js'), []);
+  // `@connect` doesn't gate GM_download.
+  const download = parseHeader(`// ==UserScript==
+// @name X
+// @match https://e/*
+// @grant GM_download
+// ==/UserScript==
+`);
+  assert.deepEqual(extractStartupLogs(download, 'x.user.js'), []);
+});
+
+test('extractStartupLogs warns about an unsupported @run-at', () => {
+  const header = parseHeader(`// ==UserScript==
+// @name X
+// @match https://e/*
+// @run-at document-ready
+// ==/UserScript==
+`);
+  assert.deepEqual(extractStartupLogs(header, 'x.user.js'), [
+    { level: 'warn', message: unsupportedRunAtWarning('document-ready'), location: { file: 'x.user.js', line: 4 } },
+  ]);
+  assert.equal(
+    unsupportedRunAtWarning('document-ready'),
+    '@run-at document-ready is not supported. The script runs at document-idle instead.',
+  );
+  for (const runAt of ['document-start', 'document-body', 'document-end', 'Document-Idle']) {
+    const ok = parseHeader(`// ==UserScript==\n// @name X\n// @match https://e/*\n// @run-at ${runAt}\n// ==/UserScript==\n`);
+    assert.deepEqual(extractStartupLogs(ok, 'x.user.js'), [], runAt);
+  }
 });
 
 // ---------- buildScriptFromText ----------
@@ -289,7 +379,7 @@ console.log('hi');
   assert.deepEqual(entry.startupLogs, [
     {
       level: 'warn',
-      message: 'Ignoring @grant GM_typoName — unsupported APIs',
+      message: 'Ignoring unsupported @grant GM_typoName',
       location: { file: 'a.user.js', line: 5 },
     },
   ]);
@@ -1183,28 +1273,39 @@ function legacyRow(over = {}) {
   return { ...row, ...over };
 }
 
+// `store.session` holds what the Log writes (`log:<id>` and friends).
 function stubStorage(rows) {
-  const store = Object.fromEntries(rows.map((r) => [`script:${r.id}`, r]));
+  // Already storage format 2, so writes don't wait on a migration.
+  const store = { storeFormat: 2, ...Object.fromEntries(rows.map((r) => [`script:${r.id}`, r])) };
+  const session = {};
+  Object.defineProperty(store, 'session', { value: session });
   globalThis.chrome = {
     storage: {
       local: {
-        get: async (key) => (key === null ? { ...store } : {}),
+        get: async (keys) => {
+          if (keys === null) return { ...store };
+          const list = typeof keys === 'string' ? [keys] : keys;
+          return Object.fromEntries(list.filter((k) => k in store).map((k) => [k, store[k]]));
+        },
         set: async (obj) => { Object.assign(store, obj); },
+        getKeys: async () => Object.keys(store),
+      },
+      session: {
+        get: async (keys) => Object.fromEntries(keys.filter((k) => k in session).map((k) => [k, session[k]])),
+        set: async (obj) => { Object.assign(session, obj); },
       },
     },
   };
   return store;
 }
 
-test('backfillUsesUnsafeWindow flips a pre-field row and gives it the startup log', async () => {
+test('backfillUsesUnsafeWindow flips a pre-field row', async () => {
   const store = stubStorage([legacyRow()]);
   assert.equal(await backfillUsesUnsafeWindow(), 1);
   const row = store['script:script-1'];
   assert.equal(row.usesUnsafeWindow, true);
-  // Re-derived, so the row says what the injector will now do with it.
-  assert.deepEqual(row.startupLogs.map((l) => [l.level, l.message]), [
-    ['info', IMPLICIT_UNSAFE_WINDOW_INFO],
-  ]);
+  // Re-derived; a page-world script using it has nothing to report.
+  assert.deepEqual(row.startupLogs ?? [], []);
 });
 
 test('backfillUsesUnsafeWindow leaves rows it has nothing to add to', async () => {
@@ -1226,4 +1327,100 @@ test('backfillUsesUnsafeWindow is idempotent', async () => {
   assert.equal(await backfillUsesUnsafeWindow(), 1);
   assert.equal(await backfillUsesUnsafeWindow(), 0);
   assert.equal(store['script:script-1'].usesUnsafeWindow, true);
+});
+
+test('backfillHeaderProblems marks an installed row invalid when a newer check refuses it', async () => {
+  // Stored `ok` by a build without the check: no @match or @include.
+  const text = `// ==UserScript==
+// @name        Nowhere
+// ==/UserScript==
+`;
+  const store = stubStorage([
+    legacyRow({
+      id: 'nowhere',
+      text,
+      enabled: false,
+      startupLogs: [{ level: 'warn', message: 'old warning' }],
+      parseCheckedHash: 'h',
+      usesUnsafeWindow: true,
+      refreshError: 'old refresh failure',
+    }),
+    legacyRow({ id: 'plain', text: VALID_SCRIPT }),
+    // Already invalid: left as it is.
+    legacyRow({ id: 'broken', text, status: 'invalid', errorMessage: 'The file is empty' }),
+  ]);
+  assert.equal(await backfillHeaderProblems(), 1);
+  const row = store['script:nowhere'];
+  assert.equal(row.status, 'invalid');
+  assert.equal(row.errorMessage, NO_MATCH_OR_INCLUDE);
+  assert.equal(row.errorLocation.line, 1);
+  // A disabled script is still marked, and stays disabled.
+  assert.equal(row.enabled, false);
+  // Same shape as a freshly built invalid row.
+  for (const field of ['startupLogs', 'parseCheckedHash', 'usesUnsafeWindow', 'refreshError']) {
+    assert.equal(row[field], undefined, field);
+  }
+  // The error reaches the Log, so the INVALID badge isn't over a Log
+  // that says nothing (or still holds the old warnings).
+  assert.deepEqual(store.session['log:nowhere'].map((e) => [e.level, e.state, e.message]), [
+    ['error', 'invalid', NO_MATCH_OR_INCLUDE],
+  ]);
+  assert.equal(store['script:plain'].status, 'ok');
+  assert.equal(store['script:broken'].errorMessage, 'The file is empty');
+  assert.equal(store.session['log:broken'], undefined);
+  assert.equal(await backfillHeaderProblems(), 0);
+});
+
+test('retiredHeaderProblemIds names the rows an older build refused for @run-at context-menu', async () => {
+  const text = `// ==UserScript==
+// @name        On demand
+// @match       https://example.com/*
+// @run-at      context-menu
+// ==/UserScript==
+`;
+  stubStorage([
+    legacyRow({ id: 'menu', text, status: 'invalid', errorMessage: RETIRED_CONTEXT_MENU_UNSUPPORTED }),
+    legacyRow({ id: 'broken', text, status: 'invalid', errorMessage: 'The file is empty' }),
+    legacyRow({ id: 'plain', text: VALID_SCRIPT }),
+  ]);
+  assert.deepEqual(await retiredHeaderProblemIds(), ['menu']);
+});
+
+test('backfillStartupLogs gives an installed row the warnings a newer check adds', async () => {
+  const text = `// ==UserScript==
+// @name        Fetcher
+// @match       https://example.com/*
+// @grant       GM_xmlhttpRequest
+// ==/UserScript==
+GM_xmlhttpRequest({ url: 'https://example.com/' });
+`;
+  const store = stubStorage([
+    legacyRow({ id: 'stale', text }),
+    // Already current: nothing to write.
+    legacyRow({ id: 'plain', text: VALID_SCRIPT }),
+    // Never runs.
+    legacyRow({ id: 'broken', text, status: 'invalid', errorMessage: 'The file is empty' }),
+  ]);
+  assert.equal(await backfillStartupLogs(), 1);
+  assert.deepEqual(store['script:stale'].startupLogs.map((l) => l.message), [noConnectInfo('GM_xmlhttpRequest')]);
+  assert.equal(store['script:broken'].startupLogs, undefined);
+  assert.equal(await backfillStartupLogs(), 0);
+});
+
+test('backfillStartupLogs keeps a stored @icon warning, which the header alone cannot give', async () => {
+  const text = `// ==UserScript==
+// @name        Iconic
+// @match       https://example.com/*
+// @icon        big.png
+// ==/UserScript==
+`;
+  const message = '@icon big.png: The file is larger than the 128 KB limit';
+  const store = stubStorage([
+    legacyRow({ id: 'iconic', text, iconCheck: { ref: 'big.png', message } }),
+  ]);
+  assert.equal(await backfillStartupLogs(), 1);
+  assert.deepEqual(store['script:iconic'].startupLogs, [
+    { level: 'warn', message, location: { file: 'a.user.js', line: 4 } },
+  ]);
+  assert.equal(await backfillStartupLogs(), 0);
 });

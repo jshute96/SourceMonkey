@@ -22,7 +22,7 @@ test.describe('examples / gm-info', () => {
     expect(text).toContain('scriptHandler');
     // "SourceMonkey" appears two ways: as the literal scriptHandler
     // value under SM, and inside the rendered @name string under any
-    // manager (the example's @name is "SourceMonkey example: GM_info").
+    // manager (the example's @name is "SourceMonkey example: gm-info: GM_info").
     // Either match is fine — the assertion proves the userscript ran
     // and its body produced output, not that a specific manager is
     // active.

@@ -22,7 +22,8 @@ test.describe('examples / headers-run-at', () => {
     await expect(page.locator('#log li[data-script="idle"]')).toHaveCount(1);
 
     // The one cross-manager invariant we can rely on is the
-    // document-idle lifecycle contract: idle scripts run *after* the
+    // document-idle lifecycle contract: on this page, whose `load`
+    // follows DOMContentLoaded at once, idle scripts run *after* the
     // page's `load` event, so they observe readyState=complete.
     //
     // Cross-script ordering on tiny local pages is implementation-
@@ -35,6 +36,13 @@ test.describe('examples / headers-run-at', () => {
     // tests/e2e/injection.spec.ts.
     await expect(page.locator('#log li[data-script="idle"]'))
       .toContainText('readyState=complete');
+
+    // Whether a load listener the idle script adds fires differs by
+    // manager: TM and VM run this @grant none script after `load` here.
+    // SM runs it just before `load`, or replays `load` to it.
+    if (setup.manager === 'sourcemonkey') {
+      await expect(page.locator('#log li[data-script="idle-load"]')).toHaveCount(1);
+    }
 
     await page.close();
   });

@@ -1,4 +1,4 @@
-// Tests for `onlyProbesChanged`, the predicate that decides whether a
+// Tests for `onlyAnnotationsChanged`, the predicate that decides whether a
 // `script:*` write is allowed to skip `notifyChange` — and therefore
 // skip a full unregister-all + register-all across every script.
 //
@@ -14,12 +14,13 @@
 //     and indefinite.
 //
 // So most of what follows pins down the eager direction: every field
-// that is not `versionProbes` must read as a change.
+// that is not an annotation (`versionProbes`, `parseCheckedHash`) must
+// read as a change.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { onlyProbesChanged } from '../../dist/match-index.js';
+import { onlyAnnotationsChanged } from '../../dist/extension/match-index.js';
 
 const ROW = {
   id: 'a',
@@ -39,7 +40,7 @@ const probe = (version) => [{ kinds: ['update'], url: 'https://e/x.meta.js', che
 
 test('a write that moves only versionProbes is probe-only', () => {
   assert.equal(
-    onlyProbesChanged({ ...ROW, versionProbes: probe('1.0') }, { ...ROW, versionProbes: probe('2.0') }),
+    onlyAnnotationsChanged({ ...ROW, versionProbes: probe('1.0') }, { ...ROW, versionProbes: probe('2.0') }),
     true,
   );
 });
@@ -47,14 +48,28 @@ test('a write that moves only versionProbes is probe-only', () => {
 test('adding or clearing versionProbes is still probe-only', () => {
   // The two shapes `setVersionProbes` actually produces: a first probe
   // landing on a row that had none, and a row whose targets went away.
-  assert.equal(onlyProbesChanged(ROW, { ...ROW, versionProbes: probe('2.0') }), true);
-  assert.equal(onlyProbesChanged({ ...ROW, versionProbes: probe('2.0') }, ROW), true);
+  assert.equal(onlyAnnotationsChanged(ROW, { ...ROW, versionProbes: probe('2.0') }), true);
+  assert.equal(onlyAnnotationsChanged({ ...ROW, versionProbes: probe('2.0') }, ROW), true);
 });
 
 test('a byte-identical rewrite is probe-only (nothing moved at all)', () => {
   // Not a probe update, but the verdict is the same and for the same
   // reason: there is nothing for a re-registration to pick up.
-  assert.equal(onlyProbesChanged(ROW, { ...ROW }), true);
+  assert.equal(onlyAnnotationsChanged(ROW, { ...ROW }), true);
+});
+
+test('a passing parse verdict landing is annotation-only', () => {
+  // Written just after the change it checked, which was synced then:
+  // the registration built from the row is the same.
+  assert.equal(onlyAnnotationsChanged(ROW, { ...ROW, parseCheckedHash: 'k1' }), true);
+});
+
+test('a failing parse verdict is NOT annotation-only', () => {
+  // It turns the row invalid, which takes the script out of the set.
+  assert.equal(
+    onlyAnnotationsChanged(ROW, { ...ROW, status: 'invalid', errorMessage: 'SyntaxError' }),
+    false,
+  );
 });
 
 // ---- the eager direction: these must all report a real change ----
@@ -65,14 +80,14 @@ test('a body edit is NOT probe-only', () => {
   // index's derived entry would wrongly call this unchanged and leave
   // the old body registered and running.
   assert.equal(
-    onlyProbesChanged(ROW, { ...ROW, bodyText: 'console.log(2);', contentHash: 'h2' }),
+    onlyAnnotationsChanged(ROW, { ...ROW, bodyText: 'console.log(2);', contentHash: 'h2' }),
     false,
   );
 });
 
 test('a body edit alongside a probe update is NOT probe-only', () => {
   assert.equal(
-    onlyProbesChanged(
+    onlyAnnotationsChanged(
       { ...ROW, versionProbes: probe('1.0') },
       { ...ROW, bodyText: 'console.log(2);', versionProbes: probe('2.0') },
     ),
@@ -81,12 +96,12 @@ test('a body edit alongside a probe update is NOT probe-only', () => {
 });
 
 test('enable / disable is NOT probe-only', () => {
-  assert.equal(onlyProbesChanged(ROW, { ...ROW, enabled: false }), false);
+  assert.equal(onlyAnnotationsChanged(ROW, { ...ROW, enabled: false }), false);
 });
 
 test('a matching change is NOT probe-only', () => {
   assert.equal(
-    onlyProbesChanged(ROW, {
+    onlyAnnotationsChanged(ROW, {
       ...ROW,
       matching: { matches: ['https://other.com/*'], excludes: [], includes: [] },
     }),
@@ -96,7 +111,7 @@ test('a matching change is NOT probe-only', () => {
 
 test('a status change is NOT probe-only', () => {
   // status gates whether the script is eligible for a spec at all.
-  assert.equal(onlyProbesChanged(ROW, { ...ROW, status: 'invalid' }), false);
+  assert.equal(onlyAnnotationsChanged(ROW, { ...ROW, status: 'invalid' }), false);
 });
 
 test('a @require body change is NOT probe-only', () => {
@@ -104,7 +119,7 @@ test('a @require body change is NOT probe-only', () => {
   // dependency has to re-register even though the script's own row is
   // otherwise untouched.
   assert.equal(
-    onlyProbesChanged(
+    onlyAnnotationsChanged(
       { ...ROW, requires: [{ url: 'u', contentHash: 'r1', source: 'var x=1;' }] },
       { ...ROW, requires: [{ url: 'u', contentHash: 'r2', source: 'var x=2;' }] },
     ),
@@ -114,13 +129,13 @@ test('a @require body change is NOT probe-only', () => {
 
 test('a headerText change is NOT probe-only', () => {
   // @grant / @run-at / @inject-into all live here and all change the spec.
-  assert.equal(onlyProbesChanged(ROW, { ...ROW, headerText: '// @grant GM_setValue' }), false);
+  assert.equal(onlyAnnotationsChanged(ROW, { ...ROW, headerText: '// @grant GM_setValue' }), false);
 });
 
 test('a creation or deletion is never probe-only', () => {
   // No prior row to have "only" changed one field of, and a deletion has
   // to reach the injector so the spec stops being registered.
-  assert.equal(onlyProbesChanged(undefined, ROW), false);
-  assert.equal(onlyProbesChanged(ROW, undefined), false);
-  assert.equal(onlyProbesChanged(undefined, undefined), false);
+  assert.equal(onlyAnnotationsChanged(undefined, ROW), false);
+  assert.equal(onlyAnnotationsChanged(ROW, undefined), false);
+  assert.equal(onlyAnnotationsChanged(undefined, undefined), false);
 });

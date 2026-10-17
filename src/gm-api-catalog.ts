@@ -19,7 +19,7 @@
 //   - The canonical `GM_x` name and the GM4-style `GM.x` alias (if
 //     any). Scripts can @grant either form and we honor both.
 //   - Whether the call resolves in-page (`sync`) — runs in
-//     USER_SCRIPT world via the shared __SM_GM__ runtime — or makes a
+//     USER_SCRIPT world via the shared GM runtime — or makes a
 //     SW round-trip (`async`).
 //   - The subsystem the body delegates to. Drives both the wrapper-side
 //     stub and the SW-side message routing.
@@ -27,6 +27,8 @@
 // Adding a new API: append an entry, then either (a) implement the
 // sync body in src/wrapper-gm-runtime.js if `kind === 'sync'` or (b)
 // add an SW-side handler if `kind === 'async'`.
+
+import { getValues, type ParsedHeader } from './userscript-header.js';
 
 export type ApiKind = 'sync' | 'async';
 
@@ -42,10 +44,21 @@ export type ApiSubsystem =
   | 'clipboard'
   | 'notification'
   | 'tab'
+  | 'tab-data'
   | 'download'
   | 'unsafe-window'
   | 'url-change'
   | 'window-control';
+
+// What a request that reads or writes a script's stored values has to
+// have granted: any storage API, or a value-change listener (its
+// snapshot seeds the listener's remote-change detection). Used by the
+// bridge gate in background.ts.
+export const STORAGE_SUBSYSTEMS: readonly ApiSubsystem[] = ['storage', 'storage-listener'];
+
+// The refusal a bridge-relayed request gets when the page may not act
+// for the script it names. Shared by the same two gates.
+export const BRIDGE_DENIED = 'This page is not allowed to act for that userscript';
 
 // Extra header tags an API depends on, beyond the bare `@grant` line.
 // The catalog declares these so the wrapper / SW can validate them once
@@ -66,7 +79,7 @@ export interface GmApiSpec {
   // as plain `const` bindings — `unsafeWindow` (a passthrough
   // binding), `window.onurlchange` (an event surface installed on the
   // world's `window`), and `window.close` / `window.focus` (methods
-  // replaced on the world's `window`). The emitter dispatches on
+  // replaced on the script's `window`). The emitter dispatches on
   // `subsystem` for those.
   kind: ApiKind;
   // Used by the GM4 `GM.` alias: when truthy, the dot form returns a
@@ -93,16 +106,16 @@ export const GM_APIS: readonly GmApiSpec[] = Object.freeze([
   // ----- Non-GM_* window features (TM's `@grant window.x` family) -----
   // `window.onurlchange` is not a callable and not a valid JS
   // identifier, so it emits no `const` binding at all. What the grant
-  // buys is an eager `__SM_GM__.urlchange.enable(scriptId)` call that
+  // buys is an eager `__smReg.gm.urlchange.enable(scriptId)` call that
   // installs the `urlchange` event surface on the world's `window`.
   // See docs/GM-APIs.md#windowonurlchange.
   { name: 'window.onurlchange', kind: 'sync', subsystem: 'url-change' },
   // `window.close` / `window.focus` are callables, but `window.close`
   // is not a legal binding name either — so, like the grant above,
-  // they emit no `const`. The grant's effect is an eager
-  // `__SM_GM__.windowControl.enable(scriptId, "close" | "focus")` that
-  // REPLACES the method on the world's `window` with one that routes
-  // through the SW (`chrome.tabs.remove` / `chrome.windows.update`),
+  // they emit no `GM_*`-style binding. The grant's effect is an eager
+  // `__smReg.gm.windowControl` call that REPLACES the method the script
+  // sees (on its sandbox `window` in the page's world, on the world's
+  // `window` when isolated) with one that routes through the SW (`chrome.tabs.remove` / `chrome.windows.update`),
   // which is what lets it work where the page's own call is a no-op.
   // `async` for that SW round-trip; the script still sees the void,
   // synchronous return TM gives it. See docs/GM-APIs.md#windowclose--windowfocus.
@@ -151,6 +164,12 @@ export const GM_APIS: readonly GmApiSpec[] = Object.freeze([
   { name: 'GM_setClipboard', gmDotName: 'setClipboard', kind: 'sync', subsystem: 'clipboard' },
   { name: 'GM_notification', gmDotName: 'notification', kind: 'async', subsystem: 'notification' },
   { name: 'GM_openInTab', gmDotName: 'openInTab', kind: 'async', subsystem: 'tab' },
+  // Per-tab objects kept by the SW while the tab is open. Each takes an
+  // optional callback, as in TM, and returns a Promise when given none,
+  // which is what the `GM.` form passes through.
+  { name: 'GM_getTab', gmDotName: 'getTab', kind: 'async', subsystem: 'tab-data' },
+  { name: 'GM_saveTab', gmDotName: 'saveTab', kind: 'async', subsystem: 'tab-data' },
+  { name: 'GM_getTabs', gmDotName: 'getTabs', kind: 'async', subsystem: 'tab-data' },
   // Like GM_xmlhttpRequest, GM_download hands back a sync `{abort}`
   // control object while the transfer itself runs in the SW — `async`
   // classifies the SW round-trip, not the return value. It is NOT
@@ -247,4 +266,20 @@ export function resolveGrants(rawGrants: readonly string[]): {
 // drive any handler).
 export function isSupportedApi(name: string): boolean {
   return findApi(name) !== undefined;
+}
+
+// The catalog subsystems the script's `@grant` lines reach — the set the
+// SW's bridge gate (`bridgeMayActAs` in background.ts) checks a relayed
+// request against, so a page can only act for a script through APIs
+// that script actually has. `@grant none` and unknown names contribute
+// nothing.
+export function grantedSubsystems(header: ParsedHeader | null | undefined): Set<ApiSubsystem> {
+  const out = new Set<ApiSubsystem>();
+  if (!header) return out;
+  const { granted } = resolveGrants(getValues(header, 'grant'));
+  for (const name of granted) {
+    const spec = findApi(name);
+    if (spec) out.add(spec.subsystem);
+  }
+  return out;
 }

@@ -3,14 +3,15 @@
 // navigation starts share their reads instead of each doing the same
 // ones. Both the reload fast path and the opportunistic sweep are
 // covered. See docs/injection.md#shared-work-across-the-batch and
-// `RefreshBatch` in src/script-store.ts.
+// `RefreshBatch` in src/extension/script-store.ts.
 //
 // The sharing has no behavioural signature by design — same rows, same
 // verdicts, same writes — so what these tests assert on is the SW's own
-// count of the two things a batch shares: `file://` directory listings
-// fetched, and collection rows read. Both halves are pinned, because a
-// change that stopped threading the batch into just one of them would
-// otherwise leave every test green.
+// count of collection rows read, and of `file://` directory listings
+// fetched. A page load's checks read each script file directly rather
+// than listing its folder (`localLookup: 'known'`), so the listing
+// count is pinned at zero: a change that brought the listing back onto
+// this path would otherwise leave every test green.
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
@@ -53,7 +54,7 @@ test.describe('navigation refresh work sharing', () => {
   test.beforeEach(() => { scriptsDir = ScriptsDir.create(); });
   test.afterEach(() => { scriptsDir.cleanup(); });
 
-  test('scripts sharing a folder read it once for the batch', async ({
+  test('scripts sharing a folder list nothing and read the row once for the batch', async ({
     extensionContext, fixtureServer, sm,
   }) => {
     // Three scripts, one collection, one folder — the shape the
@@ -83,26 +84,25 @@ test.describe('navigation refresh work sharing', () => {
     await page.reload();
     await expect(page).toHaveTitle(/-three/);
 
-    // One listing AND one collection-row read for three checks. Without
-    // the shared batch both are 3 — once per script, of the same
-    // directory and the same row.
+    // One collection-row read for three checks, and no listing. Without
+    // the shared batch the row is read 3 times, once per script.
     await expect.poll(
       () => shared(sm),
       { message: 'the batch to finish its checks' },
-    ).toEqual({ listings: 1, collectionRows: 1 });
+    ).toEqual({ listings: 0, collectionRows: 1 });
     // And they stay there: nothing re-reads after the batch settles.
-    expect(await shared(sm)).toEqual({ listings: 1, collectionRows: 1 });
+    expect(await shared(sm)).toEqual({ listings: 0, collectionRows: 1 });
     await page.close();
   });
 
-  test('a shared listing still detects a per-script edit', async ({
+  test('a direct read still detects a per-script edit', async ({
     extensionContext, fixtureServer, sm,
   }) => {
-    // The sharing must not cost the fast path its whole point. Two
-    // scripts in one folder, one of them edited between the load and
-    // the reload: the shared listing has to carry a size/mtime per
-    // FILE, so the edited one refetches and swaps while its sibling
-    // takes the unchanged skip.
+    // Reading each file directly must not cost the fast path its whole
+    // point. Two scripts in one folder, one of them edited between the
+    // load and the reload: each read carries its own file's size and
+    // modified time, so the edited one rebuilds and swaps while its
+    // sibling takes the unchanged skip.
     for (const n of ['edited', 'stable']) {
       scriptsDir.write({
         relativePath: `${n}.user.js`,
@@ -135,7 +135,7 @@ test.describe('navigation refresh work sharing', () => {
     await expect.poll(
       () => shared(sm),
       { message: 'the batch to finish its checks' },
-    ).toEqual({ listings: 1, collectionRows: 1 });
+    ).toEqual({ listings: 0, collectionRows: 1 });
     await page.close();
   });
 
@@ -150,8 +150,8 @@ test.describe('navigation refresh work sharing', () => {
     //
     // This is the path that would regress silently: it has no wrapper
     // waiting on it and no user-visible outcome, so nothing but this
-    // count would notice it going back to one listing and one row read
-    // per script.
+    // count would notice it going back to a row read per script, or to
+    // listing the folder.
     for (const n of ['alpha', 'beta', 'gamma']) {
       scriptsDir.write({
         relativePath: `${n}.user.js`,
@@ -176,12 +176,12 @@ test.describe('navigation refresh work sharing', () => {
     await expect.poll(
       () => shared(sm),
       { message: 'the opportunistic sweep to finish' },
-    ).toEqual({ listings: 1, collectionRows: 1 });
-    expect(await shared(sm)).toEqual({ listings: 1, collectionRows: 1 });
+    ).toEqual({ listings: 0, collectionRows: 1 });
+    expect(await shared(sm)).toEqual({ listings: 0, collectionRows: 1 });
     await page.close();
   });
 
-  test('a reload past the cooldown still costs one listing and one row read', async ({
+  test('a reload past the cooldown still costs one row read and no listing', async ({
     extensionContext, fixtureServer, sm,
   }) => {
     // The reload is deliberately more than UPDATE_MIN_INTERVAL_MS after
@@ -228,8 +228,8 @@ test.describe('navigation refresh work sharing', () => {
     await expect.poll(
       () => shared(sm),
       { message: 'both fan-outs to finish' },
-    ).toEqual({ listings: 1, collectionRows: 1 });
-    expect(await shared(sm)).toEqual({ listings: 1, collectionRows: 1 });
+    ).toEqual({ listings: 0, collectionRows: 1 });
+    expect(await shared(sm)).toEqual({ listings: 0, collectionRows: 1 });
     await page.close();
   });
 
@@ -261,7 +261,7 @@ test.describe('navigation refresh work sharing', () => {
     await expect.poll(
       () => shared(sm),
       { message: 'the check to finish' },
-    ).toEqual({ listings: 1, collectionRows: 1 });
+    ).toEqual({ listings: 0, collectionRows: 1 });
     await page.close();
   });
 });

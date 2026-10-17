@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name        SourceMonkey example: GM_notification
+// @name        SourceMonkey example: gm-notification: GM_notification
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.0
+// @version     1.0.2
 // @description Click buttons to fire various GM_notification call shapes.
-// @match       *://*/gm-notification/gm-notification.html
+// @match       *://*/*gm-notification/gm-notification.html
 // @match       file:///*/gm-notification/gm-notification.html
 // @run-at      document-end
 // @grant       GM_notification

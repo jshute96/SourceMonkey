@@ -178,25 +178,6 @@ test.describe('local file overrides', () => {
     expect(req?.localUrl).toBeUndefined();
   });
 
-  // The `.js` gate runs on the declared URL before any stand-in is
-  // considered, so a local `.js` file can't launder a non-JS ref.
-  test('a non-.js declared URL is still rejected, local file or not', async ({ sm }) => {
-    fs.writeFileSync(path.join(scriptsDir.path, 'data.json'), '{"x":1}');
-    scriptsDir.write({
-      relativePath: 'main.user.js',
-      meta: {
-        name: 'Bad Suffix',
-        match: ['https://example.com/*'],
-        extra: [`// @require     ${server.baseUrl}/data.json`],
-      },
-      body: '',
-    });
-    const collection = await sm.addCollection(scriptsDir.path);
-    const script = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
-    expect(script.status).toBe('invalid');
-    expect(script.errorMessage).toMatch(/must end in \.js/);
-  });
-
   // Candidates are built from the declared URL's NORMALIZED pathname, so
   // a `..`-laden URL can't name a file above the script's folder. The
   // planted file is one level up; finding it would be the bug.

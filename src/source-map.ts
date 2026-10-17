@@ -25,7 +25,7 @@
 //     There is deliberately no size cap on this. The only constraint
 //     that actually binds is whether `chrome.userScripts.register()`
 //     accepts the payload, and that failure is already visible:
-//     `registerWithFallback` in src/injector.ts drops from batch to
+//     `registerWithFallback` in src/extension/injector.ts drops from batch to
 //     per-script registration on rejection and records the reason
 //     against that script (which then reads REJECTED, with Chrome's
 //     wording), so an oversized script fails loudly and by name. A preemptive cap would trade that for silently degrading

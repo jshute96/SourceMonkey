@@ -5,11 +5,11 @@ or a stand-in for a `@require` / `@resource` — is deleted or edited on
 disk, or a new script file appears in a directory collection, and how
 each surface says so before and after a refresh notices.
 
-- Paint-time probe and chip: [`src/file-changes.ts`](../src/file-changes.ts)
+- Paint-time probe and chip: [`src/extension/file-changes.ts`](../src/extension/file-changes.ts)
 - Listing-shape check: `isDirectoryListing` in
-  [`src/directories.ts`](../src/directories.ts)
+  [`src/extension/directories.ts`](../src/extension/directories.ts)
 - Dropping on refresh: `rebuildCollection` and `refreshScript` in
-  [`src/script-store.ts`](../src/script-store.ts)
+  [`src/extension/script-store.ts`](../src/extension/script-store.ts)
 - Tests: `tests/e2e/file-changes.spec.ts`, the vanished-entry tests in
   `tests/e2e/collections.spec.ts`, `tests/unit/script-store.test.mjs`
 
@@ -78,8 +78,9 @@ page would describe the file as it was last read, so it checks.
     refresh (the manifest and container refreshes list each file's
     folder once for it — which also lets the refresh skip an unchanged
     file rather than always re-reading it).
-  - A stand-in records its listing mtime beside `localUrl` when it is
-    read (`fsMtime` on the entry), so the Local overrides row reports
+  - A stand-in records its modified time beside `localUrl` when it is
+    read (`fsMtime` on the entry, from the read's `Last-Modified`, which
+    equals the listing's mtime), so the Local overrides row reports
     edits the same way — until the next refresh, the row is still
     claiming to load the bytes it holds.
 - **Conservative by construction.** A file is reported gone only when
@@ -125,6 +126,9 @@ chip is absent when nothing differs.
   says why.
 - Not for http(s) collections or manifests: telling whether those
   changed means fetching them, which is a refresh, not a listing.
+- The counting is `pendingOnDisk`, and the words `pendingSummary`
+  (`script-display.ts`). sm-dev's listings use both, through the
+  worker's `managed.onDisk` ([sm-dev-managers.md](sm-dev-managers.md#changes-on-disk)).
 
 ### What the tooltips say
 

@@ -1,7 +1,7 @@
 // Unit tests for src/external-files.ts (compiled to dist/external-files.js).
 //
-// Covers `distillRequires`, `distillResources`, and the `attachFiles`
-// orchestrator's resolution/dedup/error paths. Real network I/O is
+// Covers `distillRequires`, `distillResources`, the `attachFiles`
+// orchestrator's resolution/dedup/error paths, and `checkScriptIcon`. Real network I/O is
 // replaced by pre-seeding the cross-script fetch cache with a
 // `{bytes, contentType}` (or failure) entry keyed by the canonical
 // URL the resolver would produce — the orchestrator reads from the
@@ -12,12 +12,15 @@ import assert from 'node:assert/strict';
 
 import {
   attachFiles,
+  checkScriptIcon,
   describeFetchFailure,
   describeResolveFailure,
   distillRequires,
   distillResources,
   isFetchFailureMessage,
+  MAX_FILE_BYTES,
 } from '../../dist/external-files.js';
+import { MAX_ICON_BYTES } from '../../dist/script-icon.js';
 
 const SCRIPT_URL = 'file:///home/me/scripts/foo.user.js';
 
@@ -189,18 +192,21 @@ test('attachFiles: recheck=preserve reuses prior @require entries without fetchi
   assert.equal(r.requires[0].source, 'old collection');
 });
 
-test('attachFiles: rejects @require non-.js suffix', async () => {
+// CDN shorthands name a package, not a file, so the URL has no `.js`.
+test('attachFiles: loads a @require whose URL has no .js suffix', async () => {
+  const url = 'https://cdn.jsdelivr.net/npm/sweetalert2@11';
+  const fetchCache = new Map([[url, Promise.resolve(fakeFetched('window.Swal = {};'))]]);
   const r = await attachFiles({
     scriptFileUrl: SCRIPT_URL,
-    header: header(['require', 'https://cdn.example.com/lib.json']),
+    header: header(['require', url]),
     priorRequires: new Map(),
     priorResources: new Map(),
     recheck: 'all',
-    fetchCache: new Map(),
+    fetchCache,
     now: 2000,
   });
-  assert.match(r.errorMessage, /must end in \.js/);
-  assert.deepEqual(r.requires, []);
+  assert.equal(r.errorMessage, undefined);
+  assert.equal(r.requires[0].source, 'window.Swal = {};');
 });
 
 test('attachFiles: rejects @require traversal-bearing ref', async () => {
@@ -703,9 +709,9 @@ test('describeFetchFailure: size and emptiness name the file as their subject', 
   assert.match(describeFetchFailure({ failed: true, reason: 'oversize' }), /^The file is larger than the /);
 });
 
-// `scripts/validate-userscripts.mjs` asks this instead of matching the
-// wording, because it used to match the wording and went stale silently
-// when these messages were recased. If a reason ever stops being
+// The corpus validator (`tests/greasyfork-examples/validate-corpus.mjs`)
+// asks this instead of matching the wording, because it used to match
+// the wording and went stale silently when these messages were recased. If a reason ever stops being
 // recognized, the validator quietly mislabels that whole bucket rather
 // than failing — so the coverage has to be pinned here.
 test('isFetchFailureMessage: recognizes every message describeFetchFailure can produce', () => {
@@ -775,7 +781,7 @@ test('attachFiles: an http dependency that 404s reports the status, through the 
 
 test('attachFiles: an oversize dependency names the limit, not a generic failure', async () => {
   const realFetch = globalThis.fetch;
-  globalThis.fetch = async () => new Response(new Uint8Array(2 * 1024 * 1024).buffer, {
+  globalThis.fetch = async () => new Response(new Uint8Array(MAX_FILE_BYTES + 1).buffer, {
     status: 200,
     headers: { 'content-type': 'application/javascript' },
   });
@@ -793,4 +799,110 @@ test('attachFiles: an oversize dependency names the limit, not a generic failure
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+// ---------- checkScriptIcon ----------
+//
+// The icon check fetches on its own terms rather than through the
+// shared cache the tests above seed, so these stub `fetch` instead.
+
+const ICON_SCRIPT_URL = 'https://example.com/scripts/foo.user.js';
+
+function iconArgs(ref, extra = {}) {
+  return {
+    header: { tags: [{ tag: 'icon', value: ref, line: 4 }] },
+    scriptFileUrl: ICON_SCRIPT_URL,
+    prior: undefined,
+    recheck: 'all',
+    fetchCache: new Map(),
+    localRoots: [],
+    ...extra,
+  };
+}
+
+// Run `fn` with `fetch` answering every request with `respond()`, and
+// return what it returned plus how many requests were made.
+async function withFetch(respond, fn) {
+  const realFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return respond();
+  };
+  try {
+    return { result: await fn(), calls };
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+const png = (size) => () => new Response(new Uint8Array(size).fill(1).buffer, {
+  status: 200,
+  headers: { 'content-type': 'image/png' },
+});
+
+test('checkScriptIcon: nothing to check without an @icon, or for a data: icon', async () => {
+  assert.equal(await checkScriptIcon({ ...iconArgs('x'), header: { tags: [] } }), null);
+  assert.equal(await checkScriptIcon(iconArgs('data:image/png;base64,AAAA')), null);
+});
+
+test('checkScriptIcon: an image within the limit has no message', async () => {
+  const { result } = await withFetch(png(100), () => checkScriptIcon(iconArgs('i.png')));
+  assert.deepEqual(result, { ref: 'i.png', url: 'https://example.com/scripts/i.png' });
+});
+
+test('checkScriptIcon: an icon over the limit names the icon limit', async () => {
+  const { result } = await withFetch(png(MAX_ICON_BYTES + 1), () => checkScriptIcon(iconArgs('big.png')));
+  assert.deepEqual(result, {
+    ref: 'big.png',
+    url: 'https://example.com/scripts/big.png',
+    message: '@icon big.png: The file is larger than the 128 KB limit',
+    failure: 'oversize',
+  });
+});
+
+test('checkScriptIcon: a non-image, an HTTP error, or a bad reference is reported', async () => {
+  const html = () => new Response('<html></html>', { status: 200, headers: { 'content-type': 'text/html' } });
+  const { result: notImage } = await withFetch(html, () => checkScriptIcon(iconArgs('i.png')));
+  assert.equal(notImage.message, '@icon i.png: The file is not an image');
+
+  const { result: missing } = await withFetch(() => new Response(null, { status: 404 }), () => checkScriptIcon(iconArgs('i.png')));
+  assert.equal(missing.message, '@icon i.png: The server returned HTTP 404');
+
+  const bad = await checkScriptIcon(iconArgs('ftp://example.com/i.png'));
+  assert.equal(
+    bad.message,
+    `@icon ftp://example.com/i.png: ${describeResolveFailure({ failed: true, reason: 'unsupported-scheme', scheme: 'ftp:' })}`,
+  );
+});
+
+test('checkScriptIcon: preserve keeps the prior answer for the same ref; all looks again', async () => {
+  const url = 'https://example.com/scripts/i.png';
+  const prior = { ref: 'i.png', url, message: '@icon i.png: The server returned HTTP 404' };
+  const kept = await withFetch(png(100), () => checkScriptIcon(iconArgs('i.png', { prior, recheck: 'preserve' })));
+  assert.equal(kept.result, prior);
+  assert.equal(kept.calls, 0);
+
+  // A changed ref is looked at even when preserving.
+  const changed = await withFetch(png(100), () => checkScriptIcon(iconArgs('new.png', { prior, recheck: 'preserve' })));
+  assert.deepEqual(changed.result, { ref: 'new.png', url: 'https://example.com/scripts/new.png' });
+
+  // So is the same ref resolving elsewhere, once the script itself moved.
+  const moved = await withFetch(png(100), () => checkScriptIcon(iconArgs('i.png', {
+    prior, recheck: 'preserve', scriptFileUrl: 'https://example.com/other/foo.user.js',
+  })));
+  assert.equal(moved.calls, 1);
+
+  const rechecked = await withFetch(png(100), () => checkScriptIcon(iconArgs('i.png', { prior, recheck: 'all' })));
+  assert.deepEqual(rechecked.result, { ref: 'i.png', url });
+  assert.equal(rechecked.calls, 1);
+});
+
+test('checkScriptIcon: a failure that may pass on its own is looked at again', async () => {
+  const { result } = await withFetch(() => { throw new TypeError('Failed to fetch'); }, () => checkScriptIcon(iconArgs('i.png')));
+  assert.equal(result.retry, true);
+  assert.match(result.message, /^@icon i\.png: /);
+  const again = await withFetch(png(100), () => checkScriptIcon(iconArgs('i.png', { prior: result, recheck: 'preserve' })));
+  assert.equal(again.calls, 1);
+  assert.equal(again.result.message, undefined);
 });

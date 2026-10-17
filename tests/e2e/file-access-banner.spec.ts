@@ -10,7 +10,7 @@
 // replaces `chrome.extension.isAllowedFileSchemeAccess` before any page
 // script runs, so the page under test believes the toggle is off while
 // the browser keeps reading files normally. That covers the branch, the
-// shared renderer in `src/file-access.ts`, and the shared banner CSS —
+// shared renderer in `src/extension/file-access.ts`, and the shared banner CSS —
 // everything except Chrome's own enforcement, which stays a manual
 // check.
 //
@@ -60,7 +60,7 @@ test.describe('file-access banner', () => {
     await page.goto(`chrome-extension://${extensionId}/collections.html`);
 
     // Scoped to this banner, not the slot: the slot can also hold the
-    // "Allow User Scripts" banner, which carries its own chrome-link.
+    // "Allow User Scripts" banner, which links to the same page.
     const banner = page.locator('#banner-slot div.banner').filter({ hasText: BANNER });
     await expect(banner).toContainText('Allow access to file URLs');
     // The click-through that fixes it. `chrome://` can't be an <a>

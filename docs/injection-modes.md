@@ -36,28 +36,34 @@ The shape of `js[]` for one script registration:
 
 ```
 js: [
-  { code: <config blob> },   // pushes onto self.__smCfgQueue, or
-                             // calls self.__smPrelude.init directly
+  { code: <config blob> },   // pushes onto reg.cfgQueue, or
+                             // calls reg.prelude.init directly
   { code: <prelude>     },   // WRAPPER_PRELUDE + page-wide sourceURL
-  { code: <combined>    },   // requires + body, in one __smRun wrap
+  { code: <combined>    },   // requires + body, in one reg.run wrap
   { code: <seal>        },   // parse-failure sentinel; own script
 ]
 ```
 
-The combined entry:
+`reg` is the world's registry, which our entries get from
+`document.__smGate` with the channel key (see
+[injection.md](injection.md#the-channel-key)). The combined entry:
 
 ```
-self.__smRun("<id>",function(__smE){<preamble><GM bindings><GM prelude>
+(function(__smReg){__smReg.run("<id>",function(__smE){<preamble><GM bindings><GM prelude>const __smU=()=>{
 // @require https://cdn.example.com/lib.js
 <lib.js line 1>
 ...
 ;
 <body line 1>
 ...
-});
+};return __smReg.prelude.callAs(__smU);})})(<registry>);
 //# sourceURL=sourcemonkey://SourceMonkey/<folder>/<name>.user.js
 //# sourceMappingURL=data:application/json;charset=utf-8;base64,…
 ```
+
+A sandboxed page-world script's user scope (any but `@grant none`) opens and closes differently
+(a `with` over its sandbox `window`), on the same lines; see
+[injection.md](injection.md#the-sandbox-window).
 
 - The config blob and prelude stay separate — see
   [Why inline the prelude](#why-inline-the-prelude-not-register-once-per-page).
@@ -111,7 +117,8 @@ self.__smRun("<id>",function(__smE){<preamble><GM bindings><GM prelude>
     reach our own Log tab. The viewer therefore applies the same
     layout itself — `remapStackRef` over the segments
     `composeSource` produces — so a logged frame names the file the
-    code was written in. See
+    code was written in. sm-dev's printed stacks get the same
+    rewrite. See
     [script-log.md](script-log.md#stack-refs-are-source-mapped-first).
   - The registered path and the reload-swap path produce the same
     layout, so the viewer maps a hot-swapped script the same way as a
@@ -137,24 +144,20 @@ self.__smRun("<id>",function(__smE){<preamble><GM bindings><GM prelude>
   declarations in one scope is a `SyntaxError` that stops the script
   from running. Under Mode B they never met. This is TM/VM behavior —
   compatibility, not a regression — but it is a real behavior change.
-  The collision set is every identifier the wrap declares in that
-  scope: `GM`, `GM_info` (both emitted even under `@grant none`),
-  every granted `GM_*`, `unsafeWindow`, and `__sm*`.
+  - The wrap's own names (`GM_info`, granted `GM_*`, `unsafeWindow`,
+    `__sm*`) are not in that set: the user program runs in a scope
+    nested inside the wrap's, so it shadows them. See
+    [injection.md](injection.md#the-user-program-scope).
 - **A throwing require aborts the whole script.** Mode B's per-require
   `try`/`catch` let the body run anyway. TM/VM abort; so do we now.
 - **A *malformed* require takes the whole entry down at parse time**,
-  before `__smRun` is ever reached. That would be completely silent,
+  before `reg.run` is ever reached. That would be completely silent,
   so a trailing sentinel entry (`wrapSealEntry`, js[3]) — its own
   script, so it still parses — reports the failure to the Log tab and
   the badge.
 - **Require top-level `var` / `function` no longer become globals.**
-  They're locals of the wrap function. Matches TM/VM; differs from
-  Mode B, where each require was its own top-level script.
-- **A require declaring top-level `self` / `window` breaks the wrap.**
-  The wrap's own preamble reads `self.__smPrelude.send`, and the GM
-  prelude reads `window.__SM_GM__`, in the same scope — a library
-  `const self = this` puts those in TDZ. Narrow, and fixable by
-  threading both through `__smE` instead; not done.
+  They're locals of the user program's scope. Matches TM/VM; differs
+  from Mode B, where each require was its own top-level script.
 
 ### Why inline the prelude (not register once per page)
 
@@ -164,17 +167,17 @@ registration be cleaner? It would, but it doesn't work:
 
 - Within ONE `chrome.userScripts.register` entry's `js[]`, Chrome
   runs the entries in array order. The prelude (`js[1]`) is
-  guaranteed to install `self.__smRun` / `__smSealed` before the
+  guaranteed to install `reg.run` / `reg.sealed` before the
   combined entry (`js[2]`) and the sentinel (`js[3]`) call them.
 - BETWEEN separate `register` calls, the userScripts API gives no
   ordering guarantee. A separately-registered prelude could run
   AFTER a per-script's combined entry, which would synchronously
-  throw `TypeError: self.__smRun is not a function` and prevent the
+  throw `TypeError: reg.run is not a function` and prevent the
   body from running. We hit this in testing.
 - The config blob has a queue-or-init pattern that DOES tolerate
   the prelude running later. The combined entry doesn't — it calls
   the helper immediately. Wrapping that in a defensive
-  `if (self.__smRun) {...}` would silently skip the body on a race
+  `if (reg.run) {...}` would silently skip the body on a race
   instead of throwing, which is arguably worse.
 
 So we inline, accept the ~12KB × N duplication, and use the page-
@@ -341,7 +344,7 @@ the issue tracker links below.
 ### Cons
 
 - **`eval()` is gated by page CSP in MAIN world.** USER_SCRIPT
-  world has its own CSP that we set to `'unsafe-eval'` via
+  world has its own CSP that we set to allow `'unsafe-eval'` via
   `chrome.userScripts.configureWorld({ csp: ... })`, but MAIN world
   runs under whatever the host page's CSP says. Sites with
   `script-src` that omits `'unsafe-eval'` — and that's a lot of

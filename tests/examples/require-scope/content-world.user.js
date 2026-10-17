@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name        SourceMonkey example: @require in the content (USER_SCRIPT) world
+// @name        SourceMonkey example: require-scope: @require in the content (USER_SCRIPT) world
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.0
+// @version     1.0.2
 // @description The same @require'd library reaches an isolated-world script, alongside its GM_* bindings.
-// @match       *://*/require-scope/require-scope.html
+// @match       *://*/*require-scope/require-scope.html
 // @match       file:///*/require-scope/require-scope.html
 // @run-at      document-end
 // @inject-into content

@@ -14,12 +14,12 @@
 
        #sm-globe      favicon placeholder until a site icon loads, and
                       the permanent icon for a script with no resolvable
-                      origin (src/site-icon.ts; styling on
+                      origin (src/extension/site-icon.ts; styling on
                       `.site-icon-globe`).
        #sm-trash      remove SourceMonkey's record of a script.
        #sm-trash-file delete the script FILE from disk — the same can,
                       badged with a disk. Both painted by
-                      src/delete-icon.ts, which explains the pair.
+                      src/extension/delete-icon.ts, which explains the pair.
                       The can is drawn ~19% smaller than #sm-trash — its
                       own inner scale(.9) inside the normalizing
                       wrapper's scale(.9) — so the badge has a corner to
@@ -28,12 +28,14 @@
                       badged one has to stay a can at 15px.
        #sm-copy       the viewer's "copy this to the clipboard" button,
        #sm-check      and the checkmark it flashes on success
-                      (src/copy-button.ts).
+                      (src/extension/copy-button.ts).
        #sm-refresh    refetch a collection, a script, or one row of the
                       "Other versions" table. Its busy state is this
                       same arc spinning (`.btn-glyph.spinning`), so the
                       button never changes shape mid-refresh.
        #sm-gear       open a collection's rename / options dialog.
+       #sm-open       open a location in a new tab (the collection
+                      dialog's button beside its location box).
        #sm-swap       the compare page's "swap the two sides" button:
                       two arrows, one each way, the same width so their
                       ends line up.
@@ -56,8 +58,9 @@
        drawn a unit right of centre, and this puts it back. It is not
        a typo.
      - #sm-copy and #sm-check are deliberately outside this: they
-       stroke at 2.0 and live alone in the 14px copy button, never
-       beside the 1.75 set. -->
+       stroke at 2.0 in the 14px copy button. That button sits beside
+       the 1.75 set only in the collection dialog, next to #sm-open,
+       where the smaller box evens out the heavier stroke. -->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
 <symbol id="sm-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></symbol>
 <symbol id="sm-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 6h17"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"></path><path d="M10 10.5v7"></path><path d="M14 10.5v7"></path></symbol>
@@ -67,4 +70,5 @@
 <symbol id="sm-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.667" stroke-linecap="round" stroke-linejoin="round"><g transform="translate(12 12) scale(1.05) translate(-13 -12)"><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path><polyline points="23 4 23 10 17 10"></polyline></g></symbol>
 <symbol id="sm-swap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5h18"></path><path d="M16.5 3l4.5 4.5-4.5 4.5"></path><path d="M21 16.5H3"></path><path d="M7.5 12L3 16.5 7.5 21"></path></symbol>
 <symbol id="sm-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.825" stroke-linecap="round" stroke-linejoin="round"><g transform="translate(12 12) scale(.959) translate(-12 -12)"><circle cx="12" cy="12" r="3.1"></circle><path d="M19.4 14.6a1.6 1.6 0 0 0 .32 1.77l.06.06a1.95 1.95 0 1 1-2.76 2.76l-.06-.06a1.6 1.6 0 0 0-1.77-.32 1.6 1.6 0 0 0-.97 1.47V21a1.95 1.95 0 1 1-3.9 0v-.1a1.6 1.6 0 0 0-1.05-1.47 1.6 1.6 0 0 0-1.77.32l-.06.06a1.95 1.95 0 1 1-2.76-2.76l.06-.06a1.6 1.6 0 0 0 .32-1.77 1.6 1.6 0 0 0-1.47-.97H3a1.95 1.95 0 1 1 0-3.9h.1a1.6 1.6 0 0 0 1.47-1.05 1.6 1.6 0 0 0-.32-1.77l-.06-.06a1.95 1.95 0 1 1 2.76-2.76l.06.06a1.6 1.6 0 0 0 1.77.32H9a1.6 1.6 0 0 0 .97-1.47V3a1.95 1.95 0 1 1 3.9 0v.1a1.6 1.6 0 0 0 .97 1.47 1.6 1.6 0 0 0 1.77-.32l.06-.06a1.95 1.95 0 1 1 2.76 2.76l-.06.06a1.6 1.6 0 0 0-.32 1.77V9a1.6 1.6 0 0 0 1.47.97H21a1.95 1.95 0 1 1 0 3.9h-.1a1.6 1.6 0 0 0-1.47.97z"></path></g></symbol>
+<symbol id="sm-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><path d="M10 14L21 3"></path></symbol>
 </svg>

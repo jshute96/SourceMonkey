@@ -2,7 +2,7 @@
 // @name        Unusable Match
 // @namespace   https://github.com/jshute96/SourceMonkey
 // >>> the error: the only @match is one Chrome refuses, and there is no @include.
-// @match       https://example.com
+// @match       https://www.*.com/*
 // @version     1.0.0
 // ==/UserScript==
 // A script with no pattern Chrome would accept and nothing else to

@@ -1,4 +1,4 @@
-// Unit tests for src/script-log.ts. Exercises the public API end-to-
+// Unit tests for src/extension/script-log.ts. Exercises the public API end-to-
 // end against an in-memory chrome.storage.session stub so we cover the
 // read/modify/write append loop, the per-script serialization, and the
 // LOG_CAP rotation.
@@ -47,7 +47,7 @@ globalThis.chrome = {
     sendMessage: async (msg) => {
       sent.push(msg);
       if (sendFails) throw new Error('Could not establish connection');
-      return sendReply;
+      return sendReplies.length > 0 ? sendReplies.shift() : sendReply;
     },
   },
 };
@@ -59,6 +59,8 @@ let sendFails = false;
 // threw — which is why the page has to read the reply, not just await
 // it.
 let sendReply = true;
+// Answers for the next messages, in order, before `sendReply`.
+let sendReplies = [];
 
 // The module decides where to write by asking whether it is running in
 // a page (`document` exists) or the service worker (it doesn't). Node
@@ -88,13 +90,14 @@ const {
   handleScriptLogWrite,
   SCRIPT_LOG_WRITE_MESSAGE,
   _flushScriptLogQueueForTests,
-} = await import('../../dist/script-log.js');
+} = await import('../../dist/extension/script-log.js');
 
 beforeEach(() => {
   store.clear();
   sent = [];
   sendFails = false;
   sendReply = true;
+  sendReplies = [];
 });
 
 test('appendScriptLog persists an entry and getScriptLog returns it', async () => {
@@ -321,12 +324,10 @@ test('appendScriptLog appends an identical message every time', async () => {
 //
 // `log:<id>` is read-modify-written, and the per-script queue that
 // serializes those writes is module state — so it only orders the
-// writes made in one JS context. Both write: the worker logs injection
-// and refresh events, a page logs through the `script-store` code it
-// shares with the worker, and the viewer's Clear log button removes the
-// key. Two chains on one key drop entries, or resurrect ones a clear
-// just removed. So a page hands every MUTATION to the worker and the
-// worker's chain is the only one that touches the key.
+// writes made in one JS context. Only the worker writes
+// (docs/worker-writes.md): a page that logs through code it shares with
+// the worker hands the entry over, and drops it if the worker doesn't
+// take it.
 
 test('a page hands its append to the worker instead of writing itself', async () => {
   await asPage(() => appendScriptLog('s1', {
@@ -353,15 +354,13 @@ test('a page hands its clear to the worker too', async () => {
   assert.equal((await getScriptLog('s1')).length, 1);
 });
 
-test('a page writes locally when the worker does not answer', async () => {
+test('a page drops the entry when the worker does not answer', async () => {
   sendFails = true;
   await asPage(() => appendScriptLog('s1', {
     level: 'warning', source: 'add', message: 'no receiving end',
   }));
-  const entries = await getScriptLog('s1');
-  assert.equal(entries.length, 1);
-  assert.equal(entries[0].message, 'no receiving end');
-  assert.equal(await getMaxLogLevel('s1'), 'warning');
+  assert.deepEqual(await getScriptLog('s1'), []);
+  assert.equal(await getMaxLogLevel('s1'), undefined);
 });
 
 test('the worker side of the relay performs the write', async () => {
@@ -378,25 +377,33 @@ test('the worker side of the relay performs the write', async () => {
   assert.equal(await getMaxLogLevel('s1'), undefined);
 });
 
-test('a page writes locally when the worker answers without an ack', async () => {
+test('a page does not write when the worker answers without an ack', async () => {
   // The handler threw, so Chrome resolved the message with `undefined`
-  // rather than rejecting it. Awaiting alone would read that as success
-  // and drop the entry.
+  // rather than rejecting it. The page still never writes the key.
   sendReply = undefined;
   await asPage(() => appendScriptLog('s1', {
     level: 'info', source: 'add', message: 'unacked',
   }));
-  assert.equal(sent.length, 1);
-  const entries = await getScriptLog('s1');
-  assert.equal(entries.length, 1);
-  assert.equal(entries[0].message, 'unacked');
+  // Sent twice: once, and once more after no ack.
+  assert.equal(sent.length, 2);
+  assert.deepEqual(await getScriptLog('s1'), []);
 });
 
-test('an unacked clear is performed locally too', async () => {
-  await appendScriptLog('s1', { level: 'info', source: 'worker', message: 'gone' });
+test('a page sends an entry once more when the first goes unanswered', async () => {
+  // The worker stopped mid-message; the second one reaches a new one.
+  sendReplies = [undefined];
+  await asPage(() => appendScriptLog('s1', {
+    level: 'info', source: 'add', message: 'second try',
+  }));
+  assert.equal(sent.length, 2);
+  assert.deepEqual(sent[0], sent[1]);
+});
+
+test('an unacked clear leaves the log as it was', async () => {
+  await appendScriptLog('s1', { level: 'info', source: 'worker', message: 'kept' });
   sendReply = undefined;
   await asPage(() => clearScriptLog('s1'));
-  assert.deepEqual(await getScriptLog('s1'), []);
+  assert.equal((await getScriptLog('s1')).length, 1);
 });
 
 test('the worker writes directly, without a message', async () => {

@@ -166,11 +166,11 @@ test.describe('parse check at install time', () => {
     expect(scripts[0].errorMessage).toBeUndefined();
   });
 
-  test('a granted script is checked in the scope it actually runs in', async ({ sm }) => {
-    // The GM bindings are `const` declarations in the same scope as the
-    // user program, so a library redeclaring one is a genuine parse
-    // failure at injection time. Checking the user source alone would
-    // call this healthy.
+  test('a library redeclaring a GM binding is not a parse failure', async ({ sm }) => {
+    // The user program runs in a scope nested inside our GM bindings, so
+    // a library's own `const unsafeWindow` shadows ours. The check must
+    // judge that arrangement, not a same-scope one that would call this
+    // a duplicate declaration. (It runs, too: see wrapper-scope.spec.ts.)
     fs.writeFileSync(
       path.join(scriptsDir.path, 'lib.js'),
       'const unsafeWindow = window.wrappedJSObject || window;',
@@ -178,15 +178,15 @@ test.describe('parse check at install time', () => {
     scriptsDir.write({
       relativePath: 'main.user.js',
       meta: {
-        name: 'Collides with a binding',
+        name: 'Redeclares a binding',
         match: ['https://example.com/*'],
         extra: ['// @grant       unsafeWindow', '// @require     lib.js'],
       },
       body: 'void unsafeWindow;',
     });
     const scripts = await installAndRead(sm);
-    expect(scripts[0].status).toBe('invalid');
-    expect(scripts[0].errorMessage).toMatch(/already been declared/i);
+    expect(scripts[0].status).toBe('ok');
+    expect(scripts[0].errorMessage).toBeUndefined();
   });
 
   test('a top-level return is accepted — the entry is a function body', async ({ sm }) => {

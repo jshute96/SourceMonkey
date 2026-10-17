@@ -103,8 +103,19 @@ export function markupResponseMessage(
   const evidence = opts.contentType ? ` (Content-Type "${opts.contentType}")` : '';
   const expected = opts.expected ?? 'JavaScript';
   return opts.localUrl
-    ? `The local file ${opts.localUrl} is an HTML page, not ${expected}${evidence} — a folder with that name would look like this`
-    : `The server returned an HTML page, not ${expected}${evidence} — the link may be dead or behind a login`;
+    ? `${LOCAL_MARKUP_PREFIX}${opts.localUrl}${LOCAL_MARKUP_MIDDLE}${expected}${evidence}; a folder with that name would look like this`
+    : `${REMOTE_MARKUP_PREFIX}${expected}${evidence}; the link may be dead or behind a login`;
+}
+
+const REMOTE_MARKUP_PREFIX = 'The server returned an HTML page, not ';
+const LOCAL_MARKUP_PREFIX = 'The local file ';
+const LOCAL_MARKUP_MIDDLE = ' is an HTML page, not ';
+
+// Did this text come out of `markupResponseMessage`? For the corpus
+// validator, which tags each invalid script with why it failed.
+export function isMarkupResponseMessage(text: string): boolean {
+  return text.startsWith(REMOTE_MARKUP_PREFIX)
+    || (text.startsWith(LOCAL_MARKUP_PREFIX) && text.includes(LOCAL_MARKUP_MIDDLE));
 }
 
 // Thrown by the script-text fetchers so a caller can tell this apart

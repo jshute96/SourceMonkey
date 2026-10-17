@@ -10,10 +10,13 @@ import {
   displayLocation,
   effectiveScriptStatus,
   formatBytes,
+  formatQuota,
+  formatStorageUsage,
   formatScriptSize,
   formatScriptStatusLabel,
   leafName,
-  logIdDupeSuffix,
+  logIdScriptNumber,
+  logIdSuffix,
   scriptBasename,
   scriptDisplayName,
   scriptOutdatedProbe,
@@ -28,15 +31,25 @@ test('formatBytes: bytes under 1 KB', () => {
   assert.equal(formatBytes(1023), '1023 B');
 });
 
-test('formatBytes: kilobytes 1 KB through < 1 MB, one decimal', () => {
-  assert.equal(formatBytes(1024), '1.0 KB');
-  assert.equal(formatBytes(1536), '1.5 KB');
-  assert.equal(formatBytes(1024 * 1024 - 1), '1024.0 KB');
+test('formatBytes: kilobytes 1 KB through < 1 MB, whole KB', () => {
+  assert.equal(formatBytes(1024), '1 KB');
+  assert.equal(formatBytes(1536), '2 KB');
+  assert.equal(formatBytes(1024 * 1023), '1023 KB');
+  // Rounds up to 1024 KB, so it reads as MB instead.
+  assert.equal(formatBytes(1024 * 1024 - 1), '1.0 MB');
 });
 
 test('formatBytes: megabytes >= 1 MB, one decimal', () => {
   assert.equal(formatBytes(1024 * 1024), '1.0 MB');
   assert.equal(formatBytes(2 * 1024 * 1024 + 512 * 1024), '2.5 MB');
+});
+
+test('formatStorageUsage: MB on both sides, rounded down', () => {
+  const MB = 1024 * 1024;
+  assert.equal(formatStorageUsage(2 * MB, 10 * MB), '2.0 MB of 10 MB (20%)');
+  // Near the limit, never claims full while there is room.
+  assert.equal(formatStorageUsage(9.96 * MB, 10 * MB), '9.9 MB of 10 MB (99%)');
+  assert.equal(formatQuota(10.5 * MB), '10.5 MB');
 });
 
 // ---------- formatScriptSize ----------
@@ -49,7 +62,7 @@ test('formatScriptSize: null size → "—" (unknown)', () => {
 });
 
 test('formatScriptSize: ok status renders the byte count', () => {
-  assert.equal(formatScriptSize({ status: 'ok', size: 1234 }), '1.2 KB');
+  assert.equal(formatScriptSize({ status: 'ok', size: 1234 }), '1 KB');
 });
 
 test('formatScriptSize: zero-byte file renders "0 B", not MISSING', () => {
@@ -284,15 +297,16 @@ test('scriptBasename: an escaped slash cannot smuggle a path separator in', () =
   assert.equal(scriptBasename('https://x.com/a%2Fb.user.js'), 'b.user.js');
 });
 
-test('logIdDupeSuffix: only a trailing #<digits> counts', () => {
-  assert.equal(logIdDupeSuffix('foo.user.js#2'), '#2');
-  assert.equal(logIdDupeSuffix('foo.user.js#12'), '#12');
-  assert.equal(logIdDupeSuffix('foo.user.js'), '');
-  assert.equal(logIdDupeSuffix(''), '');
+test('logIdSuffix: only a trailing #E<digits> or #<digits> counts', () => {
+  assert.equal(logIdSuffix('foo.user.js#E4'), '#E4');
+  assert.equal(logIdSuffix('foo.user.js#2'), '#2');
+  assert.equal(logIdSuffix('foo.user.js#12'), '#12');
+  assert.equal(logIdSuffix('foo.user.js'), '');
+  assert.equal(logIdSuffix(''), '');
   // A literal `#` in the name (a decoded `%23`) is not a dupe suffix —
   // splitting on the first `#` would render half the name as one.
-  assert.equal(logIdDupeSuffix('Chapter #2 notes.user.js'), '');
-  assert.equal(logIdDupeSuffix('Chapter #2 notes.user.js#3'), '#3');
+  assert.equal(logIdSuffix('Chapter #2 notes.user.js'), '');
+  assert.equal(logIdSuffix('Chapter #2 notes.user.js#3'), '#3');
 });
 
 // ---------- stripSriFragment ----------
@@ -356,4 +370,10 @@ test('stripSriFragment: leaves a non-hash fragment alone', () => {
 // wondering why validation didn't happen needs to see what they typed.
 test('stripSriFragment: leaves a hash with no value alone', () => {
   assert.equal(stripSriFragment('https://example.com/lib.js#md5='), 'https://example.com/lib.js#md5=');
+});
+
+test('logIdScriptNumber: the number after #E, or null', () => {
+  assert.equal(logIdScriptNumber('foo.user.js#E4'), 4);
+  assert.equal(logIdScriptNumber('foo.user.js#2'), null);
+  assert.equal(logIdScriptNumber('foo.user.js'), null);
 });

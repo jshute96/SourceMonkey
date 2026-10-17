@@ -16,7 +16,7 @@ import {
   splitHeaders,
   buildHeaderRule,
   taggedRequestUrl,
-} from '../../dist/gm-xhr-headers.js';
+} from '../../dist/extension/gm-xhr-headers.js';
 
 // The URL tag a rule matches on: `#sm-xhr-<rule id>`. Ids climb, so
 // tests assert the shape rather than a particular number.

@@ -19,7 +19,7 @@ import { canonicalMatchPatterns } from './url-match.js';
 // Pure regex rewrite, no fetching — imported so the same-directory
 // fallback below points a github-hosted script's neighbour at the
 // github.com page instead of its raw bytes.
-import { githubRawToBlobUrl } from './github-provider.js';
+import { githubRawToBlobUrl } from './github-urls.js';
 
 export interface MatchTarget {
   // `scheme://host[:port]` — no path. Cache key for the origin-scoped
@@ -74,14 +74,18 @@ function parseMatchPattern(pattern: string): ParsedMatch | null {
   if (scheme !== 'http' && scheme !== 'https') return null;
 
   // Split host:port so the host-wildcard rules apply only to the
-  // host portion. The port (digits only) is preserved verbatim.
+  // host portion. A numeric port is preserved verbatim. A `:*` port
+  // (any port) covers the default one, so the icon comes from there.
   const colon = rawHost.lastIndexOf(':');
-  const hasPort = colon > 0 && /^\d+$/.test(rawHost.slice(colon + 1));
-  const port = hasPort ? rawHost.slice(colon) : '';
+  const hasPort = colon > 0 && /^(\d+|\*)$/.test(rawHost.slice(colon + 1));
+  const port = hasPort && rawHost.slice(colon + 1) !== '*' ? rawHost.slice(colon) : '';
   let host = (hasPort ? rawHost.slice(0, colon) : rawHost).toLowerCase();
   if (host === '*' || host === '') return null;
   if (host.startsWith('*.')) host = host.slice(2);
   if (!host || host.includes('*')) return null;
+  // `.tld` means "any public suffix" (see url-match.ts); `.com` is
+  // the one most such sites answer on, so the icon and link use it.
+  if (host.endsWith('.tld')) host = host.slice(0, -4) + '.com';
 
   // The host slot has to hold a host we could actually navigate to.
   // Worth checking since the scheme-less reading above will supply a
@@ -176,18 +180,20 @@ export function matchTargetInfo(pattern: string): MatchTarget | null {
 // the same directory as the script itself. Full rule, worked examples
 // and rationale in docs/script-viewer.md#same-directory-fallback; in
 // short, a pattern with no host whose literal trailing directories
+// (and any literal text ending a wildcard directory, like `*gm-menu`)
 // match the tail of the script's own directory D links to D + its
 // filename.
 //
-// The shape this exists for is the host-wildcard pair an example
-// script uses to name the page it ships beside:
+// It exists for the site-less patterns a script uses to name the page
+// it ships beside, such as:
 //
 //   @match *://*/gm-menu/gm-menu.html
+//   @match *://*/*gm-menu/gm-menu.html
 //   @match file:///*/gm-menu/gm-menu.html
 //
-// Neither yields a target above — one has a host of `*`, the other a
-// `file:` scheme — so both rows rendered as plain text even though the
-// page is sitting next to the script we're viewing.
+// None yields a target above (the `*://` ones have a host of `*`, the
+// other a `file:` scheme), so their rows rendered as plain text even
+// though the page is sitting next to the script we're viewing.
 //
 // Two properties worth keeping in mind when editing:
 //   - The result is D plus one literal filename, so no pattern can
@@ -222,14 +228,25 @@ export function sameDirLinkUrl(pattern: string, scriptUrl: string | undefined): 
     if (seg.includes('*')) lastWildcard = i;
   });
   const literalDirs = segments.slice(lastWildcard + 1);
-  if (literalDirs.length === 0 || literalDirs.some((s) => s === '')) return null;
+  // The text after that segment's last `*` (`gm-menu` in `*gm-menu`)
+  // still has to end the directory the wildcard stands in for.
+  const wildSuffix = lastWildcard < 0
+    ? ''
+    : segments[lastWildcard].slice(segments[lastWildcard].lastIndexOf('*') + 1);
+  if (literalDirs.length === 0 && !wildSuffix) return null;
+  if (literalDirs.some((s) => s === '')) return null;
 
   const dir = scriptDirUrl(scriptUrl);
   if (!dir) return null;
   const dirSegments = dir.pathname.split('/').filter(Boolean).map(decodeSegment);
-  if (dirSegments.length < literalDirs.length) return null;
+  const needed = literalDirs.length + (wildSuffix ? 1 : 0);
+  if (dirSegments.length < needed) return null;
   const tail = dirSegments.slice(dirSegments.length - literalDirs.length);
   if (tail.some((seg, i) => seg !== decodeSegment(literalDirs[i]))) return null;
+  if (wildSuffix
+      && !dirSegments[dirSegments.length - needed].endsWith(decodeSegment(wildSuffix))) {
+    return null;
+  }
 
   // Resolved through the URL parser rather than concatenated, so a
   // filename carrying a space or other raw character is escaped the

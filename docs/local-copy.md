@@ -5,10 +5,10 @@ on disk — and writing an editable copy into a local directory, where
 ordinary file-editing workflows change it and SourceMonkey runs the
 result.
 
-- Logic and the write: [`src/local-copy.ts`](../src/local-copy.ts)
-- Dialog: [`src/copy-dialog.ts`](../src/copy-dialog.ts)
+- Logic and the write: [`src/extension/local-copy.ts`](../src/extension/local-copy.ts)
+- Dialog: [`src/extension/copy-dialog.ts`](../src/extension/copy-dialog.ts)
 - Button and what follows a copy: `makeLocalCopyControl` in
-  [`src/userscript.ts`](../src/userscript.ts)
+  [`src/extension/userscript.ts`](../src/extension/userscript.ts)
 - Tests: `tests/e2e/local-copy.spec.ts`, `tests/unit/local-copy.test.mjs`
 
 Related: [local-delete.md](local-delete.md) (taking a copy back off
@@ -251,17 +251,20 @@ Make a local copy of this script
 2. Each file is downloaded in turn and waited on.
 3. The Downloads folder is confirmed from the first saved path; every
    later file must have landed under it too.
-4. The collection is created, adopted, or found; then refreshed, which
-   scans the copy in.
+4. The page hands over to the service worker, which writes all storage
+   ([worker-writes.md](worker-writes.md)): `registerLocalCopy` runs
+   steps 4 and 5 there. The page keeps the downloads, which need a blob
+   URL the worker lacks. The collection is created, adopted, or found;
+   then refreshed, which scans the copy in.
 5. The copy's row is **enabled** if it isn't already. Replacing a file
    inherits the row it replaced, and `rebuildCollection` preserves a
    prior `enabled: false` across a refresh — so replacing a copy the
    user had switched off would otherwise land them on a page with
    nothing running and no explanation.
 6. **Exclusive enable** (`soloRunningCopy`): the new row is enabled and
-   every other running copy is switched off through the existing
-   `enableChanges` + `setScriptsEnabled` batch — the "installing counts
-   as enabling" rule in [script-identity.md](script-identity.md).
+   every other running copy is switched off through
+   `turnOffOtherCopies`: the "installing counts as enabling" rule in
+   [script-identity.md](script-identity.md).
    Only when the new row landed `ok` and its collection is enabled.
 7. The viewer moves to the copy **in place** (`swapToScript`); the
    "Other versions" panel re-files with the new row highlighted.

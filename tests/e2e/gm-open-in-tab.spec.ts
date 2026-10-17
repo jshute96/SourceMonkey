@@ -47,6 +47,36 @@ test.describe('GM_openInTab', () => {
     await page.close();
   });
 
+  test('GM_openInTab takes a URL object', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'OpenTabUrlObject',
+        match: [`${fixtureServer.baseUrl}/target.html`],
+        runAt: 'document-end',
+        grant: ['GM_openInTab'],
+      },
+      body: `
+        GM_openInTab(new URL('/other.html', location.href), true);
+      `,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    const newTabPromise = extensionContext.waitForEvent('page');
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    const opened = await newTabPromise;
+    await opened.waitForLoadState('domcontentloaded');
+    expect(opened.url()).toBe(`${fixtureServer.baseUrl}/other.html`);
+    await opened.close();
+    await page.close();
+  });
+
   test('GM_openInTab options object: active:false opens in background', async ({
     extensionContext,
     fixtureServer,

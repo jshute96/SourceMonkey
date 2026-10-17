@@ -27,10 +27,8 @@
     <h2>Details</h2>
     <ul>
       <li>Each userscript manager renders these entries in its own UI:
-        SourceMonkey shows them indented (<code>↳ name</code>) under
-        their script in the toolbar icon&rsquo;s right-click menu;
-        Tampermonkey and Violentmonkey surface them in their own
-        toolbar popups.</li>
+        SourceMonkey, Tampermonkey and Violentmonkey all list them
+        under their script in their toolbar popups.</li>
       <li>Entries are scoped to the active tab. Navigating to a
         different document clears them; the new document&rsquo;s
         userscript re-registers from scratch.</li>
@@ -38,12 +36,20 @@
 
     <p id="runStatus" class="status">Waiting for userscript&hellip;</p>
 
-    <h3>By name (each Register adds a new entry)</h3>
+    <h3>By name (each Register gets a new id)</h3>
     <p>Without <code>options.id</code>,
       <code>GM_registerMenuCommand</code> mints a fresh id every call,
-      so clicking Register twice creates two distinct entries with the
-      same visible name. Unregister removes the most-recently-added
-      one (LIFO) so repeated clicks peel them off in reverse order.</p>
+      so clicking Register twice gives two registrations with the same
+      caption. The list below shows both; the manager&rsquo;s menu shows
+      the caption once. Unregister removes the most-recently-added one
+      (LIFO).</p>
+    <ul>
+      <li>Tampermonkey and SourceMonkey: picking the menu entry runs
+        every registration, and it stays in the menu until the last one
+        is unregistered.</li>
+      <li>Violentmonkey keys commands by caption, so a repeat replaces
+        the entry, and the first Unregister removes it.</li>
+    </ul>
     <div class="buttons">
       <button id="btn-register-by-name"   type="button">Register &ldquo;Toggle Foo&rdquo;</button>
       <button id="btn-unregister-by-name" type="button">Unregister latest &ldquo;Toggle Foo&rdquo;</button>

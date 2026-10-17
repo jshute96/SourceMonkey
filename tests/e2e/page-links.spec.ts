@@ -1,4 +1,4 @@
-// Cross-page links between the extension's own pages (src/page-links.ts).
+// Cross-page links between the extension's own pages (src/extension/page-links.ts).
 //
 // Two things are under test:
 //   - A link to the Collections or Options page opens a NEW tab, so the
@@ -8,7 +8,7 @@
 //     copies, and scrolls it to whatever the link pointed at.
 
 import type { Page } from '@playwright/test';
-import { test, expect } from '../fixtures/extension';
+import { closeCollectionsTabs, test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 
 // Every extension tab currently showing `file`.
@@ -79,6 +79,7 @@ test.describe('cross-page links', () => {
     // A real href, so the browser's own new-tab gestures still work.
     await expect(link).toHaveAttribute('href', `collections.html#collection-${collection!.id}`);
 
+    await closeCollectionsTabs(extensionContext);
     const [collections] = await Promise.all([
       extensionContext.waitForEvent('page'),
       link.click(),

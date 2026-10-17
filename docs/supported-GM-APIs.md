@@ -37,8 +37,10 @@ synchronously from the legacy form and return a Promise from the
 `GM.` form (matches the GM4 contract). Most other APIs are
 pass-through aliases.
 
-`@grant none` (or an absent `@grant`) emits **no** bindings — the
-script gets the page's `window` directly (MAIN world).
+`@grant none` (or an absent `@grant`) emits **no** `GM_*` bindings.
+A `@grant none` script gets the page's `window` directly (MAIN world);
+one with no `@grant` line runs in a sandbox `window`, as in TM and VM
+([injection.md](injection.md#the-sandbox-window)).
 
 Strict gating: every other `@grant` name is canonicalized through
 the catalog. Names we don't recognize (TM-only `GM_audio`, typos
@@ -53,41 +55,42 @@ the script sees a `ReferenceError` at call time, and the SW logs a
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
 | `GM_info` / `GM.info` | ✅ | ✓ | ✓ | ✓ | Implicit — exposed in every script regardless of `@grant` (including `@grant none` and scripts with no `@grant` line), and in both MAIN and USER_SCRIPT worlds. Also spliced into every `@require` entry. Baked into the wrapper at registration time. Surface: `script.{name, version, namespace, description, matches, includes, excludes, grant, runAt}`, `scriptHandler: "SourceMonkey"`, `version: <extension version>`, `scriptMetaStr` (raw `==UserScript==` block), `uuid` (stored script id). `script.grant` is the **canonicalized** set we emitted bindings for, not the raw `@grant` lines — `@grant GM.setValue` shows up as `GM_setValue`. TM and VM both report the raw lines instead. |
-| `unsafeWindow` | ✅ | ✓ | ✓ |   | The page's real `window`. Granting it puts the script in MAIN world (see below), where `unsafeWindow === window` — we bind the page's own `window`, with no wrapper in between. TM and VM reach the page too but both answer `false` on Chrome, handing out a sandbox wrapper instead (measured; see [cross-manager-test-results.md](cross-manager-test-results.md)). Either way the page's own variables are reachable, which is what the grant is for; the comparison itself is not portable. Reads, writes, and calls all reach the page's realm. **No grant needed:** a script whose body names `unsafeWindow` without granting it gets the same treatment — TM and VM both expose the name ungranted, so plenty of real scripts never declare it (see below). **Exception:** `@inject-into content` pins the script to the isolated world, where it can only be that world's own `window`; that combination is flagged with a startup-log warning. |
+| `unsafeWindow` | ✅ | ✓ | ✓ |   | The page's real `window`. Scripts run in MAIN world unless they ask for isolation (see below), and `unsafeWindow` is the page's own `window`. Unless the script has `@grant none`, its own `window` is a sandbox showing only the browser's built-ins ([injection.md](injection.md#the-sandbox-window)), so `unsafeWindow === window` is `false`, as in TM and VM on Chrome (measured; see [cross-manager-test-results.md](cross-manager-test-results.md)). Reads, writes, and calls through `unsafeWindow` all reach the page's realm. **No grant needed:** a script whose body names `unsafeWindow` without granting it gets the same treatment — TM and VM both expose the name ungranted, so plenty of real scripts never declare it (see below). **Exception:** `@inject-into content` or `@sandbox DOM` pins the script to the isolated world, where it can only be that world's own `window`; that combination is flagged with a startup-log warning. |
+| `cloneInto` / `exportFunction` / `createObjectIn` | ✅ | ✓ | ✓ |   | Implicit, in every script. Firefox's helpers for passing values into the page; on Chrome there's nothing to cross, so as in TM and VM they pass through: `cloneInto` returns its argument, `exportFunction` its function and `createObjectIn` a new object, the last two put on the target first when given `defineAs`. |
+| `exports` / `module` / `define` | ✅ | ✓ | ✓ |   | Implicit, in every script, as `undefined` (TM and VM give the same), so a bare reference doesn't throw and a `@require`d UMD library sets a global rather than finding a module system. That includes a page's own AMD `define`: a script that wants it uses `unsafeWindow.define`. A script may assign to them or declare its own. |
 
 ### `unsafeWindow` and the execution world
 
 - `unsafeWindow` is defined as *the page's* window. In Chrome that
   object exists only in MAIN world, and property access on it is
-  synchronous — there is no async bridge that could stand in.
-- So the grant is a **world request**: `@grant unsafeWindow` resolves
-  the script to MAIN world, exactly as `@inject-into page` does.
-  Tampermonkey and Violentmonkey make the same trade.
-- The rest of the script's `@grant`s follow it there. The shared
-  `__SM_GM__` runtime is registered in MAIN as well, and routes its
-  service-worker traffic over the existing bridge.
-- `@inject-into content` still wins — it's an explicit request for
+  synchronous, so there is no async bridge that could stand in.
+- Every script runs in MAIN world unless it asks for isolation
+  (`@inject-into content` or `@sandbox DOM`), as in Tampermonkey and
+  Violentmonkey. So `unsafeWindow` reaches the page with or without a
+  grant line.
+- The script's `@grant`s work there too. The shared GM runtime is
+  registered in MAIN as well, and routes its service-worker traffic
+  over the bridge. A secret key keeps the page from reaching either
+  ([injection.md](injection.md#the-channel-key)).
+- `@inject-into content` / `@sandbox DOM` are explicit requests for
   isolation. The binding stays (matching VM's content mode) but every
   page global reads as `undefined`, so SourceMonkey emits a
   `warning`-level startup log rather than letting that be silent.
-- **A reference with no grant line counts as the request.** Neither TM
-  nor VM keys `unsafeWindow` off `@grant`, so a script written against
-  either may use it and never declare it — 112 of the GreasyFork top
+- **A reference with no grant line gets the binding.** Neither TM nor
+  VM keys `unsafeWindow` off `@grant`, so a script written against
+  either may use it and never declare it; 112 of the GreasyFork top
   2000 do exactly that. SourceMonkey scans the body at load time and
-  treats those scripts as though they had granted it: MAIN world, same
-  binding, and an `info`-level startup log saying the script is no
-  longer isolated from page content.
+  emits the same binding.
   - `GM_info.script.grant` still reports the `@grant` lines the file
-    declares. The inference changes the world and adds a `window`
-    alias; it grants no API.
-  - What the scan can and can't see — comments and strings are
-    stripped, a source that declares the name itself is left alone —
-    is in [injection.md](injection.md#unsafewindow-forces-main-world)
+    declares. The binding is a `window` alias; it grants no API.
+  - What the scan can and can't see (comments and strings are
+    stripped, a source that declares the name itself is left alone)
+    is in [injection.md](injection.md#unsafewindow-is-the-pages-window)
     and `src/unsafe-window-use.ts`.
 - Running in MAIN world has costs the isolated world doesn't: the page
   can see and interfere with the script, and DOM injection is subject
   to the page's CSP. See
-  [injection.md](injection.md#gm_-in-main-world).
+  [injection.md](injection.md#costs-of-running-in-main).
 
 ---
 
@@ -104,8 +107,8 @@ set TM's own bundled linter validates against, so anything else
 
 | Grant | Status | TM | VM | GM | Notes |
 |-------|:------:|:--:|:--:|:--:|-------|
-| `none` | ✅ | ✓ | ✓ | ✓ | Opts the script out of the whole GM surface and puts it in MAIN world. Wins over every other `@grant` line on the same script, for both the bindings and the world — Violentmonkey does exactly this (`grant.includes('none')` gates both its API wrapper and its page-context path) and warns at install time with "`@grant none` disables all other `@grant` keys"; we say the same in a startup-log warning naming the overridden grants. `GM_info` is still exposed. See [supported-headers.md](supported-headers.md). |
-| `unsafeWindow` | ✅ | ✓ | ✓ |   | The page's real `window`; asking for it — by `@grant` or just by naming it — moves the script to MAIN world to make that so. See [`unsafeWindow` and the execution world](#unsafewindow-and-the-execution-world). |
+| `none` | ✅ | ✓ | ✓ | ✓ | Opts the script out of the whole GM surface, and out of the sandbox `window`: it gets the page's own. Wins over every other `@grant` line on the same script. Violentmonkey does exactly this (`grant.includes('none')` gates its API wrapper) and warns at install time with "`@grant none` disables all other `@grant` keys"; we say the same in a startup-log warning naming the overridden grants. `GM_info` is still exposed. See [supported-headers.md](supported-headers.md). |
+| `unsafeWindow` | ✅ | ✓ | ✓ |   | The page's real `window`, reachable because scripts run in MAIN world unless they ask for isolation; by `@grant` or just by naming it. See [`unsafeWindow` and the execution world](#unsafewindow-and-the-execution-world). |
 | `window.onurlchange` | ✅ | ✓ |   |   | SPA navigation hook. `window.onurlchange === null` feature-detects; `window.addEventListener('urlchange', info => …)` and the `window.onurlchange = fn` slot both work. See below. VM has never implemented it (feature request closed unimplemented), so scripts already carry the `=== null` guard. |
 | `window.close` | ✅ | ✓ | ✓ (2.6.2+) |   | Closes the tab the script runs in, via the extension — the plain page API refuses to close a tab the script didn't open. See below. |
 | `window.focus` | ✅ | ✓ | ✓ (2.12.10+) |   | Selects this tab and raises (un-minimizing) its browser window, neither of which page JS can do. See below. |
@@ -135,24 +138,24 @@ performs, because the browser hobbles the page's own version.
 - Both take no arguments and return `undefined` immediately. The work
   itself happens in the background, so a `window.close()` isn't
   guaranteed to have happened by the next statement.
-- The override lives only inside the userscript's world. The page's
-  own `window.close` / `window.focus` are unchanged, so a site can't
+- The override is on the granting script's own `window` (`window.close()`,
+  `self.close()`, bare `close()`), not on the page's. The page's own
+  `window.close` / `window.focus` are unchanged, so a site can't
   detect the grant.
-- **Any script on the page gets the override once one script grants
-  it.** All SourceMonkey scripts on a page share one isolated world,
-  and the override replaces the method on that world's shared
-  `window`. So a script that never asked for `window.close` can still
-  close your tab if a sibling script on the same page did ask. TM
-  gates this exactly; we can't without per-script worlds.
+- **Isolated scripts (`@inject-into content`) share it.** They share
+  one isolated world, and there the override replaces the method on
+  that world's `window`. So an isolated script that never asked for
+  `window.close` can still close your tab if a sibling isolated script
+  on the same page did ask.
 - A refused close or focus is logged to the page console and to the
   script's Log tab. A successful close takes the page with it, so
   there's nothing to report.
 
 Differences from TM, detailed in
-[GM-APIs.md](GM-APIs.md#windowclose--windowfocus): grant enforcement is
-per-document rather than per-script (the bullet above), and
-`@inject-into page` (MAIN world) is unsupported. What each call does is
-matched to TM 5.5.0's own implementation.
+[GM-APIs.md](GM-APIs.md#windowclose--windowfocus): in the isolated
+world, grant enforcement is per-document rather than per-script (the
+bullet above). What each call does is matched to TM 5.5.0's own
+implementation.
 
 ### `window.onurlchange`
 
@@ -227,7 +230,7 @@ VM](GM-APIs-storage.md#compared-with-violentmonkey).
 
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
-| `GM_setValue` / `GM.setValue` | ✅ | ✓ | ✓ | ✓ | Sync return on `GM_x`, Promise on `GM.x`. Writes batched (150 ms debounce, 1 s hard cap) and flushed on `pagehide` / `visibilitychange → hidden`. Accepts more than JSON — see above; throws on a circular reference. |
+| `GM_setValue` / `GM.setValue` | ✅ | ✓ | ✓ | ✓ | Sync return on `GM_x`, Promise on `GM.x`. Writes made in one run of script code go to the worker together, a microtask later; anything left goes on `pagehide` / `visibilitychange → hidden`. Accepts more than JSON — see above; throws on a circular reference. |
 | `GM_getValue` / `GM.getValue` | ✅ | ✓ | ✓ | ✓ | Sync read from the in-page cache; returns `defaultValue` for unknown keys. |
 | `GM_deleteValue` / `GM.deleteValue` | ✅ | ✓ | ✓ | ✓ | Same flush/batching shape as `setValue`. |
 | `GM_listValues` / `GM.listValues` | ✅ | ✓ | ✓ | ✓ | Returns the list of currently-known keys. |
@@ -244,11 +247,10 @@ VM](GM-APIs-storage.md#compared-with-violentmonkey).
   value-change listener re-syncs its cache from the SW after an SW
   start or when the tab becomes visible — so a broadcast that does
   get lost is a delay rather than a permanent desync.
-- A write made in the last ~150 ms before tab close may be lost if
-  the SW is idle/suspended and the page goes into bfcache.
-- If the SW is unreachable past the wrapper's 2 s safety timeout,
-  storage-granting scripts log a console error and refuse to run
-  (no silent stale-data). Reload to retry.
+- If the SW doesn't answer whether to run within the wrapper's 10 s
+  timeout, no script runs, and each says why in the page console. A
+  storage-granting script also refuses to run when its stored values
+  can't be read (no silent stale data). Reload to retry.
 - Same-extension userscripts share the trust boundary —
   technically, userscript A can impersonate userscript B's
   `scriptId` in the storage envelope and corrupt B's keys. This is
@@ -259,20 +261,20 @@ VM](GM-APIs-storage.md#compared-with-violentmonkey).
 
 ## DOM injection
 
-USER_SCRIPT world's DOM mutations are CSP-exempt (the same
-dispensation content scripts get), so these work even on pages with
-strict `Content-Security-Policy: script-src 'self'`.
+In USER_SCRIPT world the page's CSP doesn't apply to inserted
+elements, so these work even on pages with strict
+`Content-Security-Policy: script-src 'self'`.
 
-**Not so in MAIN world.** A script that granted `unsafeWindow` (or
-declared `@inject-into page`) runs in the page's realm, where its
-`<style>` / `<script>` elements are the page's own and the page's CSP
-applies. On a site with a `style-src` that omits `'unsafe-inline'`,
-`GM_addStyle` will insert the element and the rules simply won't take
-effect. TM/VM have the same limitation for page-context scripts. The
-runtime detects the block (`el.sheet === null` once connected) and
-reports it once per script per document as a warning in the script's
-Log; see [TODO.md](../TODO.md) for the fall-back idea (an isolated-world
-copy inserted over the bridge).
+- Styles are exempt from the page's `style-src`.
+- Scripts (inline or `src`) are checked against SourceMonkey's
+  USER_SCRIPT world CSP instead, which allows both, as Tampermonkey's
+  does.
+
+A script running in the page's world gets the same exemption for
+these two calls, as Tampermonkey's `GM_addElement` does: SourceMonkey
+does the insert from its isolated world. A `<style>` or `<script>` the
+script appends itself (`document.head.appendChild(…)`) is the page's,
+and the page's CSP applies to it.
 
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
@@ -293,7 +295,7 @@ copy inserted over the bridge).
 
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
-| `GM_xmlhttpRequest` / `GM.xmlHttpRequest` | ✅ | ✓ | ✓ | ✓ (`GM.xmlHttpRequest` only) | Returns `{abort}` synchronously. SW-side `fetch` with `AbortController`; events (`load`, `error`, `timeout`, `abort`) are shipped back to the originating tab. |
+| `GM_xmlhttpRequest` / `GM.xmlHttpRequest` | ✅ | ✓ | ✓ | ✓ (`GM.xmlHttpRequest` only) | `GM_xmlhttpRequest` returns `{abort}` synchronously; `GM.xmlHttpRequest` returns a Promise of the response, with `abort` on it (see below). SW-side `fetch` with `AbortController`; the body streams back to the originating tab in pieces, with progress events. No size cap. |
 
 ### XHR details object
 
@@ -302,13 +304,32 @@ copy inserted over the bridge).
 | Field | Notes |
 |-------|-------|
 | `method` | Default `GET`. Uppercased before send. |
-| `url` | Required. |
+| `url` | Required. A `URL` object works too. Without one, `onerror` gets the Error when given (as in VM), and otherwise it's thrown. |
 | `headers` | Plain object. Any header, including ones the browser normally forbids a script to set — see [Forbidden headers](#forbidden-headers). |
-| `data` | Body. String only today; non-string falls through `String(...)`. |
+| `data` | Body, as XMLHttpRequest's `send()` takes it: a string, `FormData`, `URLSearchParams`, `Blob` / `File`, `ArrayBuffer` or a typed array / `DataView`. Anything else is sent as its `String(...)`. The Content-Type follows from the body (multipart, form-urlencoded, the Blob's type) unless `headers` sets one. |
+| `binary` | `true` sends a string `data` as bytes, one per character (its low 8 bits). |
 | `timeout` | Milliseconds. Aborts the request and fires `ontimeout`. |
-| `responseType` | `text` (default) / `json` / `blob` / `arraybuffer` / `document`. |
+| `responseType` | `text` (default) / `json` / `blob` / `arraybuffer` / `document` / `stream`. With `stream` (as in TM), `response` is a `ReadableStream` of the body's bytes from `onloadstart` on, fed as they arrive. |
+| `overrideMimeType` | Its charset decodes the text, in place of the response's (`text/plain; charset=x-user-defined` gives one character per byte, for reading binary data from `responseText`). Its type is also the `blob`'s type and picks how a `document` parses. |
+| `context` | Any value, handed back as `context` on every response object. |
+| `nocache` / `revalidate` | TM's: `nocache` skips the browser's cache; `revalidate` checks a cached copy with the server first. |
+| `redirect` | TM's: `'error'` makes a redirect fail the request with `onerror`. Redirects are followed otherwise, `'manual'` included. |
 | `anonymous` | `true` sends the request without the user's cookies (and any cached HTTP-auth credentials). Default `false` — see [Credentials](#credentials). |
-| `onload`, `onerror`, `ontimeout`, `onabort` | Callbacks. Callbacks aren't serializable across the SW boundary so they stay on the page side keyed by request id. |
+| `onload`, `onerror`, `ontimeout`, `onabort` | Terminal callbacks: exactly one fires. Callbacks aren't serializable across the SW boundary so they stay on the page side keyed by request id. |
+| `onloadstart` | Once the extension has taken the request, with `readyState: 1`. |
+| `onreadystatechange` | At `readyState` 2 (headers in), 3 (body arriving) and 4 (just before the terminal callback), the order XMLHttpRequest uses. |
+| `onprogress` | Per piece of the body, with `lengthComputable`, `loaded` and `total` beside the response fields. For text types, `responseText` is the text so far. |
+| `onloadend` | After the terminal callback, with the same object. |
+
+A callback that throws is reported as the script's error, on its Log,
+as an uncaught error in the script is.
+
+Not supported: TM's `cookie`, `fetch`, `proxy` and `cookiePartition`,
+`user` / `password`, and `upload` callbacks.
+
+`GM.xmlHttpRequest` resolves with the response on `onload`, and
+rejects with the same object `onerror`, `ontimeout` or `onabort` gets.
+The details' callbacks run too.
 
 ### XHR response shape
 
@@ -319,40 +340,78 @@ For `responseType: 'text'` (default) and `'json'`:
 | `status` | HTTP status number. |
 | `statusText` | HTTP status text. |
 | `responseURL` / `finalUrl` | Final URL after redirects. |
-| `responseText` | Body as text. |
+| `responseText` | Body as text, decoded by `overrideMimeType`'s charset, else the response's, else UTF-8 (JSON is always UTF-8). |
 | `response` | Same as `responseText` for `text`; parsed object for `json` (or `null` on parse failure). |
 | `responseHeaders` | Multi-line `Name: value\r\n…` (TM/VM convention; trailing CRLF). |
+| `readyState` | `4` (done) for the terminal callbacks; 1-3 in the earlier ones. |
 
 For `responseType: 'blob'` / `'arraybuffer'` / `'document'`: same
 shape, except `responseText` is empty (`document` populates it) and
 `response` is the reconstructed native object (`Blob`,
-`ArrayBuffer`, or `Document`). The SW serializes bytes as base64;
-the page-side runtime decodes and rebuilds.
+`ArrayBuffer`, or `Document`). The SW sends the bytes as base64
+pieces; the page-side runtime decodes and rebuilds.
+
+For `responseType: 'stream'`: `responseText` is empty and `response`
+is the `ReadableStream` in every callback. It closes on `load`, and
+on a failure rejects reads with the error (an `AbortError` or
+`TimeoutError` for those). Cancelling it aborts the request.
+
+`ontimeout` and `onabort` get the empty shape of a failed request:
+`readyState: 4`, `status: 0`, empty `statusText` / `responseText` /
+`responseHeaders`, `response: null`, and `finalUrl` set to where the
+request had got to (after any redirect, once its headers came). `onerror`
+gets the same plus `error`. `onreadystatechange` receives the same
+object as the terminal callback that follows it, except after
+`abort()`, which fires none, as in TM. `onabort` comes after `abort()`
+returns.
+
+Every response object also has `context`, from the details.
 
 ### `@connect` gating
 
-Strict-by-default. A script with **no** `@connect` lines is blocked
-from every `GM_xmlhttpRequest` call. Grammar:
+A request goes when a `@connect` rule covers its host, or it goes to
+the page's own origin (scheme, host and port). For any other http(s)
+host, SourceMonkey asks the user, as TM does, and keeps the answer for
+the script. Design: [connect-permissions.md](connect-permissions.md).
+
+- **Allow once** or **Cancel** settles just the requests waiting, and
+  the next one asks again. Closing the prompt counts as Cancel.
+- **Allow** (that site) or **Allow all sites** lasts until reset under
+  Network access on the script's page, or the script is removed.
+- **Deny** lasts until reset, the same way.
+- A request whose prompt gets no answer in 4 minutes fails, and the
+  prompt closes. A script gets at most 3 prompts open at once.
+- Granting `GM_xmlhttpRequest` with no `@connect` gets an info note at
+  install time (viewer Log tab, page console, `sm-dev validate`).
+- A relative URL resolves against the page, as in TM and VM.
+
+Grammar:
 
 | Form | Meaning |
 |------|---------|
 | `@connect *` | Allow any host. |
 | `@connect self` | Allow the script's own `@match` / `@include` hosts. |
-| `@connect example.com` | Allow this exact host. |
-| `@connect *.example.com` | Allow `example.com` itself AND any subdomain. |
+| `@connect example.com` | Allow `example.com` AND any subdomain (`api.example.com`), as TM documents. Whole labels only: `evilexample.com` doesn't match. An IP or single-label name (`127.0.0.1`, `localhost`) matches only exactly. Multi-label public suffixes aren't special-cased, so `@connect co.uk` covers all of `.co.uk`. |
+| `@connect *.example.com` | The same: `example.com` itself AND any subdomain. |
 | `@connect https://example.com` | Same as `@connect example.com` (scheme stripped). |
 
-A denied request fires `onerror` with
-`"[SourceMonkey] GM_xmlhttpRequest: blocked by this script's @connect
-rules: …"` — built by `connectBlockedMessage` in `gm-connect.ts`, so
-the pre-flight check and the post-redirect re-check say the same thing.
+A refused request fires `onerror` with one of these, all from
+`gm-connect.ts`, so the pre-flight check and the post-redirect
+re-check say the same thing:
 
-Two near neighbours deliberately do *not* use that wording, because
-the script's header isn't what refused the call:
+- `connectDeniedMessage`: the user denied the host.
+- `connectCancelledMessage`: the user cancelled (or closed) the prompt.
+- `connectUnansweredMessage`: the prompt had no answer in time.
+- `connectPromptFailedMessage`: the prompt couldn't be opened.
+- `connectBlockedMessage`: the header can't cover it, only for a URL
+  with no host (`file:`, `data:`) under rules other than `@connect *`.
 
-- A URL that won't parse (a relative one, say) — the request fails for
-  a script with `@connect *` too.
-- A failure to evaluate the rules at all, which carries `internal
+Two near neighbours deliberately name no rule, because the script's
+header isn't what refused the call:
+
+- A URL that won't parse. The request fails for a script with
+  `@connect *` too.
+- A failure to evaluate the rules at all, which carries `Internal
   error:`.
 
 ### Credentials
@@ -411,7 +470,9 @@ How this is done, and what it can't cover:
 
 - `@connect <host>` lets the script *act as the user* on that host,
   not merely fetch a URL from it. `@connect *` says that about every
-  host. The script details' "Network access" tooltip spells this out.
+  host, and so does answering the prompt with Allow. The script
+  details' "Network access" tooltip spells this out, and the prompt
+  says so too.
 - A redirect off the allowlist still makes its outbound hop, and that
   hop is credentialed too. The script can't read the response (the
   post-redirect re-check drops it), but it can provoke a
@@ -422,7 +483,12 @@ How this is done, and what it can't cover:
 - HTTP error statuses (404, 500, …) fire `onload` with the
   non-2xx status — matches XHR semantics. Only network-level
   failures (DNS, ECONNREFUSED, etc.) fire `onerror`.
-- No `onprogress` events — only the final terminal event lands.
+  - Their `error` is `Could not reach <host> or a site it redirected
+    to. The name may not resolve, or the connection was refused, failed
+    or blocked.` (`fetch` doesn't say which hop failed) rather than
+    the browser's bare `Failed to fetch`, which says the same for all
+    of these causes.
+- No upload progress (`upload.onprogress`).
 - Forbidden headers are per-request: overlapping requests to one URL,
   across scripts or within one, each carry only their own overrides.
   SourceMonkey makes none of them wait for another. (Chrome itself
@@ -501,6 +567,9 @@ How this is done, and what it can't cover:
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
 | `GM_openInTab` / `GM.openInTab` | ✅ | ✓ | ✓ |   | `chrome.tabs.create` wrapper. Returns a control object synchronously: `{ close(), closed, onclose }`. See below for call shapes and options. |
+| `GM_getTab` / `GM.getTab` | ✅ | ✓ |   |   | This script's object for the current tab, kept while the tab is open. See [Per-tab data](#per-tab-data). |
+| `GM_saveTab` / `GM.saveTab` | ✅ | ✓ |   |   | Saves that object (a shallow copy). |
+| `GM_getTabs` / `GM.getTabs` | ✅ | ✓ |   |   | This script's object for every tab that has one, keyed by tab id. |
 
 ### Open-in-tab call shape
 
@@ -520,6 +589,22 @@ How this is done, and what it can't cover:
 - If the originating tab closes while opened tabs are still alive,
   the opened tabs stay open (matches TM/VM) but the SW drops the
   mapping, so the `onclose` callback can't be routed anywhere.
+
+### Per-tab data
+
+- `GM_getTab(callback)` calls `callback(tab)` with this script's
+  object for the tab it runs in, or `{}` if nothing was saved there.
+- `GM_saveTab(tab, callback?)` saves a shallow copy of `tab`;
+  `callback()` runs once it's saved.
+- `GM_getTabs(callback)` calls `callback(tabs)`: `{ [tabId]: tab }`
+  for each tab where the script called `GM_getTab` or saved.
+- Without a callback, each returns a Promise of the same value, which
+  is what the `GM.` forms are.
+- The object survives navigations and reloads in the tab, and goes
+  when the tab closes or the browser quits.
+- Frames share their tab's object.
+- Values travel as JSON, so functions, `undefined` and the like are
+  dropped.
 
 ---
 
@@ -559,8 +644,9 @@ Why `blob:` gets its own path:
 - That anchor click is exactly what the script could do with no
   `@grant` at all — the path grants nothing new.
 
-`details.url` is resolved against the page first, so relative URLs
-(`GM_download('/files/a.zip', …)`) work like they do in TM.
+`details.url` is resolved against the page first (its `<base href>`,
+else its own URL), so relative URLs (`GM_download('/files/a.zip', …)`)
+work like they do in TM.
 
 ### Download callbacks
 
@@ -601,8 +687,8 @@ Deliberate, and a divergence from how SourceMonkey treats
   file-extension allowlist.
 - Download URLs are runtime-discovered CDN hosts (`*.googlevideo.com`,
   `pbs.twimg.com`, per-object signed URLs) that a script can't
-  enumerate in its header. Strict-by-default `@connect` would break
-  essentially every script that grants `GM_download`.
+  enumerate in its header. Gating them on `@connect` would prompt for
+  nearly every download a script that grants `GM_download` makes.
 - The threat model differs: the bytes go to the user's disk, not back
   into the script, so the response-exfiltration risk `@connect` exists
   to contain doesn't apply.
@@ -624,8 +710,8 @@ primitive, and any host that acts on a plain GET is reachable.
   permission on update. The `chrome.downloads.onChanged` listener that
   comes with it sees every download in the browser (the API has no
   per-extension filter); SourceMonkey ignores any id it didn't start.
-- **`abort()` settles the call locally, immediately** (matching
-  `GM_xmlhttpRequest`), then asks the SW to cancel. On the in-page
+- **`abort()` settles the call locally, immediately**, then asks the
+  SW to cancel. On the in-page
   `blob:` / `data:` path there is nothing to cancel — the browser
   already owns the transfer — so `abort()` only suppresses the
   synthetic `onload`.
@@ -669,20 +755,27 @@ primitive, and any host that acts on a plain GET is reachable.
 
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
-| `GM_registerMenuCommand` / `GM.registerMenuCommand` | ✅ | ✓ | ✓ |   | Adds an entry indented under the script's row in SourceMonkey's toolbar-icon right-click menu. See below. |
+| `GM_registerMenuCommand` / `GM.registerMenuCommand` | ✅ | ✓ | ✓ |   | Adds an entry under the script's row in SourceMonkey's toolbar popup. See below. |
 | `GM_unregisterMenuCommand` / `GM.unregisterMenuCommand` | ✅ | ✓ | ✓ |   | Removes the entry. Unknown ids are silent. |
 
 ### Menu-command call shape
 
 - `GM_registerMenuCommand(name, callback, accessKeyOrOpts?)`:
-  - `name` — visible label rendered as `↳ <name>` under the script's
-    row in the action context menu.
+  - `name` — visible label, shown under the script's row in the
+    toolbar popup.
   - `callback` — invoked in the userscript's sandbox when the user
     picks the entry; required.
   - `accessKeyOrOpts.id` — pass a stable id to update an existing
     entry instead of duplicating it (matches TM/VM).
 - Returns the command id. Pass that id to
   `GM_unregisterMenuCommand` to remove the entry.
+- A caption the script registers more than once in a tab (without the
+  same `id`) shows once, and picking it runs every registration, in the
+  order they were made, as in TM.
+  - That holds across frames: a script registering a caption in the top
+    frame and its iframes shows it once, and a click runs it in each.
+  - Each registration still gets its own id. Unregistering one leaves
+    the entry for the rest.
 
 ### Menu lifecycle
 
@@ -718,8 +811,8 @@ baked into the per-script wrapper. See
 
 ## Not in the catalog at all
 
-Granting any of these names logs an "Ignoring @grant … — unsupported
-APIs" warning. Detection happens at parse time; the diagnostic is persisted
+Granting any of these names logs an "Ignoring unsupported @grant …"
+warning. Detection happens at parse time; the diagnostic is persisted
 on the stored script and surfaces two ways:
 
 - a `console.info` in the **page** DevTools console (via the wrapper's
@@ -727,7 +820,8 @@ on the stored script and surfaces two ways:
   matching page load (`console.info`, not `.warn` — injected warn/error
   leak into chrome://extensions/?errors), and
 - a `warning`-level row in the viewer's Log tab, emitted once per
-  loaded content version right after the "Loaded new content" line.
+  loaded content version right after the "Installed" or "Loaded new
+  content" line.
 
 The script's call sites get a `ReferenceError`. Adding any of these
 is a catalog entry + a body — nothing structural.
@@ -740,8 +834,7 @@ is a catalog entry + a body — nothing structural.
 - `GM_getValues` / `GM_setValues` / `GM_deleteValues` — bulk storage
   reads and writes (TM 5.x, VM 2.19.1+). Our per-call storage APIs
   already batch writes, so these are convenience, not throughput.
-- `GM_audio`, `GM_webRequest`, `GM_getTab`, `GM_saveTab`,
-  `GM_getTabs` — TM-specific surface.
+- `GM_audio`, `GM_webRequest` — TM-specific surface.
 - `GM.bootstrap`, `GM_NEXT_API_FROM_TM`, etc. — moving targets.
 
 ---

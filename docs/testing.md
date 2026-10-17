@@ -6,26 +6,40 @@ real-browser end-to-end suite for everything that touches the
 
 ## Layout
 
-- `tests/unit/*.test.mjs` — Node `--test` files. Import from
-  `dist/*.js`, so `pnpm run build` is a prerequisite (the
-  `test:unit` script runs it first).
+- `tests/unit/**/*.test.mjs` — Node `--test` files. Import from
+  `dist/**/*.js` (or `lib/` for the harness), so `pnpm run build` is a
+  prerequisite (the `test:unit` script runs it first).
+  - `tests/unit/harness/` holds the tests of `src/harness/` modules.
 - `tests/e2e/*.spec.ts` — Playwright specs. Launch headless Chromium
   with the unpacked extension loaded.
 - `tests/fixtures/` — shared harness code.
+- `tests/harness/*.spec.ts` — sm-dev and the fixture consumers import
+  (`src/harness/`, see [harness-design.md](harness-design.md)), under
+  the `sm-dev` Playwright project (`pnpm run test:sm-dev`).
+  - They run in a browser with the extension loaded, as sm-dev and the
+    fixture do for users.
+  - Fixtures in `tests/fixtures/harness.ts`, which extends the
+    package's own fixture.
+  - `violentmonkey.spec.ts` and `tampermonkey.spec.ts` run against the
+    copy `sm-dev --manager vm manager fetch` (or `tm`) put in the
+    cache, and are skipped without one.
+- `tests/vm-api/vm-api.spec.ts` and `tests/tm-api/tm-api.spec.ts` — the
+  `vm-api` and `tm-api` projects, run on demand (`pnpm run
+  test:vm-api`, `test:tm-api`): whether the fetched Violentmonkey or
+  Tampermonkey still answers each call sm-dev makes. See
+  [sm-dev-violentmonkey.md](sm-dev-violentmonkey.md#checking-a-vm-version)
+  and [sm-dev-tampermonkey.md](sm-dev-tampermonkey.md#how-stable-these-calls-are).
 - `tests/greasyfork-examples/` — not a test suite: tooling that builds a
-  corpus of the top 2000 real-world GreasyFork scripts and analyses it
-  (see its own `README.md`). Playwright's `testMatch` covers only
+  corpus of real-world GreasyFork scripts (the top 2000 and more),
+  analyses it, and records per-script validation and test results in
+  `corpus.json` (see its own `README.md`). Playwright's `testMatch` covers only
   `e2e/**` and `examples/**`, so nothing here runs as a test.
 
-`pnpm run validate` is a fourth thing again — not a test runner, but it
-does check scripts. It runs the install-time pipeline over files on
-disk with no browser, across `tests/examples/`, `tests/bad-examples/`,
-or the GreasyFork corpus. See
-[offline-validation.md](offline-validation.md).
+`sm-dev validate` runs the install-time pipeline over files on disk
+with no browser. `tests/unit/harness/validate.test.mjs` spawns it over
+`tests/examples/` and `tests/bad-examples/`.
 
-- The CLI itself is tested by `tests/unit/validate-userscripts.test.mjs`,
-  which spawns it over both example suites.
-- Its `tests/bad-examples/` expectations live in
+- `validate`'s `tests/bad-examples/` expectations live in
   `tests/fixtures/bad-script-cases.mjs` and are shared with
   `tests/e2e/bad-scripts.spec.ts`, which asserts the same table against
   the real extension in Chromium. One table, two runners: they can't
@@ -33,7 +47,7 @@ or the GreasyFork corpus. See
 
 ## Running
 
-- All tests: `pnpm test`
+- All tests: `pnpm test` (unit, e2e, then `test:sm-dev`)
 - Unit only: `pnpm run test:unit`
 - E2E only: `pnpm run test:e2e`
 - One unit file: `node --test tests/unit/<name>.test.mjs`
@@ -112,12 +126,24 @@ It runs against real headless Chromium with `chrome.userScripts`,
 
 - `extension.ts` — Playwright `test` extended with:
   - `extensionContext` (worker-scoped) — persistent Chromium with the
-    extension loaded and Preferences pre-seeded.
+    extension loaded and Preferences pre-seeded, launched by sm-dev's
+    own launcher (`src/harness/extension-launch.ts`), so the suites and
+    sm-dev's temp browser run the same browser.
+    - Tabs a test leaves open stay for the worker's later tests. A
+      link to the collections page focuses an open one instead of
+      opening a tab, so a test that waits for that tab calls
+      `closeCollectionsTabs` first.
   - `fixtureServer` (worker-scoped) — local HTTP server serving
     `tests/fixtures/pages/` first, with `tests/examples/` mounted as
     a fallback root so example pages are reachable at
-    `${baseUrl}/<api>/page.html`. Two routes are not files:
+    `${baseUrl}/<api>/page.html`. Some routes are not files:
     - `/__slow/<name>?ms=N` — delays a tiny JS/PNG response.
+    - `/__slowbody/<page>?ms=N` — sends a fixture page's headers at
+      once and its bytes N ms later, so the document exists before
+      `<html>` does.
+    - `/__sandbox/<page>` — serves a fixture page with a
+      `Content-Security-Policy: sandbox` header, which a `<meta>` CSP
+      can't set.
     - `/__echo?delay=N` — reflects the request's method, target and
       headers back as JSON, so a test can see what actually went on the
       wire (forbidden headers are invisible from the page that asked
@@ -130,6 +156,9 @@ It runs against real headless Chromium with `chrome.userScripts`,
   - `extensionId` — the deterministic ID of the unpacked extension.
   - `sm` — typed proxy over `self.SourceMonkey`; see *SW test surface*
     below. Wipes storage and unregisters userscripts at test start.
+  - `smDevMarked` — marks the browser's pages as sm-dev's for the
+    test, as a run does, so a claimed tab's `document-start` wrappers
+    ask the SW. For specs that claim tabs through `sm`.
   - `testWithBrowserDownloads` — the same fixtures, but downloads are
     left to Chrome's own download manager, landing in the
     worker-scoped `downloadsDir` (a temp directory). Playwright's
@@ -140,6 +169,10 @@ It runs against real headless Chromium with `chrome.userScripts`,
     CDP (`Browser.setDownloadBehavior: default`) and writes the
     `download.*` Preferences. The browser is shared across the worker's
     tests, so a spec cleans its own files in `beforeEach`.
+  - `testWithBackForwardCache` — the same fixtures, in a browser that
+    keeps Chrome's back/forward cache, which Playwright turns off by
+    default. Go back with `history.back()` from the page: Playwright's
+    `goBack` loses track of a page restored from the cache.
 - `extension-id.ts` — computes Chrome's deterministic
   unpacked-extension ID (SHA-256 of the path, first 16 bytes, mapped
   `0`–`f` → `a`–`p`). Needed because we have to write Preferences for
@@ -198,7 +231,7 @@ derivations still resolve correctly.
 
 ### SW test surface
 
-`src/background.ts` exposes `self.SourceMonkey` so Playwright can invoke
+`src/extension/background.ts` exposes `self.SourceMonkey` so Playwright can invoke
 SW functions via `serviceWorker.evaluate(...)`. Methods relevant to
 tests:
 
@@ -212,7 +245,8 @@ tests:
   it too, so behaviours that key off a real click (upstream version
   probes, retrying a refused registration immediately) need `'force'`.
 - Inspection: `getTabState(tabId)` returns the current badge text,
-  background color, tooltip, and the structured `TabRecord` from
+  background color, tooltip, the popup's rows with a status
+  (`rows`, as `Name | STATUS`), and the structured `TabRecord` from
   session storage. `debugMatchIndex(url)` returns the matcher cache.
   `getRejections()` returns the registrations Chrome refused on the
   last attempt — what the UI renders as REJECTED.
@@ -233,11 +267,19 @@ tests:
   sharing has no other observable signature. Both are per-JS-context and
   count *all* such reads in the worker, so reset around the window under
   test.
-- GM values: `getGmValues(id)` returns every **persisted** value for a
-  script, deliberately excluding the SW's in-flight overlay.
-  `GM_setValue` batches its write 150ms after the last one, so a test
-  waits on this rather than pausing — and because it reads only what
-  survived, a predicate that passes has passed against durable state.
+- sm-dev runs: `writeRunScript({ run, text, name?, files? })` installs text
+  into run `run`'s test collection and syncs before it resolves (a
+  rewrite of the same name replaces in place); `releaseRun(run)`
+  removes the collection. `sweepRunCollections(now)` runs the
+  crashed-run cleanup as if at `now`, past the grace period. sm-dev
+  drives these; see
+  [sm-dev-design.md](sm-dev-design.md#test-collections).
+- GM values: `getGmValues(id)` returns a script's values from the
+  worker's value store, which includes writes not yet on disk. A page
+  sends its writes a microtask after making them, so a test waits on
+  this rather than pausing. `gmValuesSaved()` resolves once every
+  write the worker has taken is on disk, for a test about durable
+  state.
 
 These mirror production functions. Two of them wait where production
 deliberately doesn't, so a test can't observe a half-written state:
@@ -328,14 +370,20 @@ fetch via the SW). Highlights:
 - `tests/e2e/gm-xhr.spec.ts` + `tests/e2e/gm-xhr-binary.spec.ts` —
   `GM_xmlhttpRequest` text + JSON, POST body, network failure,
   abort, timeout, binary types.
-- `tests/e2e/gm-connect.spec.ts` — `@connect` URL gating, including
-  the strict-by-default "no @connect → blocked" case.
+- `tests/e2e/gm-connect.spec.ts` — `@connect` URL gating: the
+  connection prompt (each answer, closing it, one prompt per host,
+  abort while it waits, its Log entries), the page's own origin and
+  relative URLs, redirects, and the Network access row's Reset
+  buttons.
 - `tests/e2e/gm-log.spec.ts` — `GM_log` prefixes log lines with the
   per-script id and forwards the rest verbatim; ungranted access is
   gated.
 - `tests/e2e/gm-open-in-tab.spec.ts` — `GM_openInTab` opens at the
   right URL, both options-object and positional call shapes work,
   `onclose` fires when the opened tab is closed.
+- `tests/e2e/gm-tab-data.spec.ts` — `GM_getTab` / `GM_saveTab` /
+  `GM_getTabs`, in both worlds: a tab's object survives a navigation,
+  a second tab is listed, and a closed tab's object goes.
 - `tests/e2e/gm-notification.spec.ts` — `GM_notification` resolves
   with a notification id; details and positional call shapes; the
   GM4 alias returns a Promise; empty `text` rejects.
@@ -358,8 +406,8 @@ fetch via the SW). Highlights:
   `@grant window.focus`: a granted `window.close()` really removes the
   tab, an ungranted one hits Chrome's refusal and leaves it open, each
   grant installs only its own override, and the page's MAIN-world
-  `window.close` / `.focus` stay native. `window.focus` is asserted by
-  its tab-selection half (a second tab is opened, then the script is
+  `window.close` / `.focus` stay native, as do a page-world sibling's.
+  `window.focus` is asserted by its tab-selection half (a second tab is opened, then the script is
   cued through the DOM to call `focus()`, and the active tab flips
   back) — the window-raising half isn't observable headlessly, since a
   headless browser reports every window as focused. Unit tests cover
@@ -368,26 +416,36 @@ fetch via the SW). Highlights:
   sibling script in the same document gets the working override.
 - `tests/e2e/gm-unsafe-window.spec.ts` — `@grant unsafeWindow` reads,
   calls, and writes real page globals; storage and XHR keep working
-  from MAIN world over the bridge; `@grant none` pages stay free of
-  `__SM_GM__`; `@inject-into content` is isolated and warns; a
-  page-forged bridge GM call for a USER_SCRIPT-world script is
-  refused; and an isolated script's cross-tab value broadcast is not
-  relayed into the page.
+  from MAIN world over the bridge; `@grant none` pages get no GM
+  runtime; `@inject-into content` is isolated and warns; a bridge GM
+  call forged for a USER_SCRIPT-world script (by a test page given the
+  channel key, `tests/fixtures/bridge-forge.ts`) is refused; and an
+  isolated script's cross-tab value broadcast is not relayed into the
+  page.
 - `tests/e2e/gm-unsafe-window-implicit.spec.ts` — `unsafeWindow` used
   with no `@grant` line for it: a `GM_*`-granting script reaches page
   globals and keeps its storage, a grant-free script gets the binding
-  without pulling `__SM_GM__` onto the page, a mention in a comment or
+  without pulling the GM runtime onto the page, a mention in a comment or
   a string leaves the script isolated, a script that declares the name
-  itself still installs `ok` (our binding would be a duplicate `const`),
-  and `@inject-into content` still wins and warns.
-- `tests/e2e/gm-main-world-surface.spec.ts` — the rest of the GM_*
-  surface from MAIN world, which every other spec exercises only in
-  USER_SCRIPT world. Two reasons a surface is in here:
-  - **It installs itself on the world's `window`**, which in MAIN is the
-    *page's*: `window.onurlchange` (the `=== null` feature test has to
-    hold, and the page can see the accessor too — pinned deliberately,
-    see TODO.md) and `window.close` / `window.focus` (the override
-    replaces the page's method, and the tab really closes).
+  itself installs `ok` and stays where its grants put it, and
+  `@inject-into content` still wins and warns.
+- `tests/e2e/wrapper-scope.spec.ts` — the user program's nested scope:
+  `const window = unsafeWindow`, redeclared `GM_*` / `unsafeWindow` /
+  `__sm*` names and a library's own `unsafeWindow` all run; a leading
+  `"use strict"` applies, at run time and in the install-time syntax
+  check; the reload swap gets the same scope.
+- `tests/e2e/sandbox-window.spec.ts` — a page-world script's sandbox
+  `window` (granted or no `@grant` line): built-ins only, page globals
+  by bare name, `in` checks, own writes and `@require` globals kept off
+  the page, bound window methods, the reload swap, and
+  the default world (`@sandbox DOM` isolates).
+- `tests/e2e/gm-main-world-surface.spec.ts` — GM_* surfaces from MAIN
+  world where the world matters. Two reasons a surface is in here:
+  - **It installs itself on a `window`**: `window.onurlchange` on the
+    *page's* (the `=== null` feature test has to hold, and the page can
+    see the accessor too — pinned deliberately, see TODO.md) and
+    `window.close` / `window.focus` on the script's sandbox (the tab
+    really closes).
   - **It depends on an unprompted SW push**, which MAIN world can only
     receive via `wrapper-bridge.js` re-posting it: `sm:url-change`,
     `sm:gm-value-update` (cross-tab listener), `sm:gm-menu-fire`,
@@ -398,7 +456,7 @@ fetch via the SW). Highlights:
     and `sm:gm-download-event` (needs a real download).
 
 The other direction — page→SW requests, which ride a
-`sourcemonkey-bridge-sync` DOM event — is pinned in two places:
+`sourcemonkey-sync-<key>` DOM event — is pinned in two places:
 
 - `tests/unit/injector.test.mjs` drives the bridge source in a fake DOM
   and covers the reply path (the SW's answer relayed back on the
@@ -437,12 +495,12 @@ files into TM/VM, hit the same URLs, compare outcomes).
   alongside the main `tests/e2e/` suite. Specs cover the same
   ground as the targeted GM_* specs above but through the public,
   installable userscript surface.
-- Userscripts `@match *://*/<api>/page.html` so the same patterns
+- Userscripts `@match *://*/*<api>/page.html` so the same patterns
   work whether served at `${fixtureServer.baseUrl}` (random port) or
   by a developer's local `http-server`.
 - A directory may also hold **multiple** sibling userscripts for
   header-variation pages (`headers-run-at/` runs one per value;
-  `xmlhttp-denied/` runs one per `@connect` configuration). All
+  `xmlhttp-connect/` runs one per `@connect` configuration). All
   variants share the same `<dir>.html` and the spec asserts on the
   cross-variant outcomes side-by-side.
 
@@ -476,11 +534,13 @@ files into TM/VM, hit the same URLs, compare outcomes).
   resolution but Chrome's notification UI is suppressed in
   headless, so we can't drive a click; the unit test covers the
   page-side dispatcher logic instead.
-- Real Chrome action context menu click-through for
-  `GM_registerMenuCommand` — Playwright can't drive the toolbar
-  right-click menu, so the SW exposes
-  `getActionContextMenu` + `fireActionContextMenuItem` and
-  `tests/e2e/gm-menu.spec.ts` covers the round-trip through them.
-  The real UI render is exercised manually.
+- A real click on the toolbar icon — Playwright can't click it, so
+  the SW exposes `clickAction`, and `tests/e2e/popup.spec.ts` opens
+  `popup.html?tab=<id>` in a plain tab. That `openPopup` really opens
+  the popup is checked through `chrome.runtime.getContexts`.
+  - Chrome taking a second click on the icon is stood in for by
+    closing the real popup over CDP (`Target.closeTarget`), or by
+    `closePopup`, which has it close as after an action.
+  - Chrome dropping an open still under way can't be brought about.
 - `GM_cookie` and other catalog entries that remain stubbed as
   not-implemented.

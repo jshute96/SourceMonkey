@@ -1,4 +1,4 @@
-// Tests for the rate-limit + concurrency gate in src/script-updater.ts.
+// Tests for the rate-limit + concurrency gate in src/extension/script-updater.ts.
 // We cover the gate() helper directly so we don't have to stub the
 // chrome.storage path the public updateScript / updateCollection /
 // updateAllCollections wrappers go through.
@@ -10,7 +10,7 @@ import {
   UPDATE_MIN_INTERVAL_MS,
   _setNowForTests,
   gate,
-} from '../../dist/script-updater.js';
+} from '../../dist/extension/script-updater.js';
 
 // Tiny helper: a Promise the test resolves manually so we can control
 // when "the fetch finishes" without real I/O.
@@ -103,6 +103,23 @@ test('gate: concurrent callers share the in-flight promise (single fetch)', asyn
   assert.equal(r3, 'shared');
 });
 
+test('gate: an own call waits for the running check, then runs, and later callers join it', async () => {
+  freezeTime(1000);
+  const state = new Map();
+  const first = defer();
+  const second = defer();
+  let calls = 0;
+  const p1 = gate(state, 'a', 'manual', async () => { calls++; return first.promise; }, 'skipped');
+  const p2 = gate(state, 'a', 'manual', async () => { calls++; return second.promise; }, 'skipped', 'a', true);
+  const p3 = gate(state, 'a', 'opportunistic', async () => { calls++; return 'unused'; }, 'skipped');
+  first.resolve('first');
+  assert.equal(await p1, 'first');
+  second.resolve('own');
+  assert.equal(await p2, 'own', 'its own run, not the running one');
+  assert.equal(await p3, 'own', 'joined the own run');
+  assert.equal(calls, 2);
+});
+
 test('gate: different keys run independently', async () => {
   freezeTime(1000);
   const state = new Map();
@@ -155,11 +172,12 @@ globalThis.chrome = globalThis.chrome ?? {
         if (key === null || key === undefined) {
           return Object.fromEntries(localStore);
         }
-        if (typeof key === 'string') {
-          return localStore.has(key) ? { [key]: localStore.get(key) } : {};
-        }
-        return {};
+        const keys = Array.isArray(key) ? key : [key];
+        const out = {};
+        for (const k of keys) if (localStore.has(k)) out[k] = localStore.get(k);
+        return out;
       },
+      getKeys: async () => [...localStore.keys()],
       set: async (obj) => { for (const [k, v] of Object.entries(obj)) localStore.set(k, v); },
     },
     session: {
@@ -186,14 +204,14 @@ const {
   replayScriptLogsAtBoot,
   emitScriptOutcomeLog,
   summarizeCollectionOutcome,
-} = await import('../../dist/script-updater.js');
+} = await import('../../dist/extension/script-updater.js');
 const {
   appendScriptLog,
   clearScriptLog,
   getMaxLogLevel,
   getScriptLog,
   _flushScriptLogQueueForTests,
-} = await import('../../dist/script-log.js');
+} = await import('../../dist/extension/script-log.js');
 
 function seedScript({ scriptId, collectionId = 'src-x', startupLogs, ...overrides }) {
   // replayScriptLogsAtBoot reads via getAllScripts (one storage.local
@@ -219,7 +237,7 @@ async function seedSingleScriptThenReplay(scriptId = 'sc-1') {
   sessionStore.clear();
   seedScript({
     scriptId,
-    startupLogs: [{ level: 'warn', message: 'Ignoring @grant GM_audio — unsupported APIs' }],
+    startupLogs: [{ level: 'warn', message: 'Ignoring unsupported @grant GM_audio' }],
   });
   await replayScriptLogsAtBoot();
   await _flushScriptLogQueueForTests(scriptId);
@@ -266,13 +284,13 @@ test('replayScriptLogsAtBoot: replays diagnostics even if a refresh got there fi
   sessionStore.clear();
   seedScript({
     scriptId: 'sc-race',
-    startupLogs: [{ level: 'warn', message: 'Ignoring @grant GM_audio — unsupported APIs' }],
+    startupLogs: [{ level: 'warn', message: 'Ignoring unsupported @grant GM_audio' }],
   });
   // Pre-seed the log with what a refresh path would have written.
-  await (await import('../../dist/script-log.js')).appendScriptLog('sc-race', {
+  await (await import('../../dist/extension/script-log.js')).appendScriptLog('sc-race', {
     level: 'warning',
     source: 'parser',
-    message: 'Ignoring @grant GM_audio — unsupported APIs',
+    message: 'Ignoring unsupported @grant GM_audio',
   });
   await replayScriptLogsAtBoot();
   await _flushScriptLogQueueForTests('sc-race');
@@ -423,7 +441,7 @@ async function framing(prior, next, mode = 'manual') {
 }
 
 test('framing: an uneventful check is a single self-describing row', async () => {
-  assert.deepEqual(await framing(OK_ROW, OK_ROW), ['Checked for updates — no change']);
+  assert.deepEqual(await framing(OK_ROW, OK_ROW), ['Checked for updates and found no change']);
 });
 
 test('framing: an uneventful background check says nothing at all', async () => {
@@ -464,6 +482,22 @@ test('framing: new content is announced, then reported', async () => {
   assert.match(log[1], /^Loaded new content/);
 });
 
+test('framing: a dependency-only change says so, without the size, and restates the header warnings', async () => {
+  // The script's own file is unchanged (same contentHash); only a
+  // `@require` moved its `loadedAt`. Its size is the same, so it isn't
+  // restated. Its header warnings are, since the new-content line
+  // starts the badge over and they still hold.
+  const warned = {
+    ...OK_ROW, contentHash: 'h1',
+    startupLogs: [{ level: 'warn', message: 'header warning' }],
+  };
+  const fresh = { ...warned, loadedAt: OK_ROW.loadedAt + 1 };
+  assert.deepEqual(
+    await framing(warned, fresh),
+    ['Checking for updates', 'Loaded new content for its @require or @resource files', 'header warning'],
+  );
+});
+
 test('emitScriptOutcomeLog: a manual no-change check restates parse-time diagnostics', async () => {
   // A parse-time warning is a property of the installed content, not an
   // event: it stays true until the content changes. Logging it only on
@@ -477,7 +511,7 @@ test('emitScriptOutcomeLog: a manual no-change check restates parse-time diagnos
   };
   const log = await emitAll([[warned, warned]]);
   assert.deepEqual(log.map((e) => e.message), [
-    'Checked for updates — no change',
+    'Checked for updates and found no change',
     'unsafeWindow cannot reach the page',
   ]);
   assert.equal(log[1].level, 'warning');
@@ -513,7 +547,7 @@ test('emitScriptOutcomeLog: a still-failing check reports, like a healthy one do
   const healthy = await emitAll([[OK_ROW, OK_ROW]]);
   const broken = await emitAll([[bad, bad]]);
   assert.equal(healthy.length, 1);
-  assert.equal(healthy[0].message, 'Checked for updates — no change');
+  assert.equal(healthy[0].message, 'Checked for updates and found no change');
   assert.equal(broken.length, 1, 'a broken script must not go quiet');
   assert.equal(broken[0].message, 'no metadata block');
 });
@@ -684,7 +718,7 @@ test('summarizeCollectionOutcome: a readable-again collection logs the recovery'
   );
   assert.deepEqual(log.map((e) => e.message), [
     'This collection is readable again',
-    'Checked for updates — no change',
+    'Checked for updates and found no change',
   ]);
   assert.equal(log[0].level, 'info');
 });
@@ -701,7 +735,7 @@ test('summarizeCollectionOutcome: a broad refresh frames each script for itself'
     [healthy, broken],
     { collection: COLLECTION_OK, scripts: [healthy, broken] },
   );
-  assert.deepEqual(healthyLog.map((e) => e.message), ['Checked for updates — no change']);
+  assert.deepEqual(healthyLog.map((e) => e.message), ['Checked for updates and found no change']);
   assert.deepEqual(
     brokenLog.map((e) => e.message),
     ['Checking for updates', 'no metadata block'],

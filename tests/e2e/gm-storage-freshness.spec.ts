@@ -4,9 +4,8 @@
 // snapshot the SW attaches to the `sm:check-pending` reply. These
 // tests verify that the snapshot is current: a write made in one
 // document is visible to any subsequent document (same tab after
-// navigation, fresh tab, write-then-immediate-navigate within the
-// 150 ms debounce, multi-key burst, concurrent writes from two
-// tabs, pagehide-only flush).
+// navigation, fresh tab, write-then-immediate-navigate, multi-key
+// burst, concurrent writes from two tabs, write-then-close).
 //
 // Each test asserts the value seen by the script's FIRST GM_getValue
 // call (the `data-sm-initial` attribute), captured before any post-load
@@ -47,8 +46,8 @@ test.describe('GM_* storage freshness across documents', () => {
   `;
 
   // The probe reports the value as soon as it writes it, but the write
-  // itself is batched 150ms later — so the navigation below would race
-  // it without this.
+  // reaches the worker a message later — so the navigation below would
+  // race it without this.
   async function waitForShared(sm: SmApi, expected: string): Promise<void> {
     await waitForGmValues(sm, (values) => values.shared === expected, `shared = ${expected}`);
   }
@@ -110,7 +109,7 @@ test.describe('GM_* storage freshness across documents', () => {
     await pageB.close();
   });
 
-  test('write-then-immediate-navigate within debounce: new doc still sees the value', async ({
+  test('write-then-immediate-navigate: new doc still sees the value', async ({
     extensionContext, fixtureServer, sm,
   }) => {
     writeProbe(fixtureServer.baseUrl);
@@ -121,14 +120,10 @@ test.describe('GM_* storage freshness across documents', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page.locator('body')).toHaveAttribute('data-sm-initial', '_NONE_');
 
-    // Write and navigate without waiting for the 150ms debounce. The
-    // pagehide handler force-flushes, but chrome.storage.local.set is
-    // async; depending on machine speed the persist may or may not
-    // have landed by the time the new doc requests its snapshot. The
-    // assertion just checks the end result — we want the value to
-    // surface either via the in-flight overlay or via the freshly-
-    // persisted row. Either path keeps the user-visible behavior
-    // correct, so we don't try to distinguish them here.
+    // Write and navigate without waiting for the worker to have the
+    // write. It leaves the page a microtask after it's made, and the
+    // worker's value store has it from then on, whether or not it's on
+    // disk yet, so the new document's snapshot includes it.
     await page.evaluate(() => { document.body.dataset.smCmd = 'set:fromA'; });
     await expect(page.locator('body')).toHaveAttribute('data-sm-value', 'fromA');
     await page.goto(`${fixtureServer.baseUrl}/target.html?n=race`);
@@ -141,9 +136,9 @@ test.describe('GM_* storage freshness across documents', () => {
   // accepts a `;`-separated burst of `set:key=value` ops in
   // dataset.smCmd, and reflects the full GM_listValues / GM_getValue
   // snapshot as a JSON string in dataset.smInitial / dataset.smState.
-  // The whole burst is applied inside a single polling tick, so the
-  // batched-write debounce sees one queue of writes — closer to a
-  // real script's GM_setValue spree than three separate cmds.
+  // The whole burst is applied inside a single polling tick, so it
+  // goes to the worker as one batch — closer to a real script's
+  // GM_setValue spree than three separate cmds.
   const multiProbeBody = `
     const snapshot = () => {
       const keys = GM_listValues();
@@ -183,7 +178,7 @@ test.describe('GM_* storage freshness across documents', () => {
   }
 
   // T1. Verifies the whole batch survives even when navigation
-  // happens before the debounce fires — a regression where, say,
+  // follows straight after it — a regression where, say,
   // only the last write in the queue made it across would pass
   // the single-key freshness tests above but fail here.
   test('multi-key burst survives an immediate navigation', async ({
@@ -205,7 +200,7 @@ test.describe('GM_* storage freshness across documents', () => {
     // Wait until the burst has been applied locally — `data-sm-state`
     // is the in-page snapshot rebuilt every 50ms.
     await expect(page.locator('body')).toHaveAttribute('data-sm-state', /v3/);
-    // Navigate immediately, no debounce wait.
+    // Navigate immediately, without waiting for the worker.
     await page.goto(`${fixtureServer.baseUrl}/target.html?n=2`);
     const initial = await page.locator('body').getAttribute('data-sm-initial');
     expect(JSON.parse(initial ?? '')).toEqual({ k1: 'v1', k2: 'v2', k3: 'v3' });
@@ -257,10 +252,10 @@ test.describe('GM_* storage freshness across documents', () => {
     await pageC.close();
   });
 
-  // T3. Pagehide-only path: the tab is closed before the 150ms
-  // debounce would have fired. The runtime's pagehide / visibility-
-  // hidden handler must force-flush so the write isn't lost across
-  // the close. A fresh tab opened after the close reads the value.
+  // T3. Write then close: the tab is closed straight after the write,
+  // which has to leave the page before the document goes (sent from a
+  // microtask, or by the pagehide / visibility-hidden handler if still
+  // queued). A fresh tab opened after the close reads the value.
   test('write then close tab without navigating; fresh tab still sees the value', async ({
     extensionContext, fixtureServer, sm,
   }) => {
@@ -273,8 +268,7 @@ test.describe('GM_* storage freshness across documents', () => {
     await expect(pageA.locator('body')).toHaveAttribute('data-sm-initial', '{}');
     await pageA.evaluate(() => { document.body.dataset.smCmd = 'set:k=closedWrite'; });
     await expect(pageA.locator('body')).toHaveAttribute('data-sm-state', /closedWrite/);
-    // Close BEFORE the 150ms debounce: only the pagehide /
-    // visibilitychange flush can save the write.
+    // Close straight after the write, without waiting for the worker.
     await pageA.close();
 
     const pageB = await extensionContext.newPage();
@@ -286,14 +280,12 @@ test.describe('GM_* storage freshness across documents', () => {
 
   // T4. SW-failure path. The wrapper expects the SW to attach a
   // gmValues snapshot to the sm:check-pending reply for any
-  // storage-granting script. When it's missing (SW unreachable past
-  // the 2 s safety timer, or the snapshot read threw on the SW
-  // side), the prelude must hard-abort rather than running the body
-  // with empty storage. The debug knob
+  // storage-granting script. When it's missing (the snapshot read
+  // threw on the SW side), the prelude must hard-abort rather than
+  // running the body with empty storage. The debug knob
   // `setDebugForceSnapshotFailure` makes `loadSnapshotForCheckPending`
-  // throw, which causes the message handler to reply
-  // `{action: "run"}` with no `gmValues` — exactly the failure
-  // shape we want to verify.
+  // throw, so the message handler replies with its decision (`run`)
+  // and no `gmValues`: exactly the failure shape we want to verify.
   test('SW snapshot unavailable: storage-granting script aborts cleanly', async ({
     extensionContext, fixtureServer, sm,
   }) => {

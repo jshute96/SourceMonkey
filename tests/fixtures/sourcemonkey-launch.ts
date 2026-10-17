@@ -1,78 +1,43 @@
-// Shared helpers for launching a Chromium with the unpacked SourceMonkey
-// extension loaded. Used by both `extension.ts` (the SM-only e2e fixture)
-// and `manager.ts` (the manager-agnostic examples fixture, on its SM
-// branch). Keeping the launch path in one place so the examples suite
-// under SM runs in the same environment as the main e2e suite.
+// Shared helpers for the suites that run SourceMonkey: launching
+// Chromium with the unpacked extension, finding its service worker, and
+// the HTTP fixture server. Used by `extension.ts` (the SM-only e2e
+// fixture) and `manager.ts` (the examples fixture, on its SM branch).
+// The launch itself is sm-dev's (src/harness/extension-launch.ts), so
+// the suites, sm-dev and the consumer fixture run the same browser.
 
-import { chromium, type BrowserContext, type Worker } from '@playwright/test';
+import { type BrowserContext, type Worker } from '@playwright/test';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { handleSlowRoute, serveStaticFile } from './slow-route.mjs';
+import { launchExtensionBrowser } from '../../lib/harness/extension-launch.js';
 
 export interface LaunchedSmContext {
   ctx: BrowserContext;
-  /** Removes the on-disk user-data-dir. Best-effort — Chrome may still hold a lock briefly. */
-  cleanup(): void;
+  /** Closes the browser and removes its profile. */
+  close(): Promise<void>;
 }
 
 /**
- * Launch a fresh persistent Chromium with the unpacked SM extension.
- * Writes a Preferences file pre-launch to grant the per-extension
- * `user_scripts_enabled` toggle (Chrome ≥138 gates `chrome.userScripts`
- * behind it). Optionally wires `SM_FORWARD_SW_CONSOLE` so SW
- * `console.log` lines stream to test stderr.
- *
- * **The `extensionId` must match the ID Chrome actually uses for the
- * unpacked extension.** Our `src/manifest.json` has a `"key"` field,
- * so Chrome derives the ID from the key bytes rather than the
- * filesystem path. Use `extensionIdFromPath()` from `extension-id.ts`
- * — it reads the manifest and picks the right derivation. Writing to
- * the wrong ID silently no-ops: `chrome.userScripts` ends up
- * undefined and every userscript registration is dropped.
+ * Launch a fresh hidden Chromium with the unpacked SM extension, "Allow
+ * User Scripts" granted and first run done (see extension-launch.ts).
+ * Optionally wires `SM_FORWARD_SW_CONSOLE` so SW `console.log` lines
+ * stream to test stderr.
  */
 export async function launchSourceMonkeyContext(opts: {
-  extensionPath: string;
-  extensionId: string;
   // Leave downloads to Chrome itself, landing in this directory, instead
-  // of Playwright's interception. Playwright normally tells Chromium to
-  // save every download under a GUID name in its own temp dir (CDP
-  // `Browser.setDownloadBehavior: allowAndName`), which is what makes
-  // `page.waitForEvent('download')` work — but it also hides the real
-  // file name and location from `chrome.downloads`, which the local-copy
-  // feature depends on. With this set, Chrome's own download manager
-  // runs, honouring the `download.*` Preferences written here.
+  // of Playwright's interception, which hides the real file name and
+  // location from `chrome.downloads`, which the local-copy feature
+  // depends on.
   downloads?: { dir: string };
-}): Promise<LaunchedSmContext> {
-  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sourcemonkey-test-'));
-  writeExtensionPreferences(userDataDir, opts.extensionId, opts.downloads);
-
-  const ctx = await chromium.launchPersistentContext(userDataDir, {
-    // Extensions require Chrome's new headless mode (--headless=new,
-    // available since Chrome 112). We set headless: false so Playwright
-    // doesn't inject its own --headless flag, then pass --headless=new
-    // ourselves. This avoids a visible window that steals focus.
-    headless: false,
-    args: [
-      '--headless=new',
-      `--disable-extensions-except=${opts.extensionPath}`,
-      `--load-extension=${opts.extensionPath}`,
-    ],
+  // Keep Chrome's back/forward cache, which Playwright turns off.
+  backForwardCache?: boolean;
+} = {}): Promise<LaunchedSmContext> {
+  const launched = await launchExtensionBrowser({
+    downloadsDir: opts.downloads?.dir,
+    backForwardCache: opts.backForwardCache,
   });
-
-  if (opts.downloads) {
-    // Playwright has already told Chromium to intercept downloads
-    // (`allowAndName` into its artifacts dir) as part of creating the
-    // context, and its public options offer no way to opt out. Undo
-    // it over CDP: `default` hands download handling back to Chrome,
-    // which then follows the `download.*` Preferences written above.
-    const page = await ctx.newPage();
-    const cdp = await ctx.newCDPSession(page);
-    await cdp.send('Browser.setDownloadBehavior', { behavior: 'default' });
-    await cdp.detach();
-    await page.close();
-  }
+  const ctx = launched.context;
 
   if (process.env.SM_FORWARD_SW_CONSOLE === '1') {
     const wireUp = (sw: Worker): void => {
@@ -84,29 +49,7 @@ export async function launchSourceMonkeyContext(opts: {
     ctx.on('serviceworker', wireUp);
   }
 
-  // Suppress first-run default-collection seeding in tests. The SW opens a
-  // `collections.html?first_run` tab on install and that page seeds the
-  // defaults over the network (GitHub) — flaky and slow in a test run.
-  // Pre-setting the flag makes the SW skip the open and any seeding page
-  // skip the network add. (Key mirrors FIRST_RUN_DONE_KEY in
-  // script-store.ts.) Best-effort: this can lose the race against the
-  // SW's onInstalled('install') if that fires before the evaluate lands,
-  // but seeding is also gated on the `?first_run` param (only that tab
-  // carries it) and `resetAllState` re-marks the flag beforeEach, so a
-  // stray seed can't pollute a test's own page state.
-  try {
-    const sw = await makeGetServiceWorker(ctx)();
-    await sw.evaluate(() => chrome.storage.local.set({ firstRunComplete: true }));
-  } catch {
-    /* SW not reachable yet; the sm fixture's resetAllState also sets it */
-  }
-
-  return {
-    ctx,
-    cleanup: () => {
-      try { fs.rmSync(userDataDir, { recursive: true, force: true }); } catch {}
-    },
-  };
+  return { ctx, close: launched.close };
 }
 
 /**
@@ -166,39 +109,6 @@ export function makeGetServiceWorker(ctx: BrowserContext): () => Promise<Worker>
   };
 }
 
-// Pre-seed the Chrome profile so the unpacked extension at our known
-// ID is granted the per-extension toggles that headless test runs
-// can't click. Today this is just `user_scripts_enabled`, but the
-// same Preferences file is the right place for future per-extension
-// toggles. Keys observed by reading what Chrome itself writes after
-// a user flips the toggle in the UI.
-function writeExtensionPreferences(
-  userDataDir: string,
-  extensionId: string,
-  downloads?: { dir: string },
-): void {
-  const defaultDir = path.join(userDataDir, 'Default');
-  fs.mkdirSync(defaultDir, { recursive: true });
-  const prefs: Record<string, unknown> = {
-    extensions: {
-      settings: {
-        [extensionId]: { user_scripts_enabled: true },
-      },
-    },
-  };
-  if (downloads) {
-    // The same keys Chrome writes when the download location is changed
-    // in its settings UI. `directory_upgrade` marks the directory as
-    // user-chosen, so Chrome doesn't fall back to its platform default.
-    prefs.download = {
-      default_directory: downloads.dir,
-      directory_upgrade: true,
-      prompt_for_download: false,
-    };
-  }
-  fs.writeFileSync(path.join(defaultDir, 'Preferences'), JSON.stringify(prefs));
-}
-
 // ----- HTTP fixture server -----
 
 export interface FixtureServer {
@@ -248,6 +158,43 @@ export async function createFixtureServer(pagesDir: string, examplesDir: string)
         const delay = Number.isFinite(rawDelay) ? Math.max(0, Math.min(5000, rawDelay)) : 0;
         if (delay > 0) setTimeout(send, delay);
         else send();
+        return;
+      }
+      // `/__sandbox/<page>` serves a fixture page with a CSP `sandbox`
+      // header, which a <meta> CSP can't set. See sandbox-csp.spec.ts.
+      if (url.pathname.startsWith('/__sandbox/')) {
+        res.setHeader('Content-Security-Policy', 'sandbox');
+        if (serveStaticFile(res, pagesDir, url.pathname.slice('/__sandbox/'.length))) return;
+        res.removeHeader('Content-Security-Policy');
+        res.statusCode = 404;
+        res.end();
+        return;
+      }
+      // `/__attachment/<name>` is a small text file the browser saves as
+      // `<name>` rather than showing, for download tests.
+      if (url.pathname.startsWith('/__attachment/')) {
+        const name = path.basename(url.pathname);
+        res.writeHead(200, { 'Content-Type': 'text/plain', 'Content-Disposition': `attachment; filename="${name}"` });
+        res.end(`attachment ${name}`);
+        return;
+      }
+      // `/__slowbody/<page>?ms=N` sends the headers at once and the
+      // page's bytes N ms later, so the browser has made the new
+      // document well before the parser can create <html>. Clamped
+      // like `/__slow/`'s ms.
+      if (url.pathname.startsWith('/__slowbody/')) {
+        const raw = Number(url.searchParams.get('ms') ?? '0');
+        const ms = Number.isFinite(raw) ? Math.max(0, Math.min(5000, raw)) : 0;
+        const file = path.join(pagesDir, url.pathname.slice('/__slowbody/'.length));
+        const rel = path.relative(pagesDir, file);
+        if (rel.startsWith('..') || path.isAbsolute(rel) || !fs.existsSync(file)) {
+          res.statusCode = 404;
+          res.end();
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+        res.flushHeaders();
+        setTimeout(() => res.end(fs.readFileSync(file)), ms);
         return;
       }
       const name = url.pathname.replace(/^\//, '') || 'index.html';

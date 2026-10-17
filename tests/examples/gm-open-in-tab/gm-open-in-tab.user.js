@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name        SourceMonkey example: GM_openInTab
+// @name        SourceMonkey example: gm-open-in-tab: GM_openInTab
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.0
+// @version     1.0.2
 // @description Open new tabs via every GM_openInTab call shape.
-// @match       *://*/gm-open-in-tab/gm-open-in-tab.html
+// @match       *://*/*gm-open-in-tab/gm-open-in-tab.html
 // @match       file:///*/gm-open-in-tab/gm-open-in-tab.html
 // @run-at      document-end
 // @grant       GM_openInTab

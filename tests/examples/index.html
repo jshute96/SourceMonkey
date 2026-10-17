@@ -60,6 +60,10 @@
         positional call shapes.
       </li>
       <li>
+        <a href="gm-tab/gm-tab.html">GM_getTab / GM_saveTab / GM_getTabs</a>
+        &mdash; an object per tab that lasts while the tab is open.
+      </li>
+      <li>
         <a href="gm-notification/gm-notification.html">GM_notification</a>
         &mdash; click-driven examples of every call shape.
       </li>
@@ -71,8 +75,8 @@
       </li>
       <li>
         <a href="gm-menu/gm-menu.html">GM_registerMenuCommand</a>
-        &mdash; add and remove entries in the toolbar icon&rsquo;s
-        right-click menu, surfaced indented under each script.
+        &mdash; add and remove entries in the manager&rsquo;s toolbar
+        popup, listed under each script.
       </li>
       <li>
         <a href="gm-resource/gm-resource.html">GM_getResourceText / GM_getResourceURL</a>
@@ -98,15 +102,38 @@
         <code>unsafeWindow</code> but uses it anyway.
       </li>
       <li>
+        <a href="frames/frames.html">Iframes and @noframes</a>:
+        scripts running in a page&rsquo;s same- and cross-origin
+        frames, one kept to the top frame, sharing a counter.
+      </li>
+      <li>
         <a href="headers-run-at/headers-run-at.html">@run-at</a>
         &mdash; one userscript per value (<code>document-start</code> /
         <code>-end</code> / <code>-idle</code>) running on the same page.
+      </li>
+      <li>
+        <a href="run-at-context-menu/run-at-context-menu.html">@run-at context-menu</a>
+        &mdash; a script that runs only when asked, once per request.
       </li>
       <li>
         <a href="headers-inject-into/headers-inject-into.html">@inject-into</a>
         &mdash; MAIN world (<code>page</code>) vs isolated USER_SCRIPT world
         (<code>content</code>), showing what each one can and can&rsquo;t see
         of the page&rsquo;s globals.
+      </li>
+      <li>
+        <a href="headers-match-hash/headers-match-hash.html#part">#hash in matching</a>:
+        which <code>@match</code> / <code>@include</code> / <code>@exclude</code>
+        variants run on a URL with a fragment.
+      </li>
+      <li>
+        <a href="headers-include-regex/headers-include-regex.html">regex @include</a>:
+        slashes, flags and case in a <code>/.../</code> rule.
+      </li>
+      <li>
+        <a href="use-strict/use-strict.html">top-level 'use strict'</a>:
+        whether a <code>'use strict'</code> right after the metadata
+        block puts the whole script in strict mode.
       </li>
       <li>
         <a href="require-scope/require-scope.html">@require scope</a>
@@ -116,10 +143,10 @@
         without leaking onto the page&rsquo;s globals.
       </li>
       <li>
-        <a href="xmlhttp-denied/xmlhttp-denied.html">@connect denial (negative cases)</a>
-        &mdash; scripts with no <code>@connect</code>, a mismatched host, and an
-        explicit allow all firing <code>GM_xmlhttpRequest</code> at the same
-        URL to show blocked-vs-allowed outcomes.
+        <a href="xmlhttp-connect/xmlhttp-connect.html">@connect</a>
+        &mdash; scripts declaring no <code>@connect</code>, one site, and
+        <code>*</code>, with buttons to send <code>GM_xmlhttpRequest</code>
+        to several sites and try each answer to the permission prompt.
       </li>
     </ul>
   </main>

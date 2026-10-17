@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name        SourceMonkey example: @require in the page (MAIN) world
+// @name        SourceMonkey example: require-scope: @require in the page (MAIN) world
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.0
+// @version     1.0.2
 // @description A @require'd library's top-level class/const/function reach a MAIN-world script.
-// @match       *://*/require-scope/require-scope.html
+// @match       *://*/*require-scope/require-scope.html
 // @match       file:///*/require-scope/require-scope.html
 // @run-at      document-end
 // @inject-into page

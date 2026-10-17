@@ -79,6 +79,28 @@ test.describe('update probes', () => {
     expect(script.headerText).toContain('@version     1.0');
   });
 
+  test('an install from the preview checks for a newer version without a Refresh', async ({
+    sm, extensionContext, extensionId,
+  }) => {
+    server.setRoute('/thing.meta.js', metaBlock('2.0'));
+    server.setRoute('/thing.user.js', versionedScript({
+      version: '1.0',
+      updateUrl: `${server.baseUrl}/thing.meta.js`,
+    }));
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`${server.baseUrl}/thing.user.js`)}`);
+    await page.locator('#install-btn').click();
+    await page.waitForURL(/[?&]script=/);
+
+    const probes = async () => {
+      const [collection] = await sm.getCollections();
+      return (await sm.getCollectionWithScripts(collection.id))!.scripts[0]?.versionProbes ?? [];
+    };
+    await expect.poll(probes).toHaveLength(1);
+    expect((await probes())[0]).toMatchObject({ kinds: ['update'], version: '2.0' });
+    await page.close();
+  });
+
   test('the installed copy is never updated from the probed URL', async ({ sm }) => {
     // @downloadURL points at a *different* body. Honoring it would move
     // the update channel to an origin the user never approved, so the
@@ -191,7 +213,7 @@ test.describe('update probes', () => {
     expect(restated).toHaveLength(1);
     expect(restated[0]).toMatchObject({
       state: 'outdated',
-      message: `Newer version 2.0 at update URL (running 1.0) — ${server.baseUrl}/thing.meta.js`,
+      message: `Newer version 2.0 at update URL (running 1.0): ${server.baseUrl}/thing.meta.js`,
     });
   });
 
@@ -525,7 +547,7 @@ test.describe('update probes', () => {
   // Both halves are asserted together on purpose. The suppression is
   // only correct if it is narrow, and "we stopped re-registering" is a
   // bug, not a fix, if a real edit stops re-registering too.
-  test('a probe-only write does not re-register, but a body change still does', async ({ sm, getServiceWorker }) => {
+  test('a probe-only or verdict-only write does not re-register, but a body change still does', async ({ sm, getServiceWorker }) => {
     server.setRoute('/thing.user.js', versionedScript({ version: '1.0' }));
     const collection = await sm.addCollection(`${server.baseUrl}/thing.user.js`);
     await sm.syncNow();
@@ -561,7 +583,7 @@ test.describe('update probes', () => {
       const key = `script:${id}`;
       const got = await chrome.storage.local.get(key);
       const row = got[key] as Record<string, unknown>;
-      await chrome.storage.local.set({
+      await (self as unknown as { SourceMonkey: { seedStorage(items: Record<string, unknown>): Promise<void> } }).SourceMonkey.seedStorage({
         [key]: {
           ...row,
           versionProbes: [{
@@ -574,14 +596,28 @@ test.describe('update probes', () => {
     await settle();
     expect(await regCalls()).toBe(0);
 
+    // The parse check's passing verdict landing on its own, the write
+    // that follows a deferred check: no sync either.
+    await sw.evaluate(async (id: string) => {
+      const key = `script:${id}`;
+      const got = await chrome.storage.local.get(key);
+      const row = got[key] as Record<string, unknown>;
+      await (self as unknown as { SourceMonkey: { seedStorage(items: Record<string, unknown>): Promise<void> } }).SourceMonkey.seedStorage({
+        [key]: { ...row, parseCheckedHash: 'verdict-key' },
+      });
+    }, scriptId);
+    await settle();
+    expect(await regCalls()).toBe(0);
+
     // Same row, real content change: this one has to reach Chrome, or
     // the page keeps running the old body.
     await sw.evaluate(async (id: string) => {
       const key = `script:${id}`;
       const got = await chrome.storage.local.get(key);
       const row = got[key] as Record<string, unknown>;
-      await chrome.storage.local.set({
-        [key]: { ...row, bodyText: 'console.log("edited");', contentHash: 'changed' },
+      await (self as unknown as { SourceMonkey: { seedStorage(items: Record<string, unknown>): Promise<void> } }).SourceMonkey.seedStorage({
+        // An inline body, which reads as it is in place of the row's blob.
+        [key]: { ...row, bodyBlobRef: undefined, bodyText: 'console.log("edited");', contentHash: 'changed' },
       });
     }, scriptId);
     await settle();

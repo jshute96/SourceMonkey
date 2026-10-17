@@ -22,18 +22,39 @@ export function _setDebugLoggingForTests(value: boolean): void {
   enabled = value;
 }
 
-export async function loadDebugLoggingFlag(): Promise<void> {
-  try {
-    const got = await chrome.storage.local.get(DEBUG_LOGGING_KEY);
-    enabled = got[DEBUG_LOGGING_KEY] === true;
-  } catch {
-    enabled = false;
-  }
+// Settles once the setting has been read in this context.
+let loading: Promise<void> | null = null;
+let loaded = false;
+
+export function loadDebugLoggingFlag(): Promise<void> {
+  loading = (async () => {
+    try {
+      const got = await chrome.storage.local.get(DEBUG_LOGGING_KEY);
+      enabled = got[DEBUG_LOGGING_KEY] === true;
+    } catch {
+      enabled = false;
+    }
+    loaded = true;
+  })();
+  return loading;
 }
 
-// Idempotent, matching `match-index.ts`'s storage listener. Three
-// contexts install this now (worker, collections page, options page)
-// and a context that called twice would double every flag update.
+// Whether the setting is still being read: a line about work done before
+// then can wait for `debugLoggingSettled` rather than be dropped.
+export function debugLoggingPending(): boolean {
+  return loading !== null && !loaded;
+}
+
+// Whether debug logging is on, once the setting has been read (at once
+// in a context that never reads it).
+export async function debugLoggingSettled(): Promise<boolean> {
+  await loading;
+  return enabled;
+}
+
+// Idempotent, matching `match-index.ts`'s storage listener. Several
+// contexts install this (the worker and the extension pages), and a
+// context that called twice would double every flag update.
 let listenerInstalled = false;
 
 export function installDebugLoggingListener(): void {

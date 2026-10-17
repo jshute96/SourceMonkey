@@ -6,6 +6,7 @@
 // reload that follows runs the new body without racing anything and
 // without a second reload. See docs/updates.md#focus-triggered-refresh.
 
+import type { BrowserContext, Page } from '@playwright/test';
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 import { UserscriptServer } from '../fixtures/userscript-server';
@@ -13,6 +14,19 @@ import { waitForTabState, activeTabId, hasBadgeColor } from '../fixtures/sw-api'
 
 const GREEN = '#2e7d32';
 const PURPLE = '#d500f9';
+
+// A tab to switch away to. It stays on `about:blank` on purpose: any
+// page on the fixture server matches the scripts these tests install,
+// and a navigation onto a matching URL makes the SW fan out an
+// opportunistic check for every script on it. That check is normally
+// swallowed by the updater's cooldown — but each test clears the
+// cooldown a moment later, so a fan-out still on its way to the gate
+// gets through and does the very work the focus path is supposed to be
+// the only source of. `about:blank` isn't an injectable scheme, so
+// nothing fans out and there is no race to lose.
+async function openSwitchAwayTab(ctx: BrowserContext): Promise<Page> {
+  return ctx.newPage();
+}
 
 test.describe('focus-triggered refresh', () => {
   let scriptsDir: ScriptsDir;
@@ -49,8 +63,7 @@ test.describe('focus-triggered refresh', () => {
     // Switch away, edit the file the way an editor would, then switch
     // back. Nothing else touches the extension in between — no
     // navigation, no Refresh click.
-    const other = await extensionContext.newPage();
-    await other.goto(`${fixtureServer.baseUrl}/blank.html`);
+    const other = await openSwitchAwayTab(extensionContext);
     scriptsDir.rewriteBody('live.user.js', `document.title = 'v2';`);
     // The navigation above already ran an opportunistic check, and this
     // test switches back inside `UPDATE_MIN_INTERVAL_MS`. A real user
@@ -65,7 +78,7 @@ test.describe('focus-triggered refresh', () => {
     await waitForTabState(
       sm,
       tabId,
-      (s) => hasBadgeColor(s, PURPLE) && s.title.includes('Live | Reload to update'),
+      (s) => hasBadgeColor(s, PURPLE) && s.rows.includes('Live | RELOAD'),
       'purple + RELOAD title after the tab regained focus',
     );
 
@@ -101,8 +114,7 @@ test.describe('focus-triggered refresh', () => {
     const tabId = await activeTabId(getServiceWorker);
     await waitForTabState(sm, tabId, (s) => hasBadgeColor(s, GREEN), 'initial green');
 
-    const other = await extensionContext.newPage();
-    await other.goto(`${fixtureServer.baseUrl}/blank.html`);
+    const other = await openSwitchAwayTab(extensionContext);
     scriptsDir.rewriteBody('live.user.js', `document.title = 'v2';`);
     await sm.clearUpdateRateLimit();
     // A real OS focus can't be delivered to a headless background tab,
@@ -114,7 +126,7 @@ test.describe('focus-triggered refresh', () => {
     await waitForTabState(
       sm,
       tabId,
-      (s) => hasBadgeColor(s, PURPLE) && s.title.includes('Live | Reload to update'),
+      (s) => hasBadgeColor(s, PURPLE) && s.rows.includes('Live | RELOAD'),
       'purple + RELOAD title after the page reported focus',
     );
     await other.close();
@@ -166,8 +178,7 @@ test.describe('focus-triggered refresh', () => {
         (e) => e.path === '/remote.user.js',
       ).length;
 
-      const other = await extensionContext.newPage();
-      await other.goto(`${fixtureServer.baseUrl}/blank.html`);
+      const other = await openSwitchAwayTab(extensionContext);
       // Edit the local script too, so the focus check has real work to
       // do and the assertion below isn't just "nothing happened".
       scriptsDir.rewriteBody('local.user.js', `document.title = 'v2';`);

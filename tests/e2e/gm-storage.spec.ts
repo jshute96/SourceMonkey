@@ -163,7 +163,7 @@ test.describe('GM_* storage (Phase 3)', () => {
     await page1.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page1.locator('body')).toHaveAttribute('data-sm-probe', '0');
     // The second load below is only meaningful once the first load's
-    // write is on disk, and that write is batched 150ms after the fact.
+    // write is on disk, and it reaches the worker a message after the fact.
     await waitForGmValues(sm, (values) => values.counter === 1, 'counter = 1');
     await page1.close();
 

@@ -82,8 +82,8 @@ test.describe('GM_* stored-value type fidelity', () => {
     const page1 = await extensionContext.newPage();
     await page1.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page1.locator('body')).toHaveAttribute('data-sm-probe', /dateType/);
-    // The writes are batched 150ms after the fact; the second load is
-    // only meaningful once they are on disk.
+    // The writes reach the worker a message after the fact; the second
+    // load is only meaningful once they are saved.
     await waitForGmValues(sm, (values) => 'err' in values, 'all seven keys persisted');
     await page1.close();
 

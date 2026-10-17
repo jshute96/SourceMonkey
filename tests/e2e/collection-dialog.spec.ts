@@ -1,4 +1,4 @@
-// The create / edit collection dialog (src/collection-dialog.ts) as
+// The create / edit collection dialog (src/extension/collection-dialog.ts) as
 // driven from the collections page: how the Add field routes into it,
 // what it makes of a location (the Type row is the dialog's own
 // verdict, never a choice), what it refuses and why, and what Edit can
@@ -48,6 +48,32 @@ test.describe('collection dialog', () => {
       .toHaveAttribute('placeholder', 'Name is required for scripts collections');
     await expect(dialog.locator('.dlg-error')).toHaveText('');
     await expect(dialog.locator('button.primary')).toBeDisabled();
+    // Nothing to open, until the box names a path or URL.
+    const open = dialog.locator('button.dlg-open-location');
+    await expect(open).toBeDisabled();
+    await dialog.locator('#collection-dialog-location').fill('not a path');
+    await expect(open).toBeDisabled();
+    await dialog.locator('#collection-dialog-location').fill('https://example.com/scripts/');
+    await expect(open).toBeEnabled();
+    // Their tooltips name what the box holds.
+    await expect(open).toHaveAttribute('title', 'Open URL in a new tab');
+    await expect(dialog.locator('.dlg-location button.copy-btn')).toHaveAttribute('title', 'Copy URL');
+    await dialog.locator('#collection-dialog-location').fill('/tmp/scripts/script_manifest.json');
+    await expect(open).toHaveAttribute('title', 'Open file in a new tab');
+    await expect(dialog.locator('.dlg-location button.copy-btn')).toHaveAttribute('title', 'Copy filename');
+    // Copy gives a file:// URL as its plain path, and is off while empty.
+    const copy = dialog.locator('.dlg-location button.copy-btn');
+    await page.evaluate(() => {
+      const w = window as unknown as { copied: string[] };
+      w.copied = [];
+      navigator.clipboard.writeText = async (t: string) => { w.copied.push(t); };
+    });
+    await dialog.locator('#collection-dialog-location').fill('file:///tmp/my%20scripts');
+    await expect(copy).toHaveAttribute('title', 'Copy directory');
+    await copy.click();
+    expect(await page.evaluate(() => (window as unknown as { copied: string[] }).copied)).toEqual(['/tmp/my scripts']);
+    await dialog.locator('#collection-dialog-location').fill('');
+    await expect(copy).toBeDisabled();
 
     // A name with no location is a collection of individual scripts.
     await dialog.locator('#collection-dialog-name').fill('Work');
@@ -246,6 +272,8 @@ test.describe('collection dialog', () => {
 
       const dialog = page.locator(DIALOG);
       await expect(dialog.locator(TYPE_BUBBLE)).toHaveText('http-manifest');
+      // Adding, the label still offers both.
+      await expect(dialog.locator('label[for="collection-dialog-location"]')).toHaveText('Directory or manifest');
       await expect(dialog.locator('#collection-dialog-name'))
         .toHaveAttribute('placeholder', 'Name is optional for manifest collections');
       await expect(dialog.locator('#collection-dialog-local-files')).toBeDisabled();
@@ -491,10 +519,28 @@ test.describe('collection dialog', () => {
 
     const dialog = page.locator(DIALOG);
     await expect(dialog.locator(TYPE_BUBBLE)).toHaveText('file-dir');
+    // Fixed, so the label names the one it is.
+    await expect(dialog.locator('label[for="collection-dialog-location"]')).toHaveText('Directory');
     await expect(dialog.locator('#collection-dialog-location')).toBeVisible();
     await expect(dialog.locator('#collection-dialog-location')).toBeDisabled();
     await expect(dialog.locator('#collection-dialog-location')).toHaveValue(scriptsDir.path);
     await expect(dialog.locator('#collection-dialog-name')).toHaveValue('Mine');
+
+    // The copy button copies the plain path.
+    await page.evaluate(() => {
+      const w = window as unknown as { copied: string[] };
+      w.copied = [];
+      navigator.clipboard.writeText = async (t: string) => { w.copied.push(t); };
+    });
+    await dialog.locator('.dlg-location button.copy-btn').click();
+    expect(await page.evaluate(() => (window as unknown as { copied: string[] }).copied)).toEqual([scriptsDir.path]);
+
+    // The open button shows the directory, as a file:// URL, in a new tab.
+    const opened = extensionContext.waitForEvent('page');
+    await dialog.locator('button.dlg-open-location').click();
+    const listing = await opened;
+    await expect.poll(() => listing.url()).toMatch(new RegExp(`^file://${scriptsDir.path}/?$`));
+    await listing.close();
 
     // Blank → the inferred name (the path), as the Add field always did.
     await dialog.locator('#collection-dialog-name').fill('');
@@ -503,6 +549,25 @@ test.describe('collection dialog', () => {
     await expect(dialog).toBeHidden();
     await expect(section.locator('h2 .collection-display-name')).toHaveText(scriptsDir.path);
     await page.close();
+  });
+
+  test('Edit on a manifest collection labels its location Manifest', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const server = await UserscriptServer.start();
+    try {
+      const collection = await sm.createCollection({ kind: 'location', path: `${server.baseUrl}/scripts/script_manifest.json` });
+      const page = await extensionContext.newPage();
+      await openCollectionsPage(page, extensionId);
+      await page.locator(`section.collection[data-collection-id="${collection!.id}"] button.edit-collection`).click();
+      const dialog = page.locator(DIALOG);
+      await expect(dialog.locator(TYPE_BUBBLE)).toHaveText('http-manifest');
+      await expect(dialog.locator('label[for="collection-dialog-location"]')).toHaveText('Manifest');
+      await dialog.getByRole('button', { name: 'Cancel' }).click();
+      await page.close();
+    } finally {
+      await server.stop();
+    }
   });
 
   test('a scripts collection shows a scheme chip on each row', async ({
@@ -524,7 +589,8 @@ test.describe('collection dialog', () => {
       await openCollectionsPage(page, extensionId);
       const section = page.locator(`section.collection[data-collection-id="${mine!.id}"]`);
       await expect(section.locator('tbody tr')).toHaveCount(2);
-      await expect(section.locator('tbody tr .scheme-chip')).toHaveText(['http', 'file']);
+      // Rows are by name: Local, then Web.
+      await expect(section.locator('tbody tr .scheme-chip')).toHaveText(['file', 'http']);
       await page.close();
     } finally {
       await server.stop();

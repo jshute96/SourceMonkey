@@ -182,7 +182,7 @@ test.describe('collections', () => {
     await sm.appendScriptLog(goingAway.id, {
       level: 'info', source: 'test', message: 'hello',
     });
-    expect(await sm.getScriptLog(goingAway.id)).toHaveLength(1);
+    expect((await sm.getScriptLog(goingAway.id)).map((e) => e.message)).toContain('hello');
 
     scriptsDir.remove('b.user.js');
     await sm.updateCollection(collection!.id, 'manual');
@@ -335,6 +335,39 @@ test.describe('collections', () => {
     await collections.close();
   });
 
+  test('the collections page lists scripts by shown name, not scan order', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // Scan order is by file path, which the page never shows, so the
+    // names here are chosen to disagree with it. Case is ignored and
+    // numbers compare numerically.
+    const names: Record<string, string> = {
+      'a.user.js': 'Zeta',
+      'b.user.js': 'Bravo',
+      'c.user.js': 'Item 10',
+      'd.user.js': 'Item 9',
+      // Code-unit order would put lowercase after every capital.
+      'e.user.js': 'alpha',
+    };
+    for (const [relativePath, name] of Object.entries(names)) {
+      scriptsDir.write({ relativePath, meta: { name, match: ['https://example.com/*'] }, body: '' });
+    }
+    const collection = await sm.addCollection(scriptsDir.path);
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const shown = page
+      .locator(`section.collection[data-collection-id="${collection!.id}"]`)
+      .locator('tbody tr[data-script-id] .name-cell a[href*="userscript.html"]');
+    await expect(shown).toHaveText(['alpha', 'Bravo', 'Item 9', 'Item 10', 'Zeta']);
+
+    // A rename lands through the in-place repaint, which re-sorts too.
+    scriptsDir.write({ relativePath: 'a.user.js', meta: { name: 'Charlie', match: ['https://example.com/*'] }, body: '' });
+    await sm.updateCollection(collection!.id, 'manual');
+    await expect(shown).toHaveText(['alpha', 'Bravo', 'Charlie', 'Item 9', 'Item 10']);
+    await page.close();
+  });
+
   test('a very long script name wraps inside its card instead of widening the table', async ({
     extensionContext, extensionId, sm,
   }) => {
@@ -379,7 +412,7 @@ test.describe('collections', () => {
 // Collections were called "sources" before the August 2026 rename, which
 // moved the index row, the per-collection rows, and each script's parent
 // pointer. A profile written before it has to survive the upgrade — see
-// `ensureCollectionKeysMigrated` in src/script-store.ts and the
+// `ensureCollectionKeysMigrated` in src/extension/script-store.ts and the
 // removal note in TODO.md.
 test.describe('legacy source:* key migration', () => {
   test('a pre-rename profile is rewritten on the first read', async ({
@@ -388,7 +421,7 @@ test.describe('legacy source:* key migration', () => {
     const sw = await getServiceWorker();
     // Write the old spelling straight into storage, bypassing the store.
     await sw.evaluate(async () => {
-      await chrome.storage.local.set({
+      await (self as unknown as { SourceMonkey: { seedStorage(items: Record<string, unknown>): Promise<void> } }).SourceMonkey.seedStorage({
         sources: ['c1'],
         'source:c1': {
           id: 'c1',

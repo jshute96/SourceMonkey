@@ -28,6 +28,9 @@ interface Route {
   // the reload fast-path's refresh a known, non-trivial duration
   // instead of the sub-millisecond one a local route normally has.
   delayMs?: number;
+  // When set, the route answers with JSON describing the request: its
+  // method, headers and body (base64). For checking request bodies.
+  echo?: boolean;
 }
 
 // Per-route record of how each incoming GET was answered. Tests use
@@ -117,6 +120,12 @@ export class UserscriptServer {
     });
   }
 
+  // Register a route that answers with the request it got, as JSON
+  // `{ method, headers, body }`, the body in base64.
+  setEcho(path: string): void {
+    this.routes.set(this.normalize(path), { body: '', contentType: 'application/json', echo: true });
+  }
+
   // Register a 302 redirect route. `location` is the absolute URL the
   // route redirects to. Used to test that GM_xmlhttpRequest's @connect
   // re-check rejects a redirect whose final host isn't allowlisted.
@@ -168,6 +177,16 @@ export class UserscriptServer {
     if (waiting) {
       this.watchers.delete(url.pathname);
       for (const resolve of waiting) resolve();
+    }
+    if (this.routes.get(url.pathname)?.echo) {
+      const chunks: Buffer[] = [];
+      req.on('data', (c: Buffer) => chunks.push(c));
+      req.on('end', () => {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ method: req.method, headers: req.headers, body: Buffer.concat(chunks).toString('base64') }));
+        this.log.push({ path: url.pathname, status: 200 });
+      });
+      return;
     }
     const delayMs = this.routes.get(url.pathname)?.delayMs ?? 0;
     if (delayMs > 0) {

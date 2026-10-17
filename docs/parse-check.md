@@ -11,7 +11,7 @@ anywhere in that program makes the *whole* entry fail to parse.
 
 Before this check, that was only discoverable at injection time:
 
-- The seal entry noticed `__smRun` was never called and logged
+- The seal entry noticed the registry's `run` was never called and logged
   "Script source failed to parse (a `@require` or the script body has a
   syntax error); nothing was run".
 - It fired only on a page the script actually matched, so a broken
@@ -52,7 +52,7 @@ that may.
 | Context | Has | Lacks | Reaches the sandbox by |
 |---------|-----|-------|------------------------|
 | Sandboxed iframe (`parse-sandbox.ts`) | `eval`, DOM | `chrome.*`, any caller but its embedder | — it *is* the sandbox |
-| Extension page (`parse-check-client.ts`) | `chrome.*`, DOM | `eval` | embedding its own frame |
+| Extension page (`parse-check-client.ts`, the install preview) | `chrome.*`, DOM | `eval` | embedding its own frame |
 | Offscreen document (`offscreen.ts`) | `chrome.*`, DOM | `eval` | embedding its own frame |
 | Service worker (`parse-check.ts`) | `chrome.*` | DOM, `eval` | messaging the offscreen document |
 
@@ -62,32 +62,27 @@ That is the whole job of the offscreen document.
 
 ## What is checked
 
-The exact text `wrapCombinedEntry` compiles as a function body, built
-by `buildParseCheckSource` in `injector.ts`:
+The user program exactly as `wrapCombinedEntry` compiles it, as one
+function body, built by `buildParseCheckSource` in `composed-source.ts`:
 
 - every `@require` body, in declaration order;
-- the script's own full source;
-- the emitted `GM_*` bindings.
+- then the script's own full source.
 
-The bindings are included on purpose. They are `const` declarations in
-the same scope as the user program, so a library doing
-`const unsafeWindow = window.wrappedJSObject || window;` — a real idiom
-— is a duplicate declaration and a genuine parse failure.
+Our own declarations are not included, and need not be:
 
-- The one binding that steps aside is the *implicit* `unsafeWindow`
-  one: a script that merely uses the name gets no binding when a
-  `@require` declares it, so that idiom keeps compiling.
-
-Not included: the wrap head, its `var` preamble, the `__smE` parameter,
-and the GM prelude. The head is ours and always valid, and on its own
-it leaves an unbalanced brace.
-
-That leaves a gap, in the safe direction. `var x` beside `var x` is
-legal, but `var x` beside `let`/`const`/`class x` is a `SyntaxError`,
-and so is redeclaring a parameter. A script writing `const __smE`,
-`let __smDecision` or `const __smGmSnap` therefore passes and fails at
-injection. All such names are `__sm`-prefixed, and the run-time seal
-entry still reports it. Tracked in `TODO.md`.
+- The wrap head, its `var` preamble, the `GM_*` bindings and the GM
+  prelude live in an outer scope. The user program runs in a function
+  nested inside it (see
+  [injection.md](injection.md#the-user-program-scope)), so nothing it
+  declares can clash with them.
+  - So `const unsafeWindow = window.wrappedJSObject || window;` in a
+    library, a real idiom, compiles and runs.
+- That nested scope is a function body, as `new Function`'s is, so a
+  top-level `return` is judged as it will run.
+- The checked text starts with a blank line (so a `#!` line is never
+  first), not a statement, so a leading `"use strict"` applies there
+  as in the nested scope: strict-only errors like `with` are caught at
+  install.
 
 ## Why the composed program, not each file
 
@@ -135,10 +130,11 @@ missed here is still reported exactly as it was before.
 
 ## Where the checker is installed
 
-`script-store.ts` does **not** import the injector — a real (not
-type-only) module cycle between them is something this codebase avoids.
-Instead the dependency is inverted: `setParseChecker` takes the
-implementation, and each context installs one at startup.
+The load pipeline (`script-build.ts`) doesn't pick the checker, because
+what compiles the text depends on the context. Instead
+`setParseChecker` takes the implementation, and the service worker
+installs one at startup. Pages install none: they don't run the store's
+check (below).
 
 ### The service worker
 
@@ -147,27 +143,18 @@ source and drives the offscreen document.
 
 ### Extension pages
 
-The load pipeline runs **wherever it was called from**. The collections
-page (Add, Refresh, Refresh All) and the viewer (Install,
-Refresh) call `addCollection` / `updateCollection` / `updateScript` in the
-*page*, not in the service worker.
+Pages run no part of the load pipeline: Add, Refresh, Refresh All and
+Install run in the service worker ([worker-writes.md](worker-writes.md)),
+so every stored row is checked through the offscreen document.
 
-`parse-check-client.ts` installs a checker there. The page has a DOM,
-so it embeds its own `parse-sandbox.html` and compiles locally. The
-service worker is not involved, which buys:
-
-- no SW wake on the path behind an Install click;
-- no structured clone of the whole script — bodies, `@require` bodies,
-  base64 `@resource` blobs — to every extension context;
-- no dependency on the SW surviving the round trip;
-- **parallelism**: one single-threaded worker with one shared sandbox
-  is a queue; per-page frames are not;
-- a circuit breaker per page, so one wedged sandbox doesn't turn the
-  feature off everywhere.
-
-Only the transport differs from the SW's checker. Both compose the
-checked text with `buildParseCheckSource`, so both judge the same
-program.
+- `parse-check-client.ts` is the page's own checker, for the install
+  preview only (below). The page has a DOM, so it embeds its own
+  `parse-sandbox.html` and compiles locally: no worker wake and no
+  copy of the script across contexts before the user has chosen to
+  install.
+- Only the transport differs from the worker's checker. Both compose
+  the checked text with `buildParseCheckSource`, so both judge the same
+  program.
 
 ### The install preview
 
@@ -219,10 +206,9 @@ whose content didn't move reuses the prior verdict.
 
 - The body's hash covers the whole file including the header, so
   `@grant` / `@require` / `@inject-into` edits all move the key.
-- The **version** leg matters because the checked text contains code
-  *we* emit. Add a `GM_*` binding in a future release and a script that
-  already declares that name becomes a parse failure, with nothing
-  about the script having changed.
+- The **version** leg matters because how *we* compose and wrap the
+  program decides what parses. That can change in a release with
+  nothing about the script having changed.
 - An `invalid` or `unknown` row deliberately records nothing, so a
   later refresh re-derives the verdict rather than inheriting a stale
   pass.
@@ -333,15 +319,15 @@ before this feature existed — or while the check was failing open —
 keeps `status: 'ok'` with no `parseCheckedHash`, and nothing revisits
 it.
 
-`runSync` (`src/injector.ts`) closes that. Before it builds specs it
+`runSync` (`src/extension/injector.ts`) closes that. Before it builds specs it
 calls `verifyParseChecks` with exactly the rows it is about to
 register:
 
 - A row with a matching `parseCheckedHash` is left alone — the normal
   case, and no round trip.
 - After a SourceMonkey update every row mismatches at once, because
-  `parseCheckKey` carries the extension version (the checked text
-  contains our own `GM_*` bindings). That pass is capped —
+  `parseCheckKey` carries the extension version (see
+  [Caching](#caching)). That pass is capped —
   `PARSE_RECHECK_CONCURRENCY` — and registration waits for it, so the
   bound is on memory, not on politeness.
 - Anything else is compiled now. A `syntax-error` verdict writes the
@@ -477,7 +463,7 @@ file anyone can open. `buildParseCheckSource` returns the same
 — the machinery the Log tab's stack refs already use.
 
 - Columns pass through unchanged: composition only moves whole lines.
-- A line no segment covers is ours (the GM-bindings preamble, a seam),
+- A line no segment covers is ours (our first line, a seam),
   so the position is dropped rather than blamed on the user's file.
 - A position outside the checked text is the sentinel — the source ends
   mid-construct — so it is reported as the message alone.
@@ -507,10 +493,11 @@ knows a column, so `ParseLocation` pins both coordinates present.
 
 ## Outside the browser
 
-The same check runs as a CLI over files on disk — `new Function` under
-Node, with `vm.Script` standing in for the `<script>` location probes.
+The same check runs under Node for `sm-dev validate` and the corpus
+validator: `new Function`, with `vm.Script` standing in for the
+`<script>` location probes (`src/harness/parse-check-node.ts`).
 Everything from `selectParseLocation` onward is this code, unchanged.
-See [offline-validation.md](offline-validation.md).
+See [harness-design.md](harness-design.md#preparets-script-in-injectable-script-out).
 
 ## Testing
 
@@ -528,7 +515,7 @@ See [offline-validation.md](offline-validation.md).
   construct). Add the directory as a collection to see the real messages.
   The expectations live in `tests/fixtures/bad-script-cases.mjs` and
   are pinned twice: by `bad-scripts.spec.ts` in Chromium and by
-  `tests/unit/validate-userscripts.test.mjs` under Node, which is what
+  `tests/unit/harness/validate.test.mjs` under Node, which is what
   keeps the two engines' answers verified against each other. The same
   directory covers the header diagnostics — see
   [diagnostics.md](diagnostics.md).

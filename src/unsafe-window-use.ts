@@ -2,19 +2,16 @@
 // it?
 //
 // `@grant unsafeWindow` is how a script is *supposed* to ask for the
-// page's window, and it is what moves the script to MAIN world
-// (`resolveWorld` in injector.ts). Plenty of real scripts never declare
-// it: `unsafeWindow` is implicitly available under Tampermonkey and
+// page's window, and it is what gets the script the binding. Plenty of
+// real scripts never declare it: `unsafeWindow` is implicitly available under Tampermonkey and
 // Violentmonkey — neither keys it off a grant line, measured under TM
 // 5.5.0 and VM 2.49.0 by `tests/examples/unsafe-window/ungranted.user.js`
 // — so an author who only ever tested there has no reason to add one.
 //
 // Measured over the GreasyFork top 2000: 112 scripts use `unsafeWindow`
-// with no grant for it. 75 of them resolve to the isolated USER_SCRIPT
-// world today, where the identifier is an outright `ReferenceError`;
-// the other 37 (`@grant none` and friends) already run in MAIN but
-// still get no binding, so they throw too. Honoring the reference is
-// what makes those scripts run at all.
+// with no grant for it. Without the binding, the identifier is a
+// `ReferenceError`, so honoring the reference is what makes those
+// scripts run at all.
 //
 // This is a text scan, not a parse. We have no JS parser in the
 // extension (the install-time check compiles with `new Function` in a
@@ -22,34 +19,31 @@
 // and the answer is needed on the storage row. So:
 //
 //   - Comments and string / template literals are stripped first, so a
-//     mention in a comment or a log message doesn't move a script's
-//     world. That was 13 of the 126 ungranted mentions in the corpus.
+//     mention in a comment or a log message gets no binding. That was
+//     13 of the 126 ungranted mentions in the corpus.
 //   - A property key, a `#private` member and a `foo.unsafeWindow`
-//     access don't count. A false positive costs a script its
-//     isolation, and in MAIN world the page can drive the GM runtime
-//     the script's other grants need, so the bar here is higher than
-//     for a miss.
+//     access don't count. A false positive only adds an unused
+//     `window` alias.
 //   - A regex literal is NOT recognized. `/['"]/` therefore opens a
 //     string state that runs to the next quote, and a literal ending in
 //     `\/\/` reads as a line comment — either can swallow real code.
-//     Normally that costs a missed reference, which leaves the script
-//     behaving as it does today. If it swallows a DECLARATION while
-//     leaving a use visible, the emitted binding is a duplicate and the
-//     install-time parse check fails the row by name — visible, not
-//     silent, but a regression. No corpus script hits it.
+//     Normally that costs a missed reference, so the script gets no
+//     binding. If it swallows a DECLARATION while leaving a use
+//     visible, the script gets a binding it shadows anyway, which is
+//     harmless. No corpus script hits it.
 //   - A script that DECLARES the name — `const unsafeWindow =
 //     window.wrappedJSObject || window;`, a real cross-browser idiom —
 //     answers false, including in a declarator list or a destructuring
-//     pattern. Our binding is a `const` in the same scope, so emitting
-//     one there would turn a working script into a duplicate-
-//     declaration SyntaxError. The check is scope-blind, so a
-//     declaration inside a function suppresses the whole script: that
-//     direction only costs the feature.
+//     pattern. Its references read its own binding, never ours. (Our binding would be
+//     harmless beside it: the user program runs in a nested scope, so
+//     the script's declaration shadows it. See wrapCombinedEntry in
+//     injector.ts.) The check is scope-blind, so a declaration inside a
+//     function suppresses the whole script: that direction only costs
+//     the feature.
 //
 // Only the script's own body is scanned, not its `@require` bodies: the
-// requires arrive on a later pipeline step (`attachFiles`) and a
-// library's own `unsafeWindow` declaration is exactly the case above.
-// See TODO.md.
+// requires arrive on a later pipeline step (`attachFiles`). See
+// TODO.md.
 
 const IDENT = /[$\w]/;
 
@@ -155,10 +149,8 @@ const KEYWORD = /(?:^|[^$\w.])(?:var|let|const)(?![$\w])/g;
 const DECLARATOR_SPAN = 2000;
 
 // Is `unsafeWindow` a NAME BEING BOUND anywhere in this source, rather
-// than a value being read? Our binding is a `const` in the same scope as
-// the user program, so emitting one beside the source's own declaration
-// is a duplicate-declaration SyntaxError — it would turn a script that
-// works today into an `invalid` row at install time.
+// than a value being read? A script that binds the name reads its own
+// value, so it gets neither our binding nor the move to MAIN world.
 //
 // Walks each `var` / `let` / `const` declarator list, tracking bracket
 // depth and whether the current declarator has passed its `=`:
@@ -204,15 +196,6 @@ function declaresBinding(code: string): boolean {
     }
   }
   return false;
-}
-
-// The source brings its own `unsafeWindow` binding, so ours would be a
-// duplicate declaration in the same scope. Checked against `@require`
-// bodies too (see `buildGmBindingsForScript`): a library declaring the
-// name is the case the main body is usually referencing.
-export function sourceDeclaresUnsafeWindow(text: string | null | undefined): boolean {
-  if (!text || text.indexOf('unsafeWindow') === -1) return false;
-  return declaresBinding(stripQuotedAndComments(text));
 }
 
 export function sourceUsesUnsafeWindow(bodyText: string | null | undefined): boolean {

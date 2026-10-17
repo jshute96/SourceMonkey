@@ -1,4 +1,4 @@
-// Tests for src/refresh-targets.ts (compiled to dist/refresh-targets.js).
+// Tests for src/extension/refresh-targets.ts (compiled to dist/extension/refresh-targets.js).
 //
 // Pure target selection behind the collections page's `?refresh_local`
 // and `?refresh_file=<path>` triggers.
@@ -13,7 +13,7 @@ import {
   pathsOverlap,
   refreshPathProblem,
   toFsPath,
-} from '../../dist/refresh-targets.js';
+} from '../../dist/extension/refresh-targets.js';
 
 // Minimal stand-ins for the stored shapes: the selectors only read
 // `id` / `path` off a collection and `id` / `fileUrl` off a script.

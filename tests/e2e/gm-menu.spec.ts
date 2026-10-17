@@ -1,12 +1,12 @@
 // End-to-end coverage for GM_registerMenuCommand / GM_unregisterMenuCommand.
 //
-// Playwright can't drive Chrome's action context menu directly, so the
-// SW exposes two test helpers in `self.SourceMonkey`:
+// The SW exposes two test helpers in `self.SourceMonkey` (named for the
+// context menu the popup replaced):
 //   - getActionContextMenu(tabId) — returns the (scriptId, commands[])
-//     groups we would have rendered for the tab.
-//   - fireActionContextMenuItem(tabId, scriptId, commandId) — synthesizes
-//     the chrome.contextMenus.onClicked dispatch by sending the same
-//     `sm:gm-menu-fire` message the real click handler does.
+//     groups the tab has registered, which the popup lists.
+//   - fireActionContextMenuItem(tabId, scriptId, commandId) — sends the
+//     same `sm:gm-menu-fire` message a click in the popup does.
+// The popup page itself is covered by tests/e2e/popup.spec.ts.
 //
 // USER_SCRIPT vs MAIN world: page.evaluate runs in MAIN, GM_* bindings
 // live in USER_SCRIPT. The two worlds share the DOM but not window
@@ -264,7 +264,7 @@ test.describe('GM_registerMenuCommand', () => {
   test('two scripts on the same page can share an explicit options.id without callback collisions', async ({
     extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {
-    // Regression for the wrapper-side menu-command table: `__SM_GM__`
+    // Regression for the wrapper-side menu-command table: the GM runtime
     // is a per-document singleton shared across every userscript on
     // the page, so a single-key map (commandId only) would let script
     // B clobber script A's callback for the same explicit id.
@@ -377,84 +377,6 @@ test.describe('GM_registerMenuCommand', () => {
     await page.close();
   });
 
-  test('more than 6 rows spill into a "More" submenu, scripts stay grouped with their commands', async ({
-    extensionContext, fixtureServer, sm, getServiceWorker,
-  }) => {
-    // Two scripts both matching the page. Script A registers 3 menu
-    // commands (cost 4 rows) and B registers 4 (cost 5 rows). Together
-    // that's 9 rows, well past Chrome's 6-item cap. The planner should
-    // top-level the first group that fits in the 5-slot budget (4 rows
-    // ≤ 5 → A fits) and shove the rest into More. Splitting A's commands
-    // across the two menus would orphan them visually from the A row.
-    scriptsDir.write({
-      relativePath: 'a.user.js',
-      meta: {
-        name: 'AlphaScript',
-        match: [`${fixtureServer.baseUrl}/*`],
-        runAt: 'document-end',
-        grant: ['GM_registerMenuCommand'],
-      },
-      body: `
-        GM_registerMenuCommand('A1', () => {});
-        GM_registerMenuCommand('A2', () => {});
-        GM_registerMenuCommand('A3', () => {});
-      `,
-    });
-    scriptsDir.write({
-      relativePath: 'b.user.js',
-      meta: {
-        name: 'BetaScript',
-        match: [`${fixtureServer.baseUrl}/*`],
-        runAt: 'document-end',
-        grant: ['GM_registerMenuCommand'],
-      },
-      body: `
-        GM_registerMenuCommand('B1', () => {});
-        GM_registerMenuCommand('B2', () => {});
-        GM_registerMenuCommand('B3', () => {});
-        GM_registerMenuCommand('B4', () => {});
-      `,
-    });
-    await sm.addCollection(scriptsDir.path);
-    await sm.syncNow();
-
-    const page = await extensionContext.newPage();
-    await page.goto(`${fixtureServer.baseUrl}/target.html`);
-    const tabId = await activeTabId(getServiceWorker);
-
-    // Wait until both scripts have registered all their commands. The
-    // wrapper-side registers stream in over chrome.runtime messages, so
-    // polling for the terminal shape is necessary.
-    const plan = await waitFor(
-      () => sm.getActionContextMenuPlan(tabId),
-      (p) => p.top.length === 1 && p.more.length === 1
-        && p.top[0]!.commands.length === 3
-        && p.more[0]!.commands.length === 4,
-      { label: 'overflow plan resolved' },
-    );
-
-    // AlphaScript stays whole at the top level; BetaScript moves whole
-    // into More. Each commands array is preserved verbatim.
-    expect(plan.top.map((g) => g.title)).toEqual([
-      expect.stringContaining('AlphaScript'),
-    ]);
-    expect(plan.top[0]!.commands.map((c) => c.title)).toEqual(['A1', 'A2', 'A3']);
-    expect(plan.more.map((g) => g.title)).toEqual([
-      expect.stringContaining('BetaScript'),
-    ]);
-    expect(plan.more[0]!.commands.map((c) => c.title)).toEqual(['B1', 'B2', 'B3', 'B4']);
-
-    // Firing a command that lives inside More still routes through the
-    // shared dispatch path — the More nesting is purely a UI layout
-    // concern, not a behavioral one.
-    const betaScriptId = plan.more[0]!.scriptId;
-    const b1 = plan.more[0]!.commands[0]!;
-    const fired = await sm.fireActionContextMenuItem(tabId, betaScriptId, b1.commandId);
-    expect(fired).toEqual({ ok: true });
-
-    await page.close();
-  });
-
   test('GM_registerMenuCommand with options.id updates the existing entry', async ({
     extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {
@@ -489,6 +411,67 @@ test.describe('GM_registerMenuCommand', () => {
 
     const idsRaw = await page.evaluate(() => document.body.dataset.smIds ?? '[]');
     expect(JSON.parse(idsRaw)).toEqual(['stable', 'stable']);
+
+    await page.close();
+  });
+
+  // As in TM: a caption registered again with a new id shows once and
+  // runs the newest registration; unregistering that one shows the
+  // older one again.
+  test('a repeated caption shows once and runs all its registrations; unregistering one keeps the rest', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'menu-repeat.user.js',
+      meta: {
+        name: 'MenuRepeat',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_registerMenuCommand', 'GM_unregisterMenuCommand'],
+      },
+      body: `
+        const fires = [];
+        document.body.dataset.smFires = '[]';
+        function recordFire(name) {
+          fires.push(name);
+          document.body.dataset.smFires = JSON.stringify(fires);
+        }
+        const first = GM_registerMenuCommand('Same', () => recordFire('first'));
+        GM_registerMenuCommand('Same', () => recordFire('second'));
+        const btn = document.createElement('button');
+        btn.id = 'sm-test-unregister-first';
+        btn.addEventListener('click', () => { GM_unregisterMenuCommand(first); });
+        document.body.appendChild(btn);
+        document.body.dataset.smReady = '1';
+      `,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-ready', '1');
+    const tabId = await activeTabId(getServiceWorker);
+
+    const shown = await waitFor(
+      () => sm.getActionContextMenu(tabId),
+      (g) => g.length === 1 && g[0]!.commands.length === 1,
+      { label: 'one entry for the repeated caption' },
+    );
+    const scriptId = shown[0]!.scriptId;
+    expect(await sm.fireActionContextMenuItem(tabId, scriptId, shown[0]!.commands[0]!.commandId)).toEqual({ ok: true });
+    await expect.poll(() => readFires(page)).toEqual(['first', 'second']);
+
+    // The shown entry was the first registration; the second takes over.
+    await page.locator('#sm-test-unregister-first').click();
+    const after = await waitFor(
+      () => sm.getActionContextMenu(tabId),
+      (g) => g.length === 1 && g[0]!.commands[0]?.commandId !== shown[0]!.commands[0]!.commandId,
+      { label: 'the second registration shows' },
+    );
+    expect(after[0]!.commands.map((c) => c.name)).toEqual(['Same']);
+    expect(await sm.fireActionContextMenuItem(tabId, scriptId, after[0]!.commands[0]!.commandId)).toEqual({ ok: true });
+    await expect.poll(() => readFires(page)).toEqual(['first', 'second', 'second']);
 
     await page.close();
   });

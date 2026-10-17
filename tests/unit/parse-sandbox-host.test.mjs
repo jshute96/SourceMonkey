@@ -1,5 +1,5 @@
-// Tests for the verdict guard in src/parse-sandbox-host.ts (compiled
-// to dist/parse-sandbox-host.js).
+// Tests for the verdict guard in src/extension/parse-sandbox-host.ts (compiled
+// to dist/extension/parse-sandbox-host.js).
 //
 // The sandbox is the only part of this feature that can accuse a
 // script, and `applyParseCheck` treats any status that isn't `ok` or
@@ -11,7 +11,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { isParseVerdict } from '../../dist/parse-sandbox-host.js';
+import { isParseVerdict } from '../../dist/extension/parse-sandbox-host.js';
 
 test('accepts the three real statuses', () => {
   assert.equal(isParseVerdict({ status: 'ok' }), true);

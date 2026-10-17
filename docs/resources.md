@@ -38,8 +38,10 @@ disk next to the script — same rule and same gate as `@require`; see
 
 ## Storage shape
 
-Each `StoredScript` carries an inline `resources?: StoredResource[]`
-array — declaration order, deduplicated by name.
+Each `StoredScript` carries a `resources?: StoredResource[]` array —
+declaration order, deduplicated by name. The bodies themselves are
+[content blobs](storage.md#content-blobs) (format 2; see the status
+note there).
 
 Per-entry fields:
 
@@ -49,8 +51,11 @@ Per-entry fields:
   see [supported-headers.md](supported-headers.md).
 - `ref` — verbatim from the metadata line.
 - `url` — canonical resolved URL.
-- `bytesBase64` — body bytes, base64-encoded for JSON-friendly
-  storage in `chrome.storage.local`.
+- `blobRef` — `{hash, size}` of the body bytes: the hash is the key of
+  its blob. Written
+  as base64 for JSON-friendly storage in `chrome.storage.local`, but a
+  blob first written as text (by a `@require` with the same bytes) is
+  read back as bytes just the same.
 - `contentType` — server-reported Content-Type (lowercased), or `''`
   when unavailable (file:// XHR often omits it).
 - `size`, `contentHash`, `loadedAt`, `httpEtag?`, `httpLastModified?`,
@@ -59,7 +64,7 @@ Per-entry fields:
 Storage cost:
 
 - Base64 encoding adds ~33% to the raw byte size.
-- Per-file cap: 1 MB. `chrome.storage.local` quota: 10 MB.
+- Per-file cap: 2 MB. `chrome.storage.local` quota: 10 MB.
 - SourceMonkey doesn't declare `unlimitedStorage`, so users who push
   past 10 MB total stored will see refresh failures.
 
@@ -69,7 +74,7 @@ For scripts that `@grant` `GM_getResourceText` or `GM_getResourceURL`
 the injector emits:
 
 ```js
-window.__SM_GM__.resource.init("<scriptId>", {
+__smReg.gm.resource.init("<scriptId>", {
   "<name>": { b64: "<base64>", ct: "<contentType>" },
   …
 });
@@ -97,7 +102,7 @@ The runtime keeps a per-script box of:
 - The minted blob URL is valid for the document's lifetime — we
   don't `URL.revokeObjectURL` since the runtime stays around.
 - Memory cost is ≈ 2× the resource size per document in the worst
-  case (base64 in `byName` + Blob bytes copy). Gated by the 1 MB
+  case (base64 in `byName` + Blob bytes copy). Gated by the 2 MB
   per-file cap.
 
 ## Failure handling
@@ -136,7 +141,7 @@ pass share one byte fetch — the typed assembly (`StoredRequire` vs
 
 ## Limits
 
-- Per-resource body: **1 MB** (shared cap with `@require`).
+- Per-resource body: **2 MB** (shared cap with `@require`).
 - Per-fetch timeout: 5 s (file-loader default).
 - Empty bodies rejected.
 

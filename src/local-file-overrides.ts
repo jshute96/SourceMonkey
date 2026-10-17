@@ -92,7 +92,7 @@ import {
   listDirectory,
   type DirectoryListingCache,
   type ListingEntry,
-} from './directories.js';
+} from './file-locations.js';
 
 // An encoded path separator. The URL parser resolves `..` and `%2e%2e`
 // but deliberately leaves these alone inside a segment, while Chrome's
@@ -202,7 +202,7 @@ export function textFromRoots(roots: readonly string[]): string {
 // contexts (service worker, collections page, viewer), so each loads
 // once at startup and then tracks `storage.onChanged`. Defaults to
 // none, which is also what any caller outside the extension (the
-// offline validator) sees.
+// corpus validator) sees.
 let configuredRoots: string[] = [];
 let loadOnce: Promise<void> | null = null;
 // Bumped by anything that publishes a newer value, so an initial read
@@ -261,14 +261,23 @@ export function readRootsSetting(raw: unknown): string[] {
   return raw.filter((r): r is string => typeof r === 'string');
 }
 
-// Test hook. Production callers write the storage key and let the
-// listener above pick it up.
-export function _setLocalRootsForTests(roots: readonly string[]): void {
+// Set the configured roots directly, bypassing storage. For the contexts
+// with no `chrome.storage` at all (unit tests, and the development
+// harness, which runs the same resolve pipeline under Node with roots
+// the caller names), and for the worker's own `writeSetting`, so a
+// refresh it runs next doesn't wait for the change event.
+export function setConfiguredLocalRoots(roots: readonly string[]): void {
   configuredRoots = roots.slice();
   loadGeneration++;
   // Also satisfy `localRootsReady`, or the first resolve after this
-  // would read storage and overwrite what the test just set.
+  // would read storage and overwrite what was just set.
   loadOnce = Promise.resolve();
+}
+
+// Test hook, kept under its old name for the tests and the SW test
+// surface that call it.
+export function _setLocalRootsForTests(roots: readonly string[]): void {
+  setConfiguredLocalRoots(roots);
 }
 
 // What a script's collection says about local stand-ins: whether they
@@ -279,9 +288,16 @@ export function _setLocalRootsForTests(roots: readonly string[]): void {
 export interface LocalFileScope {
   enabled: boolean;
   // The collection's stored `path`. Optional: the viewer's preview has
-  // no collection row at all, and neither does the offline validator.
+  // no collection row at all, and neither does the corpus validator.
   collectionPath?: string;
+  // How this check looks for a stand-in the last check found: 'known'
+  // reads that path first, 'search' (the default) searches the roots.
+  // Per check rather than per collection: the page-load checks pass
+  // 'known'. See `readLocalStandIn` in src/external-files.ts.
+  lookup?: LocalLookup;
 }
+
+export type LocalLookup = 'known' | 'search';
 
 // The directory a collection is rooted at, as a search root — or null
 // when it has no single tree to search:
@@ -394,9 +410,10 @@ export function collectionSupportsLocalFiles(collectionPath: string): boolean {
 }
 
 // Every local file that could stand in for `declaredUrl`, in the order
-// they should be tried. Readers go through `presentLocalFileCandidates`
-// below, which drops the ones that can't exist before fetching each in
-// turn and taking the first that reads.
+// they should be tried. Readers gate each on its root's listing
+// (`localCandidateMayExist`, or `presentLocalFileCandidates` for the
+// whole list), which drops the ones that can't exist, then fetch each
+// in turn and take the first that reads.
 //
 // Suffixes run longest-first so a deliberate layout (`lib/util.js` under
 // the root) beats an incidental basename collision (`util.js` sitting
@@ -533,9 +550,20 @@ export async function presentLocalFileCandidates(
 ): Promise<string[]> {
   const out: string[] = [];
   for (const c of localFileCandidatesDetailed(declaredUrl, roots)) {
-    if (mayExist(c, await listRoot(c.root, listings))) out.push(c.url);
+    if (await localCandidateMayExist(c, listings)) out.push(c.url);
   }
   return out;
+}
+
+// The same gate for one candidate, for a reader that tries candidates
+// in order and stops at the first that reads: it lists a root only
+// when the search reaches it, so a hit in an early root costs no
+// listings of the later ones.
+export async function localCandidateMayExist(
+  c: LocalFileCandidate,
+  listings: DirectoryListingCache,
+): Promise<boolean> {
+  return mayExist(c, await listRoot(c.root, listings));
 }
 
 // Roots whose listing failed, per listing cache. `DirectoryListingCache`

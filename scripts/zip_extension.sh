@@ -7,6 +7,10 @@
 #
 # The versioned name is used by scripts/release-extension.sh so the
 # downloaded release artifact is self-identifying.
+#
+# `dist/` is the unpacked extension and nothing else, so this packs all
+# of it. The `sourcemonkey` package is built separately into `lib/`
+# (docs/architecture.md).
 
 set -euo pipefail
 
@@ -52,7 +56,7 @@ fi
 pnpm run build
 
 rm -f "$TARGET"
-cd dist && zip -r "$TARGET" .
+cd dist && zip -rq "$TARGET" .
 
 echo
-echo "Made zip file in $TARGET"
+echo "Made zip file in $TARGET ($(du -h "$TARGET" | cut -f1))"

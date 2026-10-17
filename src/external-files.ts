@@ -8,9 +8,11 @@
 //     (the registered userScript carries the concatenated source so
 //     no runtime fetch is needed at injection time — Chrome's
 //     userScripts API can't fetch on its own).
-//   - `.js` suffix gate on the resolved URL; strict UTF-8 decode on
-//     the fetched bytes — non-UTF-8 fails the script outright. We
-//     never inject binary as JS.
+//   - Any URL, with or without a `.js` suffix (CDN shorthands like
+//     `cdn.jsdelivr.net/npm/sweetalert2@11` have none, and TM and VM
+//     don't gate on it). Strict UTF-8 decode on the fetched bytes —
+//     non-UTF-8 fails the script outright. We never inject binary as
+//     JS.
 //
 // `@resource`:
 //   - Arbitrary bytes (any media type). Stored as base64 so the
@@ -36,41 +38,45 @@
 import {
   fetchResourceBytes,
   isNotModified,
-  isJsResourceUrl,
   resolveScriptResourceDetailed,
   type FetchFailure,
   type ResolveFailure,
 } from './file-loader.js';
-import { presentLocalFileCandidates } from './local-file-overrides.js';
 import {
-  baseName,
-  locationFsPath,
-  parentDir,
-  statFromListing,
-  type DirectoryListingCache,
-} from './directories.js';
+  localCandidateMayExist,
+  localFileCandidatesDetailed,
+  type LocalLookup,
+} from './local-file-overrides.js';
+import { type DirectoryListingCache } from './file-locations.js';
 import { splitResourceValue } from './script-links.js';
 import { sha256Hex, bytesToBase64, base64ToBytes } from './bytes.js';
 import { timePhase } from './phase-timing.js';
 import { getValues, type ParsedHeader } from './userscript-header.js';
+import { iconDeclFromHeader, isIconContentType, MAX_ICON_BYTES } from './script-icon.js';
 import {
   isMarkupContentType,
   looksLikeMarkup,
   markupResponseMessage,
 } from './markup-response.js';
 
-// Per-file limit. Big enough for jQuery (~90 KB) and most chunky
-// userscript libraries; small enough to keep a runaway from draining
-// the 10 MB chrome.storage.local quota in one row. Applies to both
-// @require and @resource — split caps possible later if pain shows up.
-export const MAX_FILE_BYTES = 1024 * 1024;
+// Per-file limit. Big enough for jQuery (~90 KB) and the 1-2 MB
+// libraries scripts pin (MathJax, video.js, babel-standalone, the
+// stockfish engines); small enough to keep a runaway from draining the
+// 10 MB chrome.storage.local quota in one row. Applies to both
+// @require and @resource.
+export const MAX_FILE_BYTES = 2 * 1024 * 1024;
 
 // Rendered in whole MB when the cap divides evenly, so messages say
-// "1 MB" rather than "1024 KB". Exported because the offline validator
-// reports the cap too, and two renderings of one number could disagree.
-export const CAP_TEXT = MAX_FILE_BYTES % (1024 * 1024) === 0
-  ? `${MAX_FILE_BYTES / (1024 * 1024)} MB`
-  : `${Math.round(MAX_FILE_BYTES / 1024)} KB`;
+// "1 MB" rather than "1024 KB".
+function byteLimitText(maxBytes: number): string {
+  return maxBytes % (1024 * 1024) === 0
+    ? `${maxBytes / (1024 * 1024)} MB`
+    : `${Math.round(maxBytes / 1024)} KB`;
+}
+
+// Why a `data:` URL dependency won't load. Exported so the corpus
+// validator can recognize it without matching the wording.
+export const DATA_URL_NOT_SUPPORTED = 'URLs with the data: scheme are not supported';
 
 // Split out so `isFetchFailureMessage` can recognize the one message
 // whose text isn't fixed at module load, without either side spelling
@@ -91,10 +97,13 @@ const HTTP_STATUS_PREFIX = 'The server returned HTTP ';
 // These read as facts rather than as a list of possibilities because
 // the fetcher now reports which case it hit. It used to return a bare
 // `null`, so a single message had to cover "no response", "an HTTP
-// error", and "over the limit" at once — and the offline validator
+// error", and "over the limit" at once — and the corpus validator
 // reconstructed the real cause from a fetch log to make its report
 // useful.
-export function describeFetchFailure(failure: FetchFailure): string {
+//
+// `maxBytes` is the limit the fetch was made with, for the oversize
+// message: `@require` / `@resource` by default, smaller for an `@icon`.
+export function describeFetchFailure(failure: FetchFailure, maxBytes = MAX_FILE_BYTES): string {
   switch (failure.reason) {
     case 'unsupported-scheme':
       // Unreachable for a dependency — resolution rejects anything
@@ -114,13 +123,12 @@ export function describeFetchFailure(failure: FetchFailure): string {
     case 'http-error':
       return `${HTTP_STATUS_PREFIX}${failure.status}`;
     case 'wrong-content-type':
-      // Only reachable through the icon fetcher, which discards the
-      // reason — no user reads this today.
-      return 'The response was the wrong content type';
+      // Only the icon fetches ask for a content type.
+      return 'The file is not an image';
     case 'empty':
       return 'The file is empty';
     case 'oversize':
-      return `The file is larger than the ${CAP_TEXT} limit`;
+      return `The file is larger than the ${byteLimitText(maxBytes)} limit`;
   }
 }
 
@@ -148,8 +156,9 @@ const FETCH_FAILURE_REASONS: Record<FetchFailure['reason'], true> = {
 
 // Did this text come out of `describeFetchFailure`?
 //
-// Exists for `scripts/validate-userscripts.mjs`, which substitutes its
-// own wording when the offline mirror's 404 is an artifact of the
+// Exists for the corpus validator
+// (`tests/greasyfork-examples/validate-corpus.mjs`), which substitutes
+// its own wording when the offline mirror's 404 is an artifact of the
 // mirror rather than a real server answer — it has to recognize a
 // fetch-layer failure to know when that substitution applies.
 //
@@ -184,15 +193,19 @@ export function describeResolveFailure(failure: ResolveFailure): string {
       // local script (see file-loader.ts's module header). The scheme
       // is parenthesized rather than leading, so the sentence can open
       // with a capital of ours instead of a verbatim value.
-      return `That URL scheme (${failure.scheme}) is not supported — ` +
+      return `That URL scheme (${failure.scheme}) is not supported; ` +
         'use an http(s) URL, or a relative path resolved against the script\'s own location';
     case 'outside-script-folder':
       // Only reachable for a script loaded from `file://`: a relative
       // ref in a script served over http(s) may climb, the way it does
       // in Violentmonkey. So the message names the case it applies to
       // rather than stating a rule that isn't universal.
-      return 'That path points outside the script\'s own folder — ' +
+      return 'That path points outside the script\'s own folder; ' +
         'a relative path in a local script has to stay inside it';
+    case 'relative-in-scratch':
+      // A scratch script is text alone, without the files beside it.
+      return 'A scratch script can use a relative path only to a file pushed along with its text. ' +
+        'Use an http(s) URL, or push the file with the script.';
   }
 }
 
@@ -276,6 +289,9 @@ export interface FetchedFile {
   // keeping beyond what we already stored.
   etag?: string;
   lastModified?: string;
+  // A `file://` read's modified time, in listing units. See
+  // `fsMtimeFromLastModified`.
+  fsMtime?: number;
 }
 
 // What a caller already holds for a URL, so the fetch can be made
@@ -352,6 +368,21 @@ export function distillResources(header: ParsedHeader | null): ResourceDecl[] {
 
 // ---------- attachFiles orchestrator ----------
 
+// A `@require` / `@resource` body pushed with a scratch script, by the
+// ref its header declares (sm-dev reads them from disk, see
+// docs/sm-dev-design.md). It stands in for the declared file, and no
+// fetch is made:
+// - a relative ref, which a scratch script has no folder to resolve
+//   against: `url` is the `file://` URL it named on disk;
+// - a remote URL with a local stand-in under one of sm-dev's search
+//   roots: `url` is the declared URL, `localUrl` the file read.
+export interface PushedFile {
+  url: string;
+  localUrl?: string;
+  bytesBase64: string;
+  contentType: string;
+}
+
 export interface AttachFilesArgs {
   // The script's own canonical URL. Resolution base for relative refs.
   scriptFileUrl: string;
@@ -375,6 +406,13 @@ export interface AttachFilesArgs {
   // default) restores the pre-feature behavior exactly: no candidate
   // generation, no probe reads.
   localRoots?: readonly string[];
+  // How a stand-in found by the last check is looked for. 'known'
+  // reads its stored path first and lists nothing when it still reads;
+  // 'search' (the default) searches the roots in order. See
+  // `readLocalStandIn`.
+  localLookup?: LocalLookup;
+  // A scratch script's pushed bodies, by ref; see `PushedFile`.
+  pushedFiles?: Readonly<Record<string, PushedFile>>;
 }
 
 export interface AttachFilesResult {
@@ -425,19 +463,46 @@ export async function attachFiles(args: AttachFilesArgs): Promise<AttachFilesRes
   // @resource dedup is at NAME granularity, handled in distillResources —
   // two names pointing at the same URL produce two distinct entries.
   const seenRequireUrls = new Set<string>();
+  const localRoots = args.localRoots ?? [];
+  const localLookup = args.localLookup ?? 'search';
 
-  for (const ref of requireRefs) {
-    const res = await loadRequire({
-      ref,
-      scriptFileUrl: args.scriptFileUrl,
-      prior: args.priorRequires,
-      recheck: args.recheck,
-      fetchCache: args.fetchCache,
-      now: args.now,
-      seenUrls: seenRequireUrls,
-      localRoots: args.localRoots ?? [],
-    });
+  // All files load at once, rather than one after another: each is a
+  // round trip of its own (a stand-in read, a network fetch), and on a
+  // page-load check they decide whether the reload's window is met.
+  // Started in declaration order, and `loadRequire` claims its URL in
+  // `seenUrls` before its first await, so the first of two refs to one
+  // URL is still the one that loads. Failures are reported for the
+  // first failing declaration, as the serial loop did.
+  const requireLoads = requireRefs.map((ref) => loadRequire({
+    ref,
+    scriptFileUrl: args.scriptFileUrl,
+    prior: args.priorRequires,
+    recheck: args.recheck,
+    fetchCache: args.fetchCache,
+    now: args.now,
+    seenUrls: seenRequireUrls,
+    localRoots,
+    localLookup,
+    pushed: args.pushedFiles?.[ref],
+  }));
+  const resourceLoads = resourceDecls.map((decl) => loadResource({
+    decl,
+    scriptFileUrl: args.scriptFileUrl,
+    prior: args.priorResources,
+    recheck: args.recheck,
+    fetchCache: args.fetchCache,
+    now: args.now,
+    localRoots,
+    localLookup,
+    pushed: args.pushedFiles?.[decl.ref],
+  }));
+  const [requireResults, resourceResults] = await Promise.all([
+    Promise.all(requireLoads), Promise.all(resourceLoads),
+  ]);
+
+  for (const [i, res] of requireResults.entries()) {
     if (res.errorMessage) {
+      const ref = requireRefs[i];
       return {
         requires: [],
         resources: [],
@@ -448,17 +513,9 @@ export async function attachFiles(args: AttachFilesArgs): Promise<AttachFilesRes
     if (res.entry) requires.push(res.entry);
   }
 
-  for (const decl of resourceDecls) {
-    const res = await loadResource({
-      decl,
-      scriptFileUrl: args.scriptFileUrl,
-      prior: args.priorResources,
-      recheck: args.recheck,
-      fetchCache: args.fetchCache,
-      now: args.now,
-      localRoots: args.localRoots ?? [],
-    });
+  for (const [i, res] of resourceResults.entries()) {
     if (res.errorMessage) {
+      const decl = resourceDecls[i];
       return {
         requires: [],
         resources: [],
@@ -476,6 +533,110 @@ export async function attachFiles(args: AttachFilesArgs): Promise<AttachFilesRes
     if (res.entry) resources.push(res.entry);
   }
   return { requires, resources };
+}
+
+// ---------- @icon check ----------
+
+// What the last `@icon` check found. Stored on the script row so a
+// background refresh can keep it rather than download the icon again.
+export interface IconCheck {
+  // The declared reference that was checked, and the URL it resolved
+  // to. Both are compared before a stored answer is kept: a relative
+  // ref resolves elsewhere once the script's own URL changes.
+  ref: string;
+  url?: string;
+  // Set when a local stand-in was checked rather than the declared URL,
+  // with the stand-in's own URL (absent on rows written before it was
+  // recorded).
+  local?: true;
+  localUrl?: string;
+  // Why the icon can't be shown, as a load-time warning. Absent when
+  // it can.
+  message?: string;
+  // Which download failure it was, when the download is what failed.
+  // For a caller that sorts failures (the corpus validator's tags)
+  // without reading `message`.
+  failure?: FetchFailure['reason'];
+  // Set when the failure may pass on its own (no response, a timeout),
+  // so a background refresh looks again rather than keeping it.
+  retry?: true;
+}
+
+export interface CheckIconArgs {
+  header: ParsedHeader | null;
+  scriptFileUrl: string;
+  prior: IconCheck | undefined;
+  recheck: 'all' | 'preserve';
+  fetchCache: FileFetchCache;
+  localRoots: readonly string[];
+  // As for the dependencies; see `readLocalStandIn`.
+  localLookup?: LocalLookup;
+}
+
+// Check that the script's `@icon` can be shown: that it resolves,
+// downloads, is an image, and is within `MAX_ICON_BYTES`. The pages
+// that paint icons apply the same rules and just show a globe when one
+// fails, so this is the only place the reason is reported.
+//
+// Never makes the script invalid: the icon is cosmetic. Downloads on
+// the same terms as `@require`:
+// - `recheck: 'preserve'` keeps the prior answer for an unchanged
+//   reference, so a background refresh doesn't download it again.
+//   Not one that may pass on its own (no response, a timeout).
+// - A local stand-in is re-read every pass, like a `@require`'s.
+//
+// Returns null when there is nothing to check: no `@icon`, or an inline
+// `data:` icon, which has nothing to download.
+export async function checkScriptIcon(args: CheckIconArgs): Promise<IconCheck | null> {
+  const decl = iconDeclFromHeader(args.header);
+  if (!decl || decl.ref.startsWith('data:')) return null;
+  const { ref } = decl;
+  const problem = (reason: string): IconCheck => ({ ref, message: `@icon ${ref}: ${reason}` });
+
+  const resolved = resolveScriptResourceDetailed(ref, args.scriptFileUrl);
+  if ('failed' in resolved) return problem(describeResolveFailure(resolved));
+  const { url } = resolved;
+
+  // A stand-in the page could show wins. One it couldn't (too big, not
+  // an image) is skipped, as the page skips it for the declared URL.
+  // Read through the shared fetch, which has no icon rules, so they
+  // are applied to the bytes here.
+  const prior = args.prior;
+  // A 'known' lookup goes by what the last check of this same reference
+  // found. A row that recorded a stand-in without its URL is searched.
+  const last = args.localLookup === 'known' && prior?.ref === ref && prior.url === url &&
+    (!prior.local || prior.localUrl)
+    ? { localUrl: prior.localUrl } : undefined;
+  const local = await readLocalStandIn(url, args.localRoots, args.fetchCache, last);
+  if (
+    local?.localUrl && !isFailure(local.got) &&
+    local.got.bytes.byteLength <= MAX_ICON_BYTES &&
+    (!local.got.contentType || isIconContentType(local.got.contentType))
+  ) {
+    return { ref, url, local: true, localUrl: local.localUrl };
+  }
+  if (
+    args.recheck === 'preserve' && prior?.ref === ref && prior.url === url &&
+    !prior.local && !prior.retry
+  ) {
+    return prior;
+  }
+  // Not through the shared fetch cache: that one fetches up to the
+  // `@require` limit, and an icon has its own limit and type rule.
+  const res = await fetchResourceBytes(url, {
+    maxBytes: MAX_ICON_BYTES,
+    acceptContentType: isIconContentType,
+  });
+  if ('failed' in res) {
+    const transient = res.reason === 'no-response' || res.reason === 'timeout';
+    return {
+      ...problem(describeFetchFailure(res, MAX_ICON_BYTES)),
+      url,
+      failure: res.reason,
+      ...(transient ? { retry: true as const } : {}),
+    };
+  }
+  return { ref, url };
 }
 
 // Fetch a single `@require` the way `attachFiles` would, for one
@@ -505,6 +666,7 @@ export async function fetchRequireForPreview(
     fetchCache,
     now,
     localRoots,
+    localLookup: 'search',
     // Fresh per call: dedup across refs is the batch loader's job, and
     // the preview shows one tab per declared ref.
     seenUrls: new Set(),
@@ -531,7 +693,8 @@ interface LoadedBytes {
   // declared URL, so callers can record it without re-deriving the
   // comparison. Absent means "the declared URL was fetched".
   localUrl?: string;
-  // The stand-in's listing mtime, when its folder listed.
+  // The stand-in's modified time, in listing units, when the read
+  // reported one.
   fsMtime?: number;
   got: FetchedFile | FileFailure;
 }
@@ -546,14 +709,34 @@ function standInFields(loaded: LoadedBytes): Pick<SharedFileFields, 'localUrl' |
   };
 }
 
+// A pushed body as what was read for its ref. A relative ref's body is
+// the declared file itself, so only a stand-in for a remote URL counts
+// as one.
+function pushedBytes(pushed: PushedFile): LoadedBytes {
+  return {
+    ...(pushed.localUrl ? { localUrl: pushed.localUrl } : {}),
+    got: { bytes: base64ToBytes(pushed.bytesBase64), contentType: pushed.contentType },
+  };
+}
+
 // Read a declared file, preferring a local stand-in when one exists.
 //
 // Candidates are tried in order and the first that READS wins — the
 // probe and the real read are the same fetch, so a hit costs nothing
-// extra. A total miss costs one listing per root plus one local read
-// per candidate the listing couldn't rule out (see
-// `presentLocalFileCandidates`). `ensureFetch` caches the reads for
-// the rest of the pass, misses included.
+// extra. A root is listed only when the search reaches it, to rule out
+// candidates under it that can't exist (see `localCandidateMayExist`),
+// so a hit in an early root never lists the later ones. `ensureFetch`
+// caches the reads for the rest of the pass, misses included.
+//
+// `last` is what the last check found, passed by the page-load checks
+// (a listing per root costs more than the whole rest of such a check):
+//   - its stand-in, when still a candidate under these roots, is read
+//     first and no root is listed. A path that no longer reads falls
+//     through to the search.
+//   - no stand-in last time means none is looked for: one appearing is
+//     rare, and searching would list every root on every page load.
+// Either can miss a copy that appeared since, nearer or at all; the
+// searching checks (focus, Refresh) find it.
 //
 // Returns `null` when no stand-in was found, so the caller can take its
 // `recheck: 'preserve'` shortcut on the declared URL. That ordering is
@@ -570,30 +753,34 @@ async function readLocalStandIn(
   declaredUrl: string,
   localRoots: readonly string[],
   fetchCache: FileFetchCache,
+  last?: { localUrl?: string },
 ): Promise<LoadedBytes | null> {
-  const candidates = await presentLocalFileCandidates(declaredUrl, localRoots, listingsFor(fetchCache));
+  const candidates = localFileCandidatesDetailed(declaredUrl, localRoots);
+  if (last && !last.localUrl) return null;
+  const known = last?.localUrl;
+  if (known && candidates.some((c) => c.url === known)) {
+    const got = await ensureFetch(fetchCache, known);
+    if (!isFailure(got)) return standInRead(known, got);
+  }
+  const listings = listingsFor(fetchCache);
   for (const candidate of candidates) {
-    const got = await ensureFetch(fetchCache, candidate);
+    if (!await localCandidateMayExist(candidate, listings)) continue;
+    const got = await ensureFetch(fetchCache, candidate.url);
     // A candidate that doesn't read isn't a failure — it just isn't
     // there. Only an actual hit ends the search.
-    if (!isFailure(got)) {
-      // Its listing stat too, for the "modified" chip: one listing per
-      // folder per pass, shared through the same cache the candidate
-      // gate used. A listing that fails just leaves the stat off.
-      const fsPath = locationFsPath(candidate);
-      let fsMtime: number | undefined;
-      try {
-        fsMtime = (await statFromListing(parentDir(fsPath), baseName(fsPath), listingsFor(fetchCache)))?.mtime;
-      } catch {
-        /* no stat; the entry can still be reported deleted, not modified */
-      }
-      return { localUrl: candidate, got, ...(fsMtime !== undefined ? { fsMtime } : {}) };
-    }
+    if (!isFailure(got)) return standInRead(candidate.url, got);
   }
   return null;
 }
 
-// The root-directory listings `presentLocalFileCandidates` gates on,
+// A stand-in that read, with its modified time for the "modified" chip.
+// The time comes from the read itself (`Last-Modified`), in the units a
+// listing of its folder would give.
+function standInRead(localUrl: string, got: FetchedFile): LoadedBytes {
+  return { localUrl, got, ...(got.fsMtime !== undefined ? { fsMtime: got.fsMtime } : {}) };
+}
+
+// The root-directory listings the stand-in search gates on,
 // given the same lifetime as the fetch cache they sit beside: one
 // refresh pass, or the page for the install preview's page-lifetime
 // cache, which memoizes misses for that long anyway. Keyed off the fetch cache
@@ -629,18 +816,45 @@ interface LoadRequireArgs {
   now: number;
   seenUrls: Set<string>;
   localRoots: readonly string[];
+  localLookup: LocalLookup;
+  pushed?: PushedFile;
+}
+
+// What the last check found for this file, under a 'known' lookup. A
+// file the last check didn't load (newly declared) has nothing known,
+// so it is searched for.
+function lastLookup(lookup: LocalLookup, prior: { localUrl?: string } | undefined): { localUrl?: string } | undefined {
+  return lookup === 'known' ? prior : undefined;
+}
+
+// Start reading the stand-ins a script's last check found, into the
+// pass's fetch cache, so a check can overlap them with reading the
+// script itself. The loaders then take them from the cache. Only for a
+// 'known' lookup, which reads these paths first anyway.
+export function prefetchKnownStandIns(
+  fetchCache: FileFetchCache,
+  prior: { requires?: readonly { localUrl?: string }[]; resources?: readonly { localUrl?: string }[] },
+): void {
+  for (const entry of [...(prior.requires ?? []), ...(prior.resources ?? [])]) {
+    if (entry.localUrl) void ensureFetch(fetchCache, entry.localUrl);
+  }
+}
+
+// Where a ref resolves: the pushed body's URL when there is one, which
+// the pusher already resolved and checked, else the ref resolved
+// against the script.
+function resolveRef(ref: string, scriptFileUrl: string, pushed: PushedFile | undefined): { url: string } | { failure: string } {
+  if (pushed) return { url: pushed.url };
+  const resolved = resolveScriptResourceDetailed(ref, scriptFileUrl);
+  if ('failed' in resolved) return { failure: describeResolveFailure(resolved) };
+  if (resolved.kind === 'data') return { failure: DATA_URL_NOT_SUPPORTED };
+  return { url: resolved.url };
 }
 
 async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequire>> {
-  const resolved = resolveScriptResourceDetailed(args.ref, args.scriptFileUrl);
-  if ('failed' in resolved) {
-    return { errorMessage: `@require ${args.ref}: ${describeResolveFailure(resolved)}` };
-  }
-  if (resolved.kind === 'data') {
-    return { errorMessage: `@require ${args.ref}: URLs with the data: scheme are not supported` };
-  }
-  if (!isJsResourceUrl(resolved.url)) {
-    return { errorMessage: `@require ${args.ref}: The filename must end in .js` };
+  const resolved = resolveRef(args.ref, args.scriptFileUrl, args.pushed);
+  if ('failure' in resolved) {
+    return { errorMessage: `@require ${args.ref}: ${resolved.failure}` };
   }
   if (args.seenUrls.has(resolved.url)) return {};
   args.seenUrls.add(resolved.url);
@@ -649,9 +863,11 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
 
   // Local stand-in first, and before the preserve shortcut — see
   // `readLocalStandIn` for why an overridden file is never cached past
-  // a refresh.
-  const local = await timePhase('local-standin', () => readLocalStandIn(resolved.url, args.localRoots, args.fetchCache));
-  if (!local && args.recheck === 'preserve' && prior && !prior.localUrl) {
+  // a refresh. A pushed body is read every time for the same reason.
+  const local = args.pushed ? pushedBytes(args.pushed)
+    : await timePhase('local-standin', () => readLocalStandIn(
+      resolved.url, args.localRoots, args.fetchCache, lastLookup(args.localLookup, prior)));
+  if (!local && !args.pushed && args.recheck === 'preserve' && prior && !prior.localUrl) {
     return { entry: prior };
   }
 
@@ -819,6 +1035,8 @@ interface LoadResourceArgs {
   fetchCache: FileFetchCache;
   now: number;
   localRoots: readonly string[];
+  localLookup: LocalLookup;
+  pushed?: PushedFile;
 }
 
 async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredResource>> {
@@ -826,15 +1044,12 @@ async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredRe
   // doesn't say what failed to load. `@require` names its ref because
   // that is all it has; this names both.
   const subject = `@resource ${args.decl.name} (${args.decl.ref})`;
-  const resolved = resolveScriptResourceDetailed(args.decl.ref, args.scriptFileUrl);
-  if ('failed' in resolved) {
-    return { errorMessage: `${subject}: ${describeResolveFailure(resolved)}` };
+  const resolved = resolveRef(args.decl.ref, args.scriptFileUrl, args.pushed);
+  if ('failure' in resolved) {
+    return { errorMessage: `${subject}: ${resolved.failure}` };
   }
-  if (resolved.kind === 'data') {
-    return { errorMessage: `${subject}: URLs with the data: scheme are not supported` };
-  }
-  // No suffix gate — resources can be any media type.
-  // No URL-level dedup either: two `@resource` lines with different
+  // Resources can be any media type.
+  // No URL-level dedup: two `@resource` lines with different
   // names pointing at the same URL are intentional — we want two
   // distinct StoredResource entries so each name resolves to its own
   // GM_getResource* lookup. The shared FileFetchCache still ensures
@@ -845,7 +1060,9 @@ async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredRe
 
   // Local stand-in first, and before the preserve shortcut — same rule
   // and same reasoning as `@require`; see `readLocalStandIn`.
-  const local = await timePhase('local-standin', () => readLocalStandIn(resolved.url, args.localRoots, args.fetchCache));
+  const local = args.pushed ? pushedBytes(args.pushed)
+    : await timePhase('local-standin', () => readLocalStandIn(
+      resolved.url, args.localRoots, args.fetchCache, lastLookup(args.localLookup, prior)));
   if (
     !local && args.recheck === 'preserve' &&
     prior && prior.name === args.decl.name && !prior.localUrl
@@ -965,6 +1182,7 @@ async function fetchFileBytes(
     const out: FetchedFile = { bytes: res.body, contentType: res.contentType };
     if (res.etag) out.etag = res.etag;
     if (res.lastModified) out.lastModified = res.lastModified;
+    if (res.fsMtime !== undefined) out.fsMtime = res.fsMtime;
     return out;
   } catch (err) {
     return {
@@ -975,7 +1193,7 @@ async function fetchFileBytes(
       // our own code broke its contract — which is what the reader is
       // being told, and why `isFetchFailureMessage` correctly declines
       // it. Phrasing it as one of the fetch failures would both invite
-      // the offline validator to substitute mirror wording for a bug of
+      // the corpus validator to substitute mirror wording for a bug of
       // ours, and put a second `could not be fetched: ` colon into a
       // string that already lands after `@require <ref>: `.
       errorMessage: `Internal error: the file fetcher failed unexpectedly (${

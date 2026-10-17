@@ -25,6 +25,7 @@ repository. See `README.md` for setup instructions and available commands.
     - README should be concise and easy to read, without excessive details. It shouldn't list every feature or behavior, or implementation details of how things work.
     - Use other `docs/*.md` files for more details.
   - Always update `docs/file-index.md` when the file set changes or file descriptions become stale.
+  - When changing `sm-dev` or the harness (commands, flags, output, behavior), update the `skills/SourceMonkey-dev/` instructions (`SKILL.md`, `references/*.md`) to match, where they cover it.
   - Include all significant changes in the commit message.
 
 ## Development Conventions
@@ -62,6 +63,76 @@ entries, banners). Full rules in [docs/diagnostics.md](docs/diagnostics.md#wordi
   file the plumbing in TODO.md.
 - **`Internal error:` prefix** when the user can't act on it.
 
+### sm-dev output markup (color)
+sm-dev's output and help are marked up by role and painted at a
+terminal. How it works:
+[docs/sm-dev-design.md](docs/sm-dev-design.md#output-color-output-stylets).
+- **The roles and their looks** are `STYLES` in
+  `src/harness/output-style.ts`, the one place colors are set. Help's
+  own markup is in `src/harness/help-format.ts`, which maps its spans
+  onto those roles.
+- **Mark output by what it is** (`id`, `name`, `url`, `code`,
+  `heading`, `selected`) with `ui` and the role helpers, which escape
+  what goes in.
+- **Recognized prefixes stay plain, before any markup**: write
+  ``'[sm-dev] ' + ui`...` ``, and build `[sm-dev] ERROR: `, `ERROR: `,
+  `Warning: `, `INVALID  ` from the constants in `output-style.ts`.
+- **In messages we write, put commands, flags and the user's own input
+  in backticks** (`` Use `tabs` to list them ``). In a template literal,
+  write them with `quoted()` (`` `The ${quoted(flag)} flag` ``) rather
+  than escaped backticks. Text a script or page wrote goes in through
+  `ui` or `asError`, so its own backticks stay text.
+- **Never put markup in** Error messages, JSON, or strings code
+  compares. Plain output (pipes, tests) must read right with no color.
+- In help text (`command-list.ts`), commands, flags and values go in
+  backticks.
+
+### Storage writes and the worker's row cache
+Only the service worker writes storage and places registrations. Why,
+and how it is built: [docs/worker-writes.md](docs/worker-writes.md).
+- **Pages read storage to paint, and ask the worker for any change**
+  through `src/extension/worker-client.ts`. A new write is an operation
+  in `worker-ops.ts` plus a client export of the same name.
+  - Writers call `assertWorkerContext`, and
+    `tests/unit/page-writes.test.mjs` checks what pages import.
+  - Code running in the worker calls the store directly, never
+    `worker-client.ts`.
+- **Worker reads of collection rows, script rows and active times go
+  through the row cache** (the store's reads, `sharedRows`), not a scan
+  of their own.
+  - Rows from `sharedRows` are frozen: copy one before changing it.
+- **Write script rows inside the store's lock (`mutate`)**, awaited
+  before the section returns. The blob cleanup relies on it, and the
+  worker refuses a script row written outside the lock.
+- **What crosses the port is JSON**: no Maps or Sets, and no script
+  bodies when the page only needs the row.
+- **Anything new that changes Chrome's registration set** calls
+  `markRecordStale` first and `scheduleRecordSave` after, so a new
+  worker doesn't take a stale session record.
+- Tests that seed script rows use `sm.seedStorage`, which writes under
+  the lock.
+- **GM values (`gmval:` rows) go through `src/extension/value-store.ts`**,
+  reads and writes alike. It keeps the live maps and saves them to disk
+  behind ([docs/GM-APIs-storage.md](docs/GM-APIs-storage.md#the-workers-value-store)).
+
+### sm-dev protocol version
+`SM_DEV_PROTOCOL` in `src/sm-dev-protocol.ts` versions what sm-dev and
+the extension exchange (the calls and events `ExtensionLink` uses),
+since each side can come from a different build. The e2e-only parts of
+`self.SourceMonkey` are always the same build, so they don't count.
+When changing that surface:
+- **Bump the major** when a change needs both sides updated: a run
+  refuses an extension whose major differs.
+- **Bump the minor** for anything else new, including a new sm-dev
+  feature that needs a newer extension.
+  - An extension ahead by a minor must keep working with the older
+    sm-dev.
+  - An sm-dev feature that needs the new minor calls
+    `ExtensionLink.requireMinor` before using it. With an older
+    extension, the person then gets an error saying to update it,
+    rather than a failed call.
+- Reset the minor to 0 on a major bump.
+
 ## Planning vs Implementation
 When the user asks you to implement something, start coding quickly. Do NOT
 spend the entire session planning unless explicitly asked for a plan. If a plan
@@ -80,12 +151,36 @@ user before elaborating further. Default to action over planning.
   `~/.claude/plugins/cache/wookstar-claude-plugins/tampermonkey/<ver>/skills/tampermonkey/references/`)
   when implementing anything that touches userscript semantics.
 
+## Working on userscripts with our tools
+- When developing, debugging or testing userscripts with `sm-dev` or the
+  harness (not when changing the tools themselves), use the
+  `SourceMonkey-dev` skill for how to work with them.
+- Apply the `SourceMonkey-friction` skill too: when that work is
+  finished (committed or abandoned) and ran into friction with the
+  tools or the skill, log it as the skill describes.
+
 ## Code Changes
 - Use the file index to help find relevant files.
 - When changing behavior, read existing design docs to understand previous designs and intentions. Ask questions if unsure if we should change those requirements.
 - When the user asks for a change, apply it consistently to ALL similar patterns.
 - Do NOT drop or overwrite existing content in files like README.md — preserve what's there and add to it.
 - When similar logic occurs on multiple parallel paths, use common helper methods when possible, to ensure the logic stays consistent.
+- **Where a module goes** (see [docs/architecture.md](docs/architecture.md#source-layout)):
+  - `src/extension/` if only the extension loads it, `src/harness/` if
+    only the harness does, directly in `src/` if both do.
+  - A shared module in `src/` must not import from `src/extension/`,
+    not even `import type`: tsc would then compile that module into
+    `lib/`.
+  - When the harness needs something from an extension-only module,
+    move that piece into a shared module in `src/` (splitting the file
+    if needed) rather than importing it.
+  - Pages, CSS, icons and the manifest stay directly in `src/`, so
+    their URLs have no folder in them. A page's `<script src>` points
+    into `extension/`.
+  - From the service worker, pass Chrome absolute URLs
+    (`chrome.runtime.getURL`): it runs from `extension/`, so a relative
+    path resolves there.
+  - `tests/unit/source-layout.test.mjs` checks this.
 
 ## Running tests
 - See `docs/testing.md` for the full layout and harness details.
@@ -105,7 +200,7 @@ user before elaborating further. Default to action over planning.
 
 ## Writing tests
 - **Unit vs e2e**: unit tests (`tests/unit/`) exercise pure logic against
-  the compiled `dist/*.js`. Use them for matcher/parser/store helpers.
+  the compiled `dist/**/*.js`. Use them for matcher/parser/store helpers.
   E2E tests (`tests/e2e/`) drive a real headless Chromium with the
   unpacked extension loaded; use them for anything that touches the
   chrome.* APIs or end-to-end injection.
@@ -113,7 +208,7 @@ user before elaborating further. Default to action over planning.
   - `tests/fixtures/extension.ts` exposes `extensionContext`,
     `fixtureServer`, `extensionId`, `getServiceWorker`, and `sm`. The
     `sm` fixture is a typed proxy over the SW's `self.SourceMonkey` test
-    surface (see `src/background.ts`).
+    surface (see `src/extension/background.ts`).
   - `tests/fixtures/scripts-dir.ts` builds a tmp directory of real
     `*.user.js` files on disk so `sm.addCollection(dir.path)` runs the
     production file:// scan + fetch pipeline.
@@ -134,6 +229,11 @@ user before elaborating further. Default to action over planning.
   concern (see `tests/e2e/` for the current split).
 
 ## Editing example userscripts
+- When adding an example under `tests/examples/`, follow the page
+  skeleton and the "Adding a new example" checklist in
+  `tests/examples/README.md`: the footer, the `@name` prefix, the
+  README table row and the `index.html` link are easy to miss.
+  `tests/unit/examples.test.mjs` checks them.
 - When changing the body of any `tests/examples/**/*.user.js`, bump
   its `@version` header. `scripts/sync-manager-scripts.mjs` (and the
   cross-manager specs) compares local `@version` against the installed

@@ -92,13 +92,13 @@ test.describe('reload fast-path', () => {
     // swap decision, and waiting for the load event first would spend
     // part of that window.
     const navigated = page.reload();
-    // The tooltip separates the two purples: a swap that MISSED its
-    // window also paints purple, but as a stale `Reload to update`
-    // row. Asserting its absence keeps a missed window failing here
-    // rather than passing this wait and failing the title check.
+    // The rows separate the two purples: a swap that MISSED its
+    // window also paints purple, but with a stale `RELOAD` row.
+    // Asserting its absence keeps a missed window failing here rather
+    // than passing this wait and failing a later check.
     await waitForTabState(
       sm, tabId,
-      (s) => hasBadgeColor(s, PURPLE) && !s.title.includes('Reload to update'),
+      (s) => hasBadgeColor(s, PURPLE) && !s.rows.some((r) => r.endsWith('| RELOAD')),
       'purple while the swap lands',
     );
     await navigated;
@@ -389,7 +389,7 @@ test.describe('reload fast-path', () => {
       runAt: 'document-end' as const,
       injectInto: 'content' as const,
     };
-    // A sibling that always grants storage, so the shared `__SM_GM__`
+    // A sibling that always grants storage, so the shared GM
     // runtime stays registered in USER_SCRIPT world for every version
     // below. The runtime follows the scripts that need it, and the SW
     // defers a swap whose body would land on a document without it —
@@ -487,12 +487,10 @@ test.describe('reload fast-path', () => {
   test('a refresh that changes injection world defers to the next reload', async ({
     extensionContext, fixtureServer, sm,
   }) => {
-    // Adding a script's first real @grant moves it MAIN → USER_SCRIPT.
-    // The wrapper Chrome already injected can't move, and the new
-    // body's bindings dereference `window.__SM_GM__`, which MAIN
-    // doesn't have — so the SW defers the swap and the reload runs the
-    // baked-in body. The reload after that runs the re-registered
-    // script in its new world.
+    // Adding `@inject-into content` moves it MAIN → USER_SCRIPT. The
+    // wrapper Chrome already injected can't move, so the SW defers the
+    // swap and the reload runs the baked-in body. The reload after that
+    // runs the re-registered script in its new world.
     scriptsDir.write({
       relativePath: 'worldflip.user.js',
       meta: { name: 'WorldFlip', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
@@ -511,14 +509,13 @@ test.describe('reload fast-path', () => {
         name: 'WorldFlip',
         match: [`${fixtureServer.baseUrl}/*`],
         runAt: 'document-end',
-        grant: ['GM_setValue', 'GM_getValue'],
+        injectInto: 'content',
       },
-      body: `document.title = 'v2:' + GM_getValue('marker', 'init'); GM_setValue('marker', 'v2');`,
+      // \`chrome.runtime\` is there only in the isolated world.
+      body: `document.title = 'v2:' + typeof (window.chrome && chrome.runtime && chrome.runtime.sendMessage);`,
     });
     await page.reload();
-    // Deferred: the MAIN-world wrapper ran its own body again. A swap
-    // here would have thrown on `window.__SM_GM__` being undefined and
-    // left the page with no title change at all.
+    // Deferred: the MAIN-world wrapper ran its own body again.
     await expect(page).toHaveTitle('v1-main');
 
     // The refresh that ran during that reload landed the new row.
@@ -526,14 +523,14 @@ test.describe('reload fast-path', () => {
     // fast-following reload would otherwise out-race.
     await sm.syncNow();
     await page.reload();
-    await expect(page).toHaveTitle('v2:init');
+    await expect(page).toHaveTitle('v2:function');
     await page.close();
   });
 
   test('a refresh that first needs the GM runtime defers to the next reload', async ({
     extensionContext, fixtureServer, sm,
   }) => {
-    // The shared `__SM_GM__` runtime is registered only in worlds that
+    // The shared GM runtime is registered only in worlds that
     // have a script granting a runtime-backed API, so a page whose
     // only script grants nothing carries no runtime. Adding the first
     // such grant produces a body whose GM_* bindings would resolve to
@@ -569,7 +566,7 @@ test.describe('reload fast-path', () => {
     });
     await page.reload();
     // Deferred: the baked-in body ran again. A swap here would have
-    // thrown on `window.__SM_GM__` being undefined.
+    // thrown on the GM runtime being missing.
     await expect(page).toHaveTitle('v1-no-runtime');
 
     // That reload's refresh landed the new row; syncNow flushes the

@@ -52,7 +52,7 @@
 // record — works uniformly for file://, http(s)://, and entries
 // reached via a manifest.
 
-import { isFileUrl, isHttpUrl } from './directories.js';
+import { fsMtimeFromLastModified, isFileUrl, isHttpUrl } from './file-locations.js';
 import { githubAuthHeaders } from './github-auth.js';
 import { mustHopToWorker, readHttpViaWorker, replyBytes } from './http-read.js';
 
@@ -75,7 +75,8 @@ export type ResolveFailReason =
   | 'empty'
   | 'malformed-url'
   | 'unsupported-scheme'
-  | 'outside-script-folder';
+  | 'outside-script-folder'
+  | 'relative-in-scratch';
 
 // A discriminated union for the same reason `FetchFailure` is one: the
 // scheme is always known where it belongs, so making it optional would
@@ -87,7 +88,7 @@ export type ResolveFailure =
   | { failed: true; reason: 'unsupported-scheme'; scheme: string };
 
 // Yes/no form, for the callers that only need a URL or nothing —
-// syntax highlighting's link detection, the icon resolver, the offline
+// syntax highlighting's link detection, the icon resolver, the corpus
 // validator. A thin wrapper rather than a second implementation: the
 // two used to be one function and the rules must not drift.
 export function resolveScriptResource(
@@ -156,6 +157,9 @@ export function resolveScriptResourceDetailed(
   if (resolved.protocol === 'file:') {
     return { kind: 'file', url: resolvedStr };
   }
+  // A scratch script (`scratch:///name.user.js`, see directories.ts) is
+  // stored as text alone, so it has no folder a relative path could name.
+  if (resolved.protocol === 'scratch:') return { failed: true, reason: 'relative-in-scratch' };
   // A relative ref that lands on some other scheme — reachable when the
   // script's own URL has one. That is a pinned imported script, whose
   // `fileUrl` is the synthetic `sourcemonkey://imported/…` stand-in
@@ -206,6 +210,11 @@ export interface FetchedBytes {
   // Absent for file:// and for servers that send neither.
   etag?: string;
   lastModified?: string;
+  // A `file://` read's modified time, in the units of Chrome's
+  // directory listing (whole seconds), so it compares equal to a
+  // listing's `mtime`. Absent for http(s), or when Chrome sent no
+  // `Last-Modified`.
+  fsMtime?: number;
 }
 
 // The server confirmed the caller's copy is current. Only ever returned
@@ -457,7 +466,10 @@ function fetchFileBytesXhr(
         finish(fetchFailed('wrong-content-type'));
         return;
       }
-      finish({ body, contentType: ct, finalUrl: url });
+      finish({
+        body, contentType: ct, finalUrl: url,
+        ...fsMtimeField(xhr.getResponseHeader('last-modified')),
+      });
     };
     // A file:// XHR carries no HTTP layer, so a file that isn't there
     // and one we're not allowed to read arrive identically — hence one
@@ -497,7 +509,7 @@ async function fetchFileBytesFetch(
   // layer, and whatever status this leg's `fetch` synthesises means the
   // same thing the XHR leg's `onerror` does — the file wouldn't read.
   // Reporting it as `HTTP <n>` would make the two legs describe one
-  // situation differently, which is what the offline validator's fetch
+  // situation differently, which is what the corpus validator's fetch
   // shim exposed.
   if (!response.ok && response.status !== 0) return fetchFailed('unreadable-file');
   // Answered, but we aren't allowed to look.
@@ -518,7 +530,15 @@ async function fetchFileBytesFetch(
   if (body.byteLength === 0) return fetchFailed('empty');
   if (body.byteLength > opts.maxBytes) return fetchFailed('oversize');
 
-  return { body, contentType, finalUrl: response.url || url };
+  return {
+    body, contentType, finalUrl: response.url || url,
+    ...fsMtimeField(response.headers.get('last-modified')),
+  };
+}
+
+function fsMtimeField(header: string | null): { fsMtime?: number } {
+  const fsMtime = fsMtimeFromLastModified(header);
+  return fsMtime !== undefined ? { fsMtime } : {};
 }
 
 // ---------- Text + suffix helpers ----------
@@ -547,19 +567,3 @@ export async function fetchResourceText(
     return null;
   }
 }
-
-// Strict `.js`-suffix check used by the `@require` gate: the pathname
-// (sans query/fragment) must end in `.js`. So `jquery.js?v=3` and
-// `lib.user.js` both pass; `lib.js.txt`, `foo.json`, and `foo.js/` do
-// not. Comparison is case-insensitive — `lib.JS` is common on
-// Windows-origin and some CDNs, and TM/VM don't gate on suffix at all,
-// so being permissive about case keeps us interoperable. Returns
-// false for malformed URLs.
-export function isJsResourceUrl(url: string): boolean {
-  try {
-    return new URL(url).pathname.toLowerCase().endsWith('.js');
-  } catch {
-    return false;
-  }
-}
-

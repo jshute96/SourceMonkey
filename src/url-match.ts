@@ -7,7 +7,7 @@
 //             - host:   *, *.domain, exact domain, or empty (for file://)
 //             - path:   glob with `*` (matches any chars including `/`)
 //             Plus the special literal `<all_urls>` (any http/https/file/ftp URL).
-//             Two shapes Chrome's parser refuses are read leniently
+//             Some shapes Chrome's parser refuses are read leniently
 //             first — see `canonicalMatchPatterns`.
 //
 //   @include  Free-form glob over the *whole* URL string. `*` matches any
@@ -18,8 +18,13 @@
 //             script does not match — excludes win over both @match and
 //             @include.
 //
+// All three also take Tampermonkey's `.tld` host suffix, meaning "any
+// public suffix" — see `.tld` hosts below.
+//
 // `urlMatchesScript(url, matching)` is the entry point used by the
 // background SW; the per-pattern helpers are exported for tests.
+
+import { ICANN_SUFFIX_RULES } from './public-suffixes.js';
 
 export interface UrlMatching {
   matches: string[];
@@ -37,9 +42,144 @@ function escapeForRegexExceptStar(s: string): string {
 
 // Convert a `*`-glob (where `*` matches any chars, including `/`) to an
 // anchored RegExp.
-function globToRegExp(glob: string): RegExp {
+function globToRegExp(glob: string, flags = ''): RegExp {
   const body = escapeForRegexExceptStar(glob).replace(/\*/g, '.*');
-  return new RegExp('^' + body + '$');
+  return new RegExp('^' + body + '$', flags);
+}
+
+// ---------- `.tld` hosts ----------
+//
+// Tampermonkey and Violentmonkey read a host ending in `.tld` as "this
+// name under any public suffix": `*://www.google.tld/*` runs on
+// www.google.com, www.google.de and www.google.co.uk. They take it in
+// `@match`, `@include` and `@exclude` alike.
+//
+// A public suffix is one under which anyone can register a name. We
+// take them from the ICANN section of the Public Suffix List (PSL,
+// publicsuffix.org), generated into public-suffixes.ts:
+//   - That covers multi-level ones (`co.uk`, `com.au`) where a
+//     registry keeps the second level, and not `com.de`, an ordinary
+//     name someone owns.
+//   - The PSL's private section (`blogspot.com`, `github.io`) is left
+//     out: `www.google.blogspot.com` belongs to whoever registered it
+//     there, not to Google. (Violentmonkey includes it.)
+//   - So are names no registry hands out (`.local`, `.lan`): the PSL's
+//     implicit "any unknown label" rule isn't applied.
+//
+// Matching tries each public suffix the URL's own host ends in, with
+// `.tld` replaced by it, as an ordinary pattern (see `tldSuffixesOf`).
+//
+// The list stays out of the page: the wrapper's in-page matcher reads
+// `.tld` loosely, and the service worker's start check (the reply to
+// `sm:check-pending`) applies this exact reading. See docs/matching.md.
+
+// PSL rules, parsed on first use: plain suffixes, `*.x` wildcards
+// (every label under x is a suffix), and `!y` exceptions to them.
+let suffixRules: { plain: Set<string>; wild: Set<string>; except: Set<string> } | null = null;
+
+function rules(): NonNullable<typeof suffixRules> {
+  if (suffixRules) return suffixRules;
+  const r = { plain: new Set<string>(), wild: new Set<string>(), except: new Set<string>() };
+  for (const line of ICANN_SUFFIX_RULES.split('\n')) {
+    if (!line) continue;
+    if (line.startsWith('!')) r.except.add(line.slice(1));
+    else if (line.startsWith('*.')) r.wild.add(line.slice(2));
+    else r.plain.add(line);
+  }
+  suffixRules = r;
+  return r;
+}
+
+// Is this (lowercase, punycode) name exactly an ICANN public suffix?
+export function isPublicSuffix(name: string): boolean {
+  const r = rules();
+  if (r.except.has(name)) return false;
+  if (r.plain.has(name)) return true;
+  const dot = name.indexOf('.');
+  return dot > 0 && r.wild.has(name.slice(dot + 1));
+}
+
+// The public suffixes a URL's host ends in, shortest first: for
+// `www.google.co.uk`, `uk` and `co.uk`. Never the whole host, since a
+// `.tld` pattern always names something in front of it.
+function tldSuffixesOf(url: string): string[] {
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname.toLowerCase();
+  } catch {
+    return [];
+  }
+  const labels = hostname.split('.');
+  const out: string[] = [];
+  for (let k = 1; k < labels.length; k++) {
+    const suffix = labels.slice(-k).join('.');
+    if (isPublicSuffix(suffix)) out.push(suffix);
+  }
+  return out;
+}
+
+// A `.tld` pattern tested as each of its readings for this URL, with
+// `.tld` replaced by one of the host's public suffixes. Null when the
+// pattern has no `.tld` host, for the caller to test it as it is.
+function testTld(pattern: string, url: string, globStar: boolean, test: (p: string) => boolean): boolean | null {
+  const at = tldIndex(pattern, globStar);
+  if (at < 0) return null;
+  return tldSuffixesOf(url).some((suffix) => test(pattern.slice(0, at) + '.' + suffix + pattern.slice(at + 4)));
+}
+
+// Where the `.tld` that ends a pattern's host starts, or -1 when its
+// host doesn't end in one. The host is what follows `://` (the start,
+// for a pattern naming no scheme) up to the next `/`, less a `:port`.
+// Only a host's LAST label counts: `.tld` elsewhere is literal text.
+//
+// `globStar`: an `@include` glob may run the host straight into a `*`
+// with no `/` (`http://www.google.tld*`), as older scripts do. The
+// `.tld` still ends the host, and the `*` stays a glob star. Not for a
+// `@match`, whose grammar has no `*` after the host.
+//
+// A `.tld` with no name in front (`*.tld`, a bare `.tld`) stays
+// literal: "any host under any TLD" is not what anybody means by it.
+function tldIndex(pattern: string, globStar = false): number {
+  const sep = pattern.indexOf('://');
+  const start = sep < 0 ? 0 : sep + 3;
+  const slash = pattern.indexOf('/', start);
+  let host = pattern.slice(start, slash < 0 ? pattern.length : slash).replace(/:(\d+|\*)$/, '');
+  if (globStar && host.endsWith('*')) host = host.slice(0, -1);
+  if (!host.toLowerCase().endsWith('.tld')) return -1;
+  const base = host.slice(0, -4);
+  if (base === '' || base === '*') return -1;
+  return start + host.length - 4;
+}
+
+// Does this glob or `@match` pattern have a `.tld` host — one Chrome
+// can't match for us? Regex patterns never do: `.tld` in a regex is
+// the author's own regex text.
+export function hostEndsInTld(pattern: string): boolean {
+  if (isRegexPattern(pattern)) return false;
+  if (pattern === '<all_urls>') return false;
+  return tldIndex(pattern, true) >= 0;
+}
+
+// A glob Chrome can register for a `.tld` `@match` or `@include`, as a
+// coarse first pass: the `.tld` becomes `.*`, so `*://www.google.tld/*`
+// registers as `*://www.google.*/*`. It reaches more than `.tld` means
+// (`www.google.evil.com`, and a glob `*` also crosses `/`), so the
+// wrapper's in-page matcher, which reads `.tld` exactly, must still
+// narrow it. A `@match` host's leading `*.` also covers the bare name
+// (`*.imdb.tld` runs on `imdb.com`), which as a glob needs `*imdb.*`.
+// Only for patterns where `hostEndsInTld` is true.
+export function tldCoarseGlob(pattern: string, isMatch: boolean): string {
+  const at = tldIndex(pattern, !isMatch);
+  let head = pattern.slice(0, at);
+  if (isMatch) {
+    const sep = head.indexOf('://');
+    if (sep >= 0 && head.startsWith('*.', sep + 3)) head = head.slice(0, sep + 3) + '*' + head.slice(sep + 5);
+  }
+  return head + '.*' + pattern.slice(at + 4);
+}
+
+function isRegexPattern(pattern: string): boolean {
+  return pattern.length >= 2 && pattern.startsWith('/') && pattern.endsWith('/');
 }
 
 // ---------- lenient readings ----------
@@ -49,17 +189,18 @@ function globToRegExp(glob: string): RegExp {
 // expanded against.
 const CONCRETE_SCHEMES = ['http', 'https', 'file', 'ftp'];
 
-// Rewrite the two `@match` shapes Chrome's parser refuses but the other
+// Rewrite the `@match` shapes Chrome's parser refuses but the other
 // managers run, into the patterns Chrome's grammar spells them with.
 // Returns one pattern per concrete scheme the original names — usually
 // one, and the input verbatim when there is nothing to rewrite.
 //
 //   *.example.com/*        → *://*.example.com/*   (scheme omitted)
-//   //example.com/*        → *://example.com/*     (scheme-relative)
-//   ://example.com/*       → *://example.com/*     (empty scheme)
-//   *//example.com/*       → *://example.com/*     (`*://` less its colon)
 //   http*://example.com/*  → *://example.com/*     (scheme glob)
 //   *s://example.com/*     → https://example.com/*
+//   https://example.com    → https://example.com/  (no path)
+//   *://*example.com/*     → *://*.example.com/*   (`*` stuck to a label)
+//
+// The last two are host-and-path readings, in `readHostAndPath`.
 //
 // Why: an omitted scheme and `http*` together account for nearly every
 // `@match` in the Greasy Fork corpus that Chrome refuses — the rewrite
@@ -86,20 +227,19 @@ const CONCRETE_SCHEMES = ['http', 'https', 'file', 'ftp'];
 export function canonicalMatchPatterns(pattern: string): string[] {
   if (pattern === '<all_urls>') return [pattern];
 
-  // Supply the scheme the author left out. `//host/…` is the
-  // protocol-relative spelling of the same omission, and `*//host/…` is
-  // a `*://host/…` with the colon dropped — read literally that one
-  // would be "any host, path beginning `//host/`", which names a
-  // different site than the one written.
+  // A broken scheme (`//host/…`, `*//host/…`, `://host/…`) is left as
+  // written, for `matchPatternProblem` to flag. Supplying `*://` would
+  // turn `*//host/…` into "any host, path beginning `//host/`".
+  if (BROKEN_SCHEME.test(pattern)) return [pattern];
+  // Supply the scheme the author left out.
   let p = pattern;
-  if (p.startsWith('*//')) p = '*:' + p.slice(1);
-  else if (p.startsWith('//')) p = '*:' + p;
-  else if (!p.includes('://')) p = '*://' + p;
+  if (!p.includes('://')) p = '*://' + p;
+  p = readHostAndPath(p);
 
   const sep = p.indexOf('://');
   const scheme = p.slice(0, sep).toLowerCase();
   const rest = p.slice(sep); // keeps the `://`
-  if (scheme === '*' || scheme === '') return anyScheme(rest);
+  if (scheme === '*') return anyScheme(rest);
   if (!scheme.includes('*')) return [p];
 
   let schemeRx: RegExp;
@@ -113,6 +253,32 @@ export function canonicalMatchPatterns(pattern: string): string[] {
   // Exactly the pair `*` already means, so say it the way `*` is said.
   if (expanded.join() === 'http,https') return anyScheme(rest);
   return expanded.map((s) => s + rest);
+}
+
+// A pattern starting with `//`, `*//` or `:`: slashes or a colon with
+// no scheme in front of them. Too odd to guess at; see
+// docs/match-rules.md.
+const BROKEN_SCHEME = /^(\*?\/\/|:)/;
+
+// The host-and-path half of the lenient readings, for a pattern that
+// has its `://`:
+//   - No path reads as the root page, `/`, as Tampermonkey reads it.
+//     Violentmonkey never runs one, so this takes nothing away there.
+//   - A `*` stuck to the front of a host (`*example.com`) reads as
+//     `*.example.com`: the name and its subdomains, which is what such
+//     authors mean. Tampermonkey runs it on `example.com` alone, and
+//     Violentmonkey as a glob that also takes `fooexample.com`; this
+//     covers the first and the sensible part of the second.
+// Any other `*` inside a host is left for `matchPatternProblem`.
+function readHostAndPath(p: string): string {
+  const start = p.indexOf('://') + 3;
+  const slash = p.indexOf('/', start);
+  let host = slash < 0 ? p.slice(start) : p.slice(start, slash);
+  const path = slash < 0 ? '/' : p.slice(slash);
+  // The port's own `*` (`:*`) doesn't count as a second one.
+  const bareHost = host.replace(/:(\d+|\*)$/, '');
+  if (/^\*[^.*:]/.test(bareHost) && !bareHost.includes('*', 1)) host = '*.' + host.slice(1);
+  return p.slice(0, start) + host + path;
 }
 
 // `*://<rest>` — http-or-https — spelled the way Chrome will take it.
@@ -134,7 +300,10 @@ function anyScheme(rest: string): string[] {
 // patterns and a typo in one shouldn't break the others.
 export function matchPattern(pattern: string, url: string): boolean {
   if (pattern === '<all_urls>') return HTTP_LIKE_SCHEMES.test(url);
-  return canonicalMatchPatterns(pattern).some((p) => matchCanonical(p, url));
+  // `.tld` is found in each canonical form, so it's judged on the
+  // pattern as read, the same text that is registered.
+  return canonicalMatchPatterns(pattern).some((p) =>
+    testTld(p, url, false, (q) => matchCanonical(q, url)) ?? matchCanonical(p, url));
 }
 
 // `matchPattern` for a pattern already in Chrome's spelling.
@@ -170,7 +339,8 @@ function matchCanonical(pattern: string, url: string): boolean {
   const colon = host.lastIndexOf(':');
   // Must look like host:digits — IPv6 literals are bracketed so a colon
   // outside `[…]` is unambiguous; we don't support bracketed v6 here.
-  const hasPort = colon > 0 && /^\d+$/.test(host.slice(colon + 1));
+  // `:*` is any port, as in Chrome.
+  const hasPort = colon > 0 && /^(\d+|\*)$/.test(host.slice(colon + 1));
   const patternHost = hasPort ? host.slice(0, colon) : host;
   const patternPort = hasPort ? host.slice(colon + 1) : '';
   if (patternHost === '*') {
@@ -188,11 +358,13 @@ function matchCanonical(pattern: string, url: string): boolean {
   // (after URL parsing normalises default ports — http defaults port to
   // '', so a pattern of `http://host:80/*` won't match `http://host/`
   // because parsed.port is ''. That mirrors Chrome's literal compare.)
-  if (patternPort !== '' && parsed.port !== patternPort) return false;
+  if (patternPort !== '' && patternPort !== '*' && parsed.port !== patternPort) return false;
 
-  // Path glob runs against pathname + query + fragment so authors can
-  // target ?id=... etc.
-  const tail = parsed.pathname + parsed.search + parsed.hash;
+  // Path glob runs against pathname + query, so authors can target
+  // ?id=... etc. Not the fragment: Chrome's matcher ignores it, so a
+  // `#` in the pattern matches nothing and a URL's `#hash` never stops
+  // a match.
+  const tail = parsed.pathname + parsed.search;
   try {
     return globToRegExp(path).test(tail);
   } catch {
@@ -268,8 +440,16 @@ export function matchPatternProblem(pattern: string): MatchPatternProblem | null
 
 // The check itself, over a pattern already in Chrome's spelling. Every
 // shape that reaches here has a `://` — `canonicalMatchPatterns`
-// supplies one when the author didn't.
+// supplies one when the author didn't — except a broken scheme, which
+// it leaves as written.
 function canonicalPatternProblem(pattern: string): MatchPatternProblem | null {
+  if (BROKEN_SCHEME.test(pattern)) {
+    return {
+      pattern,
+      what: 'doesn\'t start with a scheme and "://"',
+      fix: 'start it with "*://" for http and https',
+    };
+  }
   const sep = pattern.indexOf('://');
   const scheme = pattern.slice(0, sep);
   if (!MATCH_SCHEMES.includes(scheme.toLowerCase())) {
@@ -281,16 +461,8 @@ function canonicalPatternProblem(pattern: string): MatchPatternProblem | null {
   }
 
   const rest = pattern.slice(sep + 3);
+  // Always found: `readHostAndPath` supplies a path where there was none.
   const slash = rest.indexOf('/');
-  // The single most common malformed pattern: a bare origin. Chrome
-  // calls it "Empty path" and refuses the registration.
-  if (slash < 0) {
-    return {
-      pattern,
-      what: 'has no path',
-      fix: 'add a trailing "/*" to match all pages on that host',
-    };
-  }
 
   const host = rest.slice(0, slash);
   // Chrome takes a `:port` off the host before judging it, so
@@ -340,6 +512,16 @@ function canonicalPatternProblem(pattern: string): MatchPatternProblem | null {
       fix: '"*" has to be the whole host or its first label, as in *.example.com',
     };
   }
+  // Chrome takes this one, but matches it against URLs without their
+  // fragment, so it can never match. Violentmonkey does match it, so a
+  // script written there would otherwise just never run here.
+  if (rest.slice(slash).includes('#')) {
+    return {
+      pattern,
+      what: 'names a #hash that @match can\'t see',
+      fix: 'use @include to match on the hash',
+    };
+  }
 
   return null;
 }
@@ -350,7 +532,7 @@ function canonicalPatternProblem(pattern: string): MatchPatternProblem | null {
 // scanning the Log for.
 export function ignoredMatchMessage(problem: MatchPatternProblem): string {
   const fix = problem.fix ? `; ${problem.fix}` : '';
-  return `Ignoring @match ${problem.pattern} — it ${problem.what}${fix}`;
+  return `Ignoring @match ${problem.pattern}, which ${problem.what}${fix}`;
 }
 
 // The pieces `unusableMatchMessage` is built from, kept separate so the
@@ -373,14 +555,14 @@ const NEVER_RUNS = ', so this script would never run on any page';
 // `@require` failures do: the tag names what the reader has to go and
 // fix, and a `@match` isn't a word we get to recase.
 export function unusableMatchMessage(problem: MatchPatternProblem): string {
-  const fix = problem.fix ? ` — ${problem.fix}` : '';
+  const fix = problem.fix ? `; ${problem.fix}` : '';
   return `${MATCH_TAG}${problem.pattern} ${problem.what}${NEVER_RUNS}${fix}`;
 }
 
 // One of those messages with the offending pattern elided, or null when
 // the message is something else. What a bulk survey groups on — dozens
 // of scripts making the same mistake with different URLs are one row,
-// not dozens (`scripts/validate-userscripts.mjs`).
+// not dozens (`tests/greasyfork-examples/validate-corpus.mjs`).
 //
 // Derived from the constants above rather than matching the wording: a
 // recognizer that carries its own copy of the sentence goes stale the
@@ -395,20 +577,48 @@ export function unusableMatchGroupKey(message: string): string | null {
 
 // Test a single @include / @exclude pattern against a URL. Patterns
 // wrapped in `/.../` are regex; everything else is a `*`-glob over the
-// whole URL string.
+// whole URL string. Both ignore case, as Tampermonkey's and
+// Violentmonkey's do. Chrome tests globs case-sensitively, so what we
+// register is widened to cover that (`chromeIncludeGlob`), and the
+// wrapper's matcher holds the script to this reading.
 export function includePattern(pattern: string, url: string): boolean {
-  if (pattern.length >= 2 && pattern.startsWith('/') && pattern.endsWith('/')) {
+  if (isRegexPattern(pattern)) {
     try {
-      return new RegExp(pattern.slice(1, -1)).test(url);
+      return new RegExp(pattern.slice(1, -1), 'i').test(url);
     } catch {
       return false;
     }
   }
+  const tld = testTld(pattern, url, true, (p) => includePattern(p, url));
+  if (tld !== null) return tld;
   try {
-    return globToRegExp(pattern).test(url);
+    return globToRegExp(pattern, 'i').test(url);
   } catch {
     return false;
   }
+}
+
+// The glob to register with Chrome for a glob `@include`, which we read
+// ignoring case and Chrome tests case-sensitively. It must cover every
+// URL the `@include` does, and the wrapper's matcher narrows it.
+//   - Chrome lowercases a URL's scheme and host before testing, so a
+//     host is lowercased and stays exact.
+//   - Every other letter becomes `?`, Chrome's one-character wildcard,
+//     which takes it in either case.
+//   - The host is the text before the first `/` (after a leading
+//     `scheme://`), when it has a dot, or follows `scheme://` with no
+//     `*` (`localhost`). `*Foo/bar*` has none: its `Foo` may well be
+//     in the path.
+export function chromeIncludeGlob(glob: string): string {
+  const sep = glob.indexOf('://');
+  const firstSlash = glob.indexOf('/');
+  const start = sep >= 0 && sep < firstSlash ? sep + 3 : 0;
+  const slash = glob.indexOf('/', start);
+  const hostEnd = slash < 0 ? glob.length : slash;
+  const host = glob.slice(start, hostEnd);
+  const isHost = host.includes('.') || (start > 0 && !host.includes('*'));
+  const end = isHost ? hostEnd : start;
+  return glob.slice(0, end).toLowerCase() + glob.slice(end).replace(/[a-z]/gi, '?');
 }
 
 // Combined script-level test: a script matches a URL iff
@@ -416,15 +626,35 @@ export function includePattern(pattern: string, url: string): boolean {
 //   - at least one @match or @include pattern matches.
 // A script with zero match/include patterns never matches anything,
 // which is intentional — validateHeader already flags those as errors.
+//
+// Stops at the first rule that settles it: this runs for every script
+// on every URL the badge checks. `explainUrlMatch` is the same rule,
+// listing every hit instead; `tests/unit/url-match.test.mjs` pins the
+// two together.
 export function urlMatchesScript(url: string, matching: UrlMatching): boolean {
-  for (const ex of matching.excludes) {
-    if (includePattern(ex, url)) return false;
-  }
-  for (const m of matching.matches) {
-    if (matchPattern(m, url)) return true;
-  }
-  for (const inc of matching.includes) {
-    if (includePattern(inc, url)) return true;
-  }
-  return false;
+  if (matching.excludes.some((ex) => includePattern(ex, url))) return false;
+  return matching.matches.some((m) => matchPattern(m, url)) || matching.includes.some((inc) => includePattern(inc, url));
+}
+
+export interface UrlMatchExplanation {
+  matches: boolean;
+  /** Which header line decided, e.g. `@exclude *://example.com/admin*`. */
+  rule: string | null;
+  /** Every `@match` / `@include` line that covers the URL, excluded or not. */
+  matchedBy: string[];
+  /** Every `@exclude` line that covers it. Any one keeps the script off. */
+  excludedBy: string[];
+}
+
+// The same test, also naming the rules that answered, for a developer
+// asking why a script did or didn't run. Slower than `urlMatchesScript`,
+// since it tries every rule to list them all.
+export function explainUrlMatch(url: string, matching: UrlMatching): UrlMatchExplanation {
+  const excludedBy = matching.excludes.filter((ex) => includePattern(ex, url)).map((ex) => `@exclude ${ex}`);
+  const matchedBy = [
+    ...matching.matches.filter((m) => matchPattern(m, url)).map((m) => `@match ${m}`),
+    ...matching.includes.filter((inc) => includePattern(inc, url)).map((inc) => `@include ${inc}`),
+  ];
+  const matches = excludedBy.length === 0 && matchedBy.length > 0;
+  return { matches, rule: excludedBy[0] ?? matchedBy[0] ?? null, matchedBy, excludedBy };
 }

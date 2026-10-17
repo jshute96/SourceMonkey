@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name        SourceMonkey example: GM_registerMenuCommand
+// @name        SourceMonkey example: gm-menu: GM_registerMenuCommand
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.0
+// @version     1.0.3
 // @description Register and unregister entries in the toolbar action's right-click menu.
-// @match       *://*/gm-menu/gm-menu.html
+// @match       *://*/*gm-menu/gm-menu.html
 // @match       file:///*/gm-menu/gm-menu.html
 // @run-at      document-end
 // @grant       GM_registerMenuCommand
@@ -82,9 +82,11 @@
   }
 
   // ---- "By name" pair ----------------------------------------------
-  // Each Register click creates a fresh entry. Unregister removes the
-  // most-recently-registered "Toggle Foo" (LIFO) so repeated clicks
-  // peel them off in reverse order.
+  // Each Register click creates a registration with a fresh id; the
+  // manager's menu shows the caption once, and picking it runs them
+  // all (TM and SourceMonkey). Unregister
+  // removes the most-recently-registered "Toggle Foo" (LIFO) so
+  // repeated clicks peel them off in reverse order.
 
   document.getElementById('btn-register-by-name').addEventListener('click', () => {
     register(FOO_NAME);

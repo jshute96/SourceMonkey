@@ -29,11 +29,11 @@ Update this doc when a result changes.
 Specs that opt out of a manager via
 `test.skip(setup.manager === '<name>', '<reason>')`:
 
-- **`xmlhttp-denied/`** — skipped under **both** TM and VM. It asserts
-  SM's exact `"blocked by this script's @connect rules"` message. Each
-  of TM and VM has its own `@connect` UX (potentially prompting the
-  user) and its own denial message. Out of scope for cross-manager
-  comparison.
+- **`xmlhttp-connect/`** — skipped under **both** TM and VM. It answers
+  SM's own connection prompt window and asserts SM's exact denial
+  message. TM prompts in its own way, VM doesn't
+  check `@connect` at all, and each has its own messages. Out of scope
+  for cross-manager comparison.
 - **`gm-menu/`** (by-name test only) — skipped under **VM**. VM keys
   menu commands by `opts.id || caption`
   (`GM_registerMenuCommand` in its `src/injected/web/gm-api.js`), so
@@ -70,6 +70,14 @@ Specs that opt out of a manager via
     install both variants; TM prefetches `@require` URLs at the install
     prompt, so expect that install to error or stall rather than
     complete.
+- **`use-strict/`** (the "with a @require" test) — skipped under **TM
+  only**, for the same relative `@require` reason. The rest of the
+  example (a top-level `'use strict'` in both worlds) runs under all
+  managers.
+  - TM's `@require` behavior was checked once by hand, with a library
+    served from an absolute local URL: as in VM and SM, a first
+    library's `'use strict'` makes the script strict, and the script's
+    own after a library does nothing.
 - **`gm-download/`** (the two tests that let a download complete) —
   skipped under **VM**. Not a VM bug: a Chromium one.
   - VM saves a download by clicking an anchor on a
@@ -133,21 +141,16 @@ stays enforced in an SM-only spec.
 - **`unsafe-window/`** (`unsafeWindow === window`, and the
   `@inject-into content` variant) — measured under TM 5.5.0 and VM
   2.48.0.
-  - **Identity is SM-only.** SM answers `true`: it satisfies the grant
-    by running the script in MAIN world and binding
-    `unsafeWindow = window`, with nothing in between. TM and VM both
-    answer `false` on Chrome — each hands out its sandbox's wrapper
-    rather than the raw window. VM answers `false` in its isolated mode
-    too: `unsafeWindow` there is neither this script's own `window` nor a
-    way into the page, since its `isolated-read` still came back
-    `undefined`.
-    - This corrects an earlier assumption in our docs that only Firefox
-      managers wrap. Both Chrome managers wrap; SM is the one that
-      doesn't.
+  - **Identity: all three answer `false` on Chrome.** Each hands out a
+    sandbox wrapper rather than the raw window (SM's: docs/injection.md,
+    "The sandbox window"). VM answers `false` in its
+    isolated mode too: `unsafeWindow` there is neither this script's own
+    `window` nor a way into the page, since its `isolated-read` still
+    came back `undefined`.
     - All three reach the page's own variables under the plain grant,
       which is the contract, so the read / call / write assertions are
       unconditional. The identity row is only required to *exist* under
-      TM and VM — what it says there is a report.
+      TM and VM; what it says there is a report.
   - **The isolated variant under TM.** Same cause as
     `headers-inject-into/` below: TM has no `@inject-into`, so it
     honours the `@grant unsafeWindow` and runs `isolated.user.js` in the
@@ -162,7 +165,7 @@ stays enforced in an SM-only spec.
     it, and its assertions are unconditional: every manager here is
     expected to define the name and reach the page through it. This is
     the premise SourceMonkey's own implicit handling rests on (see
-    [injection.md](injection.md#unsafewindow-forces-main-world)), so it
+    [injection.md](injection.md#unsafewindow-is-the-pages-window)), so it
     is measured rather than assumed.
     - **Both confirm it** (TM 5.5.0, VM 2.49.0): `typeof unsafeWindow` is
       `object` with no `@grant` line for it, and the read reaches the
@@ -194,9 +197,14 @@ stays enforced in an SM-only spec.
   shape (cross-manager test results varied). SM does guarantee it
   (the wrapper gates on the right lifecycle event; see
   `docs/injection.md`). Cross-manager assertion: all three scripts
-  ran and document-idle observes `readyState=complete`. SM strict
-  ordering: `tests/e2e/injection.spec.ts` ("document-start,
-  document-end, document-idle inject in @run-at order").
+  ran and document-idle observes `readyState=complete`.
+  - The idle script also logs a row from a `load` listener. Whether it
+    fires differs by manager and world (TM and VM run this `@grant
+    none` script after `load`), so only SM asserts it. See
+    [`document-idle` and the `load` event](injection.md#document-idle-and-the-load-event).
+  - SM strict ordering: `tests/e2e/injection.spec.ts`
+    ("document-start, document-end, document-idle inject in @run-at
+    order").
 
 ## Harness details worth knowing
 

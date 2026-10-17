@@ -8,13 +8,22 @@
     outright when set, and collapses the slot to that one icon.
   - Otherwise one icon per distinct site is discovered from the
     matched sites themselves (see [Multiple sites](#multiple-sites)).
-- Implemented in [`src/site-icon.ts`](../src/site-icon.ts).
+- Implemented in [`src/extension/site-icon.ts`](../src/extension/site-icon.ts).
+
+## sm-dev
+
+`sm-dev script show`, `print` and `save` give a script's site icons from
+this cache, merged and ordered as a page heading's slot
+(`siteIconsFor`, sharing `mergeSlot` with the page). `save` and `print`
+look up the missing ones the same way a page would; `show` doesn't. See
+[sm-dev-managers.md](sm-dev-managers.md#icons).
 
 ## Debug page
 
 - `/debug/icons.html` ([`src/debug/icons.html`](../src/debug/icons.html) +
-  [`src/debug/icons.ts`](../src/debug/icons.ts)) inspects and manages cached
-  icons in `chrome.storage.local`.
+  [`src/extension/debug/icons.ts`](../src/extension/debug/icons.ts)) inspects and manages cached
+  icons in `chrome.storage.local`. Linked from the Options page's
+  storage section.
 - Displays a table of all cached rows (`siteIcon:*`, `pathIcon:*`, and
   `iconUrl:*`) with icon preview, target site/URL, scope chip,
   MIME/byte-size details, schema version, freshness status, and
@@ -79,6 +88,41 @@
 - The click-through link is *always* the `@match`-derived `linkUrl`.
   `@icon` is purely a visual override — it doesn't change which site
   the favicon links to.
+- The icon rules (tags, the 128 KB limit, `image/*` only) live in
+  [`src/script-icon.ts`](../src/script-icon.ts), shared with the
+  load-time check below.
+
+### Load-time check
+
+A slot whose `@icon` can't be shown just keeps its globe, so the reason
+is reported when the script loads instead (`checkScriptIcon` in
+[`src/external-files.ts`](../src/external-files.ts)).
+
+- Checks the icon resolves, downloads, is an image, and is within
+  the limit.
+- A problem is a load-time warning on the `@icon` line, e.g.
+  `@icon big.png: The file is larger than the 128 KB limit`.
+  - It goes in the Log tab and is printed by `sm-dev validate`, like
+    the other load-time notes.
+  - Like them, it also gives the script a WARNING status once it runs,
+    and a console line on each page it runs on.
+  - It never makes the script invalid, and an invalid script isn't
+    checked.
+- Downloaded on the same terms as `@require`, never when the script
+  runs:
+  - An explicit Refresh looks again.
+  - A background refresh keeps the stored answer (`iconCheck` on the
+    script row) unless the `@icon` line or the URL it resolves to
+    changed.
+  - Except a failure that may pass on its own (no response, a
+    timeout), which the next refresh looks at again.
+  - A local stand-in is re-read every pass, like a `@require`'s. One
+    the page couldn't show (too large, not an image) is skipped for the
+    declared URL, as the page skips it.
+- Not checked:
+  - an inline `data:` icon, which has nothing to download;
+  - a script sm-dev pushes, which doesn't carry its icon file; sm-dev
+    checks the icon on disk itself.
 
 ## Multiple sites
 
@@ -119,6 +163,24 @@
 - Only the resolved bytes can tell — the hosts differ — so this
   happens after the fetches, not at first paint. `renderSiteIconInto`
   resolves with the final icon count for callers that care.
+- Until then the slot shows only the first site's globe. Showing one
+  per site would draw a row of identical globes that then collapses,
+  shifting the layout; this way the slot only widens, once the icons
+  turn out to differ.
+- Icons already cached skip all of that. The collections page reads
+  every cached icon its rows will need in one storage read
+  (`preloadSiteIcons`) before drawing them.
+  - A slot whose icons are all known is drawn finished: real icons,
+    already merged, with no globe first and no change of width.
+  - Answers are also remembered for the life of the page, so a repaint
+    reuses them.
+- **Fetching runs in the service worker**, which writes all storage
+  ([worker-writes.md](worker-writes.md)). A page that misses its own
+  read asks it (`ensureCachedIcon`): the worker answers from a row
+  another page just fetched, else fetches and caches it.
+  - At most six icon fetches run at once there; the rest wait.
+  - Local stand-ins for `@icon` (local file overrides) are read by the
+    page and never cached, so they stay in the page.
 
 ### Layout
 
@@ -128,10 +190,9 @@
   x position. `collections.ts` sets `--icon-cols` on the `<table>`
   (`fitIconColumns`) and the stylesheet derives the slot width and the
   name cell's hanging indent from it.
-  - Fitted from the slots on screen: first from the header-derived
-    estimates (every site starts as a globe), then again once the
-    rebuilt slots' favicons have settled and identical ones collapsed
-    — one shift per pass, not one per row.
+  - Fitted from the slots on screen: first with one globe per slot,
+    then again once the rebuilt slots' favicons have settled and
+    identical ones collapsed — one shift per pass, not one per row.
   - Every live sync (a refresh that changed `@match`, a script that
     arrived or left) runs the same fit, so the column narrows as well
     as widens.
@@ -181,7 +242,7 @@ Worked examples:
 | `https://example.com/a/b*c`           | `https://example.com`   | `https://example.com/a/`          |
 | `http://localhost:8080/app/*`         | `http://localhost:8080` | `http://localhost:8080/app/`      |
 | `*.example.com/*`                     | `https://example.com`   | `https://example.com/`            |
-| `http://localhost:*/path`             | *(no usable target)*    | *(no usable target)*              |
+| `http://localhost:*/path`             | `http://localhost`      | `http://localhost/path`           |
 
 The scheme-less row is not a special case here: the pattern is read
 through `canonicalMatchPatterns` first, so a site named without a
@@ -314,7 +375,10 @@ the first one discovered for the host.
 ## Storage shape
 
 Parallel cache rows for the icon-collection paths, sharing the same
-`{ dataUrl, fetchedAt, v? }` shape and TTLs:
+`{ dataUrl, fetchedAt, v?, source? }` shape and TTLs. `source` is
+where a discovered icon came from (`favicon-store`, `page`,
+`favicon.ico`, `google`), for sm-dev to report; rows written before it
+was kept have none.
 
 - `pathIcon:<pageUrl>` — discovery result (`/_favicon/` DB + HTML) for
   a specific deep page. Key is the full page URL; lets two scripts on
@@ -357,7 +421,8 @@ just trigger a fresh fetch if the user re-adds the collection.
   `ensureSiteIcon` runs the origin-discovery pipeline once per icon.
   The resolved icon is wrapped in an `<img>` that replaces the globe
   inside its inner element. No `isConnected` guard — orphan paints
-  from re-renders are cheap and unobservable.
+  from re-renders are cheap and unobservable. Only the final step that
+  fills the slot with the merged icons checks it still owns the slot.
 
 ### Keeping the rendered page small
 

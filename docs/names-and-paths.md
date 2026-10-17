@@ -44,7 +44,7 @@ How a stored location becomes the text a user reads. Helpers live in
 ### The collections page shows `@name`
 
 - The Name column shows the script's own `@name` — what its author
-  calls it, and what every other surface (badge, action menu, match
+  calls it, and what every other surface (badge, toolbar popup, match
   listings) already calls it.
 - Falls back to the location when the `@name` is missing, blank, or the
   header never parsed. Whitespace-only counts as missing.
@@ -61,11 +61,8 @@ How a stored location becomes the text a user reads. Helpers live in
   different hosts apart no better than the name did.
 - `scriptDisplayName(script, fallback)` does the pick, so the column and
   the badge/menu labels can't drift.
-- The `#N` dupe suffix beside the name still comes from the log ID,
-  which is basename-derived — so it can sit beside a name it wasn't
-  computed from, and two rows sharing an `@name` but not a basename get
-  no suffix at all. The tooltip's first line is the disambiguator in
-  both directions. See [logging.md](logging.md#log-ids).
+- Two rows sharing an `@name` look alike; the tooltip's first line,
+  the location, tells them apart. See [logging.md](logging.md#log-ids).
 - **The viewer heads with the `@name` too**, falling back to the
   location only when there is no usable name — the same pick the
   collections page makes, through the same helper. The full location
@@ -100,7 +97,7 @@ How a stored location becomes the text a user reads. Helpers live in
   the scheme: the scheme is unregistered, and a script can put
   `sourcemonkey://elsewhere/…` in its own log message.
 - `displayRefText` in `src/stack-link.ts`; `setRefText` / `refNode` in
-  `src/userscript.ts` paint it. The raw URL still does the tab lookup
+  `src/extension/userscript.ts` paint it. The raw URL still does the tab lookup
   and the click target; only the painted text changes.
 - Devtools' Sources tree indexes the file under the **encoded** folder
   name, so the tooltip carrying the raw form is how a user finds the
@@ -152,7 +149,7 @@ How a stored location becomes the text a user reads. Helpers live in
   [`script-source-url.ts`](../src/script-source-url.ts), which builds
   the `//# sourceURL=` values.
 - It re-encodes everything outside `[A-Za-z0-9._~-]`, because:
-  - a bare `#` (the `#N` dedup suffix) would start a URL fragment;
+  - a bare `#` (the `#E4` number suffix) would start a URL fragment;
   - a space or paren ends the ref run `stack-link.ts` matches, so a
     stack frame would stop linkifying to its viewer tab.
 - Round-trip is stable for the common case: `My%20Script` decodes to
@@ -172,10 +169,7 @@ How a stored location becomes the text a user reads. Helpers live in
   requested. Display-only (the tooltip and copy button carry the raw
   form), and `scriptBasename` re-takes the leaf so a decoded `/`
   can't smuggle a path separator into a log ID.
-- **`&` in a context-menu title** is a mnemonic marker to Chrome, so
-  a decoded `%26` in a script's name renders as an underline in the
-  action menu. Already true for any `@name` containing `&`.
-- **A literal `#N` at the end of a name collides with the dedup
-  suffix.** `foo%231.user.js` and the first of two `foo.user.js`
-  dupes both fold to the same `sourcemonkey://` folder. Cosmetic,
-  devtools-only, and exotic enough not to design around.
+- **A literal `#E4` at the end of a name collides with the number
+  suffix.** `foo%23E4.user.js` and script 4 named `foo.user.js` both
+  fold to the same `sourcemonkey://` folder. Cosmetic, devtools-only,
+  and exotic enough not to design around.

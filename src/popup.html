@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>SourceMonkey | Active scripts</title>
+    <link rel="stylesheet" href="styles.css" />
+    <style>
+      /* The toolbar popup (docs/status-popup.md). Chrome caps a popup at
+         800x600, so the body is a fixed-width column whose script area
+         scrolls once the whole thing would pass the cap. Opened in a
+         plain tab (`?tab=<id>`, for tests) it keeps the same width.
+         The popup is always wider by a scrollbar's width, so the rows
+         keep their width whether the script area scrolls or not: Chrome
+         grows a popup leftwards, so widening only when a scrollbar
+         shows would shift everything. Without a scrollbar the rows take
+         that strip as extra right padding (`--gutter`, set in popup.ts),
+         so their backgrounds still reach the edge. */
+      :root {
+        --popup-width: 380px;
+        --rule: #e3ddd4;
+        --muted: #6b6b6b;
+        --link: #1d4ed8;
+        --green: #2e7d32;
+        --red: #d32f2f;
+        --orange: #f57c00;
+        --purple: #d500f9;
+        --purple-deep: #8e24aa;
+        --purple-tint: #fbe9ff;
+        --grey: #757575;
+        --cyan: #00838f;
+        --cyan-tint: #e0f7fa;
+      }
+      body {
+        font: 13px system-ui, sans-serif; color: #222; background: #fff;
+        margin: 0; width: calc(var(--popup-width) + var(--scrollbar-width, 0px)); max-height: 590px;
+        display: flex; flex-direction: column;
+      }
+      /* Chrome draws the popup with no frame of its own, so a white
+         popup over a white page would have no edge. Drawn on an overlay
+         pinned to the viewport rather than as the body's border: Chrome
+         can size the popup a pixel short of the body, which clipped the
+         right and bottom edges. The header bar's border colour. The
+         right and bottom insets are set by popup.ts (`trimEdges`). */
+      body::after {
+        content: ""; position: fixed; z-index: 30;
+        inset: 0 var(--edge-trim-x, 0px) var(--edge-trim-y, 0px) 0;
+        border: 1px solid var(--header-border); pointer-events: none;
+      }
+      .page-header { padding: 0 6px 0 10px; flex: none; }
+      .page-header-inner { padding: 6px 0; gap: 8px; }
+      .page-header .page-icon { width: 22px; height: 22px; }
+      .page-header h1 { font-size: 14px; }
+      button { font: inherit; font-size: 12px; padding: 0 9px; cursor: pointer; }
+
+      /* The ⋯ buttons: borderless until hovered or open. */
+      button.kebab {
+        width: 24px; padding: 0; border-color: transparent; background: transparent;
+        font-size: 16px; font-weight: 400; line-height: 1; color: var(--muted); flex: none;
+      }
+      button.kebab:hover, button.kebab[aria-expanded="true"] {
+        background: var(--btn-bg-hover); border-color: var(--btn-border);
+      }
+
+      .banner-row {
+        display: flex; align-items: center; gap: 8px; flex: none;
+        padding: 5px 8px 5px 10px; font-size: 12.5px; font-weight: 600;
+      }
+      .banner-row span { flex: 1; }
+      .banner-row.reload { background: var(--purple-tint); color: var(--purple-deep); border-bottom: 1px solid #e7b6f2; }
+      .banner-row.reload::before {
+        content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--purple); flex: none;
+      }
+      .banner-row.reload button { background: var(--purple-deep); border-color: var(--purple-deep); color: #fff; }
+      .banner-row.reload button:hover { background: #7b1fa2; }
+      .banner-row.sm-dev { background: var(--cyan-tint); color: var(--cyan); border-bottom: 1px solid #a5dde3; }
+      .banner-row.user-scripts-off { background: #fdecea; color: #b71c1c; border-bottom: 1px solid #f5c2c0; font-weight: 400; }
+      .banner-row.user-scripts-off strong { display: block; font-weight: 600; }
+      .banner-row.user-scripts-off a { color: inherit; }
+      .banner-row.user-scripts-off code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; }
+
+      /* Only the script list gives up height at the popup's cap. */
+      #banners { flex: none; }
+      /* No native scroll anchoring: popup.ts keeps the top row in place
+         itself (restoreAnchor), around its own scrolling for banners. */
+      .scripts { overflow-y: auto; min-height: 0; flex: 1 1 auto; overflow-anchor: none; }
+      .section-head {
+        position: sticky; top: 0; z-index: 2;
+        /* Darker than the rows, with a rule on both edges, so the
+           Disabled bar doesn't blend into the white row above it. */
+        background: #ece5da; border-top: 1px solid #c9bba6; border-bottom: 1px solid #c9bba6;
+        padding: 3px calc(10px + var(--gutter, 0px)) 3px 10px; font-size: 11px; font-weight: 700; line-height: 15px;
+        letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+      }
+      .empty-note { padding: 7px calc(10px + var(--gutter, 0px)) 9px 10px; color: var(--muted); font-style: italic; }
+      .empty-page { padding: 22px calc(16px + var(--gutter, 0px)) 22px 16px; text-align: center; color: var(--muted); }
+
+      .group-head {
+        display: flex; align-items: center; gap: 6px;
+        padding: 4px calc(4px + var(--gutter, 0px)) 0 8px; font-weight: 600; border-top: 1px solid var(--rule);
+      }
+      .section-head + .group-head { border-top: none; }
+      /* The first bar sits right under the header bar's own border. */
+      .script-section:first-child .section-head { border-top: none; }
+      .group-head .collection-name {
+        color: inherit; text-decoration: none; min-width: 0; overflow-wrap: anywhere;
+      }
+      .group-head .collection-name:hover { text-decoration: underline; }
+      .group-head .collection-type-bubble { font-size: 9.5px; line-height: 14px; padding: 0 6px; }
+      .group-head .spacer { flex: 1; }
+      .collection-off {
+        font-size: 11px; font-weight: 600; line-height: 16px; padding: 0 7px; border-radius: 8px;
+        color: var(--muted); border: 1px solid #c8c8c8; white-space: nowrap;
+      }
+      .group-head.off .collection-name, .group-head.off .collection-type-bubble { opacity: 0.6; }
+
+      .row { padding: 4px calc(4px + var(--gutter, 0px)) 4px 8px; border-bottom: 1px solid #f1ede7; }
+      /* A row's ⋯ sits centered between what's left of it (the pill, say)
+         and the scrollbar, or the popup's edge when there is none: the
+         spare strip (`--gutter`) is split either side of it. The row's
+         other content keeps its width either way, so only the ⋯ moves
+         as a scrollbar comes and goes. The -2px narrows the flex gap to
+         the 4px on its right. */
+      .row button.kebab, .group-head button.kebab {
+        margin-left: calc(var(--gutter, 0px) / 2 - 2px); margin-right: calc(var(--gutter, 0px) / -2);
+      }
+      .row:last-child { border-bottom: none; }
+      /* Top-aligned so a name that wraps keeps its controls on its
+         first line. */
+      .row-main { display: flex; align-items: flex-start; gap: 6px; min-height: 24px; }
+      .row input[type="checkbox"] { margin: 5px 0 0; width: 14px; height: 14px; flex: none; cursor: pointer; }
+      /* Ticked but not running: its collection is off. */
+      .row.muted input[type="checkbox"] { opacity: 0.45; }
+      .row .script-name {
+        flex: 1; min-width: 0; color: inherit; text-decoration: none;
+        padding-top: 3px; line-height: 1.35; overflow-wrap: anywhere;
+      }
+      .row .script-name:hover { text-decoration: underline; }
+      .row.off .script-name { opacity: 0.55; }
+      .version-line { margin: 1px 0 0 20px; font-size: 11.5px; color: var(--muted); }
+
+      /* One width for every status, so the column lines up. Sized for
+         the longest label, "Reload to run". */
+      .pill {
+        flex: none; width: 94px; box-sizing: border-box; margin-top: 3px;
+        font-size: 11px; font-weight: 600; line-height: 16px; text-align: center;
+        border-radius: 8px; border: 1px solid transparent; color: #fff;
+        text-decoration: none; white-space: nowrap;
+      }
+      /* Reload to run is a button (it reloads): undo the shared button
+         height and padding, so it matches the link pills. */
+      button.pill { height: auto; padding: 0; }
+      .pill:hover { filter: brightness(0.92); }
+      .pill.ok { background: var(--green); }
+      .pill.error, .pill.rejected, .pill.invalid { background: var(--red); }
+      .pill.reload { background: var(--purple); }
+      .pill.missing, .pill.unexpected { background: var(--orange); }
+      .pill.not-loaded { background: var(--grey); }
+      /* Amber outline: a warning leaves the badge color alone, so it gets no solid color. */
+      .pill.warning { background: #fff8e1; color: #7a5800; border-color: #f9a825; }
+      .pill.pending, .pill.still-running, .pill.untracked {
+        background: var(--purple-tint); color: var(--purple-deep); border-color: var(--purple);
+      }
+      /* A manual script not run yet: nothing wrong, nothing to do. */
+      .pill.not-run { background: #fff; color: var(--grey); border-color: #c8c8c8; }
+
+      .commands { margin: 2px 0 1px 14px; display: grid; gap: 1px; }
+      .commands button {
+        height: auto; text-align: left; border: none; border-radius: 3px; background: transparent;
+        padding: 2px 6px; color: var(--link); justify-self: stretch;
+      }
+      .commands button:hover { background: #eef2ff; }
+      .commands button.disclose { color: var(--muted); justify-self: start; }
+      .commands button.run-script { font-weight: 600; }
+
+      .menu {
+        position: fixed; z-index: 10; min-width: 220px;
+        background: #fff; border: 1px solid #c9c2b8; border-radius: 6px;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16); padding: 4px 0;
+      }
+      .menu button {
+        display: block; width: 100%; height: auto; text-align: left;
+        border: none; border-radius: 0; background: transparent; padding: 5px 12px; font-size: 12.5px;
+      }
+      .menu button:hover:not(:disabled), .menu button:focus-visible { background: #f3efe9; }
+      .menu button:disabled { color: #a0a0a0; cursor: default; }
+      .menu hr { border: none; border-top: 1px solid var(--rule); margin: 4px 0; }
+    </style>
+  </head>
+  <body>
+    <header class="page-header">
+      <div class="page-header-inner">
+        <a class="page-home page-icon-link" href="collections.html" target="_blank"
+           rel="noopener" tabindex="-1" aria-hidden="true">
+          <img class="page-icon" src="icons/icon-48.png" alt="" />
+        </a>
+        <h1><a class="page-home brand" href="collections.html" target="_blank" rel="noopener"
+             title="Open the collections page">SourceMonkey</a><span class="brand"> |</span> Active scripts</h1>
+        <div class="page-header-actions">
+          <button id="open-collections" type="button" title="Open the collections page">Open</button>
+          <button id="page-menu" class="kebab" type="button" aria-label="Page actions"
+                  aria-haspopup="menu" aria-expanded="false">⋯</button>
+        </div>
+      </div>
+    </header>
+    <div id="banners"></div>
+    <div id="scripts" class="scripts"></div>
+    <script type="module" src="extension/popup.js"></script>
+  </body>
+</html>

@@ -32,35 +32,36 @@ develop it locally, write the
 absolute URL and let a file on disk stand in for it — see
 [local-file-overrides.md](local-file-overrides.md).
 
-## `.js` suffix gate
+## No suffix gate
 
-The resolved URL's pathname (sans query / fragment) must end in `.js`.
-So `https://cdn.example.com/jquery.js?v=3` is fine; `lib.json` or
-`bundle.txt` is rejected with a "must end in .js" error.
+Any URL is accepted, with or without `.js`, as in TM and VM. CDN
+shorthands like `https://cdn.jsdelivr.net/npm/sweetalert2@11` name a
+package rather than a file. The checks on the fetched response (UTF-8,
+no HTML page) are what keep non-JavaScript out.
 
 ## Storage
 
-Each `StoredScript` carries an inline `requires?: StoredRequire[]`
-array — declaration order, deduplicated by canonical URL.
+Each `StoredScript` carries a `requires?: StoredRequire[]` array —
+declaration order, deduplicated by canonical URL. The bodies themselves
+are [content blobs](storage.md#content-blobs) (format 2; see the status
+note there).
 
 Per-entry fields:
 
 - `ref` — verbatim from the `@require` line (trimmed).
 - `url` — canonical resolved URL. Dedup key.
-- `source` — fetched JS text.
-- `size` — UTF-8 byte length of `source`.
-- `contentHash` — SHA-256 of `source`. Drives the unchanged-content
-  short-circuit so unchanged bytes preserve `loadedAt`.
+- `blobRef` — `{hash, size}` of the stored JS text: the hash is the
+  key of its blob. Two scripts requiring the same bytes share one blob.
+- `size` — byte length of the fetched file.
+- `contentHash` — SHA-256 of the fetched bytes. Drives the
+  unchanged-content short-circuit so unchanged bytes preserve
+  `loadedAt`. Not always equal to `blobRef.hash`: decoding drops a
+  leading byte-order mark.
 - `loadedAt` — epoch ms; bumps only on a true content change.
 - `httpEtag?`, `httpLastModified?` — captured from the last HTTP
   fetch. Not yet round-tripped to the byte fetcher — see TODO.
 - `localUrl?` — the local file read instead of `url`, when one stood
   in. See [local-file-overrides.md](local-file-overrides.md#storage).
-
-Storage layout today: every script stores its own copy of every
-required file, so two scripts requiring jQuery store jQuery twice.
-Shared (content-addressed) storage is a planned follow-up — see
-[TODO.md](../TODO.md).
 
 ## Refresh policy
 
@@ -142,9 +143,9 @@ Any of these is a dependency failure, named by the offending URL:
   fetch, not as part of it, and by two tests: the `Content-Type` and
   the bytes.
 - `data:` URLs (resolution accepts them; the require gate rejects).
-- **Non-UTF-8 response body** (strict decode fails). A `.js` URL that
-  serves binary slips past the suffix gate and the content-type
-  predicate but gets caught here, so the user sees "not valid UTF-8"
+- **Non-UTF-8 response body** (strict decode fails). A URL that
+  serves binary slips past the content-type predicate but gets caught
+  here, so the user sees "not valid UTF-8"
   rather than a confusing `SyntaxError` at eval.
 
 ### Markup gate
@@ -231,12 +232,12 @@ ships the script's freshly-updated body to the in-page prelude for
 in-place `eval`.
 
 - The payload concatenates every `@require` body before the main body
-  via `composeRequiredBody` in `src/injector.ts`, so the eval'd swap
+  via `composeRequiredBody` in `src/extension/injector.ts`, so the eval'd swap
   sees whatever the requires set up.
 - Without that, a body referencing a require added between the
   registered version and the refreshed one would throw
   `ReferenceError` on the swap, resolving only on the *next* reload.
-- `handleCheckPending` in `src/background.ts` therefore returns
+- `handleCheckPending` in `src/extension/background.ts` therefore returns
   `composeRequiredBody(refreshed)` rather than the raw body text.
 
 Both paths now share that one concatenation, so the swap and the
@@ -270,6 +271,12 @@ Requires and the body share one lexical scope, exactly as in TM/VM:
   arrangement, where a require's top-level `var` did become a global.
   A library that expects page code to see `window.MyLib` must assign
   it explicitly.
+- **`window.MyLib = …`** reaches the page only from a `@grant none`
+  page-world script. Any other page-world script's `window` is a
+  sandbox (one with no `@grant` line too), so the assignment stays the
+  script's own, as under TM and VM; see
+  [injection.md](injection.md#the-sandbox-window). In the isolated
+  world the page never sees it either.
 - **GM bindings** are emitted once, ahead of the first require, so
   library top-level code sees `GM_info` / `GM_setValue` / etc. too.
 - **The GM prelude runs first**, so a require's top-level
@@ -281,24 +288,16 @@ Consequences of the shared scope, all matching TM/VM:
   body — are a `SyntaxError` and the script does not run. Wrap the
   body in an IIFE (as nearly every real userscript does) and the
   shadowing is ordinary.
+  - Being a parse failure, it stops the script before any of it runs.
+    A trailing sentinel entry detects that and reports it to the Log
+    tab and the badge, so it fails loudly rather than silently.
 - A require that throws at top level aborts the whole script,
   including the body.
-- A require declaring any identifier the wrap itself declares — `GM`,
-  `GM_info` (both emitted even under `@grant none`), any granted
-  `GM_*`, `unsafeWindow`, `__sm*` — is a redeclaration `SyntaxError`.
-  `const unsafeWindow = window.wrappedJSObject || window;` is a real
-  userscript-library idiom that this now rejects.
-  - That one case is handled for the *implicit* `unsafeWindow` binding:
-    when a require declares the name, the binding an ungranted
-    reference would have added is suppressed
-    (`sourceDeclaresUnsafeWindow`). A declared `@grant unsafeWindow`
-    still collides — the author asked for the binding by name.
-- A require declaring top-level `self` or `window` also breaks the
-  wrap, whose own preamble dereferences both. See
-  [injection-modes.md](injection-modes.md#cons--caveats).
-- Any of the above is a parse failure, which means the script does not
-  run at all. A trailing sentinel entry detects that and reports it to
-  the Log tab and the badge, so it fails loudly rather than silently.
+- A require (or the body) declaring a name the wrap provides (`GM`,
+  `GM_info`, any granted `GM_*`, `unsafeWindow`) or reads (`self`,
+  `window`) shadows it rather than breaking the wrap. The user program
+  runs in a scope nested inside the wrap's; see
+  [injection.md](injection.md#the-user-program-scope).
 
 ### Timing
 
@@ -335,6 +334,7 @@ buys most of it back:
   viewer's Log tab parses those strings, so it applies the layout
   itself and re-renders each ref at its original file and line; see
   [script-log.md](script-log.md#stack-refs-are-source-mapped-first).
+  sm-dev rewrites the stacks it prints the same way.
   A script that reads its own `err.stack` still sees generated
   coordinates — we rewrite the string on the way into our views, not
   at the collection.
@@ -346,7 +346,7 @@ buys most of it back:
 
 ## Limits
 
-- Per-require body: **1 MB**. Big enough for jQuery / chunky libraries;
+- Per-require body: **2 MB**. Big enough for jQuery / chunky libraries;
   small enough that a runaway can't drain the 10 MB
   `chrome.storage.local` quota in one row.
 - Per-fetch timeout: 5 s (file-loader default).

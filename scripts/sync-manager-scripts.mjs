@@ -23,6 +23,12 @@
 //                  unless --allow-downgrade is set
 //   - DOWNGRADE  if local <  installed AND --allow-downgrade
 //
+// It also lists installed examples (`@name` starting `SourceMonkey
+// example: `) that no local script has the name of any more: renamed or
+// deleted ones. They still run on the example pages, so specs counting
+// rows can fail; it says to remove them rather than doing it, since
+// removing goes through each manager's own dashboard.
+//
 // The drivers live in tests/fixtures/{tampermonkey,violentmonkey}-driver.mjs;
 // this file is the CLI wrapper around them. They compare versions with
 // the extension's own `compareVersions` from `dist/`, so run
@@ -58,6 +64,8 @@ try {
 const SCRIPTS_DIR = path.resolve(ROOT, args.dir || 'tests/examples');
 const DRY_RUN = !!args['dry-run'];
 const ALLOW_DOWNGRADE = !!args['allow-downgrade'];
+// What every example's `@name` starts with (tests/examples/README.md).
+const EXAMPLE_NAME_PREFIX = 'SourceMonkey example: ';
 const EXTENSION_ID = managerExtensionId(MANAGER);
 const PORT = managerCdpPort(MANAGER);
 
@@ -158,13 +166,20 @@ async function main() {
       }
       return {
         script, current, action: 'skip-older',
-        detail: `(installed v${current}, local is older — pass --allow-downgrade to install anyway)`,
+        detail: `(installed v${current}, local is older; pass --allow-downgrade to install anyway)`,
       };
     });
 
     console.log(`\nPlan:`);
     for (const p of plan) {
       console.log(`  [${p.action.toUpperCase()}] ${p.script.name}  local=v${p.script.version}  ${p.detail}`);
+    }
+    const localNames = new Set(local.map((s) => s.name));
+    const stale = installed.filter((s) => s.name.startsWith(EXAMPLE_NAME_PREFIX) && !localNames.has(s.name));
+    if (stale.length) {
+      console.log(`\n${CFG.label} has example scripts no local file is named for any more (renamed or deleted):`);
+      for (const s of stale) console.log(`  [STALE] ${s.name}  v${s.version || '?'}`);
+      console.log(`They still run on the example pages. Remove them from ${CFG.label}'s dashboard.`);
     }
 
     if (DRY_RUN) {

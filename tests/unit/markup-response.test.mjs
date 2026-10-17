@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 const {
   MarkupResponseError,
   isMarkupContentType,
+  isMarkupResponseMessage,
   looksLikeMarkup,
   markupResponseMessage,
 } = await import('../../dist/markup-response.js');
@@ -73,7 +74,7 @@ test('a page embedding the script it displays is still markup', () => {
 
 test('the message names the server or the local file, never both', () => {
   const server = markupResponseMessage();
-  assert.match(server, /^The server returned an HTML page, not JavaScript —/);
+  assert.match(server, /^The server returned an HTML page, not JavaScript; the link may be dead/);
 
   const local = markupResponseMessage({ localUrl: 'file:///home/me/lib.js' });
   assert.match(local, /^The local file file:\/\/\/home\/me\/lib\.js is an HTML page/);
@@ -106,4 +107,11 @@ test('MarkupResponseError is distinguishable without matching wording', () => {
   assert.ok(err instanceof Error);
   assert.equal(err.name, 'MarkupResponseError');
   assert.ok(!(new Error('same words') instanceof MarkupResponseError));
+});
+
+test('isMarkupResponseMessage recognizes each form markupResponseMessage writes', () => {
+  assert.equal(isMarkupResponseMessage(markupResponseMessage()), true);
+  assert.equal(isMarkupResponseMessage(markupResponseMessage({ contentType: 'text/html' })), true);
+  assert.equal(isMarkupResponseMessage(markupResponseMessage({ localUrl: 'file:///s/lib.js' })), true);
+  assert.equal(isMarkupResponseMessage('The server returned HTTP 404'), false);
 });

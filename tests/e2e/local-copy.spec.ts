@@ -1,5 +1,5 @@
 // Making a local copy of an installed script from the viewer's
-// Collection row (src/copy-dialog.ts, src/local-copy.ts): the copy
+// Collection row (src/extension/copy-dialog.ts, src/extension/local-copy.ts): the copy
 // lands in `<Downloads>/SourceMonkey/`, that directory becomes the
 // "Scripts copied in Downloads" collection, and the copy takes over as
 // the running version.
@@ -40,6 +40,14 @@ function scriptWith(opts: { name: string; version?: string; description?: string
     `console.log('${opts.name}');`,
     '',
   ].join('\n');
+}
+
+// The install lines in a script's Log.
+async function installLines(
+  sm: { getScriptLog(id: string): Promise<{ source: string; message: string }[]> },
+  id: string,
+): Promise<string[]> {
+  return (await sm.getScriptLog(id)).filter((e) => e.source === 'add').map((e) => e.message);
 }
 
 // Confirm the open dialog; resolve with the id the page moved to. A
@@ -144,6 +152,8 @@ test.describe('local copy of a script', () => {
     const rows = (await sm.getCollectionWithScripts(copies!.id))!.scripts;
     expect(rows[0].relativePath).toBe('hello.user.js');
     expect(rows[0].status).toBe('ok');
+    // A copy is an install, logged once whichever path scanned it in.
+    expect(await installLines(sm, copyId)).toEqual([expect.stringMatching(/^Installed /)]);
 
     // The setting: where Downloads is, and which collection is ours.
     const sw = await getServiceWorker();
@@ -212,6 +222,10 @@ test.describe('local copy of a script', () => {
     const collections = await sm.getCollections();
     const copies = collections.filter((c) => c.path === copiesDir);
     expect(copies).toHaveLength(1);
+    // Each new copy logged its install; replacing one didn't again.
+    for (const id of [firstCopy, secondCopy]) {
+      expect(await installLines(sm, id)).toEqual([expect.stringMatching(/^Installed /)]);
+    }
     const rows = (await sm.getCollectionWithScripts(copies[0].id))!.scripts;
     expect(rows.map((r) => [r.relativePath, r.enabled]).sort()).toEqual([
       ['hello.user.js', false],

@@ -1,5 +1,11 @@
 import { defineConfig } from '@playwright/test';
 
+// Playwright sets FORCE_COLOR=1 in its workers, which every sm-dev a
+// test spawns would take up, coloring output the tests read as text.
+// Workers load this file too, so it is dropped here for them (and in
+// the runner, where it isn't set).
+delete process.env.FORCE_COLOR;
+
 // Extension e2e tests must run in a persistent Chromium context with the
 // unpacked extension loaded. Each worker spins up its own context, which
 // is what makes running several at once safe: the fixture server binds
@@ -11,8 +17,9 @@ import { defineConfig } from '@playwright/test';
 //   - tests/examples/*/*.spec.ts   — per-API spec lives next to its
 //                                    paired example page + userscript.
 //
-// Three projects:
+// Projects:
 //   - sourcemonkey (default) — runs every spec under both directories.
+//   - sm-dev                 — tests/harness/, sm-dev's own suite.
 //   - tampermonkey           — runs only the examples suite against the
 //                              user's TM-equipped browser opened via
 //                              `scripts/open-test-browser.sh tampermonkey`.
@@ -60,6 +67,26 @@ export default defineConfig({
       // with no per-test reset, where re-running a half-finished install
       // is not the same proposition.
       retries: 1,
+    },
+    {
+      // sm-dev and the `sourcemonkey/harness` fixture's own suite
+      // (src/harness/). See docs/harness-design.md.
+      name: 'sm-dev',
+      testMatch: ['harness/**/*.spec.ts'],
+      retries: 1,
+    },
+    {
+      // Whether the Violentmonkey `manager fetch` got still answers the
+      // calls sm-dev makes. Run on demand (`pnpm run test:vm-api`). See
+      // docs/sm-dev-violentmonkey.md.
+      name: 'vm-api',
+      testMatch: ['vm-api/**/*.spec.ts'],
+    },
+    {
+      // The same for Tampermonkey (`pnpm run test:tm-api`). See
+      // docs/sm-dev-tampermonkey.md.
+      name: 'tm-api',
+      testMatch: ['tm-api/**/*.spec.ts'],
     },
     {
       name: 'tampermonkey',

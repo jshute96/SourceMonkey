@@ -14,15 +14,28 @@ A backlog of **candidates**, not a list of obligations.
 
 ## Skeleton
 
-- Injection follow-ups — see the **Limitations / future work**
-  section of [docs/injection.md](docs/injection.md): `@noframes` /
-  `allFrames`. (`@grant` / `GM_*`, `@require`, and `@resource` are
-  all implemented; per-area follow-ups below.)
-  - `allFrames` is no longer a self-contained change: `src/gm-menu.ts`
-    keys menu commands by one `documentId` per tab, which only works
-    while every wrapper shares the top-level document. Re-key it by
-    (tabId, documentId) first, or subframe and top-frame scripts will
-    wipe each other's menu commands.
+- Frames follow-ups (see [docs/frames.md](docs/frames.md)):
+  - Frames with no URL of their own (`about:blank`, `srcdoc`) get no
+    injection: `chrome.userScripts` has no `matchOriginAsFallback`.
+    Revisit if Chrome adds it.
+  - Removing an iframe sends no event, so the badge can count a run in
+    a removed frame until the popup opens or another frame navigates.
+  - For `about:blank` / `srcdoc` frames: no match pattern reaches them
+    (not even `<all_urls>`), so registration can't. The supported route
+    would be on-request injection: watch for such frames and run the
+    scripts matching their parent's URL in them with
+    `chrome.userScripts.execute` (`documentIds`), as manual runs already
+    do for the top frame. Check first that Chrome allows `execute` into
+    these frames; only worth it if real scripts need it.
+  - Reload fast path for frames: let a frame's check-pending use the
+    tab's fast-path entry, so frames (and frame-only scripts) run the
+    edited copy on the reload too.
+  - A command registered in several frames shows once per frame, with
+    nothing to tell them apart. Label it with the frame's host if a real
+    script needs it.
+  - Every frame's copy asks the worker whether to run
+    (`sm:check-pending`) on the document-start path. Fine at normal frame
+    counts; a page with dozens of matching frames pays it per frame.
 - Reload fast-path: once HTTP-fetched scripts land, split the current
   single 500ms timeout in `handleCheckPending` into a 500ms detection
   window and a separate ~5s loading window. File:// reads finish well
@@ -44,10 +57,35 @@ A backlog of **candidates**, not a list of obligations.
     raise buys the slow case by delaying every fast one.
   - `runAt` is already on the wrapper's config blob, so adding it to
     the `sm:check-pending` payload is the whole plumbing cost.
-  - Hard ceiling either way: the prelude's own 2s `awaitDecision`
+  - Hard ceiling either way: the prelude's own 10s `awaitDecision`
     timeout, measured from when the wrapper asked. A window that
     outlives it gets a reply nobody is listening for, and the entry is
     already marked consumed. Leave real margin.
+- `@run-at document-start` isn't guaranteed to run before page scripts.
+  - The body waits for the async `sm:check-pending` reply, while the
+    parser can run the page's early `<head>` scripts. The extension
+    usually wins (~1-5ms reply). In a browser sm-dev is connected to,
+    every script asks outside the run's own tabs, and often loses (a
+    documented caveat in harness-guide.md).
+  - Tampermonkey users expect it to run first: scripts that hook
+    `fetch`, `XMLHttpRequest` or `addEventListener` miss page code
+    otherwise.
+  - Plan: `document-start` scripts don't wait for the reply at all;
+    they run the registered body immediately.
+    - The fast-path swap is given up for them. The reload's own
+      `setupReloadFastPath` still refreshes in the background, and the
+      badge flips to RELOAD when an update lands, so an edit is picked
+      up on the second reload. (For local files the focus-triggered
+      refresh usually registers it before the first.)
+    - The other use of the reply, the "Reload with no userscripts"
+      `skip`, needs a synchronous channel instead: when arming the
+      marker, write a flag into the tab's `sessionStorage` before
+      reloading, and have the wrapper read and clear it at
+      `document-start`. Check subframes (other origins have their own
+      `sessionStorage`) and pages that block storage.
+    - The sm-dev markers (sm-dev-design.md, Making wrappers ask) would
+      go too, so update harness-guide.md, sm-dev-design.md and
+      injection.md (Concurrent gates).
 - Make an icon that works
 
 ## Source maps for stack traces
@@ -99,17 +137,14 @@ What is still unmapped:
   a library still lands in the isolated world with no binding. The
   requires arrive on a later pipeline step (`attachFiles`) than the flag
   is derived on, and a require refresh would have to re-derive it.
-  - The related half is already handled: a `@require` that *declares*
-    the name suppresses our binding at emission time, so the library's
-    own `const unsafeWindow = …` isn't a duplicate declaration.
   - The scan also has no regex-literal state, so a `/['"]/` opens a
     string, and a literal ending in `\/\/` reads as a line comment;
     either can swallow a later reference. Normally that just leaves the
     script behaving as it did before the feature. The one bad case is a
-    swallowed *declaration* with a visible use after it: the binding is
-    then emitted beside the script's own and the install-time parse check
-    fails the row. No corpus script hits it; a real tokenizer (or the one
-    the parse check already has in its sandbox) would close it.
+    swallowed *declaration* with a visible use after it: the script then
+    moves to MAIN world for a binding it shadows anyway. No corpus script
+    hits it; a real tokenizer (or the one the parse check already has in
+    its sandbox) would close it.
 
 - **Find the real `chrome.userScripts.register()` size limit.** One
   script with four 90 KB requires measures ~1 MB of `js[]` (the source
@@ -121,22 +156,32 @@ What is still unmapped:
   progressively larger scripts until it rejects, so the ceiling is a
   measured fact — and a check that the failure really is as visible as
   the fallback path suggests.
-- **Wrap identifiers a `@require` can collide with.** The wrap
-  declares `GM`, `GM_info`, every granted `GM_*`, `unsafeWindow` and
-  `__sm*` in the same scope as the user program, so a library doing
-  `const unsafeWindow = window.wrappedJSObject || window;` — a real
-  idiom — is a parse failure. The install-time parse check now catches
-  it and names the script (see [docs/parse-check.md](docs/parse-check.md)),
-  so it fails visibly rather than silently — but the script still can't
-  run. Renaming our internals (or moving the preamble reads onto
-  `__smE`, which would also fix the `self` / `window` TDZ case) would
-  make it work instead.
-  - Measured over the GreasyFork top 2000: this is the *only* thing
-    that made a real-world script fail to compile — 3 scripts, all of
-    them fine under Tampermonkey (`var …, GM;`, the
-    `if (typeof GM_setValue === 'undefined') { var GM_setValue = … }`
-    polyfill, and a script shipping its own `function GM_addStyle`).
-    See [docs/corpus-validation-results.md](docs/corpus-validation-results.md).
+
+## `document-start` that really runs first
+
+A `document-start` body runs ahead of the page's own scripts only when
+the wrapper can skip the async check-pending round trip (see
+[docs/injection.md](docs/injection.md#skipping-the-check-at-document-start)).
+Where it can't, an early inline `<head>` script can still win the race.
+
+- **Not consistent.** The same script runs first or not depending on:
+  - whether the load is a reload;
+  - whether it grants GM storage, or has a `.tld` rule;
+  - whether it is in a subframe;
+  - whether sm-dev is connected to the browser, outside the run's own
+    tabs.
+- **Not robust.** The cases that still ask are a timing race, so a
+  script that must patch the page first (user-agent spoofing, API
+  hooks) works on some loads and not others.
+- **Worth finding something else** that makes a `document-start` body
+  really run at document start in every case. Ideas, none evaluated:
+  - Make the decisions available synchronously, e.g. the GM values
+    snapshot from an in-page cache, and per-tab state (skip reload,
+    sm-dev claim) from something the wrapper can read without asking.
+  - Run the body first and apply a late `skip` / `run-new` some other
+    way, accepting that a skipped body has already run.
+  - A per-script opt-in that always runs immediately, for scripts
+    that need it more than the reload swap or the skip reload.
 
 ## Reload fast-path — remaining cost
 
@@ -146,15 +191,39 @@ and the dominant costs are gone: the slowest per-script check is 181 ms
 of a 500 ms budget, the decision lands at ~243 ms. What remains:
 
 - **`getKeys()` itself costs ~40 ms** on a 266-row namespace, paid
-  inside the window by every storage-granting script. A per-script
-  in-memory value cache in the SW (invalidated by `gmval:` writes)
-  would remove it — see the GM storage note below.
-- **The remaining `get(null)` scans are still full-namespace** —
-  `match index`, `registration sync`, `all scripts`, `log id table`.
-  They measured 129–193 ms each on a 266-row profile. Unlike the GM
-  snapshot they genuinely want script rows, so narrowing them means a
-  storage-layout change (bodies in their own rows), not a `getKeys()`
-  swap.
+  inside the window by a storage-granting script's first load after a
+  worker start. Later loads come from the value store's memory
+  (`src/extension/value-store.ts`).
+- **The script-row scans are gone from the worker**: the match index,
+  registration sync, log labels and sticky numbers read the row cache,
+  loaded once per worker start (77–93 ms for 344 rows).
+- **Reload checks were slower in a real profile than in the test
+  browser.** Before page-load checks read known paths, one reload check
+  of a script with two stand-ins measured `stat 38ms` for a 2-file
+  folder and `read-script 22ms`, against about 5 ms and 2 ms in the test
+  browser, with nothing else running in the worker. The same reads from
+  the worker's console took 2 ms. Not explained yet:
+  - an earlier check measured `read-script 125ms` and `write 84ms` on a
+    reload, against 13 ms and 12 ms on a focus check of the same
+    script; `write` there is mostly waiting for the store's lock;
+  - worth re-measuring now that a page load lists no folders.
+- **Known stand-ins are read and hashed on every page load.** Checking
+  size + modified time first (a `HEAD` gives `Last-Modified`, not the
+  size) could reuse the stored bytes, as the script file's skip does.
+  Each read is about 2 ms, so only worth it for large libraries.
+- **A script with a UTF-8 BOM never takes the size+mtime skip.** The
+  stored `size` is the decoded text's byte length (BOM dropped), the
+  listing and the direct read report the file's, so they differ by 3
+  and every check rebuilds. Recording the file's byte length on the
+  rebuild path would fix it.
+- **A script's `@require` / `@resource` loads all start at once.**
+  Unbounded per script (the entries around them are bounded), and they
+  keep going after one fails. Fine for local files; a script with many
+  CDN requires would fetch them all at once.
+- **The searching checks still list roots one after another.** Focus
+  checks and Refresh stop at the first root with the file, but a miss
+  lists each root in turn. Listing them all at once would cost more
+  reads on a hit; only worth it if a miss shows up in measurements.
 - **`build-specs` costs ~320 ms on the sync right after a swap**, 2 ms
   on the next. That is the deferred parse check landing in
   `revalidateCandidates` — expected, and off the user-visible path, but
@@ -166,13 +235,6 @@ of a 500 ms budget, the decision lands at ~243 ms. What remains:
 The compile-only check is in (see
 [docs/parse-check.md](docs/parse-check.md)). What it doesn't do yet:
 
-- **Compile with the wrap's own declarations.** The check omits the
-  wrap head's `var` preamble, the `__smE` parameter and the GM
-  prelude, so a script declaring `const __smE`, `let __smDecision` or
-  `const __smGmSnap` passes and then fails at injection. Every such
-  name is `__sm`-prefixed so the risk is small, and it errs toward
-  false-accept. Compiling with `new Function('__smE', preamble + src)`
-  would close it.
 - **Place a brace imbalance at its cause, not its symptom.** A stray or
   missing `}` is reported by the raw probe at the brace itself, which
   is right — but only when the raw probe is the one chosen, via a
@@ -223,8 +285,8 @@ The compile-only check is in (see
 ## GreasyFork corpus findings
 
 Running the install-time checks over the top-2000 GreasyFork scripts
-(`pnpm run validate`, see
-[docs/offline-validation.md](docs/offline-validation.md)) turns
+(`validate-corpus.mjs`, see
+[docs/corpus-validation.md](docs/corpus-validation.md)) turns
 "scripts SourceMonkey would refuse" into a measured list. Full results,
 with the evidence behind each item, are in
 [docs/corpus-validation-results.md](docs/corpus-validation-results.md);
@@ -233,31 +295,16 @@ what follows is the fix list it implies.
 Worth re-running after any change to the header parser, the `@require`
 gates, or the emitted wrap — the rate is the regression signal.
 
-- **`@require` URLs with no `.js` suffix.** `isJsResourceUrl` gates on
-  the URL path, and the CDN shorthand forms
-  (`cdn.jsdelivr.net/npm/sweetalert2@11`, `unpkg.com/file-saver`,
-  `bundle.run/p-queue@6.3.0`) carry no extension at all. Every
-  rejection in the corpus was one of these — no case where the gate
-  caught something that wasn't JavaScript. Tampermonkey does no suffix
-  gating. Either drop the gate in favour of the content-type + UTF-8
-  checks that already run on the response, or extend it to accept
-  extension-less paths.
-- **The 1 MB per-file cap.** `MAX_FILE_BYTES` rejects `opencv.js`,
-  `babylon.min.js`, MathJax's `tex-mml-chtml.js`, `video.js` and
-  `babel-standalone` — libraries a script legitimately pins. Splitting
-  the cap per kind is the obvious first move: a `@require` becomes part
+- **The 2 MB per-file cap.** `MAX_FILE_BYTES` (raised from 1 MB, which
+  rejected MathJax, `video.js` and `babel-standalone`) still rejects
+  `opencv.js` and `babylon.min.js` (5-11 MB), libraries a script
+  legitimately pins. Compressing stored files would let it go
+  higher. Splitting the cap per kind is the obvious first move: a `@require` becomes part
   of the registered `js[]`, while a `@resource` becomes a
   `chrome.storage.local` row, and those have different budgets. Pairs
   with "Find the real `chrome.userScripts.register()` size limit"
   above, which is what a `@require` cap should actually be derived
   from.
-- **Metadata-block markers are matched more strictly than the
-  ecosystem's.** `BLOCK_START` / `BLOCK_END` anchor to end-of-line, so
-  `// ==/UserScript==////` and `// ==/UserScript==vvvvar thisUrl = …`
-  read as unterminated, and `/// ==UserScript==` reads as no block at
-  all. GreasyFork serves all three, so something upstream accepts them.
-  Decide whether to match loosely (TM matches the marker anywhere on
-  the line) or to keep the strictness and say so in the error.
 - **Wrap-identifier collisions are real, not theoretical.** Every
   parse failure in the corpus was one — see the item under "Injection
   payload" above, which now has a measured rate behind it.
@@ -266,6 +313,157 @@ gates, or the emitted wrap — the rate is the regression signal.
   (`data:application/javascript,%3Bwindow.Vue%3DVue%3B…`). Cheap to
   support for the `application/javascript` form, since the bytes are
   in the ref and no fetch is involved.
+
+## Corpus test findings — compatibility gaps
+
+Gaps that made corpus scripts fail on their live sites (see
+`tests/greasyfork-examples/`; `record-results.mjs list --tag T` finds
+the scripts). Comparisons are against Violentmonkey's source; Tampermonkey
+wasn't checked.
+
+- **Granted `GM_*` names are `const`** (`gm-reassign`: 2129, 2128,
+  419798, 438053, 2130).
+  - A shim like `GM_xmlhttpRequest = GM.xmlHttpRequest;` throws
+    "Assignment to constant variable" at startup.
+  - VM resolves names through `with(this)` over a wrapper, so the
+    assignment works. Granted scripts now do too, since they run in
+    the page with a sandbox `window` holding the names; this is left
+    for scripts that ask to be isolated. Fix there: declare them with
+    `let`.
+  - About 50 corpus files assign to a `GM_*` name; some are guarded.
+- **Follow-ups from the page-world default** (docs/injection.md, "Costs
+  of running in MAIN"):
+  - The channel key keeps the page off the bridge and away from our
+    runtime, but a page that targets SourceMonkey can still hook
+    built-ins we haven't captured, and methods on a script's own values
+    (a `toJSON`, an `Array.prototype` method the storage codec calls),
+    and see values passing through (docs/injection.md, "What it doesn't
+    stop").
+    - `GM_xmlhttpRequest`'s request and response are covered (the one
+      path where the page could see what it couldn't read itself).
+    - The rest: storage values through the codec, `GM_addElement`'s
+      DOM calls, the transport's other messages (their payloads still
+      inherit `Object.prototype`, so its `toJSON` sees them), menu and
+      notification plumbing.
+    - Closing it fully means VM-style safe built-ins throughout the
+      MAIN-world runtime and prelude (docs/GM-API-strategy.md, section
+      3). Low priority: a page that does this can as easily hook the
+      built-ins a script's own code calls on the same values, which
+      scripts don't guard against either.
+  - Any installed userscript reaches the registry (`__smReg` is in its
+    scope), so a page-world script can call the runtime as a sibling
+    script on the same page. Per-script keys would stop that.
+  - No CSP exemption for a MAIN-world `GM_addStyle` / `GM_addElement`
+    into a closed shadow root, another frame's document or a detached
+    parent; the runtime inserts those itself (docs/GM-APIs.md).
+  - Page code can tamper with the built-ins a granted page-world
+    script uses itself (docs/GM-API-strategy.md, section 3, decided
+    against VM's safe-builtins when granted scripts ran isolated).
+- **`GM_cookie`** (463802) is the whole failure for a Reddit script.
+  See "GM_* APIs not yet in the catalog".
+
+The next items were checked against Tampermonkey 5.5.0 and
+Violentmonkey 2.49.0 with a throwaway `tests/examples/` probe script
+(2026-10-04).
+
+- **`GM_setClipboard` ignores its callback** (`setclipboard-callback`:
+  483847).
+  - TM documents `GM_setClipboard(data, info, cb)`; the binding in
+    `src/extension/gm-bindings.ts` takes `(text, type)`, so the
+    script's "copied" toast never shows. Fix: call `cb` when the copy
+    finishes.
+
+The next items came from testing the oldest corpus scripts, checked
+against Tampermonkey with `sm-dev --manager tm` probes (2026-10-05).
+
+- **`unsafeWindow` and `GM_*` aren't properties of `window`/`self`
+  in the isolated world** (`unsafewindow-on-window`: 593, 4881, 4882,
+  455261, 455855; `gm-on-window`: 456077, 455261, 455855).
+  - Greasemonkey-era scripts test `if (this.unsafeWindow)` to pick
+    their GM code path, newer ones `!!self.GM_registerMenuCommand`, and
+    vite-plugin-monkey builds read every grant off `window` (456077
+    throws `GM_getValue is not a function`). TM passes all of these.
+  - Page-world scripts get them on their sandbox `window`, and these
+    scripts now work (re-tested 2026-10-11); this is left for scripts
+    that ask to be isolated.
+
+The next items came from testing the 300 and then 400 oldest corpus
+scripts, checked against Tampermonkey 5.5 with `sm-dev --manager tm`
+(2026-10-06 and 2026-10-07).
+
+- **`GM_openInTab` refuses `data:` URLs** (`openintab-data-url`:
+  24924).
+  - 24924 renders the page with html2canvas and opens the PNG as a
+    `data:` URL. SourceMonkey logs "GM_openInTab: refusing non-http(s)
+    URL data:image/png..."; TM opens the tab.
+  - The refusal is deliberate (`isAllowedTabUrl` in
+    `src/extension/gm-tab.ts`, documented in docs/GM-APIs.md).
+    Possible fix: allow `data:` and `blob:` too, still refusing
+    `file:`, `chrome:` and `chrome-extension:`.
+- **`GM_registerMenuCommand` without a callback throws**
+  (`menu-no-callback`: 406501).
+  - 406501 calls `GM.registerMenuCommand("===== START =====")` with
+    only a name, using the item as a visual divider.
+    `src/wrapper-gm-runtime.js` throws "callback must be a function",
+    which stops the whole script.
+  - TM documents the callback as required and has no divider form,
+    but it doesn't throw: under `--manager tm` the script ran past
+    those calls. What TM's menu shows for such an item, and what
+    clicking it does, wasn't checked.
+  - A copy with `function(){}` added works. Fix: accept a missing
+    callback and register an item that does nothing; probe TM's menu
+    first to match how it shows them.
+- **`@match https://site/X/*` also runs on `https://site/X`**
+  (seen on 410968).
+  - Chrome's match patterns treat a path ending in `/*` as also
+    matching the path without it. A script with only `@match` rules
+    goes to Chrome as-is and gets no recheck in the prelude
+    (`src/userscript-prelude.js`, the "matcher" block), so it runs
+    there. TM doesn't.
+  - Reproduced with a probe on `https://example.com/zzz`. sm-dev's
+    own matcher (`explainMatch`) prints "skipped" for the URL, then
+    the script starts anyway.
+  - Fix ideas: register `/X/*` with an `excludeGlobs` entry for
+    `/X`, or send these scripts through the prelude recheck.
+
+The next items came from sweeping the last untested valid corpus
+scripts, checked against Tampermonkey 5.5.1 with `sm-dev --manager tm`
+(2026-10-10).
+
+- **Unhandled rejections aren't reported after `document.write()`**
+  (seen on 437625).
+  - A `@run-at document-start` script that calls `document.write()`
+    and then throws in a promise gets no `threw` report and nothing
+    in the console. The same throw without the `document.write()` is
+    reported.
+  - Likely cause: the implicit `document.open()` drops the
+    `unhandledrejection` listener the prelude adds to `window`
+    (`src/userscript-prelude.js`). Diagnostics only.
+- **`GM_unregisterMenuCommand(caption)` doesn't remove the command**
+  (seen on 420475).
+  - 420475 unregisters by the caption, not the id
+    `GM_registerMenuCommand` returned, so each pause toggle adds a
+    menu entry.
+  - VM (2.48 source) keys commands by `options.id || caption` and
+    returns that key, so its id is normally the caption; its
+    unregister also falls back to a caption match. A script tested
+    under VM can't tell the two apart.
+  - TM documents only the id. What TM does with a caption isn't
+    checked: probe it before deciding.
+  - Fix, if we follow VM: when the argument matches no id, remove
+    this script's commands with that caption.
+- **Unconfirmed: a frame script skipped by the 10 s decision timeout**
+  (seen on 446887, Nitro Type).
+  - In a headed browser, after the script's own reloads, the race
+    iframe's copy was skipped each time with "SourceMonkey did not
+    answer whether to run it within 10 seconds"
+    (`DECISION_TIMEOUT_MS` in `src/userscript-prelude.js`).
+  - Each time the frame had shown nothing for about 30 s and the skip
+    landed in the same millisecond as the top frame's start. That
+    looks like a stalled renderer firing the timer on resume, before
+    the answer it was about to receive. Headless reloads were fine.
+  - If it repeats: measure the wait with a clock that excludes stalls,
+    or recheck for a late answer before giving up.
 
 ## Cross-manager coverage
 
@@ -307,6 +505,16 @@ gates, or the emitted wrap — the rate is the regression signal.
 
 ## `GM_*` — deferred surface
 
+- **Say which network failure stopped a request.** `fetch` gives the
+  same bare "Failed to fetch" for a name that doesn't resolve, a refused
+  or dropped connection, a TLS failure, a request another extension
+  blocked, and an unsafe port, so `unreachableMessage` lists the causes.
+  - `chrome.webRequest.onErrorOccurred` has the real `net::ERR_*` per
+    request, but needs the `webRequest` permission, which the manifest
+    doesn't have.
+  - The message names the request's own host. When a redirect led to the
+    dead host, it should name that one.
+
 The Phase 1–10 work shipped the priority APIs; everything below is
 either a follow-up gap, a tractable second-tier API, or a research
 question. See [docs/supported-GM-APIs.md](docs/supported-GM-APIs.md)
@@ -315,7 +523,7 @@ for the current state of the per-API matrix and
 
 ### XHR header surgery — leftovers
 
-The surgery itself shipped (`src/gm-xhr-headers.ts`): forbidden
+The surgery itself shipped (`src/extension/gm-xhr-headers.ts`): forbidden
 request headers, `Sec-Fetch-*` included, travel as a per-request
 declarativeNetRequest session rule keyed on a URL-fragment tag, and our
 extension `Origin` is removed by default. What's still open:
@@ -359,12 +567,40 @@ Adding any of these is a catalog entry + a body — nothing structural.
 
 ### GM_* implementation follow-ups
 
-- **Menu commands vanish on a bfcache restore.** `src/gm-menu.ts`
+- **Large `GM_xmlhttpRequest` request bodies fail with Chrome's
+  message.** A non-text body goes to the worker as base64 in one
+  message, so past roughly 45 MB it hits Chrome's 64 MiB message limit
+  and the script gets "Message length exceeded maximum allowed length",
+  without our prefix or a fix. Send big bodies in pieces, as responses
+  come back, or at least say what the limit is.
+- **Value sequence numbers after a backward clock step.** The value
+  store starts its counter from `Date.now()` (`src/extension/value-store.ts`).
+  If the clock steps back by more than an earlier worker's lifetime,
+  open documents hold numbers above the new worker's and drop its
+  updates for those keys until they navigate (resync can't repair
+  it either). Fix: keep a high-water mark in `chrome.storage.session`
+  and start from the larger of the two.
+- **A value write can race a wipe.** `wipeValues` lists a script's
+  rows, then removes them; a write landing in between saves a key that
+  the removal then deletes from disk, while the store's map keeps it.
+  The only caller removes an sm-dev run's collection, so it's low
+  impact. Fix: hold new saves for the script until the wipe finishes.
+- **sm-dev runs never use the back/forward cache.** Playwright turns
+  it off in every browser it launches, sm-dev's included, so a page a
+  script runs on is never restored from it, as it often is in Chrome.
+  `launchExtensionBrowser` takes `backForwardCache` to keep it; sm-dev
+  could do so by default, after checking how its tab tracking copes
+  (Playwright's own `goBack` loses a restored page).
+- **Coalesce value writes per task** if a script floods the worker:
+  writes spread across `await`s or animation frames are a message
+  and a broadcast each (docs/GM-APIs-storage.md, "Sending writes").
+
+- **Menu commands vanish on a bfcache restore.** `src/extension/gm-menu.ts`
   holds ONE document's commands per tab, so leaving a page drops its
   registrations — and Chrome doesn't re-inject on back/forward, so
   nothing re-registers them. The restored page's callbacks are still
   alive in its document; only the SW-side mirror is gone, and its
-  action-menu rows stay missing until a real document load.
+  popup rows stay missing until a real document load.
   - Fix is a mirror per (tab, document) with an LRU like the one
     `updateTabMatches` already keeps for `TabMatchState` (see
     [docs/matching.md](docs/matching.md#per-tab-document-lru-bfcache-restore)),
@@ -381,40 +617,15 @@ Adding any of these is a catalog entry + a body — nothing structural.
   writeText` may reject without focus / transient activation. TM/VM
   use an offscreen `execCommand('copy')` to avoid the requirement.
   The offscreen document already exists (`src/offscreen.html` +
-  `src/offscreen.ts`, built for the parse check) and the `offscreen`
+  `src/extension/offscreen.ts`, built for the parse check) and the `offscreen`
   permission is declared — MV3 allows only ONE per extension, so
   EXTEND that host rather than adding a second. Needs
   `clipboardWrite` in the manifest and `CLIPBOARD` added to the
   `reasons` array in `parse-check.ts`, which is fixed at creation
   time.
-- **Binary XHR encoding monopolizes the SW loop.** `runXhr` buffers
-  the whole body and calls `bytesToBase64` once (`src/gm-xhr.ts`),
-  bounded only by the 50 MB `MAX_RESPONSE_BYTES` cap.
-  `String.fromCharCode` is chunked at 32 KB but the closing `btoa` is
-  a single call over the whole string, and the worker holds the bytes
-  and the string at once.
-  - It matters because that same loop answers `sm:check-pending` on
-    the document-start critical path, so one script pulling a large
-    binary can delay injection in unrelated tabs.
-  - VM doesn't have the problem: its XHR and encoding run in the
-    offscreen document, chunked at 1 MB precisely so neither the
-    extension nor the page stops responding
-    (`src/offscreen/xhr.js`).
-  - Two ways out. Cheap: chunk the encode and yield between chunks,
-    which keeps it in the worker but stops the monopolization.
-    Thorough: move the binary path to our offscreen document, which
-    also gets us `xhr.upload` progress events — `fetch` can't report
-    upload progress at all, so that's the one part of the
-    `GM_xmlhttpRequest` surface the worker cannot reach.
-  - Either way, measure first: we have no data on real-world
-    response sizes, and most `GM_xmlhttpRequest` payloads are small
-    enough that this never fires.
-  - If it goes to the offscreen document, it shares the host with
-    the clipboard item above — `reasons` is fixed at creation time,
-    so both consumers' reasons (`BLOBS`, and `WORKERS` if the encode
-    moves to a worker) have to be added in the same change.
 - **`window.close` / `window.focus` failures are filed under the
-  first granting script.** The override closes over the scriptId of
+  first granting script** in the isolated world (a page-world script
+  has its own override). The override closes over the scriptId of
   whichever script installed it, so a sibling script's refused close
   lands on the wrong Log tab. Cosmetic, and it disappears with
   per-script worlds (below).
@@ -422,21 +633,18 @@ Adding any of these is a catalog entry + a body — nothing structural.
   script on a page grants `window.onurlchange`, the `urlchange`
   surface exists on that world's shared `window`, so a sibling script
   in the same world that did NOT grant it can also feature-detect and
-  subscribe. `@grant window.close` / `window.focus` leak the same way
-  — their overrides replace the methods on that same shared `window`.
-  TM sandboxes each script's `window` and gets exact per-script
-  gating. Same shared-realm root cause as the storage-spoofing entry
-  below; a real fix needs per-script worlds.
+  subscribe. In the isolated world, `@grant window.close` /
+  `window.focus` leak the same way: their overrides replace the
+  methods on that same shared `window`. (A page-world script's
+  overrides go on its own sandbox `window`, as TM does.) Same
+  shared-realm root cause as the storage-spoofing entry below; a real
+  fix needs per-script worlds.
   - In MAIN world the shared `window` is the **page's**, so the page
-    sees these too: it can subscribe to `urlchange`, and its own
-    `window.close()` reaches our override. The override is
-    scriptId-scoped SW-side (`bridgeMayActAs`), so the page gets no
-    more than the MAIN-world script it shares a realm with already
-    had — but "the page can close its own tab" is a behavior change
-    worth knowing about. TM has the same exposure in its page-context
-    mode.
+    sees `urlchange` too: it can subscribe to it. It could go on the
+    sandbox `window`, where the `window.close` override is.
 - **`window.*` reload-fast-path coverage.** The stated reason the
-  `urlchange.enable` and `windowControl.enable` calls live in the
+  `urlchange.enable` and `windowControl.enable` / `.make` calls live
+  in the
   emitter's `js` (rather than `prelude`) is that a hot-swapped body
   still needs the surface. Only the emitted string's position is
   asserted today; an e2e driving the run-new swap with these grants
@@ -444,25 +652,20 @@ Adding any of these is a catalog entry + a body — nothing structural.
   for the same reason and now has that e2e
   (`reload-fast-path.spec.ts`), so these are the eager calls whose
   swap behaviour is unasserted.
-- **CSP-exempt DOM injection for MAIN-world scripts.** `GM_addStyle` /
-  `GM_addElement` bypass page CSP from USER_SCRIPT world but not from
-  MAIN, so a `@grant unsafeWindow` script on a site with a strict
-  `style-src` inserts a `<style>` whose rules never apply. The block
-  is detected (`el.sheet === null` once connected) and reported as a
-  Log warning; the fallback would be an async bridge request asking
-  the USER_SCRIPT-world runtime to insert a CSP-exempt copy, at the
-  cost of the returned element no longer being the live one, and of
-  registering that runtime on pages that otherwise don't need it.
-  TM/VM have the same limitation today. Build it when a real site
-  shows up where the style matters.
-- **Frame-scope the remaining SW pushes.** `sm:gm-xhr-event` now goes
-  to `sender.frameId`, but `sm:gm-tab-closed`,
-  `sm:gm-notification-event` and `sm:gm-menu-fire` still go tab-wide,
-  and `sm:gm-value-update` is inherently tab-scoped (the openers table
-  keys on tabId). Harmless while nothing registers with `allFrames` —
-  the bridge only exists in the top frame — but the day `@noframes`
-  work turns that on, a MAIN-world script's events would be posted
-  into every subframe's realm. Needs a per-frame openers table.
+- **Send the remaining GM pushes to the requesting frame.** Scripts run
+  in frames now, but `sm:gm-tab-closed` and `sm:gm-notification-event`
+  still go to the whole tab (`chrome.tabs.sendMessage` with no frame;
+  `background.ts`). Menu fires and XHR events already go to their
+  document or frame.
+  - Nothing misfires: each frame's copy drops a request id it doesn't
+    know.
+  - But any frame where the bridge (`wrapper-bridge.js`) runs relays
+    the push into its page, so another frame's page can see a
+    page-world script's request id and event.
+  - Fix: keep the requesting document with the request, as menu
+    commands do, and send to it.
+  - `sm:gm-value-update` going to all of a tab's frames is right: each
+    frame's copy needs the write.
 - **Gate `sm:start` over the bridge too.** It's what populates the
   `gmOpeners` table, i.e. who receives value broadcasts. A forged one
   can only name an id the page can already see, and the push relay is
@@ -523,8 +726,18 @@ Adding any of these is a catalog entry + a body — nothing structural.
   fingerprint stays while `state.registered` lacks the id. Harmless
   while `alreadyPlaced` also requires presence, which is the clause
   carrying the invariant.
-- **XHR `onprogress` events.** Needs a streaming wire format from
-  the SW (chunked sends or a per-request port).
+- **XHR `arraybuffer` takes twice its size on the page while built.**
+  `finishXhrBody` (`src/wrapper-gm-runtime.js`) holds the pieces and
+  the joined copy at once. With `total` known it could fill one
+  `Uint8Array(total)` as pieces arrive. `blob` and `stream` don't copy.
+- **No backpressure for an unread XHR `stream`.** The pieces queue in
+  the `ReadableStream` however slowly the script reads. A `pull`-driven
+  source could pause the worker, which needs a page-to-worker "ready
+  for more" message.
+- **XHR upload progress** (`upload.onprogress`): `fetch` reports
+  nothing as it sends a body. VM runs its XHR in the offscreen
+  document, where `xhr.upload` works; that would mean moving requests
+  with a body there.
 - **`GM_download` follow-ups.**
   - **Make `downloads` an optional permission.** TM's `not_enabled` /
     `not_permitted` errors exist because its download support is
@@ -625,12 +838,6 @@ Adding any of these is a catalog entry + a body — nothing structural.
   - Copy only if storage reads ever show up in a profile, and note
     the win is smaller for us — `chrome.storage.local` deserializes
     the row either way.
-- **Cache the gmValues snapshot in SW memory.** Every storage-
-  granting script's `sm:check-pending` reply triggers a
-  `chrome.storage.local.get(null)` on the document-start critical
-  path. A per-script in-SW cache invalidated by `handleBatchWrite`
-  would skip it on cache hit. See
-  [docs/GM-APIs-storage.md](docs/GM-APIs-storage.md#cost-on-the-document-start-critical-path).
 - **Shim cache audit.** The page-side runtime captures `Promise`,
   `Error`, `Object.keys`, `Object.create`, `Object.prototype.
   hasOwnProperty`, `document.createElement`, `Node.appendChild`,
@@ -691,11 +898,6 @@ Adding any of these is a catalog entry + a body — nothing structural.
   stale row per write; the receiving document just has no store for
   that scriptId. Fix: drop a tab's rows on committed navigation and
   let the new document's sm:start re-add them.
-- **`GM_xmlhttpRequest` binary request bodies.** FormData / Blob /
-  ArrayBuffer request bodies aren't supported — non-string `data`
-  stringifies to `[object …]` at the SW boundary. Wire format
-  needs a binary-tagged envelope (mirroring the binary RESPONSE
-  path) for non-text bodies.
 - **`composeWrapperErrorMessage` substring dedup.** The first-line
   dedup in `background.ts` checks `firstLine.includes(msg)`, so a
   message like `"ok"` substring-matches a stack first line of
@@ -714,13 +916,29 @@ Adding any of these is a catalog entry + a body — nothing structural.
 
 ## `@connect` follow-ups
 
+- **Connection policy and modes.** The prompt asks per request; the
+  wider policy is still open:
+  - What to do with the `@connect` hosts a script declares at install,
+    and with new ones an update adds. Accept them by default, show them
+    for review, let the user revoke one?
+  - A global strictness setting (ask / allow / deny undeclared hosts),
+    with care: TM's per-request prompting is a known annoyance.
+- **Several prompts at once.** A script that reaches several new hosts
+  together opens a window per host. One window listing them would be
+  kinder.
+- **An answer covers one exact host.** "Allow cdn.example.com" doesn't
+  cover `img.cdn.example.com`. Consider offering the parent domain.
 - **`self` subdomain handling.** TM/VM treat `self` as "the
   script's own origins OR their subdomains"; SourceMonkey matches
-  exact host only. See `src/gm-connect.ts#hostMatchesRule`. Fix:
+  `self` hosts exactly. See `src/gm-connect.ts#hostMatchesRule`. Fix:
   fall through to the subdomain check against `selfHosts` as a set
   of bases. Documented limitation pending a real compat report.
+- **`self` with a `.tld` host.** `extractSelfHosts` takes
+  `www.google.tld` literally, so `self` never covers the real
+  www.google.com. Matching `selfHosts` with the `.tld` reading from
+  `url-match.ts` would fix it.
 - **Port handling is asymmetric.** A user-supplied port in
-  `@connect example.com:8443` (no scheme) lands in the `exact`
+  `@connect example.com:8443` (no scheme) lands in the `host`
   branch as `host = "example.com:8443"`, but request matching
   goes through `URL.hostname` which strips the port — so the rule
   never matches. Either strip ports consistently when parsing rules
@@ -745,6 +963,134 @@ Adding any of these is a catalog entry + a body — nothing structural.
   at all, it just lists the declared hosts on its install-confirm
   page. Surface a "this script wants to talk to any host" signal in
   the collections-page row at install / refresh time.
+
+## Development harness
+
+See [docs/harness-design.md](docs/harness-design.md).
+
+- Removing a scratch script from the collections page while
+  `writeRunScript` rewrites one of the same name can delete the
+  fresh text: the write stores the text row before installing the row
+  that reads it, and the remove, in another context, sees no reader in
+  between. The install then fails with "The scratch script's text was
+  cleared". Narrow, and only with sm-dev pushing while someone
+  edits the page.
+- A scratch-script error names sm-dev's push as the fix: "Push it
+  again" when the text row is gone (`directories.ts`). Word it for the
+  writer once anything but sm-dev writes scratch scripts.
+- Two `writeRunScript`s of the same new name in one run at once both
+  miss the lookup, and the second fails with an `Internal error`.
+  sm-dev pushes one at a time, so only another caller of the worker's
+  API could. Look the row up inside the install's lock.
+- A run whose test collection the extension removed (stalled past its
+  lease and grace period while the browser ran on) isn't told: its
+  tabs then run nothing. `renewRun` could say the collection is gone,
+  so the run pushes its scripts again or says so.
+- An sm-dev older than protocol 1.7 shows an extension script whose
+  page loaded before the extension started (`UNTRACKED`) as
+  `running` in its JSON: that's its fallback for a status it doesn't
+  know. Fall back to a neutral state instead (`not-started`, or a new
+  `unknown-status`), so a later new status reads as unknown too.
+- Publishing: the package is installed from a checkout or a git tag.
+  `package.json` keeps `"private": true` until then; drop it to
+  publish.
+  Once it is on npm, the guide's install step and the consumer's
+  `dependenciesMeta.injected` workaround both get simpler.
+- A command sent to a run from another shell (or from stdin) exits 0
+  when it fails in the run, unless it is a `match` or `validate` miss
+  or it threw: the others only print why. Have each return its exit
+  code (the run already carries one back), so scripted lines can stop
+  on a failure.
+- Nothing tests the interactive `> ` prompt, which only turns on with
+  `--interactive` at a terminal. A test would run
+  `sm-dev --interactive start` in a
+  pseudo-terminal (pty: Python's `pty` module, or the native `node-pty`
+  package) and cover:
+  - Ctrl-C clearing a typed line, exiting on an empty one (and stopping
+    the run it started), and dropping an open `eval` block.
+  - A second Ctrl-C while a command runs exiting.
+  - Streamed output landing above the prompt, with the typed text redrawn.
+  - Ctrl-Z then `fg` leaving the prompt still reading keys (readline
+    pauses its input on resume). Under a pty with no job control the
+    stop signal is dropped, but sending SIGCONT still runs readline's
+    resume path.
+
+## sm-dev runs: follow-ups
+
+- **A page's stackless error is labeled `[script error]`.** A
+  `SyntaxError` from the page's own `eval` has no stack frames, and
+  `pageErrorSource` (`src/harness/page-output.ts`) gives a frameless
+  error to the scripts unless `stacklessIsScripts` (`run.ts`) can tell
+  otherwise. Seen on www.la7.it with a `@grant none` script that does
+  nothing: "Function statements require a function name", before the
+  script started. Same on `main`.
+- `settleWrites` waits 250 ms after firing a menu command, sized for
+  the old 150 ms value-write debounce
+  (`src/harness/console-commands.ts`). Writes now reach the worker a
+  message later, so it could probably be much shorter.
+- After SourceMonkey's worker restarts mid-run, the events from while it
+  was stopped are lost (the run says so). The scripts' Log entries are
+  read back; the rest (starts, menu commands, values) could be caught
+  up from the host's own reads. See
+  [docs/sm-dev-design.md](docs/sm-dev-design.md#when-the-sw-restarts).
+- A tab a run tab opens is set up after its scripts ran, so their
+  console lines from that first load don't reach the run (the reports
+  do).
+- **A run's commands take turns across all its clients.**
+  `commandRunner` (`src/harness/console-commands.ts`) queues every
+  command, so one client's `wait 30s` holds up the others.
+  - Waits and commands that only look could run alongside others.
+  - Needs a per-command context: `ctx.out` and `ctx.json` are swapped
+    per command now.
+- **`click --at X,Y` in CSS pixels, and `click --force`** to skip the
+  covered-element check. Closed shadow roots and covering overlays
+  (cookie footers, login panels) defeat `click`/`hover`, and agents
+  fall back to raw CDP, dividing screenshot pixels by devicePixelRatio.
+- **An init script for the run's lifetime.** `cdp
+  Page.addScriptToEvaluateOnNewDocument` ends with that one call's
+  session, so an observer can't be put in place before a reload.
+- **Browser-level prompts go unseen.** A page that opens a custom
+  scheme link (Douyin's `snssdk://`, say) gets Chrome's "Open
+  xdg-open?" external-protocol prompt. It isn't a page dialog, so
+  Playwright and the dialog tracker never see it, and nothing tells the
+  run a tab has one up.
+  - It doesn't block the page's JavaScript, but it covers the page in a
+    visible browser and may hold up a navigation.
+  - Options: turn external-protocol launches off in temp browsers (a
+    Chrome preference or policy, to find), and report a navigation to a
+    non-web scheme from a run's tab.
+- **`open` takes no `--timeout-seconds`**, unlike `start` and `wait`;
+  slow sites (Douyin) often pass its 30s load limit.
+- **`reload` of a `--noscript` tab printed a script's "no @connect
+  lines" note**, though that tab runs no scripts (corpus 518609). Seen
+  once; find which path printed it.
+- **Downloads leak to `~/Downloads` after a second `start`.** In a
+  temp browser run, the first `start`'s downloads go to the run's
+  `...-downloads/` folder beside its log; after another `start` in the
+  same run, they land in the person's real `~/Downloads`. Reproduced
+  in a corpus run (2026-10-04). The download behavior is probably set
+  up only for the first start's browser context or tab.
+- **A way to trim a saved page.** A raw SeeWhatISee snapshot of Code
+  Search was 1.46 MB, mostly a file-tree subtree and inline `<svg>`
+  icons, and trimmed by hand to 34 KB. A `savehtml` option (or a
+  separate command) could drop given subtrees, inline SVGs and unused
+  `<style>` blocks.
+
+## Tabs that predate the first script install
+
+- In a fresh profile (headless Chromium 153), a tab opened before
+  SourceMonkey's first script install can't message the extension.
+  - A script with a storage grant then logs `Failed reading this
+    script's stored GM values during setup`, and its `sm:error`
+    report never reaches the Log either. A reload doesn't help; a
+    cross-site navigation (a new renderer process) does.
+  - Once one script has been installed and removed, later tabs are
+    fine. Calling `configureWorld` (with or without a raw `register`)
+    before the tab opens did not help, nor did `syncNow()`.
+  - Real users mostly have scripts before any tab opens, but a new
+    install with tabs already open may hit it. Find the cause.
+  - sm-dev works around it (`warmUp` in
+    `src/harness/extension-launch.ts`).
 
 ## Test coverage gaps
 
@@ -793,15 +1139,16 @@ during cumulative review of the GM_* phases:
 
 ## Concurrency — accepted races
 
-The write mutex in `script-store.ts` is per JS context. The interleaves
-that leaves are catalogued in
-[docs/storage.md](docs/storage.md#the-lock-is-per-context) rather than
-here — they are decisions, not proposals.
+The write mutex in `script-store.ts` covers every write of a script row
+(`checkScriptRowWrite`); only the service worker writes at all. What it
+still leaves open is catalogued in
+[docs/storage.md](docs/storage.md#one-lock-in-the-worker) rather than
+here: those are decisions, not proposals.
 
 One thing does have a concrete fix we chose not to make:
 
 - **`setRefreshError` is a lost update waiting on a rare trigger.**
-  `src/refresh-error.ts` read-modify-writes one whole map, with nothing
+  `src/extension/refresh-error.ts` read-modify-writes one whole map, with nothing
   serializing it, and `refreshAllCollections` runs collections two at a
   time. Two collections failing in one pass can drop each other's entry;
   a healthy collection's clear can resurrect a sibling's error.
@@ -816,9 +1163,48 @@ One thing does have a concrete fix we chose not to make:
     banner ever becomes load-bearing, or alongside any other change to
     that module.
 
+## Worker writes — performance follow-ups
+
+Set aside while moving every write into the service worker
+([docs/worker-writes.md](docs/worker-writes.md#open)), from timings on a
+326-script profile.
+
+- **Full row-cache reads still copy every row.** Enables no longer
+  read every row (they use the indexes and the frozen shared rows), but
+  `allCachedRows` / `cachedScriptRows` still copy the whole cache, at
+  10–30 ms for 326 rows.
+  - Their callers: the membership reconcile, the blob sweep, and
+    `getAllScriptMetas`.
+  - Each would need checking for edits to the rows it reads before it
+    could take the frozen rows instead.
+- **Cache recently used script bodies in the worker.** The sync's `read
+  bodies` takes ~5 ms alone but 60–180 ms while other storage work runs,
+  and it is part of what makes enables wait during a sync. A size-capped
+  blob cache, kept current the way the row cache is, would remove those
+  reads.
+- **Re-registering the GM runtime and bridge on pattern changes.** A
+  sync that changes a helper's patterns re-registers it, 200–430 ms, and
+  storage reads in pages stall meanwhile.
+  - Identical patterns already de-dupe (`applyScope` keeps a set), but a
+    pattern covered by another (`https://a.com/foo/*` beside
+    `https://a.com/*`) still changes the set.
+  - Options: per-origin patterns, so a second script on a covered site
+    changes nothing; or `<all_urls>`, which `buildGmRuntimeSpecs`
+    argues against (the runtime's load on every site).
+- **Minify the injected helpers properly.** The build only strips
+  comments and whitespace (`minifyForInjection`): the GM runtime goes
+  from 131 KB to 55 KB. A real minifier (esbuild or terser) might reach
+  25–30 KB.
+  - Measure first: Chrome's `register` time against helper size, and
+    page parse time where it's injected.
+  - Renamed identifiers make the runtime's own stack traces harder to
+    read; a source map would cover that.
+- **Audit what's in `wrapper-gm-runtime.js`** for code no current API
+  needs.
+
 ## Storage-key migration — remove after 2026-09-01
 
-- **`ensureCollectionKeysMigrated` in `src/script-store.ts` is
+- **`ensureCollectionKeysMigrated` in `src/extension/script-store.ts` is
   temporary.** "Sources" were renamed to "collections" in August 2026,
   which moved the `"sources"` index to `"collections"`, every
   `source:<id>` row to `collection:<id>`, and each script's `sourceId`
@@ -879,6 +1265,31 @@ the items with a trade-off worth recording:
 - **The Downloads-folder field takes any absolute path**, with no
   readability probe — unlike the search-roots box above it, which
   checks. Same probe would do.
+
+## Manual scripts — follow-ups
+
+See [docs/manual-scripts.md](docs/manual-scripts.md).
+
+- **A retired row whose refresh fails keeps a false error.** A row an
+  older build refused for `@run-at context-menu` is refreshed on update
+  (`retiredHeaderProblemIds`). If that refresh fails (file gone, host
+  down), the row keeps "@run-at context-menu … is not supported", which
+  is no longer true. Rewrite it to a neutral "needs a refresh" message,
+  or log why the recheck failed.
+- **Two sources for "is this manual".** `recordScriptReport` asks the
+  match index (`isManualScriptId`); `computeBadge` asks the document's
+  `manualRuns`. They disagree only after a header edit adds or removes
+  `@run-at context-menu` while a page runs the old copy: a stale report
+  can then skip the stale check, or a manual-then-load script never
+  shows RELOAD there. Deciding from `manualRuns` in both would agree.
+- **Fixture `fireMenu('Run this script')` edge cases.** With no manual
+  script reported yet, or more than one and no `script` named, it falls
+  through to `fireMenuCommand` and returns false, rather than waiting or
+  saying which to pick.
+- **Pages open across an extension update** have the old bridge, without
+  the once-per-document guard, so a page-world manual run there injects
+  a second bridge and every message is forwarded twice. Gone with the
+  next load of the page.
 
 ## Changed files on disk — follow-ups
 
@@ -998,7 +1409,7 @@ with a trade-off worth recording:
   covers …" for a path that really is on disk. Refreshing just that row
   (`updateScript`) would avoid re-reading the manifest over the network,
   but the shape is rare enough that the extra branch hasn't earned its
-  keep yet. See `src/refresh-targets.ts`.
+  keep yet. See `src/extension/refresh-targets.ts`.
 
 - **`setToggleBusy` is not re-entrant.** Two quick clicks on the same
   toggle produce overlapping `onToggleScript` calls sharing one spinner
@@ -1034,13 +1445,24 @@ with a trade-off worth recording:
 
 ## `@require` follow-ups
 
-- **Shared storage of common require files.** Today each script stores
-  its own copy of every required file inline on its `StoredScript`
-  row. Five scripts requiring jQuery = jQuery stored five times. Move
-  to a content-addressed `require:<sha256>` row keyed by `contentHash`,
-  with each `StoredScript.requires[i]` holding only `{ ref, url,
-  contentHash, validators, loadedAt }`. Add a sweeper that drops a
-  `require:<hash>` row when its refcount across scripts hits zero.
+- **Storage format 2 follow-ups.** Bodies live in shared
+  `blob:<sha256>` rows ([storage.md](docs/storage.md#content-blobs)),
+  and readers that need only the rows skip them. Still open:
+  - The Options page usage table sizes blobs from the refs and
+    `getBytesInUse`, without reading them.
+  - Compression of large blobs, as a new `encoding`.
+  - Refresh still reads the bodies of the copy it starts from, to
+    reuse them when the file hasn't changed. Reading them only on that
+    outcome would need the rebuild to take the row and load bodies on
+    demand.
+  - An incremental sync re-sends a registered script's code even when
+    it didn't change (a row edit that moved only its patterns, say).
+    The full sync compares against `getScripts()`; an incremental one
+    would need each placement's code hash kept in its record.
+  - A missing blob shows on the pages once a registration sync reads
+    the script (each worker start, or a change to its row) and saves it
+    `invalid`. Until then they show it as it was. Checking the blob
+    keys (`getKeys`) on a repaint would catch it sooner.
 - **UI surface for prefetched requires.** The viewer now shows one
   tab per require with its full source, but the collections page row and
   the viewer's details panel still don't expose require state. Add a
@@ -1229,7 +1651,7 @@ Rough edges left:
     rows noted below.
 - **Poll noise still fills the cap.** The reload fast-path runs in
   `manual` mode for every matched script on every tab reload, so
-  ordinary browsing appends `Checked for updates — no change` per
+  ordinary browsing appends `Checked for updates and found no change` per
   script per reload — and two rows for a script that is still failing.
   Dropping the row for non-user-initiated checks would fix it; the
   blocker is that `manual` currently means "not rate-limited", not
@@ -1271,8 +1693,8 @@ itself once a sync places it. What's missing:
 
 - **The match-pattern check is narrower than Chrome's parser.**
   `matchPatternProblem` (`src/url-match.ts`) covers the shapes Chrome
-  names — no path, bad scheme, empty host, a host holding characters no
-  hostname can, misplaced host wildcard — and stops there, because a
+  names — bad or missing scheme, empty host, a host holding characters
+  no hostname can, misplaced host wildcard — and stops there, because a
   false positive would drop a pattern that works. A malformed port and
   anything Chrome tightens next still land as REJECTED (a port out of
   range, say — `https://host:65536/*` passes our check and Chrome
@@ -1280,30 +1702,12 @@ itself once a sync places it. What's missing:
   so each addition wants a probe against a real Chrome first (the one
   in `tests/e2e/rejected-registration.spec.ts`'s header is the record
   of the last such run).
-- **Two Chrome-refused shapes are left unread.** The scheme-less and
-  scheme-glob shapes are now rewritten into Chrome's spelling
-  (`canonicalMatchPatterns`, see
-  [docs/matching.md](docs/matching.md#lenient-readings-canonicalmatchpatterns)),
-  which took the corpus from 1,035 refused patterns / 81 dead scripts
-  down to 158 / 34. What still fails, and why neither is as clear-cut:
-    - **A bare origin, no path** (92 patterns: `https://example.com`,
-      `zombs.io`). Chrome says "Empty path". The reading is either
-      "that one page" or "the whole host", and the two differ — TM
-      matches the exact URL. Probe TM before picking.
-    - **A `*` in the middle of a host** (62: `*://*brainly.com/*`,
-      `https://video.sina.*/*`). Chrome's host wildcard is only the
-      whole host or its first label, so a TLD glob or a bare prefix
-      has no Chrome spelling at all. Registering `<all_urls>` and
-      deciding in the prelude is the only route, and it means giving
-      the script every page in exchange.
-  `pnpm run test:e2e:tm` drives a real TM, which is where "what does TM
-  run for this" gets answered.
 - **The install preview doesn't show parse-time warnings.**
   `checkPreviewSource` builds the row and reports header errors and
   syntax errors, but drops `startupLogs` — so an unsupported `@grant`
   or a dropped `@match` is only visible after installing.
 - **Registration has no single owner across contexts.** The lock in
-  `src/injector.ts` serializes registration work within one JS context,
+  `src/extension/injector.ts` serializes registration work within one JS context,
   but the collections page and the viewer call
   `retryRejectedRegistrations` in theirs, so a page-side registration
   can still land in the middle of the SW's sync. `placeSpec` makes that
@@ -1417,11 +1821,17 @@ they follow are in
 - collapse a collection
 - smoother add collection/script flow, maybe a dialog box
 
-### Page status menu / widget
+### Toolbar popup
 
-- status widget instead of context menu for running scripts
-- enable / disable a script on that page
-- choose which version of a script to use
+The popup shipped (see [docs/status-popup.md](docs/status-popup.md)).
+Left from its design:
+
+- **Version picker**: a small versions button on a row with other
+  copies, opening a list like the viewer's to switch which copy runs.
+  Needs the list UI designed first.
+- **A script's own `@icon`** on its row, maybe. Site icons were left
+  out: on one page they'd nearly all be that site's.
+- **More page actions**: Refresh All, disable everything on this site.
 
 ### Other
 
@@ -1461,14 +1871,14 @@ they follow are in
   be noise-free, but it needs a wording that reads as a capability
   rather than a tag dump.
 - large collections still blow past `chrome.storage.local` (and RAM). The
-  refresh fan-out is bounded now (`src/concurrency.ts`), but the whole
+  refresh fan-out is bounded now (`src/extension/concurrency.ts`), but the whole
   result set — every script body, plus prefetched `@require` /
   `@resource` payloads — is still held live and then written in one
   `set`. Open pieces:
   - No `unlimitedStorage` permission, so the whole extension shares a
     10 MB `storage.local` budget. Decide between taking the permission
     and moving bodies out of `storage.local`.
-  - Reporting the failure is done (`src/refresh-error.ts`) — what's
+  - Reporting the failure is done (`src/extension/refresh-error.ts`) — what's
     left is not hitting it. The user still has to work out for
     themselves that one enormous collection is what filled the budget;
     the banner names total usage, not the collection responsible. A
@@ -1480,8 +1890,8 @@ they follow are in
     thousands-of-scripts path, all of them storage writes rather than
     fetches (so lighter per item, but still one-per-script):
     `emitInitialLoadLog` over a freshly added collection
-    (`src/script-store.ts`), and the boot log replay in
-    `src/script-updater.ts`. Both want `mapWithConcurrency`.
+    (`src/extension/script-store.ts`), and the boot log replay in
+    `src/extension/script-updater.ts`. Both want `mapWithConcurrency`.
 - Tampermonkey import follow-ups (see
   [docs/import-export-tampermonkey.md](docs/import-export-tampermonkey.md)):
   - **Re-import merges instead of duplicating.** Every import creates a
@@ -1501,9 +1911,9 @@ they follow are in
     Tampermonkey install in step during development.
 - `GM_setValue` rows outlive the script that owned them. `removeScript`
   and `removeCollection` drop the structural rows but never call
-  `wipeScriptValues`, which exists and is unit-tested but has no
-  production caller — so `gmval:<scriptId>:*` keys accumulate under ids
-  nothing refers to any more. Pre-existing, and harmless in the sense
+  `wipeValues` (only an sm-dev run's test collection is wiped on
+  removal), so `gmval:<scriptId>:*` keys accumulate under ids nothing
+  refers to any more. Pre-existing, and harmless in the sense
   that nothing reads them; it is storage that only grows. Newly easier
   to notice now that importing a backup seeds those rows up front, so a
   40-script import that gets removed leaves 40 scripts' worth behind.

@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name        SourceMonkey example: unsafeWindow
+// @name        SourceMonkey example: unsafe-window: unsafeWindow
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.1.1
+// @version     1.1.4
 // @description Reads and writes the page's real window through unsafeWindow, while still using GM storage.
-// @match       *://*/unsafe-window/unsafe-window.html
+// @match       *://*/*unsafe-window/unsafe-window.html
 // @match       file:///*/unsafe-window/unsafe-window.html
 // @run-at      document-end
 // @grant       unsafeWindow
@@ -88,12 +88,11 @@
   );
 
   // 4. Whether the two are the same object is up to the manager, so
-  //    the line reports what it found. SourceMonkey meets the grant by
-  //    running the script in the page, so they are one object;
-  //    Tampermonkey hands out its sandbox's wrapper around the page's
-  //    window even on Chrome, so they are not. Both reach the page —
-  //    step 1 is what proves that. Scripts that branch on this
-  //    comparison need the answer to be honest.
+  //    the line reports what it found. SourceMonkey, Tampermonkey and
+  //    Violentmonkey all give a granted script a sandbox wrapper around
+  //    the page's window as its own `window` on Chrome, so they are
+  //    not. All reach the page; step 1 is what proves that. Scripts
+  //    that branch on this comparison need the answer to be honest.
   const sameWindow = unsafeWindow === window;
   logStep(
     'identity',

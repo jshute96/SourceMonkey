@@ -34,7 +34,7 @@ Notes on the storage shape:
 - Single-array (rather than one-key-per-entry) keeps the log-pane
   render cheap — no scan-all-keys on open.
 - Concurrent appends for the **same script** are serialized through
-  an in-memory promise chain in `src/script-log.ts` so the
+  an in-memory promise chain in `src/extension/script-log.ts` so the
   read/modify/write window doesn't lose writes.
 - Cross-script appends still run concurrently.
 
@@ -50,8 +50,21 @@ interface LogEntry {
   location?: DiagnosticLocation;  // a place in the script's own files
   state?: LoadState;       // the Status-badge state this event moved the script into
   resetsLogLevel?: boolean;  // clears `loglevel:` as it is written — a fresh start
+  collapseKey?: string;    // later entries with this key fold into this one
+  count?: number;          // how many it stands for, once folded
 }
 ```
+
+### Folded entries
+
+- An append with `collapse: { key, message(count) }` folds into the
+  entry already written with that key, while it's still in the Log.
+  - That entry keeps its place and first time. Its count goes up, and
+    `message(count)` rewords it.
+  - It isn't a new entry, so sm-dev's entry listener isn't told.
+- Used for reports from a page's iframes (see
+  [frames.md](frames.md#script-log)), which would otherwise fill a
+  script's Log in a few loads of a page full of frames.
 
 `state` is set on entries that record a **state transition** rather
 than something the script did. Type `LoadState` (`script-display.ts`):
@@ -129,9 +142,9 @@ Load pipeline (service-worker side, never carries a `tabId`):
 | --- | --- | --- |
 | `manual-refresh` | `emitScriptOutcomeLog` | The user clicked Refresh / Refresh All. |
 | `background-refresh` | same | An opportunistic check, triggered by a page navigation. |
-| `add` | `emitInitialLoadLog` | Failed on its first load, when the script was added. |
+| `add` | `emitInitialLoadLog` | The script was installed: the install line, and a failure on its first load. |
 | `extension-startup` | `ensureLoadStateInLogTab`, `ensureOutdatedInLogTab` | Restated after a browser restart — see below. |
-| `parser` | `ensureStartupLogsInLogTab`, and the refresh paths | Parse-time diagnostics from `script.startupLogs`: when new content lands, restated on a manual no-change refresh, and replayed at boot. |
+| `parser` | `ensureStartupLogsInLogTab`, the refresh paths, and `emitInitialLoadLog` | Parse-time diagnostics from `script.startupLogs`: at install, when new content lands, restated on a manual no-change refresh, and replayed at boot. |
 | `version-probe` | `probeOneScript` | An `@updateURL` / `@downloadURL` elsewhere declares a newer `@version`. |
 
 Registration:
@@ -140,14 +153,23 @@ Registration:
 | --- | --- | --- |
 | `chrome-injector` | `registerWithFallback` | Chrome refused the script's spec, so it silently never runs. |
 
+Stored values (service-worker side, no `tabId`, since a save serves
+every tab):
+
+| Source | Emitted by | Means |
+| --- | --- | --- |
+| `gm-storage` | `reportValueSaveFailure` in `background.ts` | The script's `GM_setValue` values could not be saved (or loaded to take a write), naming storage use when it's nearly full. An error, once until a save works again ([GM-APIs-storage.md](GM-APIs-storage.md#the-workers-value-store)). |
+
 Runtime — always carries a `tabId`, so these render as `tab 17 · …`:
 
 | Source | Emitted by | Means |
 | --- | --- | --- |
-| `script-wrapper` | the `sm:*` handlers in `background.ts` | Start, reload-swap, abandon, and uncaught script errors. |
+| `script-wrapper` | the `sm:*` handlers in `background.ts` | Start, reload-swap, abandon, and uncaught script errors. Also `logMissingScripts`: a script that matched a page but never started there, with a hint at why ([matching.md](matching.md#scripts-that-never-start)). |
+| `sandbox-fallback` | `logSandboxFallback` in `background.ts` | A page-world script ran isolated, because the page's CSP `sandbox` turns off its own script ([injection.md](injection.md#csp-sandbox-pages)). Info, once per run. |
 | `gm-log` | the `SM_GM_LOG_MSG` handler | A `GM_log()` call from the script itself. |
-| `gm-dom` | the `SM_GM_DOM_BLOCKED_MSG` handler | The page's CSP refused a style `GM_addStyle` / `GM_addElement` added — only possible for a script running in the page (MAIN world). Once per script per document. |
+| `gm-dom` | the `SM_GM_DOM_BLOCKED_MSG` handler | The page's CSP refused a style `GM_addStyle` / `GM_addElement` added — only possible for a script running in the page (MAIN world), for an element added inside a closed shadow root or another frame's document, or before the bridge loaded; the line says which. Once per script per document. |
 | `gm-download` | `sendDownloadEvent` in `background.ts` | A `GM_download()` call that was refused, interrupted, or timed out. Successful downloads are not logged — a batch downloader would flood the capped log. |
+| `gm-xhr` | `connect-prompt.ts` | The connection prompt for a host the script's `@connect` lines don't cover: info as it opens; the answer (info for an allowance, a warning for Deny, Cancel or closing); and a warning when a kept denial blocks a request, once per site per page. |
 | `gm-window` | `handleWindowControl` in `background.ts` | A granted `window.close()` / `window.focus()` the browser refused. A successful close takes the page (and its console) with it, so only failures land here. |
 
 Two naming notes worth keeping:
@@ -165,7 +187,7 @@ Two naming notes worth keeping:
 
 ## API
 
-`src/script-log.ts` exports the public surface:
+`src/extension/script-log.ts` exports the public surface:
 
 - `appendScriptLog(scriptId, input)` — async write. Promise resolves
   once the entry is persisted. Also bumps `loglevel:<scriptId>` when
@@ -188,24 +210,23 @@ Two naming notes worth keeping:
 serializes those writes is module state — so it only orders the writes
 made in one JS context.
 
-- Both contexts write. The worker logs injection, refresh and probe
-  events; a page logs through the `script-store` code it shares with the
-  worker (an install's first-load line), and the viewer's Clear log
-  button removes the key.
-- Two chains on one key lose entries, and let an append that was already
-  in flight resurrect a log the user just cleared.
-- So a page hands every **mutation** to the worker
-  (`SCRIPT_LOG_WRITE_MESSAGE`, handled in `background.ts`) and the
-  worker's chain is the only one that touches the key. Reads don't hop —
-  they aren't read-modify-write.
-- The page falls back to writing locally unless the worker answers
-  `true`: a visible entry is worth more than the ordering, and a handler
-  that threw resolves the message rather than rejecting it, so the ack
-  has to be read and not just awaited.
-- What the chain guarantees is that the worker's chain orders everything
-  reaching it — not that one page's appends are ordered. Two writes from
-  a page are two messages, and a write that fell back is on a different
-  chain entirely.
+- Only the worker writes, as it writes all storage
+  ([worker-writes.md](worker-writes.md)): injection, refresh, install
+  and probe events, and the viewer's Clear log, which the page asks it
+  for.
+- Two chains on one key would lose entries, and let an append that was
+  already in flight resurrect a log the user just cleared.
+- A guard for pages: no page code logs today, but a page that logs
+  through code it shares with the worker hands the entry to the worker
+  (`SCRIPT_LOG_WRITE_MESSAGE`, handled in `background.ts`). Reads don't
+  hop: they aren't read-modify-write.
+  - The worker answers `true` once it has written the entry. A handler
+    that threw resolves the message rather than rejecting it, so the
+    ack has to be read, not just awaited.
+  - With no `true`, the page sends it once more: a worker stopped
+    mid-message leaves the first unanswered, and the second wakes a new
+    one. With no `true` again, it drops the entry and says so in its own
+    console.
 
 ## Status column promotion
 
@@ -225,7 +246,7 @@ Rule: if a script's status column or viewer pane shows a failure, that
 script's Log explains it. A badge the user can't click through to a
 reason is worse than no badge.
 
-`loadStateLogEntry` (`src/script-store.ts`) is the single mapping from
+`loadStateLogEntry` (`src/extension/script-store.ts`) is the single mapping from
 a row's persisted state to the entry it warrants:
 
 | Row state | `state` | Level | Message |
@@ -256,13 +277,13 @@ way whichever path reported it:
 Beyond the load pipeline:
 
 - **Rejected registration** (`registerWithFallback` in
-  `src/injector.ts`, source `chrome-injector`) — Chrome refused the
+  `src/extension/injector.ts`, source `chrome-injector`) — Chrome refused the
   script's spec, so it never runs even though its row loaded fine.
   Error level, `state: 'rejected'`. The status cell says REJECTED for
   as long as the refusal stands; the Log is where the reason gets a
   timestamp and a permanent home. See
   [injection.md](injection.md#rejected-registrations).
-- **Outdated** (`probeOneScript` in `src/script-updater.ts`, source
+- **Outdated** (`probeOneScript` in `src/extension/script-updater.ts`, source
   `version-probe`) — an upstream copy moved ahead of ours. Warning
   level, `state: 'outdated'`; the probe going quiet again logs
   `Up to date again` with `state: 'ok'`. Restated at boot with source
@@ -282,8 +303,9 @@ collection. They are always **info**, never warning/error:
 What gets fanned out:
 
 - **Scan failure** (`scanError`: unreadable listing / manifest / bad
-  URL) — `This collection did not load: <reason> — still running the
-  cached copy`. `refreshCollection` deliberately leaves every script row
+  URL) — `This collection did not load: <reason>. Still running the
+  cached copy.`. No second period when `<reason>` already ends a
+  sentence, as a GitHub hint does. `refreshCollection` deliberately leaves every script row
   untouched in this case, so without this the per-script outcome pass
   would report no change for rows that were never actually checked.
 - **A refresh that read fine but couldn't be saved** — the shared
@@ -311,8 +333,8 @@ stops being one.
 
 One thing stays quiet, and it is about **whether anything happened**:
 
-- **A no-op refresh on a valid script.** `Checked for updates — no
-  change` is manual-only, so background polling doesn't announce that a
+- **A no-op refresh on a valid script.** `Checked for updates and
+  found no change` is manual-only, so background polling doesn't announce that a
   healthy script is still healthy.
 
 A **registration rejection is not** one of those, and used to be. Every
@@ -365,7 +387,7 @@ path goes through `emitScriptOutcomeLog`, which writes both.
 
 | Outcome | Rows |
 | --- | --- |
-| Nothing to report | `Checked for updates — no change` |
+| Nothing to report | `Checked for updates and found no change` |
 | Anything else | `Checking for updates`, then the outcome |
 
 - The uneventful case is **one self-describing line**, so a routine
@@ -392,8 +414,8 @@ naming what recovered:
 - `Loads cleanly again (was invalid)`
 - `Refresh succeeded again (collection is reachable)`
 - `This collection is readable again`
-- `Chrome accepted this script's registration — it runs again`
-  (`logRecoveries` in `src/injector.ts`, source `chrome-injector`)
+- `Chrome accepted this script's registration, so it runs again`
+  (`logRecoveries` in `src/extension/injector.ts`, source `chrome-injector`)
 
 This matters most when the bytes didn't change — e.g. a `@require`
 host that starts answering again clears the failure without bumping
@@ -411,26 +433,26 @@ Both trigger modes log failures. A background check exists precisely to
 notice a failure the user hasn't gone looking for, so a badge that
 turns amber on its own must come with a matching Log line.
 
-Trigger mode still gates the **non**-events: `Checked for updates — no
-change` is manual-only.
+Trigger mode still gates the **non**-events: `Checked for updates and
+found no change` is manual-only.
 
 Caveat on what "manual" means: it is "not rate-limited as a refresh",
 not "the user clicked". The
 [reload fast-path](injection.md#reload-fast-path) runs in `manual`
 mode for every matched script on every tab reload, so a healthy script
-*does* accumulate `Checked for updates — no change` rows from ordinary
+*does* accumulate `Checked for updates and found no change` rows from ordinary
 browsing. That is the remaining source of poll noise in the cap —
 tracked in `TODO.md`.
 
 ## What gets logged today
 
-- **Refresh paths** (`src/script-updater.ts`):
+- **Refresh paths** (`src/extension/script-updater.ts`):
   - `Checking for updates` (info) — ahead of any outcome worth
     reporting; omitted when the check has nothing to say (see
     [How a check frames itself](#how-a-check-frames-itself)).
   - `Loaded new content (<size>)` (info) — when the new build has a
     different `loadedAt` from the prior.
-  - `Checked for updates — no change` (info) — only on manual refresh,
+  - `Checked for updates and found no change` (info) — only on manual refresh,
     to mirror the SW console behaviour. Opportunistic background checks
     stay silent to keep the log from filling with poll noise.
   - Load failures (error) — the row's `errorMessage` when it lands
@@ -443,8 +465,8 @@ tracked in `TODO.md`.
     [storage.md](storage.md#refresh-failures-keep-the-good-copy-running)).
     Covers hard fetch failures, an http(s) 200 that parsed as a login
     page, and dependency fetch failures.
-  - `This collection did not load: <reason> — still running the cached
-    copy` (info), the `describeRefreshError` sentence (info), and
+  - `This collection did not load: <reason>. Still running the cached
+    copy.` (info), the `describeRefreshError` sentence (info), and
     `Could not refresh this collection: <reason>` (info) — collection-level
     failures, fanned out to every script under the collection. See
     [Collection-level failures](#collection-level-failures) for why info.
@@ -462,7 +484,7 @@ tracked in `TODO.md`.
     record.
   - Collection / refresh-all paths route per-script outcomes through the
     same helper so each affected script gets one entry.
-- **Injector** (`registerWithFallback` in `src/injector.ts`, source
+- **Injector** (`registerWithFallback` in `src/extension/injector.ts`, source
   `chrome-injector`):
   - `Chrome rejected this script's registration, so it will not
     run: <reason>` (error) — the spec was refused, so the script never
@@ -470,16 +492,29 @@ tracked in `TODO.md`.
     Chrome's own wording, verbatim, because it names the offending
     header value.
     - The sentence is built by `describeRejection`
-      (`src/script-rejection.ts`), shared with the viewer's message
+      (`src/extension/script-rejection.ts`), shared with the viewer's message
       bar so one problem keeps one wording.
     - Written on every refused attempt, not just when the state
       changes — see
       [injection.md](injection.md#rejected-registrations).
 - **Add** (`emitInitialLoadLog` in
-  `src/script-store.ts`, source `add`):
+  `src/extension/script-store.ts`, source `add`):
+  - `Installed (<size>)` (info) for each newly installed script, with
+    `state: 'ok'` unless it landed broken. No size when nothing could
+    be fetched.
+    A new local copy (`registerLocalCopy` in
+    `src/extension/local-copy.ts`) counts as an install; replacing one
+    doesn't.
   - The same load-failure entry, for a script that lands broken on its
-    very first load. The add path bypasses the updater, so without
-    this a brand-new INVALID row would have an empty Log.
+    very first load.
+  - Its parse-time diagnostics (source `parser`), after the failure if
+    there is one: a row invalid on a failed `@require` still has
+    header warnings that hold.
+  - The add path bypasses the updater, so without this a new script
+    would start with an empty Log.
+  - Adding a file to an existing container re-reads its siblings too.
+    They get only the failure entry, if still broken: no install line
+    or parser rows, since they weren't installed and didn't change.
 - **Boot replay** (`replayScriptLogsAtBoot`, source `extension-startup`):
   - The same load-failure entry, restated once per Chrome session for
     any row that is *still* broken. `chrome.storage.session` is wiped
@@ -488,25 +523,26 @@ tracked in `TODO.md`.
     long-broken script would show a red badge over an empty Log.
   - The OUTDATED row too, for a row whose persisted probe is still
     ahead of it — same reasoning, same wording as the probe's own row.
-- **Update probes** (`src/script-updater.ts`, source `version-probe`):
-  - `Newer version <v> at <update|download> URL (running <v>) — <url>`
+- **Update probes** (`src/extension/script-updater.ts`, source `version-probe`):
+  - `Newer version <v> at <update|download> URL (running <v>): <url>`
     (warning) — an `@updateURL` / `@downloadURL` declares a version
     ahead of the copy we run. Emitted only when the newer version
     *changes*, so an upstream that's been ahead for a month doesn't
     add a row every check. Nothing is logged for a probe that fails,
     finds nothing newer, or is skipped as still-fresh. See
     [updates.md](updates.md).
-- **Parser** (`extractStartupLogs` in `src/script-store.ts`, replayed
-  by `emitScriptOutcomeLog` in `src/script-updater.ts`):
-  - `Ignoring @grant <names> — unsupported APIs` (warning) — emitted
+- **Parser** (`extractStartupLogs` in `src/script-build.ts`, replayed
+  by `emitScriptOutcomeLog` in `src/extension/script-updater.ts` and
+  `emitInitialLoadLog` in `src/extension/script-store.ts`):
+  - `Ignoring unsupported @grant <names>` (warning) — emitted
     once per loaded content version, immediately after the
-    `Loaded new content` row. Detection happens at parse time and is
+    `Installed` or `Loaded new content` row. Detection happens at parse time and is
     persisted on `StoredScript.startupLogs`, so SW restarts don't
     re-fire the row. Also mirrored into the page DevTools console via
     the wrapper's [startup-log channel](logging.md#page-console-startup-logs)
     on every matching page load.
   - A **manual** refresh that finds no change restates them, after
-    its `Checked for updates — no change` line. They describe the
+    its `Checked for updates and found no change` line. They describe the
     installed content, not an event, so they stay true until it
     changes; logging them only when content lands left a permanently
     misconfigured script with no Log line at all once that row
@@ -528,8 +564,8 @@ tracked in `TODO.md`.
     `chrome.runtime.sendMessage` can't carry non-cloneable values
     and the Log tab is text-only.
 - **window.close / window.focus failures** (`handleWindowControl` in
-  `src/background.ts`, source `gm-window`, `tabId` attached):
-  - `window.close — <reason>` / `window.focus — <reason>` (warning) —
+  `src/extension/background.ts`, source `gm-window`, `tabId` attached):
+  - `window.close: <reason>` / `window.focus: <reason>` (warning) —
     the tab was already gone, or `chrome.windows` was unavailable. A
     window manager that declines to raise the window is NOT a failure
     Chrome reports, so it doesn't appear here either.
@@ -540,8 +576,8 @@ tracked in `TODO.md`.
     console with it — the Log tab is the only place a user can look
     afterwards.
 - **GM_download failures** (`sendDownloadEvent` in
-  `src/background.ts`, source `gm-download`, `tabId` attached):
-  - `GM_download <reason> — <url>` (warning) — a download that was
+  `src/extension/background.ts`, source `gm-download`, `tabId` attached):
+  - `GM_download <reason> (<url>)` (warning) — a download that was
     refused (`not_permitted`), interrupted (`not_succeeded`, with
     Chrome's interrupt reason), or timed out. A file that silently
     never appears is otherwise invisible to the user, and the reason
@@ -551,11 +587,12 @@ tracked in `TODO.md`.
     a SourceMonkey malfunction.
   - Successful downloads are **not** logged — a batch downloader fires
     hundreds and would push everything else past `LOG_CAP`.
-- **Wrapper reports** (`src/background.ts`'s `recordScriptReport`):
+- **Wrapper reports** (`src/extension/background.ts`'s `recordScriptReport`):
   - `sm:start` (info) — wrapper reached its body in a tab.
   - `sm:swapped` (info) — reload fast-path swapped in newer content.
   - `sm:abandoned` (warning) — wrapper skipped because the SW told it
-    to (rare).
+    to (rare). With no decision (`no-decision`) it's an error instead,
+    with why: see [injection.md](injection.md#no-decision).
   - `sm:error` (error) — runtime throw from the userscript itself.
     Details:
     - Wrapper captures `err.stack` on all three send-sites: sync-catch
@@ -572,7 +609,7 @@ tracked in `TODO.md`.
   patch global console in the injected world; the user can open
   DevTools on the host page if they want that.
 - Per-tab badge transitions. Those are noisy and already visible.
-- `Checked for updates — no change` on opportunistic checks
+- `Checked for updates and found no change` on opportunistic checks
   (manual-only, as above).
 - Update probes that fail, find nothing newer, or are skipped as
   still-fresh. A probe is an annotation; it can't change what runs.
@@ -612,7 +649,7 @@ tracked in `TODO.md`.
   - Raw frames never carry that require URL; see **Stack refs are
     source-mapped first** below.
   - Line 1 IS linkable, but its column-accent bar is suppressed —
-    the wrap prefix (the `self.__smRun(id, function(__smE){…`
+    the wrap prefix (the registry's `run(id, function(__smE){…`
     + GM bindings + declaration preamble emitted by `wrapCombinedEntry`)
     shares that physical line, so the reported column points into
     the wrap, not user code.
@@ -620,7 +657,7 @@ tracked in `TODO.md`.
 ## Export
 
 The Log tab's **Save** and **Copy** buttons hand out the same CSV text,
-built by `formatLogCsv` in `src/log-format.ts`. (Ctrl-A on the tab
+built by `formatLogCsv` in `src/extension/log-format.ts`. (Ctrl-A on the tab
 selects the table itself instead — see
 [script-viewer.md](script-viewer.md#layout).)
 
@@ -642,7 +679,7 @@ Format:
       the table shows them (see below). Exporting the stored text would
       name the `.user.js` at a generated line inside the combined
       injected entry — the coordinate the Log tab exists to correct.
-  - `Time` / `Source` come from `src/log-format.ts`; the mapped
+  - `Time` / `Source` come from `src/extension/log-format.ts`; the mapped
     `Message` needs the viewer's tabs and the script's current layout,
     so `formatLogCsv` takes that renderer as an argument.
 - Quoted when the value contains the separator, a quote, or any
@@ -662,8 +699,8 @@ Format:
 Behavior:
 
 - Suggested filename: the script's log ID with its `.user.js` / `.js`
-  extension swapped for `.log`, keeping any `#N` dedup suffix —
-  `bold-on-hover.user.js#2` → `bold-on-hover#2.log`.
+  extension swapped for `.log`, keeping its `#E4` suffix —
+  `bold-on-hover.user.js#E4` → `bold-on-hover#E4.log`.
 - Save opens a real save dialog (`showSaveFilePicker`) so the user
   picks the name and folder, rather than dropping a file into the
   downloads folder behind their back.
@@ -703,7 +740,7 @@ Behavior:
 ### What the Log tab does
 
 - Recomputes the entry's segment layout from the stored script, via
-  the shared `composeSource` in `src/composed-source.ts`.
+  the shared `stackLayout` in `src/composed-source.ts`.
 - Applies it with `remapStackRef` (`src/source-map.ts`) to each ref
   `parseStackRefs` found.
 - Re-renders the ref text with the mapped URL and line, so the string
@@ -711,6 +748,24 @@ Behavior:
   artifact of our injection and means nothing to the script's author.
 - Routes the click to the tab that owns the mapped URL — which is how
   a stack ref reaches a `@require` tab at all.
+
+### Other readers of stacks
+
+- sm-dev prints stacks as text: `threw` reports, console lines that
+  carry a stack (`console.error(err)`), and the Log tab's entries.
+- It rewrites them with `remapStackText` (`src/stack-link.ts`), the
+  same `remapStackRef` applied to every ref in a string.
+- The layout comes from `stackLayout` (`src/composed-source.ts`), the
+  helper the Log tab uses too. sm-dev asks the service worker for the
+  pushed script's (`getStackLayout` on its test surface).
+- Refs from scripts it doesn't know stay as they were. So do refs to
+  an entry URL that scripts with different layouts share (two
+  `foo.user.js` files in one sm-dev run), rather than risk naming the
+  wrong file.
+- A ref on a line of our own wrap (the head with the GM bindings, a
+  seam) has no original line, so it is renamed to the script's
+  `__wrapper.js` at the generated line. Left alone, it would read as
+  that line of the user's file.
 
 ### Refs are decoded for display
 
@@ -757,9 +812,9 @@ Behavior:
 - Entries older than the current `loadedAt` carry a tooltip saying so,
   so a line that doesn't match reads as expected rather than as a bug.
 - The previous layout cannot be recovered to do better. A refresh
-  overwrites `bodyText` and every `requires[].source` in place on the
-  same row, and a `LogEntry` stores only timestamp / level / source /
-  tabId / message.
+  points the row at the new body and `@require` blobs, keeping no
+  reference to the old ones (which cleanup may delete), and a
+  `LogEntry` stores only timestamp / level / source / tabId / message.
 - The staleness signal is not airtight: a tab still running the
   previous body can log an entry with a fresh timestamp, which reads as
   current. Closing that would need the wrapper to stamp each report
@@ -771,10 +826,13 @@ Behavior:
   `__prelude.js`. They pass through untouched.
 - Generated lines that belong to our wrap rather than to user code:
   the head, the `// @require` marker lines, the `;` ASI guards, the
-  closing `});`. Guessing at a neighbouring line would point the user
-  at unrelated code.
+  closing `})();});`. Guessing at a neighbouring line would point the
+  user at unrelated code. These render as plain text, not links.
 - Scripts with no `@require`. Nothing was concatenated, so nothing
   moved, and the reported lines are already original.
+  - Except the closing line just past the body: it is ours, and shows
+    up in every synchronous throw's stack as the call into the nested
+    user-program scope. It renders as plain text too.
 - Columns are passed through rather than mapped, and that is exact:
   composition moves whole lines and never code within a line.
 - Line numbers are counted the way V8 counts them (`\r`, `\r\n`,

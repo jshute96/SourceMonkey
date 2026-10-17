@@ -33,7 +33,7 @@ without the user doing anything.
 ## Focus-triggered refresh
 
 Bringing a tab to the front also checks the **local** scripts running
-on it. `installFocusRefresh` in `src/background.ts`.
+on it. `installFocusRefresh` in `src/extension/background.ts`.
 
 ### Why
 
@@ -75,8 +75,8 @@ Details of the page-side half (`installFocusSignal` in
 - One listener per execution world per document — the prelude IIFE is
   idempotent — armed only once some script has matched this URL. A page
   running scripts in both worlds therefore reports twice per gesture,
-  each with its own floor. Scripts never register with `allFrames`, so
-  subframes add nothing.
+  each with its own floor. A frame running scripts reports too, with a
+  floor of its own (see [frames.md](frames.md)).
 - A 5 s floor per document, below the SW's own interval so it never
   becomes the binding limit. It exists to stop focus churn from waking
   the worker, not to rate-limit checks.
@@ -108,7 +108,7 @@ stay distinguishable — the distinction that found the Linux gap.
   badge is computed from. An older document in the tab is off screen.
 - **Local rows only**, keyed on each script's own `fileUrl`, not on its
   collection's location: a container collection holds scripts of both
-  kinds. `localScriptIds` in `src/match-index.ts`.
+  kinds. `localScriptIds` in `src/extension/match-index.ts`.
   - An http(s) script would mean a conditional GET to a third party on
     every alt-tab, for a script the user is unlikely to be editing.
 - `@require` / `@resource` follow the ordinary opportunistic policy: a
@@ -182,10 +182,14 @@ it.
 ### When it runs
 
 Straight after a refresh, against the rows it produced, for `ok` rows
-only. How hard it tries is a `ProbePolicy`, passed explicitly:
+only. Also straight after a single script is installed
+(`probeInstalledScript`), so an install of an outdated copy says so
+without a Refresh; not awaited by the install. A whole collection added
+at once waits for its first Refresh. How hard it tries is a
+`ProbePolicy`, passed explicitly:
 
-- **`force`** — an actual Refresh / Refresh All / viewer-Update click.
-  Ignores the interval; the user asked.
+- **`force`** — an actual Refresh / Refresh All / viewer-Update click,
+  and the check after an install. Ignores the interval; the user asked.
 - **`if-stale`** (the default) — everything else, including the
   opportunistic navigation check *and the reload fast path*. Probes
   only when the stored answer has aged past `PROBE_MIN_INTERVAL_MS`
@@ -254,7 +258,7 @@ metadata block wherever it sits.
 Split across two modules so display code stays off the fetch stack:
 `src/version-probe.ts` is pure (targets, verdict, staleness, types) and
 is what `script-display.ts` / `collections.ts` / `script-details.ts`
-import; `src/version-probe-fetch.ts` does the fetching and is reached
+import; `src/extension/version-probe-fetch.ts` does the fetching and is reached
 only from `script-updater.ts`.
 
 ## Version comparison

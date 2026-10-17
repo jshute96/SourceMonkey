@@ -57,7 +57,7 @@ const {
   isAllowedDownloadUrl,
   startGmDownload,
   validateDownloadName,
-} = await import('../../dist/gm-download.js');
+} = await import('../../dist/extension/gm-download.js');
 
 function payloadOf(over = {}) {
   return {

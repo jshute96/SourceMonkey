@@ -6,7 +6,7 @@
   "description": "Userscript manager that treats userscripts like source code, built and managed with real coding tools",
   "homepage_url": "https://github.com/jshute96/SourceMonkey",
   "minimum_chrome_version": "152",
-  "permissions": ["contextMenus", "declarativeNetRequestWithHostAccess", "downloads", "favicon", "notifications", "offscreen", "scripting", "storage", "userScripts", "webNavigation"],
+  "permissions": ["alarms", "contextMenus", "declarativeNetRequestWithHostAccess", "downloads", "favicon", "notifications", "offscreen", "scripting", "storage", "userScripts", "webNavigation"],
   "sandbox": {
     "pages": ["parse-sandbox.html"]
   },
@@ -15,7 +15,7 @@
   },
   "host_permissions": ["<all_urls>", "file:///*"],
   "background": {
-    "service_worker": "background.js",
+    "service_worker": "extension/background.js",
     "type": "module"
   },
   "action": {

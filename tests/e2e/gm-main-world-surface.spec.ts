@@ -1,11 +1,9 @@
-// MAIN-world coverage for the GM_* surfaces whose specs only ever ran
-// in USER_SCRIPT world.
+// MAIN-world coverage for the GM_* surfaces where the world matters.
 //
 // Why these and not the others: the surfaces below either install
-// themselves on the world's own `window` (`window.onurlchange`,
-// `window.close` / `window.focus` — in MAIN that window is the
-// PAGE's), or depend on an unprompted service-worker PUSH reaching the
-// script. MAIN world has no `chrome.runtime.onMessage`, so every push
+// themselves on a `window` (`window.onurlchange` on the PAGE's,
+// `window.close` / `window.focus` on the script's sandbox), or depend
+// on an unprompted service-worker PUSH reaching the script. MAIN world has no `chrome.runtime.onMessage`, so every push
 // has to be re-posted by wrapper-bridge.js and is gated there on the
 // destination script's world (`smWorld`) — the direction most likely
 // to be silently missing for a subsystem nobody exercised from MAIN.
@@ -16,8 +14,8 @@
 // headlessly: `sm:gm-notification-event` (no way to click a Chrome
 // notification) and `sm:gm-download-event` (needs a real download).
 //
-// Every script here grants `unsafeWindow` purely to land in MAIN
-// world; the assertions are about the other grant on the script.
+// The scripts' `unsafeWindow` grants don't matter here (MAIN world is
+// the default); the assertions are about the other grant.
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
@@ -43,10 +41,9 @@ test.describe('GM_* surfaces in MAIN world', () => {
       body: `
         const seen = [];
         document.body.dataset.supported = String(window.onurlchange === null);
-        // Same object either way in MAIN world; asserting both spellings
-        // is what proves the accessor went onto the page's window and
-        // not some other one.
-        document.body.dataset.sameWindow = String(unsafeWindow === window);
+        // Read through the page's own window too: that proves the
+        // accessor went onto it, not onto the script's sandbox.
+        document.body.dataset.onPageWindow = String(unsafeWindow.onurlchange === null);
         window.addEventListener('urlchange', function (info) {
           seen.push(info && info.url);
           document.body.dataset.urls = JSON.stringify(seen);
@@ -64,7 +61,7 @@ test.describe('GM_* surfaces in MAIN world', () => {
     // The documented feature test has to hold in MAIN too — a script
     // that reads `undefined` here concludes the feature is unsupported.
     await expect(page.locator('body')).toHaveAttribute('data-supported', 'true');
-    await expect(page.locator('body')).toHaveAttribute('data-same-window', 'true');
+    await expect(page.locator('body')).toHaveAttribute('data-on-page-window', 'true');
 
     // A genuine page-initiated navigation. `page.evaluate` runs in MAIN
     // world, which is now the same world as the script.
@@ -85,7 +82,7 @@ test.describe('GM_* surfaces in MAIN world', () => {
     await page.close();
   });
 
-  test('window.close from MAIN world closes the tab, and the override replaces the page\'s method', async ({
+  test('window.close from MAIN world closes the tab, through the script\'s own override', async ({
     extensionContext, fixtureServer, sm,
   }) => {
     scriptsDir.write({
@@ -98,8 +95,9 @@ test.describe('GM_* surfaces in MAIN world', () => {
       },
       body: `
         // '[native code]' is the tell that the override didn't take:
-        // ours is ordinary script. In MAIN world these overwrite the
-        // methods on the page's own window.
+        // ours is ordinary script. In MAIN world these are on the
+        // script's sandbox window (the page's stay native; see
+        // window-close-focus.spec.ts).
         const native = (fn) => Function.prototype.toString.call(fn).includes('native code');
         document.body.dataset.nativeClose = String(native(window.close));
         document.body.dataset.nativeFocus = String(native(window.focus));
@@ -124,7 +122,10 @@ test.describe('GM_* surfaces in MAIN world', () => {
     await expect(page.locator('body')).toHaveAttribute('data-native-focus', 'false');
 
     const closed = page.waitForEvent('close', { timeout: 10_000 });
-    await page.locator('#sm-close-now').click();
+    // The click closes the page, sometimes before Playwright has finished
+    // the click, which then reports the page gone. The close event is
+    // what's under test.
+    await page.locator('#sm-close-now').click().catch(() => undefined);
     await closed;
     expect(page.isClosed()).toBe(true);
   });

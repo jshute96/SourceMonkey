@@ -53,24 +53,34 @@ function countLineBreaks(text: string): number {
   return text.match(LINE_BREAK_G)?.length ?? 0;
 }
 
-const BLOCK_START = /^[ \t]*\/\/[ \t]*==UserScript==[ \t]*$/m;
-const BLOCK_END = /^[ \t]*\/\/[ \t]*==\/UserScript==[ \t]*$/m;
+// A marker line is `//`, optional spaces or tabs, then the marker, with
+// anything before or after it on the line, as VM matches it. GreasyFork
+// serves scripts opening with `/// ==UserScript==` or closing with
+// `// ==/UserScript==////`, and TM and VM both install them. Each match
+// takes the whole line, so text after a closing marker (part of that
+// comment) stays in the header rather than starting the body.
+//
+// `[^\r\n]` and a lookbehind rather than `/m` with `.`, `^` and `$`:
+// those also break at U+2028/U+2029, which `LINE_BREAK` deliberately
+// doesn't treat as line breaks.
+const BLOCK_START = /(?<![^\r\n])[^\r\n]*?\/\/[ \t]*==UserScript==[^\r\n]*/;
+const BLOCK_END = /(?<![^\r\n])[^\r\n]*?\/\/[ \t]*==\/UserScript==[^\r\n]*/;
 
 // Strip a single leading UTF-8 BOM. Most fetch paths (`response.text()`,
 // `TextDecoder`) drop it for us, but the page-context `file://` XHR path
 // (`directories.ts`) hands back `xhr.responseText` with the BOM intact.
-// Our `^//` boundary regexes won't match past a U+FEFF, so a BOM-prefixed
-// script would be misread as having no metadata block. The BOM only ever
-// appears at file position 0.
+// The marker regexes would take it as text before the `//` on line 1,
+// leaving it in `headerText` (and GM_info's metadata string) rather than
+// dropped. The BOM only ever appears at file position 0.
 function stripLeadingBom(source: string): string {
   return source.charCodeAt(0) === 0xfeff ? source.slice(1) : source;
 }
 
-// The two ways the split can fail, as the text a user reads.
+// The ways the split can fail, as the text a user reads.
 //
 // Named constants rather than inline literals because these strings are
 // both the message and the value something compares against — today the
-// offline validator, which groups failures by message. A reworded
+// corpus validator, which groups failures by message. A reworded
 // literal would silently stop matching.
 //
 // Phrased to read correctly in all three places they appear: alone in
@@ -85,9 +95,20 @@ export const NO_METADATA_BLOCK =
 // `… — add a … line (in f.user.js, line 1)`, where the parenthetical
 // reads as *where to add it*. Line 1 is where the block opened.
 export const UNTERMINATED_METADATA_BLOCK =
-  'The // ==UserScript== metadata block is never closed — it needs a // ==/UserScript== line';
+  'The // ==UserScript== metadata block is never closed and needs a // ==/UserScript== line';
 
-export type SplitError = typeof NO_METADATA_BLOCK | typeof UNTERMINATED_METADATA_BLOCK;
+// A file with no userscript block but a `/* ==UserStyle==` one is a
+// user style (CSS for a style manager extension, not a userscript).
+// GreasyFork lists them alongside userscripts, so naming what the file
+// is beats calling it "not a userscript".
+export const USERSTYLE_NOT_SUPPORTED =
+  'This is a user style (a /* ==UserStyle== block), not a userscript. User styles need a user style manager extension.';
+const USERSTYLE_START = /\/\*[ \t]*==UserStyle==/;
+
+export type SplitError =
+  | typeof NO_METADATA_BLOCK
+  | typeof UNTERMINATED_METADATA_BLOCK
+  | typeof USERSTYLE_NOT_SUPPORTED;
 
 export interface SplitResult {
   leadingText: string; // anything before the `==UserScript==` line; '' when block starts at file top
@@ -97,7 +118,7 @@ export interface SplitResult {
   // 1-based line of the `// ==UserScript==` marker, when there is one.
   // Set even for UNTERMINATED_METADATA_BLOCK, which is precisely the
   // error whose one useful place to point is the line that opened the
-  // block that never closed. Absent for NO_METADATA_BLOCK.
+  // block that never closed. Absent for the other errors.
   headerStartLine?: number;
 }
 
@@ -105,16 +126,18 @@ export interface SplitResult {
 // block, the raw metadata block itself, and the body text.
 //
 // Failure modes:
-//   - no `==UserScript==` line          → NO_METADATA_BLOCK
+//   - no `==UserScript==` line          → NO_METADATA_BLOCK, or
+//     USERSTYLE_NOT_SUPPORTED when there's a `/* ==UserStyle==` instead
 //   - open marker but no matching close → UNTERMINATED_METADATA_BLOCK
-// In both cases we return leadingText = '', headerText = '', and
+// In every case we return leadingText = '', headerText = '', and
 // bodyText = the whole source so callers always have something to
 // display.
 export function splitHeaderBody(source: string): SplitResult {
   source = stripLeadingBom(source);
   const startMatch = BLOCK_START.exec(source);
   if (!startMatch) {
-    return { leadingText: '', headerText: '', bodyText: source, error: NO_METADATA_BLOCK };
+    const error = USERSTYLE_START.test(source) ? USERSTYLE_NOT_SUPPORTED : NO_METADATA_BLOCK;
+    return { leadingText: '', headerText: '', bodyText: source, error };
   }
   const headerStartLine = countLineBreaks(source.slice(0, startMatch.index)) + 1;
   const afterStart = source.slice(startMatch.index + startMatch[0].length);
@@ -181,8 +204,8 @@ export function parseHeader(source: string): ParsedHeader | null {
 
   const tags: HeaderTag[] = [];
   // Split on every line-terminator shape — `\r\n` (DOS), `\n` (Unix),
-  // and bare `\r` (classic Mac). `splitHeaderBody`'s boundary regex
-  // already handles all three via the `/m` flag, so we keep parity here.
+  // and bare `\r` (classic Mac). `splitHeaderBody`'s marker regexes
+  // stop at all three too, so we keep parity here.
   //
   // `block` begins with the terminator that ended the `==UserScript==`
   // line, so element 0 is always the empty remainder of that line and
@@ -237,4 +260,42 @@ export function getLocalized(header: ParsedHeader, tag: string): Record<string, 
 export function hasTag(header: ParsedHeader, tag: string): boolean {
   const t = tag.toLowerCase();
   return header.tags.some((e) => e.tag === t);
+}
+
+// The `@run-at` values that pick a point in the page load. Anything
+// else (a typo) runs at `document-idle`: see `normalizeDeclaredRunAt`
+// in injector.ts. The exception is `context-menu`, which makes the
+// script manual instead (see `CONTEXT_MENU_RUN_AT`).
+export const SUPPORTED_RUN_AT: readonly string[] = [
+  'document-start',
+  'document-body',
+  'document-end',
+  'document-idle',
+];
+
+// The script's declared `@run-at` when it is one we don't honor, so
+// the caller can say it runs at `document-idle` instead. Undefined when
+// the tag is absent, blank, supported, or `context-menu`.
+export function unsupportedRunAt(header: ParsedHeader | null | undefined): string | undefined {
+  if (!header) return undefined;
+  const value = (getValue(header, 'run-at') ?? '').trim();
+  if (value === '' || SUPPORTED_RUN_AT.includes(value.toLowerCase())) return undefined;
+  if (value.toLowerCase() === CONTEXT_MENU_RUN_AT) return undefined;
+  return value;
+}
+
+// Tampermonkey's `@run-at context-menu`: don't run on page load, run
+// from a right-click menu item instead. We call these manual scripts:
+// they match pages as usual, but run only when the person picks "Run
+// this script" in the popup (or sm-dev fires it). See
+// docs/manual-scripts.md.
+export const CONTEXT_MENU_RUN_AT = 'context-menu';
+
+// The command that runs a manual script now: first in its popup row,
+// and in sm-dev's `menu`.
+export const RUN_SCRIPT_LABEL = 'Run this script';
+
+export function isContextMenuRunAt(header: ParsedHeader | null | undefined): boolean {
+  if (!header) return false;
+  return (getValue(header, 'run-at') ?? '').trim().toLowerCase() === CONTEXT_MENU_RUN_AT;
 }
