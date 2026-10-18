@@ -155,6 +155,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/collection-dialog.ts` | The create / edit collection dialog shared by the collections page and the install page: name / location / local-overrides fields, an inferred Type row, live validation, pre-create readability probe, create/install/move wording |
 | `src/extension/refresh-targets.ts` | Picks the collections/scripts a `?refresh_local` or `?refresh_file=<path>` trigger should refresh |
 | `src/extension/popup.ts` | Toolbar popup controller: renders the worker's view, toggles scripts and collections, menus, menu commands, reloads |
+| `src/extension/more-menu.ts` | The ⋯ button and the menu it opens, shared by the toolbar popup and the collections page |
 | `src/extension/popup-commands-open.ts` | SW-side store of which scripts' command lists are open in a tab's popup, kept for the tab's lifetime |
 | `src/extension/popup-view.ts` | Pure model of the toolbar popup: rows by collection, statuses, tooltips, reload banner; popup ↔ worker messages |
 | `src/extension/script-enablement.ts` | Enable toggles that keep one copy of each script active, restore displaced copies, and run Enable all |
@@ -175,11 +176,15 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/line-diff.ts` | Pure line diff (Myers) plus hunk folding and change counts, behind the compare page |
 | `src/extension/move-dialog.ts` | The move-script dialog opened from the viewer's Collection row: destination dropdown, live refusals, runs the move itself |
 | `src/extension/copy-dialog.ts` | The local-copy dialog opened from the viewer's controls row: filename, header fields, dependency checkbox, existing-file checks, runs the copy |
+| `src/extension/export-dialog.ts` | The export dialog opened from the collections page's ⋯ menus: what to include, Save As, the result |
 | `src/extension/delete-icon.ts` | Paints the two removal glyphs: plain trash can for a record, trash can + disk badge for a file delete |
 | `src/extension/delete-dialog.ts` | The delete-local-script-file confirmation: the file and its path, the dependency lists, an on-disk watch, runs the deletion |
 | `src/extension/file-changes.ts` | Paint-time "deleted" / "modified" chips and the per-collection "refresh pending" chip: listing-based probe, new-file scan, pending counts, tagging, tooltips |
 | `src/extension/local-delete.ts` | Deleting a local copy from disk: which scripts qualify, what goes with them, download-history lookup and removal |
 | `src/extension/local-copy.ts` | Local copies of a script: name rules, header rewriting, dependency layout, the `chrome.downloads` write; the worker adds the result |
+| `src/extension/export-backup.ts` | The backup export: plans the zip's entries (manifest, TM metadata, values, dependency files), gathers inputs, saves |
+| `src/extension/zip-writer.ts` | Builds the export's zip through the vendored fflate library |
+| `src/vendor/fflate.d.ts` | Types for fflate, which the build copies to `dist/vendor/fflate.js` |
 | `src/extension/script-details.ts` | Builds the viewer's curated details `<dl>` — chosen header fields, the resolved provenance rows, and the Collection row's trailing slot — for both modes; lends the compare page its Collection cell |
 | `src/extension/details-tooltips.ts` | The one table of tooltip text for the details panel's row labels, plus the mode/site-name lookups |
 | `src/extension/copy-button.ts` | The square copy-to-clipboard button beside a path (viewer rows, delete dialog): sprite glyphs, per-button "Copied" flash, text read at click time |
@@ -323,6 +328,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/fixtures/bad-script-cases.mjs` | Expected status / message / error line for every `tests/bad-examples/` file, shared by the e2e spec and the CLI test |
 | `tests/fixtures/bridge-forge.ts` | Sends the bridge's events as a page holding the channel key would, for tests of the SW-side gate |
 | `tests/fixtures/scripts-dir.ts` | Tmp-dir helper that writes real `*.user.js` files on disk for the production scan/fetch pipeline to ingest |
+| `tests/fixtures/zip-read.mjs` | Minimal zip reader for tests of the export, independent of the writer |
 | `tests/fixtures/userscript-server.ts` | Per-test HTTP server with mutable userscript / manifest routes, conditional-GET handling, and a request-arrival wait |
 | `tests/fixtures/sw-api.ts` | Typed wrapper over the `self.SourceMonkey` SW test surface plus the shared `waitFor` / tab-id / badge-colour / all-scripts helpers |
 | `tests/fixtures/capture-nav.ts` | Shared `.user.js` capture waits: start the aborted navigation, then wait for the preview |
@@ -376,6 +382,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/file-changes.spec.ts` | The deleted / modified chips on the viewer's rows, the versions table and the collections page, the "refresh pending" chip, and their removal on refresh |
 | `tests/e2e/local-delete.spec.ts` | Deleting a local copy: own dependencies go, shared ones are kept, an untracked file blocks until deleted by hand, files gone from disk, from every trash can that offers it, control placement |
 | `tests/e2e/local-copy.spec.ts` | Local copies: first copy creates the Downloads collection and takes over, Replace for files and installed scripts, name rules, dependency files, cleanup after a refused write, a copy refusing its own name |
+| `tests/e2e/export.spec.ts` | Backup export: the ⋯ menus and dialog, the saved zip's manifest, TM metadata, values, dependency files |
 | `tests/e2e/script-log-relay.spec.ts` | The viewer's Clear log is performed by the worker, through its `sm:op` `clearScriptLog` request |
 | `tests/e2e/membership.spec.ts` | Collection membership vs. the script rows: moves and removals that land mid-refresh, and the repair sweep |
 | `tests/e2e/manifest.spec.ts` | Manifest collection refresh: vanished-entry deletion, unreadable-manifest preservation |
@@ -414,6 +421,8 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/version-compare.test.mjs` | Unit tests for `@version` ordering: numeric segments, missing tails, prereleases, empty input, the `-local` edit verdict |
 | `tests/unit/local-delete.test.mjs` | Unit tests for deleting local copies: which files qualify, the own / shared dependency split |
 | `tests/unit/local-copy.test.mjs` | Unit tests for local copies: name validation and defaults, the copy-of-itself check, header rewriting, mirror layout, file plan, setting parsing, collection lookup |
+| `tests/unit/export-backup.test.mjs` | Unit tests for the export planner: value encoding, names, manifest and options fields, empty scripts, files and subfolders |
+| `tests/unit/zip-writer.test.mjs` | Unit tests for the zip writer, read back with an independent reader |
 | `tests/unit/version-probe.test.mjs` | Unit tests for probe target selection, the outdated verdict, and the staleness gate |
 | `tests/e2e/version-probe.spec.ts` | E2E for update probes: newer/older upstream, unreachable probe, own-URL skip, OUTDATED status + viewer rows |
 | `tests/unit/tampermonkey-import.test.mjs` | Unit tests for the Tampermonkey backup parser: decoding, ordering, location rules, partial failure, filename dedup |
@@ -721,6 +730,9 @@ For userscript repos to install, so their coding agents know how to use `sm-dev`
 | `docs/file-changes.md` | Files changed behind SourceMonkey's back: the drop-on-refresh rule per collection kind, the paint-time chips, the collection's "refresh pending" chip |
 | `docs/local-delete.md` | Deleting a local copy: what can be deleted and why, the dialog, dependency files, order and failure |
 | `docs/local-copy.md` | Local copies of a script: the Downloads collection, why `chrome.downloads`, the dialog, header rewriting, dependency layout, what's next |
+| `docs/export.md` | Exporting collections to a zip: the ⋯ menus, the dialog, where the data comes from, the zip writer |
+| `docs/export-format.md` | Userscript managers' backup formats (Tampermonkey JSON and zip, Violentmonkey zip, SourceMonkey's), field by field, compared |
+| `docs/import.md` | Design in progress for importing scripts from a backup: entry menus, imported scripts, the preview dialog |
 | `docs/harness-design.md` | The harness other repos install: `sm-dev` and the Playwright fixture, running scripts in the real extension |
 | `docs/sm-dev-design.md` | Internals of `sm-dev`: runs and clients, command input, tabs and claims, page commands, waiting, the extension's events |
 | `docs/sm-dev-violentmonkey.md` | Design: sm-dev's run scripts and collection/script commands under Violentmonkey, and what other managers share |

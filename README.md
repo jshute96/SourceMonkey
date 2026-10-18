@@ -157,6 +157,11 @@ confirmation naming the path and every dependency file the copy loads,
 saying which of them go with it. Copies are the one thing SourceMonkey
 can delete from disk, since the browser downloaded them.
 
+The **⋯** menus, in the header and on each collection, export all
+collections or one collection to a zip file: a backup, or a way to move scripts to
+another machine. Tampermonkey and Violentmonkey can import it too. See
+[docs/export.md](docs/export.md).
+
 When the same script is installed more than once — the same URL under two
 collections, or the same `@name` and `@namespace` from two different places — the
 viewer lists the copies in an **Other versions** panel at the top of the page,

@@ -13,6 +13,8 @@ it starts, the dialog, and what happens to each script.
     backup or to move a setup to another machine. It restores what the
     other formats can't carry: collections, each script's location, and
     its own on/off flag.
+- **Reading zips:** with fflate, already vendored for the export
+  ([export.md](export.md#the-zip-writer)).
 - **Not in scope:** driving another manager's pages or reading its
   storage. Chrome gives an extension no way to reach another
   extension's state, so the user carries a file across.
@@ -23,7 +25,8 @@ it starts, the dialog, and what happens to each script.
   Import, and Export all collections.
 - A **⋯ menu** in each collection's button bar: Export this collection,
   and Import into this collection.
-- Both use the popup's existing ⋯ menu pattern.
+- Both use the popup's ⋯ menu (`more-menu.ts`). The Export items exist
+  ([export.md](export.md)); Import is to come.
 - Importing into a collection presets the dialog's destination; it is
   otherwise the same dialog.
 

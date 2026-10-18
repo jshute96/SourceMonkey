@@ -44,6 +44,7 @@ import {
   type ReloadMode,
 } from './popup-view.js';
 import { SM_DEV_CONTROL_LABEL } from './tab-status.js';
+import { closeMenu, moreMenuButton, openMenu as openSharedMenu, type MenuItem as SharedMenuItem } from './more-menu.js';
 import { collectionAnchorId, EDIT_COLLECTION_HASH_PREFIX, makeCollectionTypeBubble } from './collection-display.js';
 import {
   namedPageUrl, openBackgroundTab, openExtensionTab, openExtensionWindow, openNamedTab, type NamedPage,
@@ -532,8 +533,8 @@ function groupHead(group: PopupGroup): HTMLElement {
   }, c.name);
   onOpenClick(name, namedPageUrl('collections', hash), () => openNamedTab('collections', { hash }).then(closeSoon));
   const off = !c.enabled;
-  const kebab = kebabButton('Collection actions');
-  kebab.addEventListener('click', () => openMenu(kebab, [
+  const menuBtn = moreMenuButton('Collection actions');
+  menuBtn.addEventListener('click', () => openMenu(menuBtn, [
     namedPageItem('Collection details', 'collections', hash),
     {
       label: off ? 'Enable collection' : 'Disable collection',
@@ -544,7 +545,7 @@ function groupHead(group: PopupGroup): HTMLElement {
   const head = el('div', { class: 'group-head' + (off ? ' off' : ''), 'data-collection-id': c.id },
     name, makeCollectionTypeBubble(c.path));
   if (off) head.append(el('span', { class: 'collection-off', title: COLLECTION_OFF_TOOLTIP }, COLLECTION_OFF_LABEL));
-  head.append(el('span', { class: 'spacer' }), kebab);
+  head.append(el('span', { class: 'spacer' }), menuBtn);
   return head;
 }
 
@@ -584,11 +585,11 @@ function scriptRow(row: PopupRow, group: PopupGroup): HTMLElement {
     onOpenClick(pill, viewerUrl(row.id, 'log'));
     main.append(pill);
   }
-  const kebab = kebabButton('Script actions');
+  const menuBtn = moreMenuButton('Script actions');
   // Not for a manual script: no reload runs it, so running it alone or
   // keeping it out is nothing.
   const perScriptReload = view?.perScriptReload === true && !row.manual;
-  kebab.addEventListener('click', () => openMenu(kebab, [
+  menuBtn.addEventListener('click', () => openMenu(menuBtn, [
     pageItem('Script details', viewerUrl(row.id)),
     pageItem('Script log', viewerUrl(row.id, 'log')),
     { separator: true, hidden: !perScriptReload },
@@ -603,7 +604,7 @@ function scriptRow(row: PopupRow, group: PopupGroup): HTMLElement {
       hidden: !perScriptReload, disabled: !row.active, title: row.active ? undefined : INACTIVE_RELOAD_TITLE,
     },
   ]));
-  main.append(kebab);
+  main.append(menuBtn);
 
   const cls = 'row' + (row.active ? '' : ' off') + (row.checked && !group.collection.enabled ? ' muted' : '');
   const out = el('div', { class: cls, 'data-script-id': row.id }, main);
@@ -754,16 +755,12 @@ async function setEnabled(
 
 // ---------- Menus ----------
 
-interface MenuItem {
-  label?: string;
-  // Shown but not clickable, with `title` saying why.
-  disabled?: boolean;
-  title?: string;
+// The popup's items: a page item (`url`) opens by any of
+// `onOpenClick`'s gestures, and a background open leaves the menu up.
+interface MenuItem extends Omit<SharedMenuItem, 'run'> {
   run?: () => Promise<unknown>;
   // The page `run` opens, for the other ways to open it (`onOpenClick`).
   url?: string;
-  separator?: boolean;
-  hidden?: boolean;
 }
 
 // Menu items that open a page, by any of `onOpenClick`'s gestures.
@@ -775,75 +772,14 @@ function namedPageItem(label: string, page: NamedPage, hash?: string): MenuItem 
   return { label, run: () => openNamedTab(page, { hash }).then(closeSoon), url: namedPageUrl(page, hash) };
 }
 
-let openMenuEl: HTMLElement | null = null;
-let openMenuBtn: HTMLButtonElement | null = null;
-
-function kebabButton(label: string): HTMLButtonElement {
-  return el('button', {
-    type: 'button', class: 'kebab', 'aria-label': label, 'aria-haspopup': 'menu', 'aria-expanded': 'false',
-  }, '⋯') as HTMLButtonElement;
-}
-
 function openMenu(btn: HTMLButtonElement, items: MenuItem[]): void {
-  const wasOpen = openMenuBtn === btn;
-  closeMenu();
-  if (wasOpen) return;
-  const menu = el('div', { class: 'menu', role: 'menu' });
-  for (const item of items) {
-    if (item.hidden) continue;
-    if (item.separator) {
-      menu.append(el('hr'));
-      continue;
+  openSharedMenu(btn, items.map(({ url, run, ...rest }): SharedMenuItem => {
+    if (url && run) {
+      return { ...rest, wire: (b, close) => onOpenClick(b, url, run, (how) => { if (how !== 'background') close(); }) };
     }
-    const b = el('button', { type: 'button', role: 'menuitem' }, item.label ?? '') as HTMLButtonElement;
-    b.disabled = item.disabled === true;
-    if (item.title) b.title = item.title;
-    if (item.url && item.run) {
-      // A page: a background open leaves the menu up, for the next one.
-      onOpenClick(b, item.url, item.run, (how) => { if (how !== 'background') closeMenu(); });
-    } else {
-      b.addEventListener('click', () => {
-        closeMenu();
-        if (item.run) quietly(item.run());
-      });
-    }
-    menu.append(b);
-  }
-  document.body.append(menu);
-  // Under the button, right-aligned to it; above it when there's no
-  // room below.
-  const r = btn.getBoundingClientRect();
-  const below = r.bottom + 2;
-  const top = below + menu.offsetHeight > document.documentElement.clientHeight
-    ? Math.max(0, r.top - menu.offsetHeight - 2) : below;
-  menu.style.top = `${top}px`;
-  menu.style.right = `${document.documentElement.clientWidth - r.right}px`;
-  btn.setAttribute('aria-expanded', 'true');
-  openMenuEl = menu;
-  openMenuBtn = btn;
-  (menu.querySelector('button') as HTMLButtonElement | null)?.focus();
+    return { ...rest, ...(run ? { run: () => quietly(run()) } : {}) };
+  }));
 }
-
-function closeMenu(): void {
-  openMenuEl?.remove();
-  openMenuBtn?.setAttribute('aria-expanded', 'false');
-  openMenuEl = null;
-  openMenuBtn = null;
-}
-
-document.addEventListener('click', (ev) => {
-  const t = ev.target as Element | null;
-  if (!openMenuEl || t?.closest('.menu') || t?.closest('button.kebab') === openMenuBtn) return;
-  closeMenu();
-});
-document.addEventListener('keydown', (ev) => {
-  if (ev.key === 'Escape' && openMenuEl) {
-    const btn = openMenuBtn;
-    closeMenu();
-    btn?.focus();
-    ev.preventDefault();
-  }
-});
 
 function el(tag: string, attrs: Record<string, string> = {}, ...kids: (Node | string)[]): HTMLElement {
   const e = document.createElement(tag);

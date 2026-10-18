@@ -53,11 +53,11 @@
       button { font: inherit; font-size: 12px; padding: 0 9px; cursor: pointer; }
 
       /* The ⋯ buttons: borderless until hovered or open. */
-      button.kebab {
+      button.more-menu {
         width: 24px; padding: 0; border-color: transparent; background: transparent;
         font-size: 16px; font-weight: 400; line-height: 1; color: var(--muted); flex: none;
       }
-      button.kebab:hover, button.kebab[aria-expanded="true"] {
+      button.more-menu:hover, button.more-menu[aria-expanded="true"] {
         background: var(--btn-bg-hover); border-color: var(--btn-border);
       }
 
@@ -120,7 +120,7 @@
          other content keeps its width either way, so only the ⋯ moves
          as a scrollbar comes and goes. The -2px narrows the flex gap to
          the 4px on its right. */
-      .row button.kebab, .group-head button.kebab {
+      .row button.more-menu, .group-head button.more-menu {
         margin-left: calc(var(--gutter, 0px) / 2 - 2px); margin-right: calc(var(--gutter, 0px) / -2);
       }
       .row:last-child { border-bottom: none; }
@@ -172,18 +172,6 @@
       .commands button.disclose { color: var(--muted); justify-self: start; }
       .commands button.run-script { font-weight: 600; }
 
-      .menu {
-        position: fixed; z-index: 10; min-width: 220px;
-        background: #fff; border: 1px solid #c9c2b8; border-radius: 6px;
-        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16); padding: 4px 0;
-      }
-      .menu button {
-        display: block; width: 100%; height: auto; text-align: left;
-        border: none; border-radius: 0; background: transparent; padding: 5px 12px; font-size: 12.5px;
-      }
-      .menu button:hover:not(:disabled), .menu button:focus-visible { background: #f3efe9; }
-      .menu button:disabled { color: #a0a0a0; cursor: default; }
-      .menu hr { border: none; border-top: 1px solid var(--rule); margin: 4px 0; }
     </style>
   </head>
   <body>
@@ -197,7 +185,7 @@
              title="Open the collections page">SourceMonkey</a><span class="brand"> |</span> Active scripts</h1>
         <div class="page-header-actions">
           <button id="open-collections" type="button" title="Open the collections page">Open</button>
-          <button id="page-menu" class="kebab" type="button" aria-label="Page actions"
+          <button id="page-menu" class="more-menu" type="button" aria-label="Page actions"
                   aria-haspopup="menu" aria-expanded="false">⋯</button>
         </div>
       </div>

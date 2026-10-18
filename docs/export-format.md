@@ -318,28 +318,52 @@ import. SourceMonkey adds a `script_manifest.json`, which only it reads.
 - Written for all collections, or for one.
 - sm-dev's test collections are never exported.
 
+Each script has a folder of its own, holding its files. With more than
+one collection, the script folders sit in a folder per collection:
+
 ```
 sourcemonkey-backup-2026-10-17T12-34-56-789Z.zip
 ├── script_manifest.json
-├── My Script.user.js
-├── My Script.options.json
-├── My Script.storage.json
-└── code.jquery.com/
-    └── jquery.min.js
+├── code.jquery.com/jquery.min.js          shared dependency
+├── My scripts/
+│   └── My Script/
+│       ├── My Script.user.js
+│       ├── My Script.options.json
+│       ├── My Script.storage.json
+│       ├── lib/util.js                    relative @require
+│       └── cdn.example.com/x.js           used by this script only
+└── Scripts from web/
+    └── Other/
+        ├── Other.user.js
+        └── Other.options.json
 ```
 
 | Entry | Holds | Read by |
 |---|---|---|
 | `script_manifest.json` | The format marker, the exported collections, and one entry per script | SourceMonkey |
-| `<name>.user.js` | The script text, plain UTF-8 | All three |
-| `<name>.options.json` | TM's per-script metadata | All three |
-| `<name>.storage.json` | GM values, as `{ts, data}` | All three |
-| `<host>/<path>` | A dependency or icon file, when included | SourceMonkey |
+| `<name>/<name>.user.js` | The script text, plain UTF-8 | All three |
+| `<name>/<name>.options.json` | TM's per-script metadata | All three |
+| `<name>/<name>.storage.json` | GM values, as `{ts, data}` | All three |
+| Other files | Dependency and icon files, when included ([below](#dependency-bodies)) | SourceMonkey |
 
-- `<name>` is the script's `@name` with each character TM or VM would
-  replace (`\ / : * ? " < > | $`) turned into `-`. Duplicates get
-  ` (2)`, ` (3)`.
+- The collection folder is the collection's name, its last path segment
+  for one named by a path. Only written for more than one collection.
+- TM and VM read scripts at any folder depth, pairing a script's files
+  by their full path without the suffix.
+- `<name>` is the script's `@name`, made safe for a file name:
+  - Each character TM or VM would replace (`\ / : * ? " < > | $`), and
+    each control character, turned into `-`.
+  - Trimmed, with leading dots dropped, and cut to 100 characters;
+    `script` if nothing is left.
+  - Duplicates in one folder, compared ignoring case, get ` (2)`,
+    ` (3)`. Collection folders follow the same rules.
 - A script with no stored values gets no `.storage.json`.
+- Locations are written as the collection has them, so a `?token=…`
+  the user put on a manifest URL (for a private repo) goes into the
+  export too, and into `file_url`.
+- Every script goes in. One that is empty, or has never loaded, gets an
+  empty `.user.js`; its `<name>` comes from its file name when it has no
+  `@name`.
 - Why it is safe for the other managers:
   - TM sets aside zip entries it doesn't recognize, and ignores keys it
     doesn't read.
@@ -377,7 +401,7 @@ sourcemonkey-backup-2026-10-17T12-34-56-789Z.zip
   ],
   "scripts": [
     {
-      "path": "My Script.user.js",
+      "path": "Scripts from web/My Script/My Script.user.js",
       "uuid": "0f8e2a4c-3b1d-4e5f-9a6b-7c8d9e0f1a2b",
       "collection": "b2e4f6a8-1c3d-4e5f-8a9b-0c1d2e3f4a5b",
       "location": "https://greasyfork.org/scripts/1/code/My%20Script.user.js",
@@ -409,7 +433,7 @@ Per script, in each collection's order:
 
 | Field | Holds |
 |---|---|
-| `path` | Its `.user.js` entry, relative to the manifest. Its other entries share the name |
+| `path` | Its `.user.js` entry, relative to the manifest, folders included. A manifest entry is a URL, so `#` and `%` are percent-encoded (`Tools %232.user.js` for `Tools #2.user.js`); nothing else is. Its other entries share the name |
 | `uuid` | Its SourceMonkey id; the same as `meta.uuid` in its `.options.json` |
 | `collection` | The `uuid` of its collection |
 | `location` | Where it loads from: a URL, or an absolute file path. `null` for an imported script with no location |
@@ -463,21 +487,31 @@ does.
 An export option: the `@require`, `@resource` and `@icon` files each
 script holds, so an import works offline and survives a dead URL.
 
-- Each body is written to `<host>/<path>` of its declared URL, beside
-  the scripts: the layout local copies use
+- Each body is written to `<host>/<path>` of its declared URL: the
+  layout local copies use
   ([local-copy.md](local-copy.md#layout-mirror-the-url-beside-the-script)).
-  - That is the first place the local-file overrides look
-    ([local-file-overrides.md](local-file-overrides.md#the-rule)), so
-    the unzipped folder, added as a manifest collection with local
-    files on, runs every script on the bundled bodies.
-  - Scripts sharing a library share one file.
+  - In the script's folder when only it uses that file.
+  - At the top when scripts share it with the same bytes. When they
+    don't all have the same bytes, the version the most scripts use goes
+    at the top, and the others in their scripts' folders.
   - A name that can't be written (a `host:port` folder) falls back to
     the next-shorter suffix, as local copies do.
+- So the unzipped folder, added as a manifest collection with local
+  files on, runs every script on the bundled bodies. The local-file
+  overrides search the script's own folder first, then the manifest's
+  folder ([local-file-overrides.md](local-file-overrides.md#where-roots-come-from)),
+  so a script's own copy wins over the shared one.
 - `file://` dependencies are written too, since the export may be
   opened on a machine that doesn't have them.
   - Written at their path (`/home/me/lib/util.js` as
     `home/me/lib/util.js`). A `file://` URL has no host, so its path is
     the longest suffix the overrides try.
+- A relative ref (`@require lib/util.js`) is written at that path in
+  the script's folder, where it resolves from the unzipped script.
+  Always there, even when identical for several scripts: a ref that
+  resolves inside a searched folder is never looked up elsewhere. One
+  that climbs out of the script's folder (`../x.js`) is written by its
+  URL, as above.
 - A `data:` icon is left out: it is in the header itself.
 - The local-file overrides treat all three alike
   ([local-file-overrides.md](local-file-overrides.md#every-file-a-script-declares-is-treated-alike)),
@@ -513,9 +547,9 @@ TM's own layout (`<name>.user.js-<md5>-<basename>` plus a
 | Dependency bodies | Optional | Optional | Never | Optional, as local-override files |
 | Icon file | No | No | No | Optional, with the dependencies |
 | Global settings | Optional | Optional | Always | No |
-| Import matches by | uuid, else namespace + name | Same | namespace + name | See [import.md](import.md) |
-| Import on a match | Replaces | Replaces | Replaces in place | The user chooses in the preview |
-| Read by | TM | TM, VM | VM | TM, VM, SM |
+| Import matches by | uuid, else namespace + name | Same | namespace + name | Planned ([import.md](import.md)) |
+| Import on a match | Replaces | Replaces | Replaces in place | Planned: the user chooses in a preview |
+| Read by | TM | TM, VM | VM | TM, VM (SM planned) |
 
 ## Possible enhancements
 

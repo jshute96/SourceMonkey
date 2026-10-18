@@ -87,6 +87,13 @@ await cp(
   resolve(dist, 'vendor', 'prism', 'prism-line-numbers.css'),
 );
 
+// 2c. Vendor fflate (zip writing for the backup export), as an ES
+// module the extension imports from `vendor/fflate.js`. Its types are
+// src/vendor/fflate.d.ts.
+await cp(resolve(root, 'node_modules', 'fflate', 'esm', 'browser.js'), resolve(dist, 'vendor', 'fflate.js'));
+// Its MIT license asks for the notice to travel with the code.
+await cp(resolve(root, 'node_modules', 'fflate', 'LICENSE'), resolve(dist, 'vendor', 'fflate.LICENSE'));
+
 // 3. Copy the manifest into dist/ so Chrome can find it when loading
 //    unpacked from dist/. The package gets a copy too: the harness
 //    derives the extension id from its `key` (extension-backend.ts).

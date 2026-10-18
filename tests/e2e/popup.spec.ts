@@ -31,13 +31,13 @@ async function widths(popup: Page): Promise<{ body: number; rowMain: number; scr
 
 // The space either side of a row's ⋯: to the pill on its left, and to
 // the scrollbar (or the popup's edge) on its right.
-async function kebabGaps(popup: Page, name: string): Promise<{ left: number; right: number }> {
+async function menuButtonGaps(popup: Page, name: string): Promise<{ left: number; right: number }> {
   return popup.locator('.row', { hasText: name }).evaluate((row) => {
     const list = document.getElementById('scripts')!;
-    const kebab = row.querySelector('button.kebab')!.getBoundingClientRect();
+    const menuBtn = row.querySelector('button.more-menu')!.getBoundingClientRect();
     const pill = row.querySelector('.pill')!.getBoundingClientRect();
     const edge = list.getBoundingClientRect().left + list.clientWidth;
-    return { left: Math.round(kebab.left - pill.right), right: Math.round(edge - kebab.right) };
+    return { left: Math.round(menuBtn.left - pill.right), right: Math.round(edge - menuBtn.right) };
   });
 }
 
@@ -182,11 +182,11 @@ test.describe('toolbar popup', () => {
     await expect(popup.locator('.row', { hasText: 'Alpha' }).locator('.pill')).toHaveAttribute('title', /Running on this page\nClick to open the script log\./);
     await expect(popup.locator('.row', { hasText: 'Beta' }).locator('.pill')).toHaveCount(0);
     // A disabled script's per-script reloads are greyed; an active one's aren't.
-    await popup.locator('.row', { hasText: 'Beta' }).locator('button.kebab').click();
+    await popup.locator('.row', { hasText: 'Beta' }).locator('button.more-menu').click();
     await expect(popup.getByRole('menuitem', { name: 'Reload page with only this script' })).toBeDisabled();
     await expect(popup.getByRole('menuitem', { name: 'Reload page without this script' })).toBeDisabled();
     await expect(popup.getByRole('menuitem', { name: 'Script details' })).toBeEnabled();
-    await popup.locator('.row', { hasText: 'Alpha' }).locator('button.kebab').click();
+    await popup.locator('.row', { hasText: 'Alpha' }).locator('button.more-menu').click();
     await expect(popup.getByRole('menuitem', { name: 'Reload page with only this script' })).toBeEnabled();
     await popup.keyboard.press('Escape');
     // No reload needed yet.
@@ -246,7 +246,7 @@ test.describe('toolbar popup', () => {
     const widthsBefore = await widths(popup);
     expect(widthsBefore.scrollbar).toBe(0);
     // The ⋯ sits centered between the pill and the popup's edge.
-    const gapsBefore = await kebabGaps(popup, 'Alpha');
+    const gapsBefore = await menuButtonGaps(popup, 'Alpha');
     expect(gapsBefore.left).toBe(gapsBefore.right);
     await alphaBox.uncheck();
     await expect(popup.locator('section[data-section="enabled"] .row', { hasText: 'Alpha' }).locator('.pill')).toHaveText('Still running');
@@ -265,7 +265,7 @@ test.describe('toolbar popup', () => {
     expect(widthsPinned.scrollbar).toBeGreaterThan(0);
     expect({ ...widthsPinned, scrollbar: 0 }).toEqual(widthsBefore);
     // Only the ⋯ moves, to centered between the pill and the scrollbar.
-    expect(await kebabGaps(popup, 'Alpha')).toEqual({ left: 4, right: 4 });
+    expect(await menuButtonGaps(popup, 'Alpha')).toEqual({ left: 4, right: 4 });
 
     // Ticking it back takes the banner away, and the rows stay put again.
     await alphaBox.check();
@@ -508,7 +508,7 @@ test.describe('toolbar popup', () => {
       'title', 'Enable this script\nScript will not run because its collection is disabled');
 
     // The collection's menu turns it back on.
-    await head.locator('button.kebab').click();
+    await head.locator('button.more-menu').click();
     await popup.getByRole('menuitem', { name: 'Enable collection' }).click();
     const pill = popup.locator('section[data-section="disabled"] .row', { hasText: 'Gamma' }).locator('.pill');
     await expect(pill).toHaveText('Reload to run');
@@ -647,7 +647,7 @@ test.describe('toolbar popup', () => {
     await popup.locator('.row', { hasText: 'Alpha' }).locator('.script-name').click({ modifiers: ['ControlOrMeta'] });
     await (await viewer).close();
 
-    await popup.locator('.row', { hasText: 'Alpha' }).locator('button.kebab').click();
+    await popup.locator('.row', { hasText: 'Alpha' }).locator('button.more-menu').click();
     const log = extensionContext.waitForEvent('page', (p) => p.url().includes('#Log'));
     await popup.getByRole('menuitem', { name: 'Script log' }).click({ button: 'middle' });
     const logTab = await log;
@@ -693,7 +693,7 @@ test.describe('toolbar popup', () => {
     await popup.close();
 
     popup = await openClosablePopup(extensionContext, extensionId, tabId);
-    await alpha(popup).locator('button.kebab').click();
+    await alpha(popup).locator('button.more-menu').click();
     opened = extensionContext.waitForEvent('page', (p) => p.url().includes('/userscript.html'));
     await popup.getByRole('menuitem', { name: 'Script details' }).click({ button: 'middle', modifiers: ['Shift'] });
     tab = await opened;
