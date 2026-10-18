@@ -38,11 +38,6 @@ import {
   scratchRunOf,
   smDevContainerPath,
   smDevRunOfContainer,
-  importCollectionPath,
-  isImportCollection,
-  isPinnedScriptUrl,
-  pinnedScriptUrl,
-  storedScriptLocation,
 } from '../../dist/extension/directories.js';
 
 test('parseListing extracts files and directories, skipping ..', () => {
@@ -827,72 +822,4 @@ test('a run\'s test collection path round-trips its run', () => {
   assert.equal(smDevRunOfContainer('container:sm-dev:D2-a3f9'), 'D2-a3f9');
   assert.equal(isContainerCollection('container:sm-dev:D2-a3f9'), true);
   assert.equal(smDevRunOfContainer('container:file'), null);
-});
-
-// ---------- Import collections and pinned script URLs ----------
-//
-// See docs/import.md. `import:<uuid>` is the one
-// collection path with no location behind it, and a pinned `fileUrl` is
-// the one script URL that names no place.
-
-test('isImportCollection: only the import: prefix, and only with an id', () => {
-  assert.equal(isImportCollection('import:abc-123'), true);
-  assert.equal(isImportCollection(importCollectionPath('abc-123')), true);
-  // A bare prefix is not a collection — it carries no id to tell two
-  // imports apart, which is the whole point of the shape.
-  assert.equal(isImportCollection('import:'), false);
-  assert.equal(isImportCollection('container:file'), false);
-  assert.equal(isImportCollection('/home/me/scripts'), false);
-  assert.equal(isImportCollection('https://example.com/import:abc'), false);
-});
-
-test('pinnedScriptUrl: parses as a URL so it can be a resolution base', () => {
-  const url = pinnedScriptUrl('id-1', 'My Script.user.js');
-  assert.doesNotThrow(() => new URL(url));
-  // An absolute ref resolves against it, which is why an empty string
-  // could not be used here — `new URL(abs, '')` throws.
-  assert.equal(
-    new URL('https://cdn.example.com/lib.js', url).href,
-    'https://cdn.example.com/lib.js',
-  );
-  // A relative ref lands on the synthetic scheme, which the file loader
-  // then rejects — the truthful outcome for a script with no folder.
-  assert.equal(new URL('./lib.js', url).protocol, 'sourcemonkey:');
-});
-
-test('pinnedScriptUrl: is unique per script, so two pinned rows never collide', () => {
-  assert.notEqual(pinnedScriptUrl('a', 'Same.user.js'), pinnedScriptUrl('b', 'Same.user.js'));
-});
-
-test('pinnedScriptUrl: escapes a name that would otherwise break the path', () => {
-  const url = pinnedScriptUrl('id-1', 'a/b?c#d.user.js');
-  assert.equal(new URL(url).hash, '');
-  assert.equal(new URL(url).search, '');
-});
-
-test('isPinnedScriptUrl: recognises our own stand-ins and nothing else', () => {
-  assert.equal(isPinnedScriptUrl(pinnedScriptUrl('id-1', 'x.user.js')), true);
-  assert.equal(isPinnedScriptUrl('https://example.com/x.user.js'), false);
-  assert.equal(isPinnedScriptUrl('file:///home/me/x.user.js'), false);
-  // The injector's devtools URLs share the scheme but not the host, and
-  // must not read as a location-less script.
-  assert.equal(isPinnedScriptUrl('sourcemonkey://SourceMonkey/x/x.user.js'), false);
-});
-
-test('storedScriptLocation: import rows read from fileUrl, pinned rows read as nothing', () => {
-  const path = importCollectionPath('abc-123');
-  const located = { relativePath: 'Foo.user.js', fileUrl: 'https://example.com/foo.user.js' };
-  assert.equal(storedScriptLocation(path, located), 'https://example.com/foo.user.js');
-  // Raw GitHub URLs display as the blob page, like every other surface.
-  const raw = { relativePath: 'Bar.user.js', fileUrl: 'https://raw.githubusercontent.com/o/r/main/bar.user.js' };
-  assert.equal(storedScriptLocation(path, raw), 'https://github.com/o/r/blob/main/bar.user.js');
-  const pinned = { relativePath: 'Baz.user.js', fileUrl: pinnedScriptUrl('id', 'Baz.user.js') };
-  assert.equal(storedScriptLocation(path, pinned), '');
-  // Every other collection derives it from the path, as before.
-  assert.equal(
-    storedScriptLocation('/srv/scripts', { relativePath: 'a.user.js', fileUrl: 'file:///srv/scripts/a.user.js' }),
-    '/srv/scripts/a.user.js',
-  );
-  // No collection row: the relative path is all there is.
-  assert.equal(storedScriptLocation(null, located), 'Foo.user.js');
 });

@@ -162,6 +162,12 @@ collections or one collection to a zip file: a backup, or a way to move scripts 
 another machine. Tampermonkey and Violentmonkey can import it too. See
 [docs/export.md](docs/export.md).
 
+The same menus import scripts from a backup file: SourceMonkey's own
+export, or Tampermonkey's or Violentmonkey's. A preview lists the file's
+scripts against the ones already installed, and offers what to do with
+new ones and with ones already here, and whether to bring their stored
+values. See [docs/import.md](docs/import.md).
+
 When the same script is installed more than once — the same URL under two
 collections, or the same `@name` and `@namespace` from two different places — the
 viewer lists the copies in an **Other versions** panel at the top of the page,
@@ -222,25 +228,6 @@ is in SourceMonkey itself; it goes when the run ends (see
 
 Details: [docs/file-access.md](docs/file-access.md),
 [docs/http-collections.md](docs/http-collections.md).
-
-### Importing from Tampermonkey
-
-Click **Import**, beside Add, to bring your scripts over from
-Tampermonkey. The dialog links to Tampermonkey's Utilities page, where
-**File → Export** saves a backup file; hand that file back to the
-dialog and its scripts arrive as a new collection.
-
-What comes across: each script's source, whether it was enabled, its
-dashboard order, and its stored `GM_setValue` data. Scripts installed
-from the web keep their address, so the viewer's Refresh (and the
-check on each visit) can pull a newer copy; ones you wrote or edited
-inside Tampermonkey have nowhere to update from, and say so. The
-collection itself has no location, so Refresh All leaves it alone.
-
-Each import makes its own collection, so importing twice gives you two.
-
-Details:
-[docs/import.md](docs/import.md).
 
 ### Installing scripts from a `.user.js` link
 

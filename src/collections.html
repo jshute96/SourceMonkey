@@ -168,24 +168,6 @@
       .toggle:has(.busy-spinner) input[type="checkbox"] { opacity: 0.3; }
       /* While a collection is being removed, dim the whole section and block further clicks. */
       .collection.removing { opacity: 0.5; pointer-events: none; }
-      /* Import dialog. Sized so the instruction list reads as prose
-         rather than a wrapped column, and centered by the native
-         <dialog> so it doesn't have to compete with the page's own
-         max-width. */
-      #import-dialog { max-width: 32em; border: 1px solid #ccc; border-radius: 8px; padding: 1.2em 1.4em; color: #222; }
-      #import-dialog::backdrop { background: rgb(0 0 0 / 0.35); }
-      #import-dialog h2 { margin: 0 0 0.6em; font-size: 1.1em; }
-      #import-dialog code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; }
-      .import-steps { margin: 0 0 1em; padding-left: 1.4em; line-height: 1.5; }
-      .import-steps li { margin-bottom: 0.3em; }
-      /* Per-script problems from a partly-readable backup. Sits on the
-         page rather than in the dialog, since the import succeeded and
-         the dialog is gone by the time these are shown. Amber, not red:
-         red on this page means something did not happen. */
-      .import-warnings { margin: 0 0 1em; padding: 0.5em 0.7em; border-radius: 4px; background: #fef3c7; color: #92400e; font-size: 0.9em; }
-      .import-warnings ul { margin: 0.3em 0 0; padding-left: 1.2em; }
-      .import-actions { display: flex; justify-content: flex-end; gap: 0.5em; margin-top: 1.2em; }
-
       /* Highlight rows that changed during a refresh. The color
          persists until the next refresh clears it, so the
          user can leave the page and come back without losing the
@@ -287,33 +269,8 @@
       <form id="add-form" class="add-form">
         <input id="add-path" type="text" placeholder="A .user.js file, a directory, a script_manifest.json, or a name for a new collection" autocomplete="off" spellcheck="false" />
         <button type="submit">Add</button>
-        <button id="open-import" type="button" title="Import scripts from a Tampermonkey backup file">Import</button>
       </form>
       <p id="add-error" class="error" hidden></p>
-      <!-- Import warnings live on the PAGE, not in the dialog: they are
-           reported for an import that succeeded, so they have to outlive
-           the dialog closing and sit beside the section that just
-           appeared. -->
-      <div id="import-warnings" class="import-warnings" hidden></div>
-
-      <!-- Import dialog. Instructions first, because the work is in
-           Tampermonkey: nothing on its Utilities page can be driven by a
-           link, so the user has to click Export there and bring the file
-           back. See docs/import.md. -->
-      <dialog id="import-dialog">
-        <h2>Import from Tampermonkey</h2>
-        <ol class="import-steps">
-          <li>Open <a id="import-tm-link" href="#" target="_blank" rel="noopener noreferrer">Tampermonkey's Utilities page</a>.</li>
-          <li>Under <strong>File</strong>, click <strong>Export</strong>. Your browser saves a <code>tampermonkey-backup-….txt</code> file.</li>
-          <li>Choose that file here:</li>
-        </ol>
-        <input id="import-file" type="file" accept=".txt,.json,application/json,text/plain" />
-        <p id="import-error" class="error" hidden></p>
-        <div class="import-actions">
-          <button id="import-cancel" type="button">Cancel</button>
-          <button id="import-run" type="button" disabled>Import</button>
-        </div>
-      </dialog>
 
       <div id="collections"></div>
     </div>

@@ -82,7 +82,6 @@ import {
   isHttpUrl,
   isFileUrl,
   isContainerCollection,
-  isImportCollection,
   pathToFileUrl,
   isManifestCollection,
   isSingleFileInput,
@@ -400,12 +399,7 @@ export function localSearchRoots(
 // Every container qualifies — even the built-in web / GitHub defaults —
 // because a container may hold scripts from any scheme, and the option
 // applies to whichever of them came from disk.
-// Import collections are excluded for the same reason: a located
-// imported script loads over the network, and a pinned one loads from
-// nowhere. Either way no row under an import collection ever has a
-// `file://` URL for `localSearchRoots` to resolve stand-ins against.
 export function collectionSupportsLocalFiles(collectionPath: string): boolean {
-  if (isImportCollection(collectionPath)) return false;
   return !isHttpUrl(collectionPath);
 }
 

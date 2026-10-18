@@ -19,10 +19,9 @@
 //
 // See [docs/script-identity.md].
 
-import { isImportCollection, isPinnedScriptUrl, storedScriptLocation } from './directories.js';
+import { isContainerCollection, scriptAbsolutePath } from './directories.js';
 import {
   appendWithSlashBreaks,
-  pinnedLocationText,
   displayLocation,
   viewerUrl,
   type ScriptStatusView,
@@ -34,7 +33,6 @@ import {
   makeCollectionTypeBubble,
   collectionAnchorId,
   collectionHasManifest,
-  isSyntheticCollection,
 } from './collection-display.js';
 import { openExtensionTab, wireNamedTabLink } from './page-links.js';
 import { getValue } from '../userscript-header.js';
@@ -518,17 +516,11 @@ function refetchVerb(mode: 'installed' | 'preview'): string {
 // refetch, but a preview is about the URL on screen, and Update there
 // means "bring this copy up to what you are looking at" — which a
 // different-URL row, refetching its own upstream, would not be.
-//
-// Either way a pinned row is excluded: it was imported with no
-// upstream, so there is no "its own collection" to re-read it from —
-// `refreshScript` would return it untouched.
 function updatableRows(model: RelatedVersionsModel): readonly RelatedScript[] {
-  const rows = model.mode === 'preview' ? model.sameLocation : allRelatedRows(model);
-  return rows.filter((rel) => rowUpdatable(rel, model.mode));
+  return model.mode === 'preview' ? model.sameLocation : allRelatedRows(model);
 }
 
 function rowUpdatable(rel: RelatedScript, mode: RelatedVersionsModel['mode']): boolean {
-  if (isPinnedScriptUrl(rel.script.fileUrl)) return false;
   return mode === 'preview' ? rel.sameLocation : true;
 }
 
@@ -837,13 +829,7 @@ function locationCell(
   mode: RelatedVersionsModel['mode'],
 ): HTMLTableCellElement {
   const td = cell('col-location');
-  // An import row's location lives on `fileUrl`, not `relativePath`
-  // (which is only a synthesized filename there); a pinned row says so.
-  const text = rel.collection && isImportCollection(rel.collection.path)
-    ? (isPinnedScriptUrl(rel.script.fileUrl)
-      ? pinnedLocationText(rel.script.importedFrom?.manager)
-      : displayLocation(storedScriptLocation(rel.collection.path, rel.script)))
-    : displayLocation(rel.script.relativePath);
+  const text = displayLocation(rel.script.relativePath);
   const title = locationTitle(rel, text);
   // The element carrying the path is tagged with the file it names, so
   // a deleted or changed file gets its chip (see `markFileChanges`).
@@ -894,8 +880,10 @@ function locationCell(
 // text already on screen, which is the common `https://…/foo.user.js`
 // case. A tooltip repeating its own cell is noise.
 function locationTitle(rel: RelatedScript, shown: string): string {
-  const full = storedScriptLocation(rel.collection?.path, rel.script);
-  return full === shown || full === '' ? '' : full;
+  const full = rel.collection
+    ? scriptAbsolutePath(rel.collection.path, rel.script.relativePath)
+    : rel.script.relativePath;
+  return full === shown ? '' : full;
 }
 
 // Status, linking to that copy's Log tab. Every row links, including
@@ -1097,7 +1085,7 @@ function removeCell(
   // it gets the live button rather than a tooltip about a collection
   // that isn't there.
   const removable = deletesFile
-    || (rel.collection ? isSyntheticCollection(rel.collection.path) : true);
+    || (rel.collection ? isContainerCollection(rel.collection.path) : true);
   const b = document.createElement('button');
   b.type = 'button';
   b.className = 'versions-remove';  // `.icon-btn` is added by setDeleteIcon

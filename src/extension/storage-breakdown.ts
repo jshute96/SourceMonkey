@@ -18,7 +18,10 @@ import { blobKey, BLOB_PREFIX } from './script-blobs.js';
 import { collectionKey, SCRIPT_PREFIX } from './structural-keys.js';
 import { VALUE_PREFIX as GM_VALUE_PREFIX } from './gm-values.js';
 import {
-  isScratchUrl,
+  IMPORT_INFO_KEY_PREFIX,
+  importInfoKey,
+  isImportedUrl,
+  isStoredTextUrl,
   SCRATCH_FILES_KEY_PREFIX,
   SCRATCH_SOURCE_KEY_PREFIX,
   SCRATCH_TEXT_KEY_PREFIX,
@@ -32,7 +35,7 @@ import { jsonBytes, rowBytes } from './storage-usage.js';
 import type { StoredCollection } from './script-store.js';
 import type { ParsedHeader } from '../userscript-header.js';
 
-export type ItemKind = 'script' | 'metadata' | 'require' | 'resource' | 'smdev-text' | 'smdev-file';
+export type ItemKind = 'script' | 'metadata' | 'require' | 'resource' | 'smdev-text' | 'smdev-file' | 'imported-text' | 'imported-file';
 
 // The script a part of storage belongs to.
 export interface ScriptRef {
@@ -48,7 +51,7 @@ export interface StorageItem {
   kind: ItemKind;
   // The `@resource` name.
   name?: string;
-  // Readable location of the file; absent for `metadata` and `smdev-text`.
+  // Readable location of the file; absent for `metadata` and the text kinds.
   location?: string;
   bytes: number;
   // A `blob:` row the script points at that isn't in storage.
@@ -117,7 +120,7 @@ interface ScriptRowLike {
   resources?: Array<{ name?: unknown; url?: unknown; bytesBase64?: unknown; blobRef?: BlobRefLike }>;
 }
 
-const SCRATCH_PREFIXES = [SCRATCH_TEXT_KEY_PREFIX, SCRATCH_FILES_KEY_PREFIX, SCRATCH_SOURCE_KEY_PREFIX];
+const SCRATCH_PREFIXES = [SCRATCH_TEXT_KEY_PREFIX, SCRATCH_FILES_KEY_PREFIX, SCRATCH_SOURCE_KEY_PREFIX, IMPORT_INFO_KEY_PREFIX];
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 
@@ -210,24 +213,26 @@ export function buildStorageBreakdown(rows: Record<string, unknown>): StorageBre
     });
     items.push({ item: { kind: 'metadata', bytes: Math.max(0, rowBytes(rowKey, value) - inline) } });
 
-    // sm-dev's own rows for a scratch script: its text (with the
-    // record of where on disk it came from), and the files it pushed.
-    if (isScratchUrl(relativePath)) {
+    // The rows of a script whose only copy is in storage: its text
+    // (with the record of where it came from: on disk for a scratch
+    // script, the file for an imported one), and its pushed files.
+    if (isStoredTextUrl(relativePath)) {
+      const imported = isImportedUrl(relativePath);
       const textKey = scratchTextKey(relativePath);
-      const sourceKey = scratchSourceKey(relativePath);
+      const sourceKey = imported ? importInfoKey(relativePath) : scratchSourceKey(relativePath);
       const filesKey = scratchFilesKey(relativePath);
       for (const key of [textKey, sourceKey, filesKey]) claimedScratch.add(key);
       if (textKey in rows || sourceKey in rows) {
         const bytes = (textKey in rows ? rowBytes(textKey, rows[textKey]) : 0)
           + (sourceKey in rows ? rowBytes(sourceKey, rows[sourceKey]) : 0);
-        use({ kind: 'smdev-text', bytes }, textKey);
+        use({ kind: imported ? 'imported-text' : 'smdev-text', bytes }, textKey);
       }
       const pushed = rows[filesKey];
       if (pushed && typeof pushed === 'object') {
         for (const [fileRef, file] of Object.entries(pushed as Record<string, { url?: unknown }>)) {
           // The entry's share of the row: its key and its value.
           const bytes = jsonBytes(fileRef) + 1 + jsonBytes(file);
-          use({ kind: 'smdev-file', location: displayLocation(str(file?.url) || fileRef), bytes },
+          use({ kind: imported ? 'imported-file' : 'smdev-file', location: displayLocation(str(file?.url) || fileRef), bytes },
             `${filesKey}#${fileRef}`);
         }
       }
@@ -337,7 +342,7 @@ function compareBy(key: SortKey, dir: SortDir): (a: Sortable, b: Sortable) => nu
   };
 }
 
-const KIND_ORDER: ItemKind[] = ['script', 'require', 'resource', 'smdev-text', 'smdev-file', 'metadata'];
+const KIND_ORDER: ItemKind[] = ['script', 'require', 'resource', 'smdev-text', 'smdev-file', 'imported-text', 'imported-file', 'metadata'];
 
 // Scripts by the column; each script's items largest first.
 export function sortScripts(scripts: ScriptEntry[], key: SortKey, dir: SortDir): ScriptEntry[] {

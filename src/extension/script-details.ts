@@ -43,14 +43,13 @@ import { connectLinkUrl } from '../script-links.js';
 import { renderPatternIconInto } from './site-icon.js';
 import type { StoredCollection } from './script-store.js';
 import type { StoredRequire, StoredResource } from '../external-files.js';
-import { locationFsPath } from '../file-locations.js';
+import { isContainerCollection, locationFsPath } from '../file-locations.js';
 import { appendWithSlashBreaks, displayLocation, formatBytes, logIdScriptNumber, stripSriFragment } from '../script-display.js';
 import { sitePageRow } from './script-sites.js';
 import {
   effectiveDisplayName,
   makeCollectionTypeBubble,
   collectionAnchorId,
-  isSyntheticCollection,
 } from './collection-display.js';
 import { wireNamedTabLink } from './page-links.js';
 import { getValue, getValues, type ParsedHeader } from '../userscript-header.js';
@@ -61,15 +60,9 @@ export interface LocationRow {
   // What the row reads as — the decoded URL, or the bare fs path for
   // file:// scripts.
   text: string;
-  // What the anchor points at (and what the tooltip surfaces): the
-  // real, encoded URL.
-  //
-  // Absent for a pinned script — one imported from another manager's
-  // backup with no upstream (see docs/import.md).
-  // There the row states that fact instead of naming a place, so it
-  // renders as plain text: an anchor with nothing behind it invites a
-  // click that can only disappoint, and there is nothing worth copying.
-  href?: string;
+  // What the anchor points at (and what the tooltip surfaces): always
+  // the real, encoded URL.
+  href: string;
   // Optional trailing control, e.g. the viewer's copy-to-clipboard
   // button. Moved into the cell on every render.
   trailing?: HTMLElement;
@@ -183,11 +176,7 @@ export function renderDetails(container: HTMLElement, model: DetailsModel): void
   }
   if (model.location) {
     appendRow(dl, 'Location', locationCell(model.location));
-    // The hosting-site row is derived from where the script lives, so a
-    // pinned script (no `href`) has nothing to derive it from. Skipped
-    // rather than passed an empty URL, which `sitePageRow` would have
-    // to grow a case for.
-    if (model.location.href !== undefined) addSitePage(dl, model.location.href, h);
+    addSitePage(dl, model.location.href, h);
   }
   // Straight after the hosting-site row: both name a page about this
   // script, one derived from where it lives and one claimed by the file
@@ -727,10 +716,9 @@ export function collectionCell(collection: StoredCollection, trailing?: Node): N
   // open and scrolling it to this collection. See src/extension/page-links.ts.
   wireNamedTabLink(nameLink, 'collections', collectionAnchorId(collection.id));
   // Tooltip surfaces the raw stored path; the anchor itself jumps to
-  // the section on the collections page. Container and import
-  // collections have a synthetic path (`container:…` / `import:<uuid>`)
-  // which would leak — skip for those.
-  if (!isSyntheticCollection(collection.path)) nameLink.title = collection.path;
+  // the section on the collections page. Container collections have a
+  // synthetic `container:…` path which would leak — skip then.
+  if (!isContainerCollection(collection.path)) nameLink.title = collection.path;
   cell.appendChild(nameLink);
   if (trailing) cell.appendChild(trailing);
 
@@ -747,17 +735,6 @@ function locationCell(row: LocationRow): Node {
     appendWithSlashBreaks(textEl, row.text);
     cell.appendChild(textEl);
     if (row.trailing) cell.appendChild(row.trailing);
-    return cell;
-  }
-
-  // No href: the row is stating that there is no location rather than
-  // showing one. Plain text, and none of the affordances below — the
-  // caller doesn't pass a copy button either.
-  if (row.href === undefined) {
-    const noteEl = document.createElement('span');
-    noteEl.className = 'filename-text location-none';
-    noteEl.textContent = row.text;
-    cell.appendChild(noteEl);
     return cell;
   }
 

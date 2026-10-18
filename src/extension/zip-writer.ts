@@ -26,7 +26,15 @@ export function buildZip(entries: readonly ZipEntry[], now: number = Date.now())
   const files: Zippable = Object.create(null);
   for (const entry of entries) {
     if (Object.hasOwn(files, entry.path)) throw new Error(`Internal error: The zip has two entries named ${entry.path}`);
-    files[entry.path] = [entry.data, { mtime: entry.modified ?? now }];
+    files[entry.path] = [entry.data, { mtime: zipTime(entry.modified ?? now) }];
   }
   return zipSync(files);
+}
+
+// A zip's dates run from 1980 to 2099, and fflate refuses one outside
+// them. A row that never recorded a load time has 0.
+const ZIP_EARLIEST = Date.UTC(1980, 0, 2);
+const ZIP_LATEST = Date.UTC(2099, 11, 31);
+function zipTime(ms: number): number {
+  return Math.min(Math.max(ms, ZIP_EARLIEST), ZIP_LATEST);
 }

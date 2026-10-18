@@ -52,15 +52,15 @@ import {
   fetchScriptFileUrlText,
   fetchScriptFileWithStat,
   fetchHttpText,
-  importCollectionPath,
   isContainerCollection,
   isHttpUrl,
-  isImportCollection,
   isLocalDirectoryCollection,
-  isPinnedScriptUrl,
-  pinnedScriptUrl,
   isSingleFileInput,
-  isScratchUrl,
+  isStoredTextUrl,
+  importInfoKey,
+  importedUrl,
+  type ImportInfo,
+  type ImportSource,
   scratchFilesKey,
   scratchSourceKey,
   scratchTextKey,
@@ -86,10 +86,6 @@ import {
   type DirectoryListingCache,
   type ScratchSource,
 } from './directories.js';
-import {
-  importedScriptFilename,
-  type ImportedScript,
-} from './tampermonkey-import.js';
 import {
   getValue,
   parseHeader,
@@ -125,7 +121,7 @@ import {
 } from './script-blobs.js';
 import { sameScript } from './script-keys.js';
 import { compareInCollection, preferredCopy } from './copy-preference.js';
-import { valueWritesSaved, wipeValues, writeValues } from './value-store.js';
+import { readValues, valueWritesSaved, wipeValues, writeValues, type WireValueWrite } from './value-store.js';
 import { connectGrantsKey } from './connect-grants.js';
 import { sourceUsesUnsafeWindow } from '../unsafe-window-use.js';
 import type { VersionProbe } from '../version-probe.js';
@@ -140,7 +136,7 @@ import {
   RESERVED_COLLECTION_NAME,
 } from './collection-display.js';
 import { appendScriptLog, forgetScriptLogs, type AppendLogInput, type LogLevel } from './script-log.js';
-import { displayLocation, formatBytes, stripSriFragment, type LoadState } from '../script-display.js';
+import { displayLocation, formatBytes, scriptDisplayName, stripSriFragment, type LoadState } from '../script-display.js';
 import { setRefreshError, pruneRefreshErrors } from './refresh-error.js';
 import {
   mapWithConcurrency,
@@ -710,29 +706,6 @@ interface ScanEntry {
 
 // Does an `invalid` parse of this entry keep the PRIOR copy running,
 // rather than becoming the row's new state?
-// Where one scanned entry's bytes come from. For every scanned kind
-// the collection's own location IS the answer, so it's recomputed from
-// path + relativePath rather than trusted from the prior row — that
-// keeps a row honest if the collection is ever re-rooted.
-//
-// Import collections are the exception. Their location is per script —
-// some rows carry the URL the backup named, others are pinned with
-// nowhere to go — and nothing in `import:<uuid>` can reproduce which.
-// The stored value is the source of truth there. A row with no prior
-// can only be pinned, since an import never scans up new entries: the
-// only way in is `importCollection`, which writes every row itself.
-function entryFileUrl(
-  collectionPath: string,
-  relativePath: string,
-  prior: Pick<ScriptMeta, 'fileUrl'> | undefined,
-  id: string,
-): string {
-  if (!isImportCollection(collectionPath)) {
-    return scriptFileUrl(collectionPath, relativePath);
-  }
-  return prior?.fileUrl ?? pinnedScriptUrl(id, relativePath);
-}
-
 //
 // True for an http(s) entry with a prior `ok` copy: a 200 that doesn't
 // parse is usually a login or error page served in place of the script,
@@ -840,7 +813,7 @@ export async function rebuildCollection(args: RebuildArgs): Promise<StoredScript
   for (const found of args.scan) {
     const prior = existingByPath.get(found.relativePath);
     const id = prior?.id ?? newId();
-    const fileUrl = entryFileUrl(args.collectionPath, found.relativePath, prior, id);
+    const fileUrl = scriptFileUrl(args.collectionPath, found.relativePath);
     const fr = args.fetchResults.get(found.relativePath);
     if (fr && 'ok' in fr && fr.ok) {
       entryTasks.push(async (): Promise<StoredScript> => {
@@ -1647,132 +1620,6 @@ async function createLocationCollection(
   return { kind: 'newCollection', collection: refreshed?.collection ?? seed };
 }
 
-// Turn a parsed backup into one new collection of pinned scripts.
-//
-// Unlike every other add path there is nothing to fetch: the bodies
-// arrived in the file. Each row still goes through the same
-// `buildScriptFromText` + `applyFiles` pair the scan pipeline uses, so
-// an imported script's header validation, content hash, matching,
-// `@require` / `@resource` prefetch, and parse check are all decided by
-// exactly the same rules as a fetched one. The only thing the import
-// supplies that a scan can't is the body — and the enable state,
-// ordering, and provenance that came with it.
-//
-// Every import creates its OWN collection (`import:<uuid>`), so
-// importing the same backup twice yields two sections rather than
-// merging. Recognising a re-import is a follow-up; `importedFrom` is
-// the handle it will use. See docs/import.md.
-export async function importCollection(
-  imported: readonly ImportedScript[],
-  displayName: string,
-): Promise<{ collection: StoredCollection; scripts: StoredScript[] }> {
-  const now = Date.now();
-  const collectionId = crypto.randomUUID();
-  const path = importCollectionPath(crypto.randomUUID());
-
-  // Filenames are assigned across the whole import, not per script, so
-  // two scripts sharing a `@name` (which Tampermonkey allows — it
-  // disambiguates by `@namespace`) land as `Name.user.js` and
-  // `Name-2.user.js` instead of colliding.
-  const usedFilenames = new Set<string>();
-  const planned = imported.map((src) => {
-    const id = crypto.randomUUID();
-    const relativePath = importedScriptFilename(src.name, usedFilenames);
-    return {
-      src,
-      id,
-      relativePath,
-      // A body the user edited inside the other manager is pinned even
-      // when a URL is available: refetching would discard the edit that
-      // made them keep their own copy.
-      fileUrl:
-        src.location && !src.userModified
-          ? src.location
-          : pinnedScriptUrl(id, relativePath),
-    };
-  });
-
-  // Shared across the whole import so two scripts naming the same
-  // `@require` URL fetch it once, exactly as a collection refresh does.
-  const fetchCache: FileFetchCache = new Map();
-  // Bounded like a collection refresh: each row may fetch its
-  // `@require` / `@resource` bodies, and a big backup is exactly where
-  // an unbounded fan-out hurts.
-  const scripts = await mapWithConcurrency(
-    planned, FETCH_SCRIPTS_PER_COLLECTION_CONCURRENCY,
-    async (p) => {
-      const built = await buildScriptFromText({
-        id: p.id,
-        collectionId,
-        relativePath: p.relativePath,
-        fileUrl: p.fileUrl,
-        text: p.src.source,
-        now,
-      });
-      // `buildScriptFromText` defaults new rows to enabled; the backup
-      // knows better, and mirroring it is the difference between a
-      // migration that reproduces the user's setup and one that turns
-      // everything they had switched off back on.
-      built.enabled = p.src.enabled;
-      // Written unconditionally. The manager and the time are always
-      // known; the foreign `uuid` is the optional part, and an old or
-      // hand-edited backup that omits it must not cost the row its
-      // provenance — that is what the pinned Location row reads to name
-      // the manager, and what a future re-import merge looks for.
-      built.importedFrom = { manager: 'tampermonkey', importedAt: now };
-      if (p.src.uuid) built.importedFrom.uuid = p.src.uuid;
-      // No local stand-ins: nothing under an import collection ever has a
-      // `file://` URL to resolve them against (`collectionSupportsLocalFiles`).
-      return await applyFiles(built, undefined, 'all', fetchCache, now, { enabled: false, collectionPath: path });
-    },
-  );
-
-  const collection: StoredCollection = {
-    id: collectionId,
-    path,
-    lastRefreshedAt: now,
-    // Import order is the backup's `position` order, applied by the
-    // parser — so the collection reads the way the other manager's
-    // dashboard did.
-    scriptIds: scripts.map((s) => s.id),
-    enabled: true,
-    // Written outright rather than inferred: `import:<uuid>` says
-    // nothing a user would want to read.
-    displayName,
-  };
-
-  await mutate(async () => {
-    const collections = await getCollections();
-    const rows: Record<string, unknown> = {
-      [COLLECTIONS_INDEX_KEY]: [...collections.map((c) => c.id), collectionId],
-      [collectionKey(collectionId)]: collection,
-    };
-    for (const s of scripts) rows[scriptKey(s.id)] = s;
-    await writeLocal(rows);
-  });
-
-  // GM_setValue data lives in its own key space, so it's written after
-  // the structural rows rather than inside the same lock. A script
-  // resuming without its stored settings would look like it had been
-  // reset, which for a lot of scripts is indistinguishable from broken.
-  //
-  // Through the value store, like every other `gmval:` write, then
-  // awaited to disk: the store saves behind, and an import that reports
-  // success should not lose its values to a worker shutting down.
-  for (const [i, p] of planned.entries()) {
-    const writes = Object.entries(p.src.storage).map(([key, value]) => ({ key, value }));
-    if (writes.length > 0) await writeValues(scripts[i].id, writes);
-  }
-  await valueWritesSaved();
-
-  // Same reasoning as the add path: this bypasses the updater, so
-  // anything that arrived already broken would otherwise have an empty
-  // Log tab for the user to click into.
-  await Promise.all(scripts.map((s) => emitInitialLoadLog(s, true)));
-
-  return { collection, scripts };
-}
-
 // First-run gate. Seeding the default collections is driven from the
 // collections page (so the user watches the normal add → Refresh flow,
 // rather than scripts appearing silently from the SW); the SW only
@@ -1821,10 +1668,11 @@ export async function installScript(
 // fetcher reads back, so every refresh path treats them as ordinary
 // scripts.
 
-// The bodies pushed with a scratch script, or undefined when none were
-// (or the script isn't one).
+// The bodies pushed with a scratch script, or imported with an
+// imported one, or undefined when there are none (or the script is
+// neither).
 async function pushedFilesOf(url: string): Promise<Record<string, PushedFile> | undefined> {
-  if (!isScratchUrl(url)) return undefined;
+  if (!isStoredTextUrl(url)) return undefined;
   const files = await getRaw<Record<string, PushedFile>>(scratchFilesKey(url));
   return files && Object.keys(files).length > 0 ? files : undefined;
 }
@@ -1937,6 +1785,256 @@ export async function removeSmDevCollection(run: string): Promise<{ scriptIds: s
 // The runs that have a test collection.
 export async function smDevCollectionRuns(): Promise<string[]> {
   return (await getCollections()).map((c) => smDevRunOfContainer(c.path)).filter((run) => run !== null);
+}
+
+// ---------- Imports ----------
+//
+// Applies an import the page planned from a backup file (docs/import.md):
+// new scripts installed into one scripts collection, and updates to
+// scripts already here. The page reads the file and decides what
+// happens to each script; this writes it.
+
+// One new script.
+export interface ImportInstall {
+  name: string;
+  text: string;
+  enabled: boolean;
+  // An http(s) URL to load from and update from later. Without one the
+  // script is kept as its text (an `imported:///` location).
+  followUrl?: string;
+  // Where it loaded from before, and the id the file gave it, for its
+  // import record.
+  location?: string;
+  foreignId?: string;
+  values?: Record<string, unknown>;
+  // `@require` / `@resource` bodies from the file, by ref.
+  files?: Record<string, PushedFile>;
+}
+
+// A change to a script already here. Each field is applied when present.
+export interface ImportUpdate {
+  scriptId: string;
+  // New text, for a script kept only as its text.
+  text?: string;
+  files?: Record<string, PushedFile>;
+  enabled?: boolean;
+  // Replaces all its values.
+  values?: Record<string, unknown>;
+}
+
+export interface ImportRequest {
+  source: ImportSource;
+  // Where new scripts go: a scripts collection, or a new one by this name.
+  into: { collectionId: string } | { newCollectionName: string };
+  installs: ImportInstall[];
+  updates: ImportUpdate[];
+}
+
+export interface ImportOutcome {
+  // The collection new scripts went into, when there were any.
+  collectionId: string | null;
+  installed: number;
+  updated: number;
+  failed: { name: string; message: string }[];
+}
+
+export async function importScripts(request: ImportRequest): Promise<ImportOutcome> {
+  const now = Date.now();
+  const failed: ImportOutcome['failed'] = [];
+  let collectionId: string | null = null;
+  let installed = 0;
+  if (request.installs.length > 0) {
+    const out = await installImported(await importTarget(request.into), request, now, failed);
+    collectionId = out.collectionId;
+    installed = out.installed;
+  }
+  let updated = 0;
+  for (const update of request.updates) {
+    try {
+      if (await applyImportUpdate(update, request.source, now)) updated++;
+    } catch (err) {
+      const row = await getScriptMeta(update.scriptId);
+      failed.push({ name: row ? scriptDisplayName(row) : update.scriptId, message: describeError(err) });
+    }
+  }
+  await valueWritesSaved();
+  return { collectionId, installed, updated, failed };
+}
+
+// Where new scripts go: a scripts collection here, or a new one, which
+// is made only once there is something to put in it.
+type ImportTarget = { existing: StoredCollection } | { create: StoredCollection };
+
+async function importTarget(into: ImportRequest['into']): Promise<ImportTarget> {
+  if ('collectionId' in into) return { existing: await checkedImportCollection(into.collectionId) };
+  return {
+    create: {
+      id: crypto.randomUUID(),
+      path: newContainerPath(),
+      lastRefreshedAt: Date.now(),
+      scriptIds: [],
+      enabled: true,
+      displayName: into.newCollectionName.trim() || 'Imported scripts',
+    },
+  };
+}
+
+// The scripts collection `id`, if new scripts can go into it.
+async function checkedImportCollection(id: string): Promise<StoredCollection> {
+  const found = await getRaw<StoredCollection>(collectionKey(id));
+  if (!found) throw new Error(COLLECTION_GONE);
+  if (!isContainerCollection(found.path)) throw new Error('Internal error: Scripts can only be imported into a scripts collection');
+  if (isSmDevCollection(found.path)) throw new Error(SM_DEV_COLLECTION_LOCKED);
+  return found;
+}
+
+// The rows behind an imported script's text.
+function storedTextKeys(url: string): string[] {
+  return [scratchTextKey(url), importInfoKey(url), scratchFilesKey(url)];
+}
+
+// Builds each new script from the file's text, then writes them all in
+// one step. Built here rather than by a refresh, so a script that will
+// update from a URL still starts from the file's copy, as it ran in the
+// other manager, and nothing is fetched but its dependencies.
+async function installImported(
+  target: ImportTarget,
+  request: ImportRequest,
+  now: number,
+  failed: ImportOutcome['failed'],
+): Promise<{ collectionId: string | null; installed: number }> {
+  const container = 'existing' in target ? target.existing : target.create;
+  const fetchCache: FileFetchCache = new Map();
+  const localFiles = localFileScope(container);
+  const built = await mapWithConcurrency(request.installs, FETCH_SCRIPTS_PER_COLLECTION_CONCURRENCY, async (item) => {
+    const id = crypto.randomUUID();
+    let relativePath: string | null = null;
+    try {
+      relativePath = item.followUrl ? await canonicalLocation(item.followUrl) : importedUrl(item.name);
+      const stored = isStoredTextUrl(relativePath);
+      if (stored) {
+        const info: ImportInfo = { source: request.source, importedAt: now };
+        if (item.foreignId) info.foreignId = item.foreignId;
+        if (item.location) info.location = item.location;
+        await writeLocal({
+          [scratchTextKey(relativePath)]: item.text,
+          [importInfoKey(relativePath)]: info,
+          ...(item.files && Object.keys(item.files).length > 0 ? { [scratchFilesKey(relativePath)]: item.files } : {}),
+        });
+      }
+      const fileUrl = scriptFileUrl(container.path, relativePath);
+      const row = await buildScriptFromText({ id, collectionId: container.id, relativePath, fileUrl, text: item.text, now });
+      row.enabled = item.enabled;
+      const files = item.files && Object.keys(item.files).length > 0 ? item.files : undefined;
+      return { item, stored, script: await applyFiles(row, undefined, 'all', fetchCache, now, localFiles, 'await', files) };
+    } catch (err) {
+      if (relativePath && isStoredTextUrl(relativePath)) await removeLocal(storedTextKeys(relativePath));
+      failed.push({ name: item.name, message: describeError(err) });
+      return null;
+    }
+  });
+
+  const ready = built.filter((b) => b !== null);
+  const rivalIds = await possibleRivals(container.id, ready.map((b) => b.script));
+  let written: typeof ready;
+  try {
+    written = await mutate(async () => {
+      const collections = await getCollections();
+      let current: StoredCollection;
+      if ('existing' in target) {
+        current = await checkedImportCollection(container.id);
+      } else {
+        // A name already taken gets a number, as a second import the
+        // same day would.
+        const base = target.create.displayName ?? 'Imported scripts';
+        let name = base;
+        for (let n = 2; collectionNameInUse(name, collections) || !mayUseReservedName(name, null); n++) name = `${base} (${n})`;
+        current = { ...target.create, displayName: name };
+      }
+      const held = new Set<string>();
+      const rows = await getRows(current.scriptIds.map(scriptKey));
+      for (const value of Object.values(rows)) held.add(canonicalCollectionInput((value as ScriptMeta).relativePath));
+      // A URL the collection already holds, or one an earlier script in
+      // this import took, is a copy it has, not a new one.
+      const fresh = ready.filter((b) => {
+        if (b.stored) return true;
+        const key = canonicalCollectionInput(b.script.relativePath);
+        if (!held.has(key)) {
+          held.add(key);
+          return true;
+        }
+        failed.push({ name: b.item.name, message: ALREADY_INSTALLED_IN_TARGET });
+        return false;
+      });
+      if (fresh.length === 0) return fresh;
+      const scripts = fresh.map((b) => b.script);
+      const nextCollection: StoredCollection = { ...current, scriptIds: [...current.scriptIds, ...scripts.map((s) => s.id)] };
+      const toSet: Record<string, unknown> = { [collectionKey(current.id)]: nextCollection };
+      if ('create' in target) toSet[COLLECTIONS_INDEX_KEY] = [...collections.map((c) => c.id), current.id];
+      Object.assign(toSet, await settleNewCopies(nextCollection, scripts, new Set(scripts.map((s) => s.id)), [], rivalIds, false));
+      Object.assign(toSet, (await changedScriptRows(scripts, {}, () => undefined)).items);
+      await writeLocal(toSet);
+      return fresh;
+    });
+  } catch (err) {
+    // Nothing was written, so neither are the text rows wanted.
+    const urls = ready.filter((b) => b.stored).map((b) => b.script.relativePath);
+    if (urls.length > 0) await removeLocal(urls.flatMap(storedTextKeys));
+    throw err;
+  }
+  // The text rows of scripts that weren't written after all.
+  const unused = ready.filter((b) => b.stored && !written.includes(b)).map((b) => b.script.relativePath);
+  if (unused.length > 0) await removeLocal(unused.flatMap(storedTextKeys));
+
+  for (const b of written) {
+    if (b.item.values && Object.keys(b.item.values).length > 0) await replaceValues(b.script.id, b.item.values);
+    await emitInitialLoadLog(b.script, true);
+  }
+  return { collectionId: written.length > 0 ? container.id : null, installed: written.length };
+}
+
+// Applies one update. False when it changed nothing.
+async function applyImportUpdate(update: ImportUpdate, source: ImportSource, now: number): Promise<boolean> {
+  const row = await getScriptMeta(update.scriptId);
+  if (!row) throw new Error(SCRIPT_GONE);
+  let changed = false;
+  if (update.text !== undefined) {
+    // Only a script kept as its text has text to replace; any other
+    // loads from its location.
+    if (!isStoredTextUrl(row.relativePath)) throw new Error('Internal error: Only an imported or scratch script\'s text can be replaced');
+    const url = row.relativePath;
+    const hasFiles = update.files !== undefined && Object.keys(update.files).length > 0;
+    // Its import record now names this file. A scratch script has none.
+    const info = await getRaw<ImportInfo>(importInfoKey(url));
+    await writeLocal({
+      [scratchTextKey(url)]: update.text,
+      ...(hasFiles ? { [scratchFilesKey(url)]: update.files } : {}),
+      ...(info ? { [importInfoKey(url)]: { ...info, source, importedAt: now } satisfies ImportInfo } : {}),
+    });
+    if (!hasFiles) await removeLocal([scratchFilesKey(url)]);
+    await refreshScript(update.scriptId);
+    changed = true;
+  }
+  if (update.enabled !== undefined && update.enabled !== row.enabled) {
+    await setScriptsEnabled([{ id: update.scriptId, enabled: update.enabled }]);
+    changed = true;
+  }
+  if (update.values !== undefined) {
+    await replaceValues(update.scriptId, update.values);
+    changed = true;
+  }
+  return changed;
+}
+
+// Replaces all of a script's values with `values`, through the value
+// store, so documents running it hear of the change.
+async function replaceValues(scriptId: string, values: Record<string, unknown>): Promise<void> {
+  const current = await readValues(scriptId);
+  const writes: WireValueWrite[] = Object.keys(current.values)
+    .filter((key) => !Object.hasOwn(values, key))
+    .map((key) => ({ key, deleted: true }));
+  for (const [key, value] of Object.entries(values)) writes.push({ key, value });
+  if (writes.length > 0) await writeValues(scriptId, writes);
 }
 
 // Does this container already hold `canonicalPath`?
@@ -2496,15 +2594,15 @@ export async function removeScript(id: string): Promise<void> {
   await forgetScriptLogs([id]);
 }
 
-// The text rows (and pushed-file rows) of the scratch scripts among
-// `removed` that no other script row still reads. A scratch script moved into another collection
-// keeps reading its text row, so a URL some remaining row names keeps
-// its text. Reads nothing more when no scratch script is among those
-// removed, and otherwise only the container collections' rows: a
-// scratch script can only be moved into another container. Call
-// inside `mutate`, before the rows are deleted.
+// The text rows (and pushed-file and origin rows) of the scratch and
+// imported scripts among `removed` that no other script row still
+// reads. A script moved into another collection keeps reading its text
+// row, so a URL some remaining row names keeps its text. Reads nothing
+// more when no such script is among those removed, and otherwise only
+// the container collections' rows: these scripts only ever sit in
+// containers. Call inside `mutate`, before the rows are deleted.
 async function unreferencedScratchKeys(removed: readonly ScriptMeta[]): Promise<string[]> {
-  const urls = new Set(removed.map((r) => r.relativePath).filter(isScratchUrl));
+  const urls = new Set(removed.map((r) => r.relativePath).filter(isStoredTextUrl));
   if (urls.size === 0) return [];
   const removedIds = new Set(removed.map((r) => r.id));
   const collectionRows = await getMany((await readCollectionIndex()).map(collectionKey));
@@ -2518,7 +2616,7 @@ async function unreferencedScratchKeys(removed: readonly ScriptMeta[]): Promise<
   for (const value of Object.values(rows)) {
     urls.delete((value as ScriptMeta).relativePath);
   }
-  return [...urls].flatMap((url) => [scratchTextKey(url), scratchFilesKey(url), scratchSourceKey(url)]);
+  return [...urls].flatMap((url) => [scratchTextKey(url), scratchFilesKey(url), scratchSourceKey(url), importInfoKey(url)]);
 }
 
 // ---------- Membership reconciliation ----------
@@ -2721,17 +2819,6 @@ export async function refreshCollection(
   const { collection, scripts: existingScripts } = prior;
   timer.mark('read');
   timer.note(collection.path);
-
-  // An import collection has no upstream to rescan — its bodies came
-  // from a backup file, not a location. Returning what is already
-  // stored keeps Refresh All harmless: it walks every collection, and
-  // anything else here would either mark every imported script
-  // `missing` (there's no listing to find them in) or refetch the rows
-  // that happen to carry a URL, which is per-script Refresh's job, not
-  // the collection's. See docs/import.md.
-  if (isImportCollection(collection.path)) {
-    return { collection, scripts: existingScripts };
-  }
 
   let scan: { relativePath: string; size?: number; mtime?: number }[] = [];
   let scanError: string | undefined;
@@ -3329,22 +3416,12 @@ export async function refreshScript(
   timer.note(meta.relativePath);
   timer.note(() => `${Math.round((meta.size ?? 0) / 1024)} KB row`);
 
-  // A pinned row — imported from a backup with no upstream named — has
-  // nowhere to refresh from. Report it unchanged rather than letting the
-  // fetcher try its stand-in URL and record a `refreshError`, which is
-  // what the opportunistic check on every matching navigation would
-  // otherwise do, permanently, to a script that is working fine.
-  if (isPinnedScriptUrl(meta.fileUrl)) return (await priorRead) ?? null;
-
   // Build a single-entry scan. Any `file://` script gets the size+mtime
   // its collection's refresh would give it, from a listing of its
   // folder or a direct read; HTTP entries rely on the conditional GET
   // inside fetchOrSkipInParallel.
   const scan: ScannedFile[] = [{ relativePath: meta.relativePath }];
-  // Same derivation the fetch half uses (`entryFileUrl`): an import
-  // collection's path holds no location, so deriving one from it would
-  // land on a `file://` URL built out of the synthetic `import:<uuid>`.
-  const fileUrl = entryFileUrl(collectionRow.path, meta.relativePath, meta, meta.id);
+  const fileUrl = scriptFileUrl(collectionRow.path, meta.relativePath);
   const usesListingStat = isFileUrl(fileUrl);
   const knownPaths = opts.batch?.localLookup === 'known';
   // The parent listing was read and does not show the file.
@@ -3750,20 +3827,7 @@ export async function fetchOrSkipInParallel(
     scan, FETCH_SCRIPTS_PER_COLLECTION_CONCURRENCY,
     async (found): Promise<[string, FetchResult]> => {
       const prior = byPath.get(found.relativePath);
-      // Same derivation the write half uses, so the bytes we fetch and
-      // the `fileUrl` we store can't disagree about where a row lives.
-      // It matters for import collections specifically: the path holds
-      // no location, so deriving one from it lands on a `file://` URL
-      // built out of the synthetic `import:<uuid>`.
-      const url = entryFileUrl(collectionPath, found.relativePath, prior, prior?.id ?? '');
-      // A pinned row has nothing to fetch. `refreshScript` already
-      // turns these back before they get here, but the rule belongs in
-      // the fetch layer too — reporting "unchanged" is the truth, and
-      // it means no future caller can hand a synthetic URL to a fetcher
-      // and get a `refreshError` naming an internal path.
-      if (isPinnedScriptUrl(url)) {
-        return [found.relativePath, { unchanged: true }];
-      }
+      const url = scriptFileUrl(collectionPath, found.relativePath);
       if (isHttpUrl(url)) {
         try {
           const fetched = await fetchHttpText(url, prior?.status === 'ok' ? {

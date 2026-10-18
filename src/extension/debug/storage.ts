@@ -80,6 +80,8 @@ const KIND_LABELS: Record<ItemKind, string> = {
   resource: '@resource',
   'smdev-text': 'sm-dev script text',
   'smdev-file': 'sm-dev pushed file',
+  'imported-text': 'Imported script text',
+  'imported-file': 'Imported file',
 };
 
 // ---------- Cells ----------

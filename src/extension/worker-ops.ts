@@ -8,8 +8,8 @@
 // bodies).
 
 import {
-  addCollection, backfillCollectionDisplayNames, createCollection, describeError, importCollection, installScript, markFirstRunComplete, migrateCollectionKeysForPage, withoutBodies,
-  type AddCollectionResult, type InstallTarget, type ScriptMeta, type StoredCollection, type StoredScript,
+  addCollection, backfillCollectionDisplayNames, createCollection, describeError, importScripts, installScript, markFirstRunComplete, migrateCollectionKeysForPage, withoutBodies,
+  type AddCollectionResult, type InstallTarget, type ScriptMeta, type StoredScript,
   moveCollection, moveScript, reconcileScriptMembership, removeCollection, removeScript, setCollectionOptions,
   setScriptsEnabled,
 } from './script-store.js';
@@ -22,7 +22,6 @@ import {
   probeInstalledScript, updateAllCollections, updateCollection, updateScript, type UpdateMode,
 } from './script-updater.js';
 import type { ProbePolicy } from '../version-probe.js';
-import type { ImportedScript } from './tampermonkey-import.js';
 import { forgetDeniedHost, revokeConnectHost } from './connect-grants.js';
 import { clearScriptLog } from './script-log.js';
 import { peekValues } from './value-store.js';
@@ -130,11 +129,8 @@ const WORKER_OPS = {
     probeInstalledScript(result);
     return result;
   },
-  // A Tampermonkey backup, already parsed by the page. The new
-  // collection only: its scripts would carry every body.
-  async importCollection(imported: ImportedScript[], displayName: string): Promise<StoredCollection> {
-    return (await importCollection(imported, displayName)).collection;
-  },
+  // A backup file the page read and planned (docs/import.md).
+  importScripts,
 
   // ---------- Reads ----------
   // GM values come from the worker's value store, which can hold writes

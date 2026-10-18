@@ -104,12 +104,6 @@ details live in the topic-specific docs linked below.
     scanner), in its own module, dispatched to from `directories.ts`
   - See [file-access.md](file-access.md) and
     [http-collections.md](http-collections.md).
-- **Backup import** (`src/extension/tampermonkey-import.ts`) — parser
-  for Tampermonkey's exported backup, the one channel by which another
-  manager's scripts can reach us. Chrome gives an extension no way to
-  read another extension's state, so migration is a file the user
-  carries across. See [import.md](import.md) and
-  [export-format.md](export-format.md).
 - **File-access permission UI** (`src/extension/file-access.ts`) — the
   "Allow access to file URLs" probe plus the shared banner every page
   raises when the toggle is what blocked a local read. See
@@ -457,16 +451,12 @@ takes effect:
 - [export-format.md](export-format.md) — the backup formats
   Tampermonkey, Violentmonkey and SourceMonkey write, field by field,
   compared.
-- [import.md](import.md) — design in progress for importing scripts
-  from a backup.
+- [import.md](import.md) — importing scripts from a backup: reading
+  each format, matching what's installed, the preview dialog, imported
+  scripts kept as text.
 - [updates.md](updates.md) — how a script updates from its install
   source, `@updateURL` / `@downloadURL` probing, `@version` ordering,
   the OUTDATED status.
-- [import.md](import.md) — importing scripts from another manager's
-  backup or our own export: the preview dialog and what an import
-  carries across.
-- [export-format.md](export-format.md) — the backup formats
-  Tampermonkey and Violentmonkey write, field by field, compared.
 - [script-viewer.md](script-viewer.md) — userscript viewer page, header parsing,
   syntax highlighting.
 - [match-rules.md](match-rules.md) — what `@match`/`@include`/`@exclude`

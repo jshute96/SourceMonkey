@@ -206,6 +206,9 @@ export function describeResolveFailure(failure: ResolveFailure): string {
       // A scratch script is text alone, without the files beside it.
       return 'A scratch script can use a relative path only to a file pushed along with its text. ' +
         'Use an http(s) URL, or push the file with the script.';
+    case 'relative-in-imported':
+      return 'An imported script can use a relative path only to a file imported along with it. ' +
+        'Use an http(s) URL, or import a backup that includes the file.';
   }
 }
 
@@ -370,8 +373,9 @@ export function distillResources(header: ParsedHeader | null): ResourceDecl[] {
 
 // A `@require` / `@resource` body pushed with a scratch script, by the
 // ref its header declares (sm-dev reads them from disk, see
-// docs/sm-dev-design.md). It stands in for the declared file, and no
-// fetch is made:
+// docs/sm-dev-design.md), or held in a backup for an imported one
+// (docs/import.md). It stands in for the declared file, and no fetch is
+// made:
 // - a relative ref, which a scratch script has no folder to resolve
 //   against: `url` is the `file://` URL it named on disk;
 // - a remote URL with a local stand-in under one of sm-dev's search
@@ -411,7 +415,7 @@ export interface AttachFilesArgs {
   // 'search' (the default) searches the roots in order. See
   // `readLocalStandIn`.
   localLookup?: LocalLookup;
-  // A scratch script's pushed bodies, by ref; see `PushedFile`.
+  // A scratch or imported script's pushed bodies, by ref; see `PushedFile`.
   pushedFiles?: Readonly<Record<string, PushedFile>>;
 }
 

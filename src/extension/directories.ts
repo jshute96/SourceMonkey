@@ -202,9 +202,7 @@ import {
   isContainerCollection,
   isFileUrl,
   isHttpUrl,
-  isImportCollection,
   isManifestCollection,
-  isPinnedScriptUrl,
   isSingleFileInput,
   joinPath,
   listDirectory,
@@ -224,7 +222,7 @@ import {
 export * from '../file-locations.js';
 // Scratch-script and sm-dev collection naming, likewise.
 export * from './location-kinds.js';
-import { isScratchUrl, scratchTextKey } from './location-kinds.js';
+import { isImportedUrl, isStoredTextUrl, scratchTextKey } from './location-kinds.js';
 
 // Leaf name (last path segment) of an http(s) URL, percent-decoded —
 // used as the FoundScript.name for HTTP manifest entries so the
@@ -235,17 +233,22 @@ export function urlBaseName(input: string): string {
   return decodeForDisplay(leafName(urlPathname(input)));
 }
 
-async function fetchScratchText(url: string): Promise<string> {
+// The text of a scratch or imported script, from its storage row.
+async function fetchStoredText(url: string): Promise<string> {
   const got = await chrome.storage.local.get(scratchTextKey(url));
   const text = got[scratchTextKey(url)];
-  if (typeof text !== 'string') throw new Error(`Could not read ${url}: The scratch script's text was cleared. Push it again.`);
+  if (typeof text !== 'string') {
+    throw new Error(isImportedUrl(url)
+      ? `Could not read ${url}: The imported script's text was cleared. Import it again.`
+      : `Could not read ${url}: The scratch script's text was cleared. Push it again.`);
+  }
   return text;
 }
 
 // ---------- File / directory fetch ----------
 
 export function fetchFileUrlText(url: string): Promise<string> {
-  if (isScratchUrl(url)) return fetchScratchText(url);
+  if (isStoredTextUrl(url)) return fetchStoredText(url);
   return readFileUrlText(url);
 }
 
@@ -744,7 +747,7 @@ export function scriptFileUrl(collectionPath: string, relativePath: string): str
     // Container scripts carry the full URL/path the user added in
     // their `relativePath`. Coerce raw fs paths to file:// URLs so the
     // downstream fetcher sees a uniform URL form.
-    if (isHttpUrl(relativePath) || isFileUrl(relativePath) || isScratchUrl(relativePath)) return relativePath;
+    if (isHttpUrl(relativePath) || isFileUrl(relativePath) || isStoredTextUrl(relativePath)) return relativePath;
     return pathToFileUrl(relativePath);
   }
   if (isManifestCollection(collectionPath)) {
@@ -755,26 +758,6 @@ export function scriptFileUrl(collectionPath: string, relativePath: string): str
   }
   // Local directory.
   return pathToFileUrl(joinPath(locationFsPath(collectionPath), relativePath));
-}
-
-// The display location of a STORED script — `scriptAbsolutePath` for
-// every collection that can derive one from its path, and the row's own
-// `fileUrl` for an import collection, whose path holds no location. A
-// pinned row (imported with no upstream) has none, and reads as ''.
-//
-// The one entry point every surface that shows a stored script's
-// location uses (viewer, compare page, "Other versions" panel), so an
-// import row can't read differently on one of them.
-export function storedScriptLocation(
-  collectionPath: string | null | undefined,
-  script: { relativePath: string; fileUrl: string },
-): string {
-  if (!collectionPath) return script.relativePath;
-  if (!isImportCollection(collectionPath)) {
-    return scriptAbsolutePath(collectionPath, script.relativePath);
-  }
-  if (isPinnedScriptUrl(script.fileUrl)) return '';
-  return githubRawToBlobUrl(script.fileUrl) ?? script.fileUrl;
 }
 
 // Human-displayable location for a specific scanned script. Three
@@ -790,13 +773,6 @@ export function storedScriptLocation(
 // This is what the viewer's Location row shows for every collection kind
 // without each collection-kind needing its own special case.
 export function scriptAbsolutePath(collectionPath: string, relativePath: string): string {
-  if (isImportCollection(collectionPath)) {
-    // Never reached with a real import row — callers go through
-    // `storedScriptLocation`, which has the row's `fileUrl`. The path
-    // alone can't name a location, so say nothing rather than fake
-    // a `/import:<uuid>/…` path.
-    return '';
-  }
   if (isGithubDirCollection(collectionPath)) {
     return githubDirScriptDisplayUrl(collectionPath, relativePath);
   }

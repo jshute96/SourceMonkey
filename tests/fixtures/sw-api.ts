@@ -302,6 +302,8 @@ export interface StoredScriptLike {
   enabled: boolean;
   headerText: string;
   bodyText: string;
+  // The parsed header; null when it didn't parse.
+  header?: { tags: { tag: string; value: string }[] } | null;
   startupLogs?: readonly {
     level: 'info' | 'warning' | 'error';
     message: string;

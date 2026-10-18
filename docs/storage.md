@@ -28,9 +28,10 @@ Key spaces in `chrome.storage.local`:
 | `"iconUrl:<url>"`      | `SiteIconEntry`     | Cached `@icon`-declared icon, keyed by header URL (see [site-icons.md](site-icons.md)). |
 | `"firstRunComplete"`   | `boolean`           | Set once the SW has seeded the default collections; gates first-run seeding (see [First-run seeding](#first-run-seeding)). |
 | `"smLocalFileRoots"`   | `string[]`          | Canonical `file://` directory URLs searched for local stand-ins, in order (see [local-file-overrides.md](local-file-overrides.md)). |
-| `"scratch:<url>"`      | `string`            | The text of a scratch script, keyed by its `scratch:///…` location (see [Container collections](#container-collections)). |
-| `"scratchFiles:<url>"` | `Record<ref, PushedFile>` | The `@require` / `@resource` bodies sm-dev pushed with a scratch script, by ref; absent when none were. |
+| `"scratch:<url>"`      | `string`            | The text of a scratch or imported script, keyed by its `scratch:///…` or `imported:///…` location (see [Container collections](#container-collections)). |
+| `"scratchFiles:<url>"` | `Record<ref, PushedFile>` | The `@require` / `@resource` bodies sm-dev pushed with a scratch script, or a backup held for an imported one, by ref; absent when there were none. |
 | `"scratchSource:<url>"` | `ScratchSource` | The file a scratch script was read from (its `file://` URL, and its path as the run was given it), for sm-dev's `script list`; absent from an sm-dev before protocol 1.2. |
+| `"importInfo:<url>"` | `ImportInfo` | Where an imported script came from: the manager, when, the file's id for it, and its old location (see [import.md](import.md#imported-scripts)). |
 | `"scriptNumbers"`      | `StickyNumbers`     | Each script's number, and the removed scripts' numbers held back from reuse (see [Sticky numbers](#sticky-numbers)). |
 | `"connectGrants:<scid>"` | `ConnectGrants` | The hosts the user allowed (or "all sites") or denied a script's `GM_xmlhttpRequest` beyond its `@connect` rules (see [connect-permissions.md](connect-permissions.md)). Removed with the script. |
 | `"enablementTimes"`    | `Record<scid, EnablementTimes>` | When each script last became active and went inactive (see [script-enablement.md](script-enablement.md#active-times)). One key, not fields on the rows, so a collection toggle doesn't rewrite every row. |
@@ -326,12 +327,6 @@ keys would look like a wiped profile.
     installed scripts. Container collections have no scan step; their
     `scriptIds` list is the source of truth. See
     [Container collections](#container-collections).
-  - `import:<uuid>` for an **import** collection — scripts handed to us
-    in another manager's backup file rather than fetched. Like a
-    container it has no scan step; unlike one it has no upstream at all,
-    so the collection never refreshes. A fresh id per import run, so
-    repeat imports each get their own section. See
-    [import.md](import.md).
 - `lastRefreshedAt` — epoch ms of the most recent refresh.
 - `scriptIds` — child script IDs in scan order (a directory by path, a
   manifest as listed), or install order for a container. The
@@ -381,12 +376,6 @@ keys would look like a wiped profile.
     the user added, in its canonical spelling (`canonicalCollectionInput`:
     a `file://` URL collapses to its bare path, so one file on disk
     can't land as two rows); `fileUrl` is its URL form.
-  - Import collection: `relativePath` is a filename synthesized from the
-    script's `@name`, deduped within the import. `fileUrl` is the URL the
-    backup named, or a synthetic `sourcemonkey://imported/…` stand-in
-    when it named none — the row's own value either way, since the
-    collection path can't derive it. See
-    [import.md](import.md#per-script-location).
 - `status` — `'ok' | 'invalid'`. A script whose file has vanished is
   not a status — the row is dropped (see
   [Vanished entries](#vanished-entries)).
@@ -436,10 +425,6 @@ keys would look like a wiped profile.
   seconds). Used only for equality. Combined with `size` it lets refresh skip refetching files
   whose listing-reported size+mtime are unchanged. (file:// collections
   only.)
-- `importedFrom?` — `{manager, uuid, importedAt}` for a row that came
-  from another manager's backup. Absent on every row fetched from a
-  real location. Nothing reads the foreign `uuid` today; it is what a
-  future "re-import updates instead of duplicating" pass matches on.
 - `httpEtag?`, `httpLastModified?` — HTTP validators captured from
   the last successful fetch. Sent on the next refresh as
   `If-None-Match` / `If-Modified-Since` so the server can answer 304
@@ -735,6 +720,16 @@ individually installed scripts. Two kinds of row, told apart by path:
     another script row still reads it.
   - The scheme chip reads `scratch`, and the viewer's Location row is
     plain text, since there is nothing to open.
+- **Imported scripts** use the same mechanism in any scripts collection
+  the user has ([import.md](import.md#imported-scripts)).
+  - Each row's location is `imported:///<tag>/<name>.user.js`, its text
+    in the same `scratch:<url>` row and its bundled files in
+    `scratchFiles:<url>`.
+  - Unlike a scratch script it belongs to no run, so it runs everywhere
+    and can be moved like any container script.
+  - Removing it drops its text, files and `importInfo:` rows, on the
+    same rule as a scratch script's.
+  - The scheme chip reads `imported`.
 
 Properties:
 
@@ -1020,7 +1015,8 @@ The Options page's read-only breakdown of `chrome.storage.local`
 (`src/extension/storage-usage.ts`).
 
 - **Rows by kind**: scripts, `@require` and `@resource` files, GM
-  values, icons, scripts run by sm-dev, collections, other.
+  values, icons, imported scripts kept only here, scripts run by
+  sm-dev, collections, other.
 - **Session storage isn't shown**: it holds only this session's logs
   and tab state, with its own quota, and is nowhere near filling.
 - **Blobs by kind**: each `blob:` row counts once, under the kind of
@@ -1190,6 +1186,9 @@ content, no header) before the refresh that loads it — see
   return shape as `addCollection`; null when that container already
   holds the location; throws `COLLECTION_GONE` when the id no longer
   exists.
+- `importScripts(request)` — apply an import the page planned: install
+  new scripts into one scripts collection (made when asked for), and
+  update scripts already here. See [import.md](import.md#applying-it).
 - `moveScript(scriptId, target)` — move one already-installed script
   from its container collection into `{collectionId}` or the
   `{schemeDefault: true}` container. Same target shape as
@@ -1229,17 +1228,8 @@ content, no header) before the refresh that loads it — see
   Save. A blank name on a location collection goes back to the
   inferred one; a chosen name is held unique. `setCollectionLocalFiles`
   remains as a thin wrapper for the test surface.
-- `importCollection(scripts, displayName)` — create one collection from
-  a parsed backup. Nothing is fetched: the bodies came in the file. Each
-  row still goes through the same `buildScriptFromText` + `applyFiles`
-  pair the scan pipeline uses, so header validation, matching, content
-  hash, dependency prefetch, and the parse check all apply as usual.
-  Also mirrors each script's `enabled` state and seeds its `gmval:` rows.
 - `refreshCollection(id)` — full rescan + reload of one collection
-  (with the unchanged-file skip described above). Returns the stored
-  state untouched for an import collection: there is no upstream to
-  rescan, so Refresh All walks past it rather than marking every row
-  `missing`.
+  (with the unchanged-file skip described above).
 - `refreshAllCollections()` — runs `refreshCollection` for every registered
   collection, a bounded few at a time. Used by the collections page's "Refresh All"
   button and by the `?refresh` URL trigger.
@@ -1256,10 +1246,6 @@ content, no header) before the refresh that loads it — see
   the same way — every path also clears the script's session-storage
   Log rows.
 - `refreshScript(scriptId)` — one-file fast path used by the viewer.
-  Returns a **pinned** row (an imported script whose backup named no
-  location) unchanged rather than trying its stand-in URL — otherwise
-  the opportunistic check on every matching navigation would leave a
-  permanent `refreshError` on a script that is working fine.
   Goes through the same `fetchOrSkipInParallel` + `rebuildCollection`
   pipeline as the collection-level Refresh (so the two paths can't
   drift on skip rules, fsMtime handling, enabled preservation, error
@@ -1579,15 +1565,6 @@ Routes by what was typed (trimmed):
 
 Creating from a location loads it immediately — no need to click
 Refresh after adding.
-
-### The Import button
-
-An **Import** button sits beside Add. It opens a dialog explaining how
-to export from Tampermonkey, takes the resulting file, and creates one
-import collection from it — see
-[import.md](import.md#current-implementation).
-Per-script problems in a partly-readable backup are listed on the page
-after the dialog closes, since the import itself succeeded.
 
 ### The collection dialog
 

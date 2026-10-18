@@ -1892,48 +1892,39 @@ Left from its design:
     `emitInitialLoadLog` over a freshly added collection
     (`src/extension/script-store.ts`), and the boot log replay in
     `src/extension/script-updater.ts`. Both want `mapWithConcurrency`.
-- Tampermonkey import follow-ups (see
-  [docs/import.md](docs/import.md)):
-  - **Re-import merges instead of duplicating.** Every import creates a
-    fresh collection, so importing twice gives you the same scripts
-    twice. `StoredScript.importedFrom.uuid` already records the foreign
-    identity a merge would match on. The open question is what merge
-    means when the user has since toggled or edited a row here — the
-    duplicate is at least honest, which is why it ships that way.
-  - **Accept the zip export too.** Only the `.txt` (File → Export) is
-    read today, and the dialog steers users to it. Zip needs a
-    hand-written reader — the project has no runtime dependencies —
-    which is feasible with `DecompressionStream('deflate-raw')` but is
-    only worth it for users who click the wrong Export button.
-  - **Export a backup Tampermonkey can read.** Writing the same JSON
-    shape would make the migration two-way. Nobody has asked, and the
-    `@updateURL`-at-a-local-server route already covers keeping a
-    Tampermonkey install in step during development.
+- Import follow-ups (see [docs/import.md](docs/import.md)):
+  - **Restore collections from SourceMonkey's export.** New scripts all
+    go into one scripts collection. The manifest names each script's
+    collection, with its kind and location, so a restore could re-add
+    a directory or manifest collection by its location, and put the
+    rest back into scripts collections of their old names.
+  - **Replace the text of a copy that has a location.** Today only a
+    copy kept as text takes the file's text; any other gets only its
+    values and on/off state. Options: refresh it from its location, or
+    turn it into an imported copy.
+  - **Per-row actions.** The checkbox and the sections decide each
+    row; a row can't yet be given its own action.
+  - **Settings we don't model.** TM's and VM's per-script overrides
+    (match rules, run-at, noframes) are dropped without a word. The
+    preview could say which scripts had them.
+  - **Undo.** A "Remove this import" that also removes the values it
+    brought, as VM's import offers.
+  - **Very large backups.** The page sends every script's text, values
+    and dependency bodies to the worker in one message, which Chrome
+    caps at about 64 MiB. Sending them in batches would lift that.
+  - **The viewer's Location row** shows an imported script's
+    `imported:///…` location. Its import record (`importInfo:`) says
+    where it came from and where it loaded from before, which would
+    read better there.
 - `GM_setValue` rows outlive the script that owned them. `removeScript`
   and `removeCollection` drop the structural rows but never call
   `wipeValues` (only an sm-dev run's test collection is wiped on
   removal), so `gmval:<scriptId>:*` keys accumulate under ids nothing
-  refers to any more. Pre-existing, and harmless in the sense
-  that nothing reads them; it is storage that only grows. Newly easier
-  to notice now that importing a backup seeds those rows up front, so a
-  40-script import that gets removed leaves 40 scripts' worth behind.
-  The reason to think before wiring it up: a remove-then-re-add of the
-  same script currently keeps its settings, and only sometimes is that
-  the wrong answer.
-- An import can arrive less functional than the backup it came from.
-  Tampermonkey's export carries `@require` / `@resource` bodies; we drop
-  them and refetch from the declared URLs, so the result matches every
-  other collection. If a dependency URL has since died, `applyFiles`
-  flips the script to `invalid` — a script that worked in Tampermonkey
-  arrives broken, and nothing ties the failure back to the import.
-  Seeding from the backup would fix that at the cost of a second path
-  into the requires/resources store that the normal pipeline never uses.
-- `isSingleFileInput` answers true for a pinned `sourcemonkey://imported/…`
-  URL, and `containerKindForSingleFileInput` then calls it `file`. Inert
-  today: the only caller that could act on it is the preview page's
-  install offer, and a preview never has a pinned location. Worth an
-  explicit guard before anything else starts passing `install` from the
-  installed viewer.
+  refers to any more. Harmless in the sense that nothing reads them;
+  it is storage that only grows. Easier to run into now that an import
+  brings values with its scripts. The reason to think before wiring it
+  up: a remove-then-re-add of the same script currently keeps its
+  settings, and only sometimes is that the wrong answer.
 - a collection whose refresh drops its LAST script says nothing about it.
   The tombstone rows the collections page leaves for dropped scripts
   (`docs/storage.md`, "Tombstones") hang off the script table, and a

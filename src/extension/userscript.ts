@@ -120,8 +120,6 @@ import {
   formatBytes,
   formatScriptSize,
   fullSource,
-  PINNED_NO_REFRESH_TITLE,
-  pinnedLocationText,
   requireBasename,
   scriptBasename,
   scriptStatusView,
@@ -143,11 +141,11 @@ import {
   isSingleFileLocation,
   isFileUrl,
   isScratchUrl,
+  isStoredTextUrl,
   isHttpUrl,
-  isPinnedScriptUrl,
   LOCATION_SHAPES,
   normalizeCollectionInput,
-  storedScriptLocation,
+  scriptAbsolutePath,
   collectionCanonicalUrl,
   isSingleFileInput,
 } from './directories.js';
@@ -878,20 +876,9 @@ function render(script: StoredScript, snapshot?: StoreSnapshot): void {
   // the resolved URL for non-github HTTP collections. Skip the row
   // entirely if the collection row is gone — a bare relative path under
   // a "Location" label would be misleading.
-  //
-  // Imported rows are resolved differently, because a synthetic
-  // `import:<uuid>` collection path can't produce a location: a located
-  // one carries its own URL on the row, and a pinned one has none at
-  // all (see docs/import.md).
-  const pinnedLocation = isPinnedScriptUrl(script.fileUrl);
-  // A pinned script has nowhere to refresh from, and `refreshScript`
-  // returns it untouched — so the button would spin and change nothing.
-  // Disabled with the reason rather than hidden: a missing control on
-  // one script and not another is a puzzle, and the tooltip is the
-  // answer.
-  refreshBtn.disabled = pinnedLocation;
-  refreshBtn.title = pinnedLocation ? PINNED_NO_REFRESH_TITLE : '';
-  currentFilenamePath = collectionPath ? storedScriptLocation(collectionPath, script) : '';
+  currentFilenamePath = collectionPath
+    ? scriptAbsolutePath(collectionPath, script.relativePath)
+    : '';
 
   // Anchor href: for file:// collections we use the file:// URL (the
   // display string is the bare fs path, not navigable). For everything
@@ -905,13 +892,11 @@ function render(script: StoredScript, snapshot?: StoreSnapshot): void {
     logId: currentLogId,
     collection: collectionRow,
     collectionTrailing: collectionRow ? makeMoveControl(script, collectionRow) : undefined,
-    location: pinnedLocation
-      ? { text: pinnedLocationText(script.importedFrom?.manager) }
-      : currentFilenamePath
+    location: currentFilenamePath
       ? {
           text: displayLocation(currentFilenamePath),
           href: locationHref,
-          unopenable: isScratchUrl(script.fileUrl),
+          unopenable: isStoredTextUrl(script.fileUrl),
           trailing: filenameCopyBtn,
           localFile: collectionPath ? scriptFileTag(script, collectionPath) ?? undefined : undefined,
           // This href is a `.user.js` URL for nearly every installed

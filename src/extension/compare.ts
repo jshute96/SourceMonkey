@@ -40,7 +40,7 @@ import {
   isSingleFileLocation,
   LOCATION_SHAPES,
   normalizeCollectionInput,
-  storedScriptLocation,
+  scriptAbsolutePath,
 } from './directories.js';
 import {
   appendWithSlashBreaks,
@@ -208,7 +208,9 @@ async function loadInstalled(id: string, what: string): Promise<Side> {
     kind: 'installed',
     label: scriptLabel(script.header, script.relativePath),
     collection,
-    location: displayLocation(storedScriptLocation(collection?.path, script)),
+    location: displayLocation(
+      collection ? scriptAbsolutePath(collection.path, script.relativePath) : script.relativePath,
+    ),
     pageUrl: viewerUrl(script.id),
     header: script.header,
     icons: {

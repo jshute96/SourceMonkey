@@ -50,16 +50,10 @@ import {
   type StoredCollection,
 } from './script-store.js';
 import {
-  addCollection, importCollection, updateAllCollections, updateCollection, updateScript,
+  addCollection, updateAllCollections, updateCollection, updateScript,
   backfillCollectionDisplayNames, markFirstRunComplete, moveCollection, reconcileScriptMembership, removeCollection, syncAfterUserScriptsAllowed,
   removeScript, setAllScriptsEnabled, setCollectionEnabledExclusive, setScriptEnabledExclusive,
 } from './worker-client.js';
-import {
-  ImportFormatError,
-  importCollectionName,
-  parseTampermonkeyBackup,
-  TAMPERMONKEY_UTILITIES_URL,
-} from './tampermonkey-import.js';
 import { identityKey } from './script-identity.js';
 import { watchSoloModifier } from './solo-click.js';
 import {
@@ -73,14 +67,13 @@ import {
   effectiveDisplayName,
   makeCollectionTypeBubble,
   makeSchemeChip,
-  schemeChipLocation,
   collectionAnchorId,
-  isSyntheticCollection,
   EDIT_COLLECTION_HASH_PREFIX,
 } from './collection-display.js';
 import { COLLECTION_PREFIX, SCRIPT_PREFIX, touchesStructuralRows } from './structural-keys.js';
 import { openCollectionDialog, type CollectionDialogRequest } from './collection-dialog.js';
 import { openExportDialog } from './export-dialog.js';
+import { openImportDialog } from './import-dialog.js';
 import { closeDetachedMenu, closeMenu, moreMenuButton, openMenu } from './more-menu.js';
 import { onNamedTabFocus, openExtensionTab, openNamedTab } from './page-links.js';
 import { getValue } from '../userscript-header.js';
@@ -97,7 +90,6 @@ import {
   formatStorageUsage,
   formatScriptSize,
   formatScriptStatusLabel,
-  IMPORT_NO_REFRESH_TITLE,
   previewUrl,
   scriptBasename,
   scriptDisplayName,
@@ -140,7 +132,7 @@ import {
 } from './refresh-targets.js';
 import {
   canonicalCollectionInput,
-  isImportCollection,
+  isContainerCollection,
   isSmDevCollection,
   isValidLocationShape,
   LOCATION_SHAPES,
@@ -180,14 +172,6 @@ const addButton = addForm.querySelector('button[type="submit"]') as HTMLButtonEl
 const refreshAllBtn = document.getElementById('refresh-all') as HTMLButtonElement;
 const openOptionsBtn = document.getElementById('open-options') as HTMLButtonElement;
 const addErrorEl = document.getElementById('add-error') as HTMLParagraphElement;
-const openImportBtn = document.getElementById('open-import') as HTMLButtonElement;
-const importDialog = document.getElementById('import-dialog') as HTMLDialogElement;
-const importTmLink = document.getElementById('import-tm-link') as HTMLAnchorElement;
-const importFileInput = document.getElementById('import-file') as HTMLInputElement;
-const importErrorEl = document.getElementById('import-error') as HTMLParagraphElement;
-const importWarningsEl = document.getElementById('import-warnings') as HTMLDivElement;
-const importCancelBtn = document.getElementById('import-cancel') as HTMLButtonElement;
-const importRunBtn = document.getElementById('import-run') as HTMLButtonElement;
 
 addForm.addEventListener('submit', (event) => {
   event.preventDefault();
@@ -203,31 +187,6 @@ const REFRESH_COLLECTION_LABELS = {
 };
 
 setGlyphButton(refreshAllBtn, '#sm-refresh', 'Refresh all collections', { text: 'Refresh All' });
-// Set here rather than in the markup so the one place that knows
-// Tampermonkey's URL is the module about Tampermonkey.
-importTmLink.href = TAMPERMONKEY_UTILITIES_URL;
-
-openImportBtn.addEventListener('click', () => {
-  resetImportDialog();
-  importDialog.showModal();
-});
-importCancelBtn.addEventListener('click', () => importDialog.close());
-// Escape closes a <dialog> regardless of which of its controls are
-// disabled, and the in-flight import would keep running — leaving the
-// user free to reopen and start a second one over the same file, which
-// lands as two collections. Refuse the dismissal while busy instead.
-importDialog.addEventListener('cancel', (event) => {
-  if (importBusy) event.preventDefault();
-});
-// A file chosen is the only thing that makes Import meaningful, and a
-// re-pick after a rejected file should clear the complaint about the
-// previous one.
-importFileInput.addEventListener('change', () => {
-  showImportError(null);
-  importRunBtn.disabled = !importFileInput.files?.length;
-});
-importRunBtn.addEventListener('click', () => void onImport());
-
 refreshAllBtn.addEventListener('click', () => void onRefreshAll());
 
 // The page's ⋯ menu, right of Refresh All: actions on every collection.
@@ -235,8 +194,17 @@ const pageMenuBtn = moreMenuButton('More actions');
 pageMenuBtn.id = 'page-menu';
 pageMenuBtn.title = 'More actions';
 pageMenuBtn.addEventListener('click', () => openMenu(pageMenuBtn, [
+  { label: 'Import scripts\u2026', run: () => void runImport() },
   { label: 'Export all collections\u2026', run: () => openExportDialog({ scope: { all: true } }) },
 ]));
+
+// The import dialog, then the collection its new scripts went into.
+async function runImport(collectionId?: string): Promise<void> {
+  const landed = await openImportDialog({ collectionId });
+  if (!landed) return;
+  await repaintPage();
+  jumpToCollection(landed);
+}
 refreshAllBtn.after(pageMenuBtn);
 // The menu is fixed in place, so it would stay put while its button
 // scrolls or the layout moves it.
@@ -249,103 +217,6 @@ window.addEventListener('resize', closeMenu);
 openOptionsBtn.addEventListener('click', () => {
   void openNamedTab('options');
 });
-
-// Read the chosen backup and turn it into a collection.
-//
-// Everything the user can get wrong here produces a message in the
-// dialog and leaves it open with their file still selected — a closed
-// dialog and an unchanged page would leave them guessing whether
-// anything happened.
-async function onImport(): Promise<void> {
-  const file = importFileInput.files?.[0];
-  if (!file) return;
-
-  setImportBusy(true);
-  try {
-    // One catch around the whole thing, not just the parse. Reading the
-    // file can fail too (it may have moved or been deleted since the
-    // picker recorded it), and so can the store write. Any of those
-    // escaping would leave the dialog open with a re-enabled button and
-    // nothing said — the one outcome worse than an error message.
-    let result;
-    let collection;
-    try {
-      result = parseTampermonkeyBackup(await file.text());
-      collection = await importCollection(result.scripts, importCollectionName(new Date()));
-    } catch (err) {
-      // A format complaint already says what the user should do about
-      // it. Anything else got here from the file read or the store, so
-      // it needs the prefix to make clear the backup was not the
-      // problem.
-      showImportError(
-        err instanceof ImportFormatError
-          ? err.message
-          : `This backup could not be imported: ${describeError(err)}`,
-      );
-      return;
-    }
-    // Same sequence as the add flow: the write is the source of truth,
-    // the repaint builds the section from it, then we land on it.
-    await repaintPage();
-    importDialog.close();
-    jumpToCollection(collection.id);
-
-    // Warnings survive the dialog closing, because the import DID
-    // happen — a scrolled-to new section that is quietly short a few
-    // scripts is worse than being told which ones didn't make it.
-    showImportWarnings(result.warnings);
-  } finally {
-    setImportBusy(false);
-  }
-}
-
-function resetImportDialog(): void {
-  importFileInput.value = '';
-  importRunBtn.disabled = true;
-  showImportError(null);
-  showImportWarnings([]);
-}
-
-function showImportError(message: string | null): void {
-  importErrorEl.textContent = message ?? '';
-  importErrorEl.hidden = message === null;
-}
-
-// Rendered onto the page, not into the dialog — the import succeeded,
-// so these have to still be readable once the dialog is gone and the
-// user is looking at the section that appeared.
-function showImportWarnings(warnings: readonly string[]): void {
-  importWarningsEl.replaceChildren();
-  importWarningsEl.hidden = warnings.length === 0;
-  if (warnings.length === 0) return;
-
-  const intro = document.createElement('div');
-  intro.textContent =
-    warnings.length === 1
-      ? 'One script in this backup could not be imported:'
-      : `${warnings.length} scripts in this backup could not be imported:`;
-  importWarningsEl.appendChild(intro);
-
-  const list = document.createElement('ul');
-  for (const w of warnings) {
-    const li = document.createElement('li');
-    li.textContent = w;
-    list.appendChild(li);
-  }
-  importWarningsEl.appendChild(list);
-}
-
-// Whether an import is in flight. Read by the dialog's `cancel`
-// handler, which has to refuse an Escape that would otherwise leave the
-// work running behind a closed dialog.
-let importBusy = false;
-
-function setImportBusy(busy: boolean): void {
-  importBusy = busy;
-  importRunBtn.disabled = busy || !importFileInput.files?.length;
-  importCancelBtn.disabled = busy;
-  importFileInput.disabled = busy;
-}
 
 // Resolved once the first render has finished painting, which is what
 // repaints wait for. `render()` empties the container and refills it
@@ -758,7 +629,7 @@ async function repaintScriptRows(changed: ReadonlySet<string>, timer: PhaseTimer
   timer.mark('read collections');
   if (collections.size !== collectionIds.length) return null;
   if (placed.some(({ script }) => shownNames.get(script.id)
-    !== nameCellText(script, isSyntheticCollection(collections.get(script.collectionId)!.path)))) {
+    !== nameCellText(script, isContainerCollection(collections.get(script.collectionId)!.path)))) {
     return null;
   }
   // As the full repaint does, so a rebuilt Name cell draws its icon
@@ -1049,7 +920,7 @@ async function syncScriptRowsFromStorage(
   scripts: readonly ScriptMeta[],
 ): Promise<void> {
   const localFiles = localFileScope(collection);
-  scripts = sortedByShownName(scripts, isSyntheticCollection(collection.path));
+  scripts = sortedByShownName(scripts, isContainerCollection(collection.path));
   const block = section.querySelector<HTMLElement>(':scope > .script-block');
   const tbody = block?.querySelector('tbody');
 
@@ -1127,7 +998,7 @@ function syncScriptRow(
   // The Name cell's settle promise when it was rebuilt (see
   // `fillNameCell`), null when it was left alone.
 ): Promise<number> | null {
-  const inContainer = isSyntheticCollection(collectionPath);
+  const inContainer = isContainerCollection(collectionPath);
   const { errorMessage } = applyScriptRowDatasets(row, script);
 
   // Like the Name cell below, the Status cell is only rebuilt when
@@ -1646,10 +1517,9 @@ async function renderCollectionSection(collection: StoredCollection): Promise<HT
   nameEl.dataset.displayName = effectiveDisplayName(collection);
   // Tooltip surfaces the raw stored path so the user can still see the
   // canonical URL / fs path behind a shortened display name. Container
-  // and import collections have a synthetic identifier as their path,
-  // which would leak `container:file` / `import:<uuid>` — skip the
-  // tooltip for those.
-  if (!isSyntheticCollection(collection.path)) nameEl.title = collection.path;
+  // collections have a synthetic identifier as their path, which would
+  // leak `container:file` etc. — skip the tooltip in that case.
+  if (!isContainerCollection(collection.path)) nameEl.title = collection.path;
   heading.appendChild(nameEl);
   header.appendChild(heading);
 
@@ -1692,18 +1562,7 @@ async function renderCollectionSection(collection: StoredCollection): Promise<HT
   const refreshBtn = document.createElement('button');
   refreshBtn.className = 'refresh-collection';
   setGlyphButton(refreshBtn, '#sm-refresh', REFRESH_COLLECTION_LABELS.idle);
-  if (isImportCollection(collection.path)) {
-    // `refreshCollection` returns an import collection untouched (no
-    // scan, no upstream), so the button would spin and change nothing.
-    // Disabled with the reason rather than hidden, same as the viewer's
-    // Refresh on a pinned row. Located rows still refresh one at a time
-    // from the viewer and on navigation.
-    refreshBtn.disabled = true;
-    refreshBtn.title = IMPORT_NO_REFRESH_TITLE;
-    refreshBtn.setAttribute('aria-label', IMPORT_NO_REFRESH_TITLE);
-  } else {
-    refreshBtn.addEventListener('click', () => void onRefreshCollection(collection.id, refreshBtn));
-  }
+  refreshBtn.addEventListener('click', () => void onRefreshCollection(collection.id, refreshBtn));
   buttons.appendChild(refreshBtn);
 
   // Actions on this collection. None for an sm-dev test collection,
@@ -1713,6 +1572,9 @@ async function renderCollectionSection(collection: StoredCollection): Promise<HT
     menuBtn.classList.add('collection-menu');
     menuBtn.title = 'More actions for this collection';
     menuBtn.addEventListener('click', () => openMenu(menuBtn, [
+      ...(isContainerCollection(collection.path)
+        ? [{ label: 'Import scripts into this collection\u2026', run: () => void runImport(collection.id) }]
+        : []),
       {
         label: 'Export this collection\u2026',
         run: () => openExportDialog({ scope: { collectionId: collection.id }, collectionName: effectiveDisplayName(collection) }),
@@ -1771,7 +1633,7 @@ async function renderScriptBlock(
 
 async function renderScriptTable(collection: StoredCollection, collectionOn: boolean): Promise<HTMLElement> {
   const data = await getCollectionWithScriptMeta(collection.id);
-  const inContainer = isSyntheticCollection(collection.path);
+  const inContainer = isContainerCollection(collection.path);
   const scripts = sortedByShownName(data?.scripts ?? [], inContainer);
   const localFiles = localFileScope(collection);
 
@@ -1851,7 +1713,7 @@ function renderScriptRow(
   // gets the cell, empty or not, or the columns stop lining up.
   withActions: boolean,
 ): { row: HTMLTableRowElement; iconCount: Promise<number> } {
-  const inContainer = isSyntheticCollection(collectionPath);
+  const inContainer = isContainerCollection(collectionPath);
   const scriptOn = isScriptEnabled(script);
 
   const tr = document.createElement('tr');
@@ -1886,7 +1748,7 @@ function renderScriptRow(
   if (inContainer) {
     const schemeCell = document.createElement('td');
     schemeCell.className = 'scheme-cell';
-    schemeCell.appendChild(makeSchemeChip(schemeChipLocation(script, collectionPath)));
+    schemeCell.appendChild(makeSchemeChip(script.relativePath));
     tr.appendChild(schemeCell);
   }
 
@@ -1981,7 +1843,7 @@ function fillNameCell(
   // Resolves with how many icons the slot holds once its favicons have
   // loaded — see `renderSiteIconInto`.
 ): Promise<number> {
-  const inContainer = isSyntheticCollection(collectionPath);
+  const inContainer = isContainerCollection(collectionPath);
   nameCell.textContent = '';
   // Slot for the favicons: a fixed-width container so the name
   // text always starts at the same x-position. renderSiteIconInto
@@ -2801,7 +2663,7 @@ function renderTombstoneRow(
   if (inContainer) {
     const schemeCell = document.createElement('td');
     schemeCell.className = 'scheme-cell';
-    schemeCell.appendChild(makeSchemeChip(schemeChipLocation(script, localFiles.collectionPath ?? '')));
+    schemeCell.appendChild(makeSchemeChip(script.relativePath));
     tr.appendChild(schemeCell);
   }
 

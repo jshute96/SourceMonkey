@@ -2,7 +2,7 @@
 
 The backup and export formats userscript managers write, field by
 field: what SourceMonkey's import reads ([import.md](import.md)) and
-what its export will write.
+what its export writes.
 
 - Covers Tampermonkey (TM) 5.5.0 and Violentmonkey (VM) 2.49.0.
 - Neither publishes its format. TM's FAQ names the export methods only
@@ -547,9 +547,9 @@ TM's own layout (`<name>.user.js-<md5>-<basename>` plus a
 | Dependency bodies | Optional | Optional | Never | Optional, as local-override files |
 | Icon file | No | No | No | Optional, with the dependencies |
 | Global settings | Optional | Optional | Always | No |
-| Import matches by | uuid, else namespace + name | Same | namespace + name | Planned ([import.md](import.md)) |
-| Import on a match | Replaces | Replaces | Replaces in place | Planned: the user chooses in a preview |
-| Read by | TM | TM, VM | VM | TM, VM (SM planned) |
+| Import matches by | uuid, else namespace + name | Same | namespace + name | id, then location, then namespace + name ([import.md](import.md#matching-whats-here)) |
+| Import on a match | Replaces | Replaces | Replaces in place | The user chooses in a preview |
+| Read by | TM, SM | TM, VM, SM | VM, SM | TM, VM, SM |
 
 ## Possible enhancements
 

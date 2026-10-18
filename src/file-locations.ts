@@ -66,13 +66,12 @@ export function newContainerPath(): string {
 // A collection that is a local folder scanned for `*.user.js` files —
 // the kind whose listing is its source of truth, so a file it no
 // longer shows is dropped (see `rebuildCollection`). Everything else
-// (http(s) and GitHub, a manifest, a single-file container, an import)
-// names its scripts some other way.
+// (http(s) and GitHub, a manifest, a single-file container) names its
+// scripts some other way.
 export function isLocalDirectoryCollection(collectionPath: string): boolean {
   return !isHttpUrl(collectionPath)
     && !isManifestCollection(collectionPath)
-    && !isContainerCollection(collectionPath)
-    && !isImportCollection(collectionPath);
+    && !isContainerCollection(collectionPath);
 }
 
 export function isContainerCollection(input: string): boolean {
@@ -90,59 +89,13 @@ export function containerKind(input: string): ContainerKind | null {
 }
 
 // The three shapes a collection row can take. Derived from the stored
-// path rather than persisted, so a row can't disagree with itself. An
-// import collection is `scripts`-shaped: its rows were named one at a
-// time by the backup, and it has no location of its own.
+// path rather than persisted, so a row can't disagree with itself.
 export type CollectionKind = 'scripts' | 'directory' | 'manifest';
 
 export function collectionKind(path: string): CollectionKind {
-  if (isContainerCollection(path) || isImportCollection(path)) return 'scripts';
+  if (isContainerCollection(path)) return 'scripts';
   if (isManifestCollection(path)) return 'manifest';
   return 'directory';
-}
-
-// Import collections hold scripts handed to us in a backup file rather
-// than fetched from anywhere. Their stored `path` is `import:<uuid>` —
-// a fresh id per import run, so two imports never collide on the
-// duplicate-path check and each stands as its own section. Like
-// containers they have no scan step; unlike containers their bodies
-// have no collection-level upstream, so the collection never refreshes.
-// See docs/import.md.
-const IMPORT_PATH_PREFIX = 'import:';
-
-export function importCollectionPath(importId: string): string {
-  return IMPORT_PATH_PREFIX + importId;
-}
-
-export function isImportCollection(input: string): boolean {
-  return input.startsWith(IMPORT_PATH_PREFIX) && input.length > IMPORT_PATH_PREFIX.length;
-}
-
-// Stand-in `fileUrl` for an imported script with no upstream — one
-// that was written or edited inside the other manager and exists
-// nowhere else.
-//
-// Why a synthetic URL rather than an empty string: `fileUrl` is the
-// base every `@require` / `@resource` / `@icon` ref resolves against,
-// and `new URL(ref, '')` throws even when `ref` is absolute — which
-// would take out the ordinary absolute-URL requires these scripts do
-// have. A parseable base keeps absolute refs working and makes a
-// relative one fail as `unsupported-scheme`, which is the truth: there
-// is no directory to resolve it against.
-//
-// The `imported` host keeps these clear of the `sourcemonkey://
-// SourceMonkey/…` URLs the injector emits for devtools (see
-// `script-source-url.ts`). Nothing fetches this URL; `isHttpUrl` and
-// `isFileUrl` are both false for it, so local-file overrides and
-// update probes skip such scripts without needing to know why.
-const PINNED_URL_PREFIX = 'sourcemonkey://imported/';
-
-export function pinnedScriptUrl(scriptId: string, filename: string): string {
-  return `${PINNED_URL_PREFIX}${encodeURIComponent(scriptId)}/${encodeURIComponent(filename)}`;
-}
-
-export function isPinnedScriptUrl(fileUrl: string): boolean {
-  return fileUrl.startsWith(PINNED_URL_PREFIX);
 }
 
 // Pathname of an http(s) or file:// URL, sans query and fragment.

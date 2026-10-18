@@ -27,7 +27,6 @@ import {
   isContainerCollection,
   isFileUrl,
   isHttpUrl,
-  isImportCollection,
   pathToFileUrl,
   isManifestCollection,
   type ContainerKind,
@@ -36,9 +35,9 @@ import { githubRawToBlobUrl } from '../github-urls.js';
 import { isSmDevCollection, scriptSchemeKind } from './location-kinds.js';
 import { MANIFEST_FILENAME } from '../collection-scan.js';
 import { decodeForDisplay } from '../script-display.js';
-import type { ScriptMeta, StoredCollection } from './script-store.js';
+import type { StoredCollection } from './script-store.js';
 
-export type CollectionTypeKey = 'file' | 'http' | 'github' | 'imported';
+export type CollectionTypeKey = 'file' | 'http' | 'github';
 
 // Why a script's enable checkbox is greyed out when its parent is off.
 // Stands in for `ENABLE_TITLE` on every surface that draws one, so the
@@ -60,12 +59,7 @@ const RAW_GITHUB_HOST_RE = /^https?:\/\/raw\.githubusercontent\.com\//i;
 // is the right answer for the one caller that asks about containers
 // (`isLocalCollection` in refresh-targets: a container's local rows are
 // refreshed one by one). Its bubble never comes from here.
-//
-// An import collection's path is a synthetic `import:<uuid>` that
-// matches none of the scheme tests either, and its type is about where
-// the scripts CAME from, not where they live now — checked first.
 export function inferCollectionType(path: string): CollectionTypeKey {
-  if (isImportCollection(path)) return 'imported';
   if (GITHUB_HOST_RE.test(path) || RAW_GITHUB_HOST_RE.test(path)) return 'github';
   if (isHttpUrl(path)) return 'http';
   return 'file';
@@ -143,42 +137,12 @@ export function collectionNameInUse(
   );
 }
 
-// Heading for an import collection whose stored `displayName` is
-// missing. The real one names the manager and the import date and is
-// written by `importCollection`.
-const IMPORTED_DISPLAY_NAME = 'Imported scripts';
-
-// What the type bubble says when there is no URL behind it. Container
-// and import collections both land here, for different reasons, and
-// the tooltip has to say which — "no URL to open" alone reads like a
-// failure rather than a property of the collection.
-const NO_URL_TITLES: Partial<Record<CollectionTypeKey, string>> = {
-  imported: 'Scripts imported from a backup file, with no URL to open',
-};
-const NO_URL_TITLE_DEFAULT = 'Collection of individual scripts (no common parent directory)';
-
-// True for the two collection kinds whose stored `path` is an internal
-// identifier rather than a location — containers (`container:…`) and
-// imports (`import:<uuid>`).
-//
-// One predicate rather than two because the same fact drives both
-// consequences, and splitting it invites the two halves to drift:
-//
-//   - There is no URL or path behind the collection, so nothing may
-//     render the raw `path` to the user or link to it.
-//   - There is no scan step, so a script inside can be removed on its
-//     own — nothing will bring it back. (Every other kind re-lists its
-//     scripts on refresh, which would undo a per-script removal.)
-export function isSyntheticCollection(path: string): boolean {
-  return isContainerCollection(path) || isImportCollection(path);
-}
-
 // True for manifest collections of any scheme. Thin wrapper so callers
-// don't have to import `directories` just for this. Container and
-// import collections can never be manifests — their `path` is a
-// synthetic identifier.
+// don't have to import `directories` just for this. Container
+// collections can never be manifests — their `path` is the synthetic
+// `container:…` identifier.
 export function collectionHasManifest(path: string): boolean {
-  if (isSyntheticCollection(path)) return false;
+  if (isContainerCollection(path)) return false;
   return isManifestCollection(path);
 }
 
@@ -189,21 +153,15 @@ export function collectionHasManifest(path: string): boolean {
 export function collectionBubbleKey(path: string): string {
   if (isSmDevCollection(path)) return SM_DEV_BUBBLE_KEY;
   if (isContainerCollection(path)) return SCRIPTS_BUBBLE_KEY;
-  // An import is neither a directory nor a manifest: no suffix.
-  if (isImportCollection(path)) return 'imported';
   const t = inferCollectionType(path);
   return collectionHasManifest(path) ? `${t}-manifest` : `${t}-dir`;
 }
 
 // The small per-row scheme chip a script wears inside a `scripts`
-// collection — `file` / `http` / `github` / `scratch` — since the collection's own
+// collection — `file` / `http` / `github` / `scratch` / `imported` — since the collection's own
 // bubble can't say where each of its scripts loads from. Classified
 // from the script's own location (`relativePath` in a container is the
 // full URL/path the user installed).
-//
-// A pinned imported script — one with no upstream (see
-// docs/import.md) — gets its own chip: it loads from
-// nowhere, so none of the three schemes is true of it.
 export function makeSchemeChip(location: string): HTMLElement {
   const scheme = scriptSchemeKind(location);
   const span = document.createElement('span');
@@ -214,21 +172,9 @@ export function makeSchemeChip(location: string): HTMLElement {
     http: 'Loaded from the web',
     github: 'Loaded from GitHub',
     scratch: 'Stored only in SourceMonkey',
-    imported: 'Imported from a backup, with no external location',
+    imported: 'Imported from a backup file, and stored only in SourceMonkey',
   }[scheme];
   return span;
-}
-
-// What the scheme chip classifies for a script inside a synthetic
-// collection. In a container `relativePath` IS the location the user
-// installed; in an import collection it is only a filename, and the
-// location (the URL the backup named, or the pinned stand-in) lives on
-// `fileUrl`.
-export function schemeChipLocation(
-  script: Pick<ScriptMeta, 'relativePath' | 'fileUrl'>,
-  collectionPath: string,
-): string {
-  return isImportCollection(collectionPath) ? script.fileUrl : script.relativePath;
 }
 
 // Openable URL for a collection — the link target the bubble uses. For
@@ -242,7 +188,7 @@ export function schemeChipLocation(
 // Container collections have no underlying URL — return null and let
 // callers render the bubble as a non-link.
 export function collectionClickUrl(path: string): string | null {
-  if (isContainerCollection(path) || isImportCollection(path)) return null;
+  if (isContainerCollection(path)) return null;
   if (isHttpUrl(path)) {
     return githubRawToBlobUrl(path) ?? path;
   }
@@ -267,12 +213,6 @@ export function collectionClickUrl(path: string): string | null {
 export function inferDisplayName(path: string): string {
   const ck = containerKind(path);
   if (ck) return CONTAINER_DISPLAY_NAMES[ck];
-  // Import collections are always written with an explicit
-  // `displayName` naming the manager and the date, so this is only the
-  // fallback for a row that somehow lost it. The synthetic path holds
-  // nothing worth showing, so say what the collection is instead of
-  // rendering `import:<uuid>`.
-  if (isImportCollection(path)) return IMPORTED_DISPLAY_NAME;
   // A user-created container has no location to infer from; its name
   // is whatever the user typed, stored in `displayName`.
   if (isContainerCollection(path)) return '';
@@ -367,14 +307,15 @@ export function makeCollectionTypeBubble(path: string): HTMLElement {
   const href = collectionClickUrl(path);
   if (href === null) {
     // No URL to link to, so the tooltip says what this collection IS
-    // rather than naming the internal "container" / "import" kind — the
-    // user never sees those words — and why there is nothing to open.
+    // rather than naming the internal "container" kind — the user never
+    // sees that word — and why there is nothing to open: its scripts
+    // were installed one at a time and share no parent.
     const span = document.createElement('span');
     span.className = `collection-type-bubble bubble-${key}`;
     span.textContent = key;
     span.title = key === SM_DEV_BUBBLE_KEY
       ? 'Scripts an sm-dev run pushed, which only that run changes'
-      : NO_URL_TITLES[inferCollectionType(path)] ?? NO_URL_TITLE_DEFAULT;
+      : 'Collection of individual scripts (no common parent directory)';
     return span;
   }
   const a = document.createElement('a');

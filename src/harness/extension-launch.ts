@@ -64,6 +64,12 @@ export interface ExtensionLaunchOptions {
    * default. Tests of pages restored from it ask for it.
    */
   backForwardCache?: boolean;
+  /**
+   * Optional permissions to grant the extension up front, as if allowed
+   * when it asked: a headless browser can't show the prompt. Tests
+   * exporting from Tampermonkey grant it `downloads`.
+   */
+  grantPermissions?: string[];
 }
 
 export interface LaunchedExtensionBrowser {
@@ -97,8 +103,8 @@ export async function launchExtensionBrowser(options: ExtensionLaunchOptions = {
     try { rmSync(profile, { recursive: true, force: true }); } catch { /* Chrome may hold a file briefly */ }
   };
   try {
-    if (manager === 'sourcemonkey') await prepareProfile(profile, options.downloadsDir);
-    else writePreferences(profile, fetchedId(dir, manager), options.downloadsDir);
+    if (manager === 'sourcemonkey') await prepareProfile(profile, options.downloadsDir, options.grantPermissions);
+    else writePreferences(profile, fetchedId(dir, manager), options.downloadsDir, options.grantPermissions);
     // Port 0 has Chrome pick a free port and write it to the profile.
     // A port picked here could be taken before Chrome binds it, and the
     // run would connect to whatever took it. A port given is checked
@@ -254,8 +260,8 @@ interface WarmUpApi {
  * for a browser started with `extensionArgs`. Also for a test's own
  * browser, launched outside Playwright.
  */
-export async function prepareProfile(profile: string, downloadsDir?: string): Promise<void> {
-  writePreferences(profile, await sourceMonkeyExtensionId(), downloadsDir);
+export async function prepareProfile(profile: string, downloadsDir?: string, grantPermissions?: string[]): Promise<void> {
+  writePreferences(profile, await sourceMonkeyExtensionId(), downloadsDir, grantPermissions);
   await primeFirstRun(profile);
 }
 
@@ -269,11 +275,20 @@ export function extensionArgs(dir = EXTENSION_DIR): string[] {
 // `downloadsDir`, also the keys Chrome writes when the download
 // location is changed in its settings: `directory_upgrade` marks it
 // user-chosen, so Chrome doesn't fall back to its platform default.
-function writePreferences(profile: string, extensionId: string, downloadsDir?: string): void {
+// With `grantPermissions`, the keys Chrome writes when an optional
+// permission is allowed: granted, and active.
+function writePreferences(profile: string, extensionId: string, downloadsDir?: string, grantPermissions?: string[]): void {
   const dir = path.join(profile, 'Default');
   mkdirSync(dir, { recursive: true });
+  const granted = grantPermissions?.length
+    ? { api: grantPermissions, explicit_host: [], manifest_permissions: [], scriptable_host: [] }
+    : undefined;
+  const settings = {
+    user_scripts_enabled: true,
+    ...(granted ? { granted_permissions: granted, runtime_granted_permissions: granted, active_permissions: granted } : {}),
+  };
   const prefs = {
-    extensions: { settings: { [extensionId]: { user_scripts_enabled: true } }, pinned_extensions: [extensionId] },
+    extensions: { settings: { [extensionId]: settings }, pinned_extensions: [extensionId] },
     ...(downloadsDir ? { download: { default_directory: downloadsDir, directory_upgrade: true, prompt_for_download: false } } : {}),
   };
   writeFileSync(path.join(dir, 'Preferences'), JSON.stringify(prefs));
