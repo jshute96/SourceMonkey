@@ -162,6 +162,21 @@ dialog.sm-dialog::backdrop { background: rgba(20, 24, 32, 0.35); }
 dialog.sm-dialog.copy-dialog { width: 680px; }
 /* Same reason as the copy dialog: every row holds a path. */
 dialog.sm-dialog.delete-dialog { width: 680px; }
+/* Its result line can hold the saved file's whole path. */
+dialog.sm-dialog.export-dialog { width: 560px; }
+.export-dialog .dlg-intro { grid-column: 1 / -1; margin: 0; }
+/* Checkbox, then label, with the hint under the label rather than under
+   the checkbox. The label is `display: contents` so its checkbox and
+   text sit in the grid's columns and a click on the text still ticks. */
+.export-dialog .dlg-option { display: grid; grid-template-columns: auto 1fr; column-gap: 6px; align-items: baseline; }
+.export-dialog .dlg-option .dlg-check { display: contents; }
+.export-dialog .dlg-option .dlg-hint { grid-column: 2; }
+.export-dialog .dlg-includes { display: flex; flex-direction: column; gap: 8px; padding-top: 5px; }
+.export-dialog .dlg-result { grid-column: 1 / -1; overflow-wrap: anywhere; }
+.export-dialog .dlg-result[hidden] { display: none; }
+.export-dialog .dlg-result p { margin: 0 0 4px; }
+.export-dialog .dlg-saved-path { overflow-wrap: anywhere; }
+.export-dialog .dlg-saved .copy-btn { display: inline-flex; vertical-align: middle; width: 20px; height: 20px; margin-left: 0.4em; }
 .sm-dialog .dlg-title {
   font-size: 1em;
   font-weight: 600;
@@ -792,3 +807,19 @@ a.site-icon-inner:hover { color: #444; }
      2px of the square below the baseline centres the two. */
   vertical-align: -2px;
 }
+
+/* The menu a ⋯ button opens (src/extension/more-menu.ts), on the
+   toolbar popup and the collections page. Each page styles its own
+   `button.more-menu`. */
+.menu {
+  position: fixed; z-index: 10; min-width: 220px;
+  background: #fff; border: 1px solid #c9c2b8; border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16); padding: 4px 0;
+}
+.menu button {
+  display: block; width: 100%; height: auto; text-align: left;
+  border: none; border-radius: 0; background: transparent; padding: 5px 12px; font-size: 12.5px;
+}
+.menu button:hover:not(:disabled), .menu button:focus-visible { background: #f3efe9; }
+.menu button:disabled { color: #a0a0a0; cursor: default; }
+.menu hr { border: none; border-top: 1px solid var(--rule, #e3ddd4); margin: 4px 0; }

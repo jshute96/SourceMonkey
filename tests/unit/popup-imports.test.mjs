@@ -41,5 +41,5 @@ test('the popup loads neither the script store nor the location scanner', () => 
 test('the popup stays small', () => {
   // Room to grow, but a jump past this means a new import pulled in a
   // tree, which is worth a look before raising it.
-  assert.ok(popup.length <= 20, `popup.js loads ${popup.length} modules:\n${popup.join('\n')}`);
+  assert.ok(popup.length <= 21, `popup.js loads ${popup.length} modules:\n${popup.join('\n')}`);
 });

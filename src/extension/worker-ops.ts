@@ -24,6 +24,7 @@ import {
 import type { ProbePolicy } from '../version-probe.js';
 import { forgetDeniedHost, revokeConnectHost } from './connect-grants.js';
 import { clearScriptLog } from './script-log.js';
+import { peekValues } from './value-store.js';
 import { DEBUG_LOGGING_KEY } from '../debug-log.js';
 import { GITHUB_AUTH_TOKEN_KEY, setGithubAuthToken } from '../github-auth.js';
 import { LOCAL_ROOTS_KEY, readRootsSetting, setConfiguredLocalRoots } from '../local-file-overrides.js';
@@ -127,6 +128,15 @@ const WORKER_OPS = {
     const result = await installScript(rawLocation, target);
     probeInstalledScript(result);
     return result;
+  },
+
+  // ---------- Reads ----------
+  // GM values come from the worker's value store, which can hold writes
+  // not yet saved to storage, so a page reads them here rather than
+  // from storage (the backup export).
+  async readScriptValues(scriptIds: string[]): Promise<Record<string, Record<string, unknown>>> {
+    const read = await Promise.all(scriptIds.map((id) => peekValues(id)));
+    return Object.fromEntries(scriptIds.map((id, i) => [id, read[i]]));
   },
 
   // ---------- Local copy and site icons ----------

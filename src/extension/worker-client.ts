@@ -107,6 +107,9 @@ export const updateAllCollections = op('updateAllCollections');
 export const addCollection = op('addCollection');
 export const installScript = op('installScript');
 
+// ---------- Reads ----------
+export const readScriptValues = op('readScriptValues');
+
 // ---------- Site icons (the debug icons page) ----------
 export const refreshCachedIcon = op('refreshCachedIcon');
 export const deleteCachedIcon = op('deleteCachedIcon');

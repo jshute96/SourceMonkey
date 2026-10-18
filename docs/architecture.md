@@ -446,6 +446,13 @@ takes effect:
 - [http-collections.md](http-collections.md) — `http(s)://` URL formats,
   scheme-agnostic manifest schema (works for local paths and
   file:// URLs too), conditional-GET update detection.
+- [export.md](export.md) — exporting collections to a zip file: the ⋯
+  menus, the dialog, the zip writer.
+- [export-format.md](export-format.md) — the backup formats
+  Tampermonkey, Violentmonkey and SourceMonkey write, field by field,
+  compared.
+- [import.md](import.md) — design in progress for importing scripts
+  from a backup.
 - [updates.md](updates.md) — how a script updates from its install
   source, `@updateURL` / `@downloadURL` probing, `@version` ordering,
   the OUTDATED status.
@@ -524,7 +531,8 @@ takes effect:
     folder is removed however the build ends.
 - Under `--watch`, builds only `dist/`, so `lib/` stays as it was.
 - Copies `src/icons/`, `src/manifest.json`, every top-level
-  `src/*.html`, and `node_modules/prismjs/*` into `dist/`, and the
+  `src/*.html`, `node_modules/prismjs/*` and fflate's browser build
+  (`dist/vendor/fflate.js`) into `dist/`, and the
   manifest into `lib/` too (the harness reads the extension key from it).
 - Inlines `src/glyph-sprite.svg` into each page as it is copied, at the
   page's `#include glyph-sprite` marker comment (see below).

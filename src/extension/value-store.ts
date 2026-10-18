@@ -116,6 +116,16 @@ export function valuesChangedSince(scriptId: string, seq: number): boolean {
   return (scripts.get(scriptId)?.lastChange ?? 0) > seq;
 }
 
+// A script's values, without keeping a map loaded for it: the loaded
+// map when there is one, which holds writes not yet saved, else a read
+// of storage. For reading many scripts at once (the backup export).
+export async function peekValues(scriptId: string): Promise<Record<string, unknown>> {
+  const st = scripts.get(scriptId);
+  if (st?.values) return Object.fromEntries(st.values);
+  if (st?.loading) return Object.fromEntries(await st.loading);
+  return loadAllValues(scriptId);
+}
+
 // How many values a script has, without keeping a map loaded for it.
 export async function countValues(scriptId: string): Promise<number> {
   const st = scripts.get(scriptId);

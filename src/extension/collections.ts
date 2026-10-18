@@ -72,6 +72,8 @@ import {
 } from './collection-display.js';
 import { COLLECTION_PREFIX, SCRIPT_PREFIX, touchesStructuralRows } from './structural-keys.js';
 import { openCollectionDialog, type CollectionDialogRequest } from './collection-dialog.js';
+import { openExportDialog } from './export-dialog.js';
+import { closeDetachedMenu, closeMenu, moreMenuButton, openMenu } from './more-menu.js';
 import { onNamedTabFocus, openExtensionTab, openNamedTab } from './page-links.js';
 import { getValue } from '../userscript-header.js';
 import { describeDiagnostic } from '../diagnostic-location.js';
@@ -185,6 +187,19 @@ const REFRESH_COLLECTION_LABELS = {
 
 setGlyphButton(refreshAllBtn, '#sm-refresh', 'Refresh all collections', { text: 'Refresh All' });
 refreshAllBtn.addEventListener('click', () => void onRefreshAll());
+
+// The page's ⋯ menu, right of Refresh All: actions on every collection.
+const pageMenuBtn = moreMenuButton('More actions');
+pageMenuBtn.id = 'page-menu';
+pageMenuBtn.title = 'More actions';
+pageMenuBtn.addEventListener('click', () => openMenu(pageMenuBtn, [
+  { label: 'Export all collections\u2026', run: () => openExportDialog({ scope: { all: true } }) },
+]));
+refreshAllBtn.after(pageMenuBtn);
+// The menu is fixed in place, so it would stay put while its button
+// scrolls or the layout moves it.
+window.addEventListener('scroll', closeMenu, { passive: true });
+window.addEventListener('resize', closeMenu);
 
 // A new tab, not this one: the collections page is where the user was
 // working, and Options is a detour. `openNamedTab` reuses the one
@@ -718,6 +733,7 @@ async function repaintSections(timer: PhaseTimer): Promise<void> {
   }
   refreshMoveButtons();
   markDiskChanges();
+  closeDetachedMenu();
   timer.mark('paint');
 }
 
@@ -1538,6 +1554,21 @@ async function renderCollectionSection(collection: StoredCollection): Promise<HT
   setGlyphButton(refreshBtn, '#sm-refresh', REFRESH_COLLECTION_LABELS.idle);
   refreshBtn.addEventListener('click', () => void onRefreshCollection(collection.id, refreshBtn));
   buttons.appendChild(refreshBtn);
+
+  // Actions on this collection. None for an sm-dev test collection,
+  // which the export leaves out.
+  if (!isSmDevCollection(collection.path)) {
+    const menuBtn = moreMenuButton('More actions for this collection');
+    menuBtn.classList.add('collection-menu');
+    menuBtn.title = 'More actions for this collection';
+    menuBtn.addEventListener('click', () => openMenu(menuBtn, [
+      {
+        label: 'Export this collection\u2026',
+        run: () => openExportDialog({ scope: { collectionId: collection.id }, collectionName: effectiveDisplayName(collection) }),
+      },
+    ]));
+    buttons.appendChild(menuBtn);
+  }
 
   header.appendChild(buttons);
   section.appendChild(header);

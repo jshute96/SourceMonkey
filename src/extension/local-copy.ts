@@ -296,7 +296,10 @@ export function dependencyFiles(script: StoredScript): DependencyFile[] {
 // the script still resolves; a basename that itself can't be written
 // yields null and the dependency is skipped.
 export function mirrorPath(url: string): string | null {
-  const root = 'file:///';
+  // A stand-in root no real file sits under: the candidate builder
+  // offers nothing for a URL already inside its root, which `file:///`
+  // would be for every `file://` URL.
+  const root = 'file:///sourcemonkey-mirror-root/';
   for (const candidate of localFileCandidates(url, [root])) {
     if (!candidate.startsWith(root)) continue;
     let decoded: string;

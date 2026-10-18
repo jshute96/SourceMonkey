@@ -96,6 +96,9 @@ a real profile needs for local collections at all:
     once. A page that closes doesn't stop it; the answer is dropped.
   - Only our own pages may connect (`fromExtensionPage`), as for every
     page relay.
+- **A few reads go through it too**, where the worker holds state
+  storage doesn't have yet: `readScriptValues` gives scripts' GM values
+  from the value store, including writes not yet saved.
 - **The client exports the worker functions' own names**
   (`setScriptEnabledExclusive`, `removeScript`, …), so a call site
   changes only its import.
