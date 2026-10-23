@@ -12,6 +12,7 @@
 import { testWithBrowserDownloads as test, expect } from '../fixtures/extension';
 import type { Page } from '@playwright/test';
 import { UserscriptServer } from '../fixtures/userscript-server';
+import { ScriptsDir } from '../fixtures/scripts-dir';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -347,6 +348,34 @@ test.describe('local copy of a script', () => {
     await expect(page.locator(ERROR))
       .toHaveText('Target script file and dependency files already exist and will be replaced');
     await page.close();
+  });
+
+  test('a dependency given as a relative path is written at that path', async ({
+    extensionContext, extensionId, sm, downloadsDir,
+  }) => {
+    const dir = ScriptsDir.create();
+    try {
+      dir.writeRaw('lib/helper.js', 'window.__helper = 1;\n');
+      dir.writeRaw('hello.user.js', scriptWith({ name: 'Hello', extra: ['// @require lib/helper.js'] }));
+      const def = await sm.addCollection(dir.path);
+      const originalId = (await sm.getCollectionWithScripts(def!.id))!.scripts[0].id;
+
+      const page = await extensionContext.newPage();
+      await page.goto(viewerUrl(extensionId, originalId));
+      await page.locator(COPY_BTN).click();
+      await expect(page.locator(`${DIALOG} .dlg-deps-list li`)).toHaveText('lib/helper.js');
+      await page.locator(DEPS).check();
+      const copyId = await copyAndWait(page, originalId);
+
+      const copiesDir = path.join(downloadsDir!, 'SourceMonkey');
+      expect(fs.readFileSync(path.join(copiesDir, 'lib', 'helper.js'), 'utf8')).toBe('window.__helper = 1;\n');
+      const copies = (await sm.getCollections()).find((c) => c.path === copiesDir)!;
+      const row = (await sm.getCollectionWithScripts(copies.id))!.scripts.find((s) => s.id === copyId)!;
+      expect(row.status).toBe('ok');
+      await page.close();
+    } finally {
+      dir.cleanup();
+    }
   });
 
   // A copy that fails part-way must leave nothing behind: an abandoned

@@ -18,7 +18,7 @@ import { fullSource, scriptBasename } from '../script-display.js';
 import { getValue } from '../userscript-header.js';
 import { effectiveDisplayName } from './collection-display.js';
 import { isSmDevCollection } from './location-kinds.js';
-import { mirrorPath } from './local-copy.js';
+import { isRelativeRef, mirrorPath, relativeRefPath } from './local-copy.js';
 import { dataUrlContent, ensureIconForUrl } from './site-icon.js';
 import {
   collectionUsesLocalFiles,
@@ -144,13 +144,6 @@ function manifestCollection(collection: StoredCollection): ManifestCollection {
   return out;
 }
 
-// A ref with no scheme and no leading `/`: one that resolves against the
-// script's own folder.
-function isRelativeRef(ref: string): boolean {
-  const trimmed = ref.trim().split('#')[0];
-  return trimmed !== '' && !/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !trimmed.startsWith('/');
-}
-
 // Where a dependency or icon file goes, relative to its script's folder:
 //   - A relative ref (`lib/util.js`) at that path, where it resolves
 //     from the unzipped script. One that climbs out of the script's
@@ -158,16 +151,7 @@ function isRelativeRef(ref: string): boolean {
 //   - Anything else at `<host>/<path>` of its URL (a `file://` URL at
 //     its path), where the local-file overrides look.
 export function exportFilePath(ref: string, url: string): string | null {
-  const trimmed = ref.trim().split('#')[0];
-  if (isRelativeRef(trimmed)) {
-    try {
-      const resolved = new URL(trimmed, 'file:///export-root/script.user.js');
-      if (resolved.pathname.startsWith('/export-root/')) {
-        return decodeURIComponent(resolved.pathname.slice('/export-root/'.length)) || null;
-      }
-    } catch { /* not a usable path; fall through */ }
-  }
-  return mirrorPath(url);
+  return (isRelativeRef(ref) && relativeRefPath(ref)) || mirrorPath(url);
 }
 
 // The resolved URL of a script's own icon, when it is one we can bundle.

@@ -12,6 +12,7 @@
 import { testWithBrowserDownloads as test, expect } from '../fixtures/extension';
 import type { Page } from '@playwright/test';
 import { UserscriptServer } from '../fixtures/userscript-server';
+import { ScriptsDir } from '../fixtures/scripts-dir';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -145,6 +146,35 @@ test.describe('deleting a local copy', () => {
     const copies = (await sm.getCollections()).find((c) => c.path === copiesDir)!;
     expect((await sm.getCollectionWithScripts(copies.id))!.scripts.map((s) => s.id)).not.toContain(copyId);
     await page.close();
+  });
+
+  test('a dependency given as a relative path goes with the copy', async ({
+    extensionContext, extensionId, sm, downloadsDir,
+  }) => {
+    const dir = ScriptsDir.create();
+    try {
+      dir.writeRaw('lib/helper.js', 'window.__helper = 1;\n');
+      dir.writeRaw('hello.user.js', scriptWith({ name: 'Hello', extra: ['// @require lib/helper.js'] }));
+      const def = await sm.addCollection(dir.path);
+      const originalId = (await sm.getCollectionWithScripts(def!.id))!.scripts[0].id;
+
+      const page = await extensionContext.newPage();
+      await page.goto(viewerUrl(extensionId, originalId));
+      await copyWithDeps(page, originalId);
+      const lib = path.join(downloadsDir!, 'SourceMonkey', 'lib', 'helper.js');
+      expect(fs.existsSync(lib)).toBe(true);
+
+      await page.locator(DELETE_BTN).click();
+      await expect(page.locator(GROUP(0)).locator('li')).toHaveText('lib/helper.js');
+      await page.locator(CONFIRM).click();
+      await expect(page.locator('#message')).toHaveText('This script has been removed');
+      expect(fs.existsSync(lib)).toBe(false);
+      // The original's own file is untouched.
+      expect(fs.existsSync(path.join(dir.path, 'lib', 'helper.js'))).toBe(true);
+      await page.close();
+    } finally {
+      dir.cleanup();
+    }
   });
 
   // Both controls act on the script the page is showing, so they sit in

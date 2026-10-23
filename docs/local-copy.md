@@ -319,17 +319,22 @@ Off by default: a self-contained copy that keeps pointing at the web is
 what most edits want. Ticking **Also copy N dependency files** writes
 the script's `@require` and `@resource` files beside it.
 
-### Layout: mirror the URL, beside the script
+### Layout: beside the script
 
-- Each file goes to `<script's folder>/<host>/<path>` of its declared
-  URL — the *longest* candidate the local-overrides suffix rule tries
-  (`localFileCandidates`, with the script's own folder as the implicit
-  first root). Built through that same function, so the two can't
-  drift.
-- So **no `@require` line is rewritten.** The copy keeps its published
-  absolute URLs, stays portable, and picks up the local files through
-  the existing stand-in mechanism; the refreshed row shows `localUrl`
-  on each overridden entry.
+- **A relative ref** (`@require lib/util.js`) is written at that same
+  path under the copy's folder, which is what it resolves to against
+  the copy. One that climbs out of the script's folder (`../x.js`,
+  allowed in a script served over http(s)) can't be, and is skipped.
+- **An absolute URL** goes to `<script's folder>/<host>/<path>` of
+  the declared URL — the *longest* candidate the local-overrides
+  suffix rule tries (`localFileCandidates`, with the script's own
+  folder as the implicit first root). Built through that same
+  function, so the two can't drift.
+- So **no `@require` line is rewritten.** Relative refs need nothing
+  more, and the copy keeps its published absolute URLs, stays
+  portable, and picks up the local files through the existing
+  stand-in mechanism; the refreshed row shows `localUrl` on each
+  overridden entry.
 - Shared libraries dedupe naturally: two scripts in one collection that
   both require the same CDN URL write the same file.
 - **Unwritable names fall back to the next-longest suffix.** A
@@ -350,8 +355,8 @@ the script's `@require` and `@resource` files beside it.
   what is running now.
 - A dependency already served by a local stand-in is written from that
   stand-in's bytes, which is what the row holds.
-- Only http(s) URLs: a `file://` dependency is already on disk, and a
-  `data:` one has no file to write. `@icon` is not copied.
+- Of the absolute URLs, only http(s) ones: a `data:` one has no file
+  to write. `@icon` is not copied.
 - Existing-file checks and Replace apply per file, as for the script.
 
 ## The link to the original

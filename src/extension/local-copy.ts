@@ -250,11 +250,15 @@ function applyTagEdit(lines: string[], tag: string, value: string): void {
 export interface DependencyFile {
   // The declared URL, for the dialog's listing.
   url: string;
-  // Where it goes, relative to the SCRIPT's own folder: the URL's
-  // `<host>/<path>`, decoded to the on-disk spelling. This is the
-  // longest candidate the local-overrides suffix rule tries, with the
-  // script's own folder as the implicit first root — so the copy picks
-  // the file up without any `@require` line being rewritten.
+  // Where it goes, relative to the SCRIPT's own folder, chosen so the
+  // copy picks the file up without any `@require` line being
+  // rewritten:
+  //   - A relative ref (`lib/util.js`) goes at that same path, which is
+  //     what it resolves to against the copy.
+  //   - An absolute URL goes at its `<host>/<path>`, decoded to the
+  //     on-disk spelling. This is the longest candidate the
+  //     local-overrides suffix rule tries, with the script's own folder
+  //     as the implicit first root.
   relativePath: string;
   body: Blob;
   size: number;
@@ -262,26 +266,58 @@ export interface DependencyFile {
 
 // The dependency files a copy of `script` would carry: the bytes the
 // row already holds, laid out as above. Deduped by target path, so two
-// declarations of one URL write one file. Only http(s) URLs: a
-// `file://` dependency is already on disk, and a `data:` one has no
-// file to write.
+// declarations of one URL write one file. Skipped: an absolute URL
+// that isn't http(s) (a `data:` one has no file to write), and a
+// relative ref that climbs out of the script's folder, which no path
+// under the copy's folder can satisfy.
 export function dependencyFiles(script: StoredScript): DependencyFile[] {
   const out = new Map<string, DependencyFile>();
-  const add = (url: string, body: Blob): void => {
-    // http(s) only: a `file://` dependency is already on disk, and a
-    // `data:` one has no file to write.
-    if (!isHttpUrl(url)) return;
-    const relativePath = mirrorPath(url);
+  const add = (ref: string, url: string, body: Blob): void => {
+    const relativePath = isRelativeRef(ref)
+      ? writable(relativeRefPath(ref))
+      : isHttpUrl(url) ? mirrorPath(url) : null;
     if (!relativePath || out.has(relativePath)) return;
     out.set(relativePath, { url, relativePath, body, size: body.size });
   };
   for (const r of script.requires ?? []) {
-    add(r.url, new Blob([r.source], { type: 'text/javascript' }));
+    add(r.ref, r.url, new Blob([r.source], { type: 'text/javascript' }));
   }
   for (const r of script.resources ?? []) {
-    add(r.url, new Blob([base64ToBytes(r.bytesBase64)], { type: r.contentType || 'application/octet-stream' }));
+    add(r.ref, r.url, new Blob([base64ToBytes(r.bytesBase64)], { type: r.contentType || 'application/octet-stream' }));
   }
   return [...out.values()];
+}
+
+// A ref with no scheme and no leading `/`: one that resolves against the
+// script's own folder.
+export function isRelativeRef(ref: string): boolean {
+  const trimmed = ref.trim().split('#')[0];
+  return trimmed !== '' && !/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !trimmed.startsWith('/');
+}
+
+// Where a relative ref lands under its script's folder, decoded to the
+// on-disk spelling, so the same ref finds it beside a copy or an
+// unzipped export. Null when it climbs out of that folder or names a
+// directory. An encoded `/` (`..%2F`) counts as unusable rather than
+// decoding into a path the ref never named.
+export function relativeRefPath(ref: string): string | null {
+  const root = '/sourcemonkey-ref-root/';
+  let resolved: URL;
+  try {
+    resolved = new URL(ref.trim(), `file://${root}script.user.js`);
+  } catch {
+    return null;
+  }
+  if (!resolved.pathname.startsWith(root)) return null;
+  const rest = resolved.pathname.slice(root.length);
+  if (!rest || rest.endsWith('/')) return null;
+  let segments: string[];
+  try {
+    segments = rest.split('/').map((seg) => decodeURIComponent(seg));
+  } catch {
+    return null;
+  }
+  return segments.some((seg) => seg.includes('/')) ? null : segments.join('/');
 }
 
 // `<host>/<path>` of a URL as an on-disk relative path, via the same
@@ -311,6 +347,10 @@ export function mirrorPath(url: string): string | null {
     if (!UNWRITABLE_CHARS.test(decoded)) return decoded;
   }
   return null;
+}
+
+function writable(path: string | null): string | null {
+  return path !== null && !UNWRITABLE_CHARS.test(path) ? path : null;
 }
 
 // What `chrome.downloads.download` rejects in a `filename` — the
