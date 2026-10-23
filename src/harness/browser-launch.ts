@@ -23,6 +23,7 @@ import { mkdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import { missingChromium } from './playwright-chromium.js';
 import { processAlive } from './runs.js';
 import { quoted } from './output-style.js';
 
@@ -49,7 +50,8 @@ async function browserBinary(): Promise<{ file: string; name: string }> {
   if (chrome) return { file: chrome, name: 'Google Chrome' };
   const { chromium } = await import('@playwright/test');
   const file = chromium.executablePath();
-  if (!existsSync(file)) throw new Error('No browser to launch: Google Chrome isn\'t installed, and neither is Playwright\'s Chromium (pnpm exec playwright install chromium)');
+  const missing = missingChromium(file);
+  if (missing) throw new Error(`No browser to launch: Google Chrome isn't installed. ${missing}`);
   return { file, name: 'Chromium' };
 }
 

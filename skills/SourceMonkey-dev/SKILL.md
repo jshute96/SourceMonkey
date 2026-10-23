@@ -838,6 +838,9 @@ refused. How it works and what differs:
   under sm-dev only**: in a tab a run tab opened, the script may run
   after the page's first inline scripts (see
   [How a run uses the extension](#how-a-run-uses-the-extension)).
+- **`start` reports that Playwright needs a Chromium build that isn't
+  installed**: the repo's Playwright was updated. Run
+  `pnpm exec playwright install chromium` in the repo.
 - **The run refuses to start, or says `no SourceMonkey` / `SourceMonkey
   disabled`**: see [Getting a browser](#getting-a-browser).
 - **A command these docs name is unknown**: sm-dev is older than the

@@ -29,6 +29,7 @@ import { leaveDialogsOpen } from './console-commands.js';
 import { ExtensionMissingError, extensionIdFromKey, findExtensionWorker, sourceMonkeyExtensionId } from './extension-backend.js';
 import { fetchedDir } from './manager-fetch.js';
 import { MANAGERS, managerFlag, type ManagerName } from './managers.js';
+import { missingChromium } from './playwright-chromium.js';
 import { rebuildAdvice } from './rebuild-advice.js';
 import { quoted } from './output-style.js';
 
@@ -187,6 +188,9 @@ async function launch(
   profile: string, headed: boolean, args: string[] = [], dir = EXTENSION_DIR, backForwardCache = false,
 ): Promise<BrowserContext> {
   const { chromium } = await import('@playwright/test');
+  // Playwright's own message names only the missing path.
+  const missing = missingChromium(chromium.executablePath());
+  if (missing) throw new Error(missing);
   const userAgent = headed ? null : await windowedUserAgent(chromium.executablePath()).catch(() => null);
   try {
     return await chromium.launchPersistentContext(profile, {

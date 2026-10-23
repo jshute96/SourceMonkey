@@ -798,6 +798,12 @@ for commands without a run, the browser they act on.
     soon as its worker starts, which is before it checks.
 - The same launch serves the repo's own e2e suites, which drive its
   persistent context directly.
+- Before launching, it checks that Playwright's Chromium is installed
+  (`playwright-chromium.ts`). Each Playwright version wants its own
+  build, so updating the repo's Playwright leaves it missing.
+  - The error names the Playwright version, the build it wants, the
+    builds installed, and the install command.
+  - Playwright's own error names only the missing path.
   - Downloads are left to Chrome, into a folder of the caller's, for a
     run (see Downloads above) and for a suite that asks.
   - Hidden runs use `--headless=new`, the only headless mode that loads

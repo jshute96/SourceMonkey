@@ -70,6 +70,9 @@ has them log where the tools got in the way.
 - Node 22+ and pnpm.
 - A browser to work in. By default each run launches its own, with
   SourceMonkey loaded. See [A browser to work in](#a-browser-to-work-in).
+- Playwright's Chromium, for that browser. `pnpm install` doesn't fetch
+  it: run `pnpm exec playwright install chromium`, and again after
+  each Playwright update, since each version wants its own build.
 - For a lasting browser of your own: SourceMonkey loaded in it, with
   "Allow User Scripts" on. See [Setting it up](#setting-it-up).
 
