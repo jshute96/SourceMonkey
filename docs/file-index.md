@@ -473,7 +473,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/channel.test.mjs` | Unit tests for the channel key's registry gate, its document keys, and that our pieces meet only there |
 | `tests/unit/channel-helpers.mjs` | Test helpers for the channel key: the registry, event names, a gate over a test's stub |
 | `tests/unit/injector.test.mjs` | Unit tests for the injector: spec build, active-spec collection, refusal logging, retry limits, sync serialization and scoping |
-| `tests/unit/generated-wrappers.test.mjs` | Guard test: each minified wrapper (`WRAPPER_*`) is a single line of valid JS with load-bearing tokens intact |
+| `tests/unit/generated-wrappers.test.mjs` | Guard test: each minified wrapper (`WRAPPER_*`) is valid JS with load-bearing tokens intact |
 | `tests/unit/source-layout.test.mjs` | Checks the `src/` split: what `lib/` and `dist/` compile, and that shared modules are shared |
 | `tests/unit/page-writes.test.mjs` | No page-only module imports a store writer directly or writes storage itself |
 | `tests/unit/examples.test.mjs` | Example pages keep the footer, scripts are named `SourceMonkey example: <dir>: …`, each dir is listed in README and index |

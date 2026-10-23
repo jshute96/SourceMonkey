@@ -161,7 +161,7 @@ A sandboxed page-world script's user scope (any but `@grant none`) opens and clo
 
 ### Why inline the prelude (not register once per page)
 
-Each script ships its own ~12KB copy of `WRAPPER_PRELUDE` in its
+Each script ships its own ~26KB copy of `WRAPPER_PRELUDE` in its
 `js[]` array. That sounds wasteful — wouldn't a single page-wide
 registration be cleaner? It would, but it doesn't work:
 
@@ -180,7 +180,7 @@ registration be cleaner? It would, but it doesn't work:
   `if (reg.run) {...}` would silently skip the body on a race
   instead of throwing, which is arguably worse.
 
-So we inline, accept the ~12KB × N duplication, and use the page-
+So we inline, accept the ~26KB × N duplication, and use the page-
 wide `sourcemonkey://SourceMonkey/__prelude.js` sourceURL on every
 inclusion so devtools' Sources tree groups them into a single
 visible entry (V8 dedups script entries by URL in the tree).

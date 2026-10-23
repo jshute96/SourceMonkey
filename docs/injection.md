@@ -1508,11 +1508,22 @@ Consequences:
 ## The activation / error wrapper
 
 The wrapper lives in plain JavaScript source files in `src/`. The
-build (`scripts/build.mjs`) minifies each to a single line and emits
+build (`scripts/build.mjs`) minifies each with terser and emits
 them as exported constants in `dist/generated-wrappers.js`. The type
 declarations are hand-written in `src/generated-wrappers.d.ts` (tsc
 type-checks against the `.d.ts`; the runtime `.js` is built directly
-into `dist/`). The pieces:
+into `dist/`).
+
+- Minifying renames local variables but keeps function names, so
+  stack traces from the wrapper still name their functions. It
+  doesn't rewrite expressions, so the stand-ins the extension swaps
+  text into (the channel key, the bridge's script and frames flags)
+  come through as written.
+- It shrinks the bytes Chrome stores and sends for each script (the
+  prelude ships once per script), not V8's parse time, which barely
+  changes.
+
+The pieces:
 
 - `src/userscript-prelude.js` → `WRAPPER_PRELUDE` — static, byte-
   identical across every script. Contains the IIFE, helpers

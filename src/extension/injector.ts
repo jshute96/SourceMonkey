@@ -325,7 +325,7 @@ export function buildConfigBlob(cfg: ScriptCfgLiteral): string {
 // separate registrations DON'T. A separate-prelude design races —
 // the per-script main body's `reg.run(...)` call beats the
 // prelude's helper installation. Inlining eliminates the race at
-// the cost of shipping ~12KB × N times in the registration
+// the cost of shipping ~26KB × N times in the registration
 // payload (negligible at our script counts).
 export function wrapPreludeEntry(): string {
   return withChannelKey(WRAPPER_PRELUDE) + `\n//# sourceURL=${PRELUDE_SOURCE_URL}\n`;
@@ -600,7 +600,7 @@ export function wrapCombinedEntry(args: {
 // race.
 //
 // Cost: the WRAPPER_PRELUDE bytes ship N times in the registration
-// payload (~12KB × N). Devtools tree-dedups by sourceURL though, so
+// payload (~26KB × N). Devtools tree-dedups by sourceURL though, so
 // the user only sees one `__prelude.js` entry in the Sources tree
 // — see wrapPreludeEntry's URL choice.
 //
@@ -1285,8 +1285,9 @@ function bridgeSpec(scope: BridgeScope): RegistrationSpec {
 // all `@noframes`: in a child frame it then doesn't ask the SW about a
 // sandboxed page (`sm:main-blocked`), since no MAIN-world script would
 // run there anyway, and the ask would wake the worker for each frame.
-const MAIN_IN_FRAMES = 'var SM_MAIN_IN_FRAMES = true;';
-const NO_MAIN_IN_FRAMES = 'var SM_MAIN_IN_FRAMES = false;';
+// As the minified bridge has it (scripts/build.mjs keeps the name).
+const MAIN_IN_FRAMES = 'var SM_MAIN_IN_FRAMES=true;';
+const NO_MAIN_IN_FRAMES = 'var SM_MAIN_IN_FRAMES=false;';
 function noMainInFrames(bridgeCode: string): string {
   if (!bridgeCode.includes(MAIN_IN_FRAMES)) throw new Error('Internal error: The bridge has no frames flag');
   return bridgeCode.replace(MAIN_IN_FRAMES, NO_MAIN_IN_FRAMES);

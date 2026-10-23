@@ -51,11 +51,9 @@
  * state lives under `reg.prelude.scripts[scriptId]`. Pending configs
  * live on `reg.cfgQueue` until the prelude drains them.
  *
- * Build rules. Same as the other wrapper-* files:
- *   - Only block comments. No `//` sequences in strings.
- *   - The build minifies this file to a single physical line and
- *     emits it as the WRAPPER_PRELUDE export in
- *     dist/generated-wrappers.js. (See scripts/build.mjs.)
+ * The build minifies this file with terser and emits it as the
+ * WRAPPER_PRELUDE export in dist/generated-wrappers.js (see
+ * scripts/build.mjs).
  *
  * No per-script values are baked into this file. The whole point of
  * the split is that this file is byte-identical for every script

@@ -53,6 +53,7 @@
     "@types/prismjs": "^1.26.6",
     "fflate": "^0.8.3",
     "prismjs": "^1.30.0",
+    "terser": "^5.51.2",
     "typescript": "^5.9.3"
   },
   "peerDependencies": {

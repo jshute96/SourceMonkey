@@ -519,7 +519,7 @@ takes effect:
 
 ## Build pipeline
 
-`scripts/build.mjs` is dependency-free:
+`scripts/build.mjs`:
 
 - Builds into a temporary `.build-<pid>/` (named by the build's
   process id), then renames each finished output over `dist/` and `lib/`.
@@ -534,6 +534,9 @@ takes effect:
   `src/*.html`, `node_modules/prismjs/*` and fflate's browser build
   (`dist/vendor/fflate.js`) into `dist/`, and the
   manifest into `lib/` too (the harness reads the extension key from it).
+- Minifies the injected wrapper sources with terser into
+  `generated-wrappers.js` (see
+  [injection.md](injection.md#the-activation--error-wrapper)).
 - Inlines `src/glyph-sprite.svg` into each page as it is copied, at the
   page's `#include glyph-sprite` marker comment (see below).
 - Invokes `tsc` to compile `src/**/*.ts` → `dist/**/*.js`, keeping

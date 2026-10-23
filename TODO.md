@@ -1191,14 +1191,6 @@ Set aside while moving every write into the service worker
   - Options: per-origin patterns, so a second script on a covered site
     changes nothing; or `<all_urls>`, which `buildGmRuntimeSpecs`
     argues against (the runtime's load on every site).
-- **Minify the injected helpers properly.** The build only strips
-  comments and whitespace (`minifyForInjection`): the GM runtime goes
-  from 131 KB to 55 KB. A real minifier (esbuild or terser) might reach
-  25–30 KB.
-  - Measure first: Chrome's `register` time against helper size, and
-    page parse time where it's injected.
-  - Renamed identifiers make the runtime's own stack traces harder to
-    read; a source map would cover that.
 - **Audit what's in `wrapper-gm-runtime.js`** for code no current API
   needs.
 

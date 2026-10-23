@@ -34,6 +34,7 @@ import { constants } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { basename, dirname, resolve, extname } from 'node:path';
+import { minify } from 'terser';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
@@ -164,10 +165,9 @@ for (const entry of await readdir(src, { withFileTypes: true, recursive: true })
 // The injected wrapper lives in plain JS source files in src/ so they
 // get real syntax highlighting and can be edited / linted as
 // JavaScript rather than as embedded strings in TS. The build
-// minifies each to a single physical line and writes them as exported
-// string constants into dist/generated-wrappers.js. The injector
-// splices these into chrome.userScripts.register specs as
-// { code: ... } blobs.
+// minifies each and writes them as exported string constants into
+// dist/generated-wrappers.js. The injector splices these into
+// chrome.userScripts.register specs as { code: ... } blobs.
 //
 // Why all-{code}, never {file}: chrome.userScripts.register's
 // { file: "..." } entries are loaded asynchronously in MAIN world
@@ -179,9 +179,8 @@ for (const entry of await readdir(src, { withFileTypes: true, recursive: true })
 // {code} unconditionally avoids relying on that distinction and keeps
 // behavior identical across worlds. See docs/injection-modes.md.
 //
-// The minifier is intentionally conservative — see
-// userscript-prelude.js for the source-file rules that keep it safe
-// (only /* block */ comments, no // sequences inside strings).
+// The minifier is terser, so the wrapper sources are ordinary
+// JavaScript with no rules about comments or line breaks.
 await generateWrappers();
 
 async function generateWrappers() {
@@ -198,7 +197,7 @@ async function generateWrappers() {
   };
   for (const name of wrapperFiles) {
     const text = await readFile(resolve(src, name), 'utf8');
-    const minified = minifyForInjection(text);
+    const minified = await minifyForInjection(text, name);
     out.push(`export const ${exportName[name]} = ${JSON.stringify(minified)};`);
   }
   const text = out.join('\n') + '\n';
@@ -213,17 +212,25 @@ async function generateWrappers() {
   await cp(resolve(src, 'generated-wrappers.d.ts'), resolve(lib, 'generated-wrappers.d.ts'));
 }
 
-function minifyForInjection(source) {
-  // Strip /* ... */ comments.
-  let s = source.replace(/\/\*[\s\S]*?\*\//g, '');
-  // Strip whole-line // comments (matches only lines whose first
-  // non-whitespace token is //; safe for our wrapper sources, which
-  // never use trailing-line comments).
-  s = s.replace(/^\s*\/\/.*$/gm, '');
-  // Collapse every whitespace run — including newlines — to a single
-  // space. Drop leading/trailing whitespace.
-  s = s.replace(/\s+/g, ' ').trim();
-  return s;
+// Minify a wrapper with terser: drop comments and whitespace, and
+// shorten local names. It is shipped once per script (the prelude) or
+// per page world (the runtime), so the bytes add up, though V8's parse
+// time barely changes.
+//   - No compress pass: it would fold the stand-ins the extension
+//     swaps text into (`"__SM_KEY__"`, `"__SM_ONLY__"`,
+//     `SM_MAIN_IN_FRAMES`; see channel.ts and injector.ts), and it only
+//     saves another ~10%.
+//   - keep_fnames: the wrappers' own `err.stack` strings (Log tab,
+//     console) keep readable function names. V8 never applies a
+//     source map to those strings.
+async function minifyForInjection(source, name) {
+  const result = await minify(source, {
+    ecma: 2020,
+    compress: false,
+    mangle: { keep_fnames: true, reserved: ['SM_MAIN_IN_FRAMES'] },
+  });
+  if (!result.code) throw new Error(`Minifying ${name} gave no output`);
+  return result.code;
 }
 
 // 5. Run tsc into the build directory, then swap the outputs into
