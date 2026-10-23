@@ -97,7 +97,8 @@ import { scanStorageRows } from './storage-scan.js';
 import { cachedRows, sharedRows } from './row-cache.js';
 import { isScratchUrl, scratchRunOf } from './directories.js';
 import { evalHookKey, withEvalHook } from '../eval-hook.js';
-import { canonicalMatchPatterns, chromeIncludeGlob, hostEndsInTld, matchPatternProblem, tldCoarseGlob } from '../url-match.js';
+import { canonicalMatchPatterns, chromeIncludeGlob, hostEndsInTld, matchPatternProblem, pageMatcher, tldCoarseGlob } from '../url-match.js';
+import type { PageMatcher } from '../url-match.js';
 import { dlog } from '../debug-log.js';
 import { startPhaseTimer, type PhaseTimer } from '../phase-timing.js';
 import {
@@ -269,7 +270,8 @@ interface ScriptCfgLiteral {
   // wrapper waits for the SW's check-pending answer unless the tab
   // vouches for that run (`smDevVouches` in userscript-prelude.js).
   run?: string;
-  matching: { matches: string[]; includes: string[]; excludes: string[] } | null;
+  // The wrapper's URL recheck, as regexes (`pageMatcher`).
+  matching: PageMatcher | null;
   startupLogs: ReadonlyArray<StartupLog>;
   // See `RegistrationSpecOptions.manualRun`.
   manualRun?: { gmValues?: Record<string, unknown>; gmSeq?: number };
@@ -899,7 +901,8 @@ export async function buildSwapEvalBody(
 // one script. Returns null only if validateHeader would have caught
 // the script upstream (no matchable patterns at all).
 //
-// Strategy for regex patterns: see the matcher block in the prelude.
+// Strategy for regex patterns: see docs/injection.md, "Regex pattern
+// forms", and `pageMatcher` in url-match.ts.
 // `scriptHandlerVersion` default is for unit tests; production
 // callers pass `chrome.runtime.getManifest().version`.
 // `logLabel` defaults to the script's bare basename (no `#N` dedup);
@@ -1075,7 +1078,7 @@ export async function buildRegistrationSpec(
     needsGmValues: gmEmit.needsValues,
     needsGmRuntime: needsGmRuntime(script.header),
     ...(isScratchUrl(script.fileUrl) ? { run: scratchRunOf(script.fileUrl) ?? '' } : {}),
-    matching: needsWrapperFilter ? script.matching : null,
+    matching: needsWrapperFilter ? pageMatcher(script.matching) : null,
     startupLogs: script.startupLogs ?? [],
     ...(options.manualRun ? { manualRun: options.manualRun } : {}),
   });

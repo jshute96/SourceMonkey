@@ -41,8 +41,6 @@ SourceMonkey actually does today.
   - `onPush(handler)` — SW-originated events (XHR settling, value
     broadcasts, menu fires). `chrome.runtime.onMessage` in USER_SCRIPT
     world; `sourcemonkey-push-<key>` events in MAIN.
-  - `notImplemented(name)` — Phase 2 placeholder; later phases
-    replace per-subsystem methods.
 - **`src/extension/injector.ts`** — wires the emitter and runtime into the
   registration pipeline. `buildGmBindingsForScript` produces the
   per-script collection; `buildGmRuntimeSpecs` returns one runtime
@@ -163,15 +161,12 @@ output ships whether the script lands in USER_SCRIPT or MAIN.
 ## API kinds
 
 - **Sync** APIs (`GM_setValue`/`GM_getValue`/`GM_addStyle`/...) resolve
-  in-page via the GM runtime — no SW round-trip. The Phase-2
-  stub calls `reg.gm.notImplemented(name)` which throws an
-  explanatory error.
+  in-page via the GM runtime — no SW round-trip.
 - **Async** APIs (`GM_xmlhttpRequest`/`GM_setClipboard`/...) build a
   message envelope (`{type: 'sm:gm-call', api, scriptId, args}`) and
-  route through `reg.gm.sendAsync(...)` to the SW. Phase 2 has no
-  SW-side handler yet — the call ultimately rejects.
+  route through `reg.gm.sendAsync(...)` to the SW.
 
-## Caveats and Phase-2 limitations
+## Caveats and limitations
 
 - **`unsafeWindow` is real.** Scripts run in MAIN world unless they
   ask for isolation, so it is the page's own `window`, granted or just

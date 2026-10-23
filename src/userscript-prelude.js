@@ -401,7 +401,7 @@
      saying what went wrong, which the caller reports. */
   function awaitDecision(entry, cb) {
     var cfg = entry.cfg;
-    var tld = !!(cfg.matching && hasTldRule(cfg.matching));
+    var tld = !!(cfg.matching && cfg.matching.tld);
     /* Only a decision the SW makes counts; anything else (the bridge's
        `bridgeError`, a reply with no action) is no decision. */
     var decided = function (reply) {
@@ -483,7 +483,7 @@
      so one substring test attributes any frame from this script.
      (Before Mode A each require was its own entry with its own URL and
      this had to check a list; see docs/injection-modes.md.) */
-  var __smReported = (typeof WeakSet === "function") ? new WeakSet() : null;
+  var __smReported = new WeakSet();
   function stackHitsScript(err, entry) {
     try {
       var stack = err && typeof err === "object" && err.stack;
@@ -508,7 +508,7 @@
        entry object, which subsequent async-error reports pick up
        automatically. Same observable behavior, fewer moving parts. */
     try {
-      if (err && typeof err === "object" && __smReported) {
+      if (err && typeof err === "object") {
         if (__smReported.has(err)) return;
         __smReported.add(err);
       }
@@ -790,172 +790,22 @@
 
   /* ---------- matcher (regex-aware URL recheck) ---------- */
 
-  /* Mirrors the algorithm in src/url-match.ts. Inlined here so a
-     script needing the recheck doesn't need a separate matcher entry;
-     the prelude is on every script's js[] and the algorithm is tiny.
-     The matcher block is only consulted when cfg.matching is present:
-     scripts with a regex or `.tld` @include/@exclude/@match, scripts
-     with any glob @include (registered with NO_PAGE_MATCH; see
-     injector.ts), and scripts with any @exclude. A script whose
-     @match patterns carry the whole registration skips it. */
-  function escRx(s) { return s.replace(/[.+?^${}()|[\]\\]/g, "\\$&"); }
-  function globRx(g, flags) { return new RegExp("^" + escRx(g).replace(/\*/g, ".*") + "$", flags || ""); }
-  function includeMatch(pat, url) {
-    if (pat.length >= 2 && pat.charAt(0) === "/" && pat.charAt(pat.length - 1) === "/") {
-      /* Ignoring case, as url-match.ts does. */
-      try { return new RegExp(pat.slice(1, -1), "i").test(url); } catch (_e) { return false; }
-    }
-    try { return includeGlobRx(pat).test(url); } catch (_e) { return false; }
-  }
-  /* `.tld` hosts ("any public suffix"). Read LOOSELY here, as any one
-     or more labels: the exact reading needs the public suffix list,
-     which stays out of the page. The service worker applies it in its
-     sm:check-pending reply and answers `skip` (reason "no-match") where
-     this was too generous. So this side must only ever be wider:
-       - a `.tld` @match / @include matches any labels;
-       - a `.tld` @exclude is ignored here, since a loose one would
-         exclude pages the script should run on.
-     tldIndex() mirrors src/url-match.ts; keep the two in lockstep. */
-  var TLD_RX = "(?:\\.[a-z0-9-]+)+";
-  function tldIndex(pat, globStar) {
-    var sep = pat.indexOf("://");
-    var start = sep < 0 ? 0 : sep + 3;
-    var slash = pat.indexOf("/", start);
-    var host = pat.slice(start, slash < 0 ? pat.length : slash).replace(/:(\d+|\*)$/, "");
-    if (globStar && host.charAt(host.length - 1) === "*") host = host.slice(0, -1);
-    if (host.slice(-4).toLowerCase() !== ".tld") return -1;
-    var base = host.slice(0, -4);
-    if (base === "" || base === "*") return -1;
-    return start + host.length - 4;
-  }
-  function includeGlobRx(g) {
-    var at = tldIndex(g, true);
-    /* Ignoring case, as url-match.ts's includePattern does. */
-    if (at < 0) return globRx(g, "i");
-    var a = escRx(g.slice(0, at)).replace(/\*/g, ".*");
-    var b = escRx(g.slice(at + 4)).replace(/\*/g, ".*");
-    return new RegExp("^" + a + TLD_RX + b + "$", "i");
-  }
-  function hostMatchesTld(patternHost, hostname) {
-    var base = patternHost.slice(0, -4).toLowerCase();
-    var anySub = base.indexOf("*.") === 0;
-    var name = (anySub ? base.slice(2) : base).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp("^" + (anySub ? "(?:.+\\.)?" : "") + name + TLD_RX + "$").test(hostname.toLowerCase());
-  }
-  /* Lenient readings of the shapes Chrome's parser refuses — an
-     omitted scheme, a scheme glob, no path, a `*` stuck to a host.
-     Mirrors canonicalMatchPatterns()
-     in src/url-match.ts; see its header for why. Keep the two in
-     lockstep: the SW registers the canonical form, so a wrapper that
-     didn't know the rewrite would reject a page Chrome injected it on. */
-  var CONCRETE_SCHEMES = ["http", "https", "file", "ftp"];
-  function canonicalPatterns(pat) {
-    if (pat === "<all_urls>") return [pat];
-    /* A broken scheme stays as written, and matches nothing. */
-    if (/^(\*?\/\/|:)/.test(pat)) return [pat];
-    var p = pat;
-    if (p.indexOf("://") < 0) p = "*://" + p;
-    p = readHostAndPath(p);
-    var sep = p.indexOf("://");
-    var scheme = p.slice(0, sep).toLowerCase();
-    var rest = p.slice(sep);
-    if (scheme === "*") return anyScheme(rest);
-    if (scheme.indexOf("*") < 0) return [p];
-    var expanded = [];
-    for (var i = 0; i < CONCRETE_SCHEMES.length; i++) {
-      try {
-        if (globRx(scheme).test(CONCRETE_SCHEMES[i])) expanded.push(CONCRETE_SCHEMES[i]);
-      } catch (_e) { /* unglobbable scheme — leave the pattern alone */ }
-    }
-    if (expanded.length === 0) return [pat];
-    if (expanded.join() === "http,https") return anyScheme(rest);
-    for (var j = 0; j < expanded.length; j++) expanded[j] += rest;
-    return expanded;
-  }
-  /* No path reads as `/`, and a `*` stuck to the front of a host as
-     `*.`. Mirrors readHostAndPath() in src/url-match.ts. */
-  function readHostAndPath(p) {
-    var start = p.indexOf("://") + 3;
-    var slash = p.indexOf("/", start);
-    var host = slash < 0 ? p.slice(start) : p.slice(start, slash);
-    var path = slash < 0 ? "/" : p.slice(slash);
-    var bareHost = host.replace(/:(\d+|\*)$/, "");
-    if (/^\*[^.*:]/.test(bareHost) && bareHost.indexOf("*", 1) < 0) host = "*." + host.slice(1);
-    return p.slice(0, start) + host + path;
-  }
-  /* http-or-https, spelled out beside a numeric port because Chrome's
-     parser refuses `*` there. Same reasoning as anyScheme() in
-     src/url-match.ts — matching-wise the two spellings are equal, but
-     the SW registers this one, so the wrapper reads it too. */
-  function anyScheme(rest) {
-    var host = rest.slice(3).split("/")[0];
-    if (!/:\d+$/.test(host)) return ["*" + rest];
-    return ["http" + rest, "https" + rest];
-  }
-  function matchPattern(pat, url) {
-    if (pat === "<all_urls>") return /^(https?|file|ftp):/i.test(url);
-    var cands = canonicalPatterns(pat);
-    for (var i = 0; i < cands.length; i++) if (matchCanonical(cands[i], url)) return true;
-    return false;
-  }
-  function matchCanonical(pat, url) {
-    var parts = /^(\*|https?|file|ftp):\/\/([^/]*)(\/.*)$/i.exec(pat);
-    if (!parts) return false;
-    var scheme = parts[1], host = parts[2], path = parts[3];
-    var u; try { u = new URL(url); } catch (_e) { return false; }
-    if (scheme === "*") {
-      if (u.protocol !== "http:" && u.protocol !== "https:") return false;
-    } else if (u.protocol !== scheme.toLowerCase() + ":") return false;
-    /* Split off a trailing `:port` so a port-pinned pattern matches the
-       way Chrome's matcher (and src/url-match.ts) does — without this
-       the whole `host:port` was compared against u.hostname (no port)
-       and a script declaring a port-pinned @match alongside anything
-       that makes cfg.matching ship was wrongly rejected in-page even
-       though Chrome injected it. A pattern host
-       with no port matches any port. Keep this in lockstep with
-       url-match.ts. */
-    var colon = host.lastIndexOf(":");
-    var hasPort = colon > 0 && /^(\d+|\*)$/.test(host.slice(colon + 1));
-    var patternHost = hasPort ? host.slice(0, colon) : host;
-    var patternPort = hasPort ? host.slice(colon + 1) : "";
-    if (patternHost === "*") {
-      /* any host */
-    } else if (tldIndex(patternHost) >= 0) {
-      if (!hostMatchesTld(patternHost, u.hostname)) return false;
-    } else if (patternHost.indexOf("*.") === 0) {
-      var suffix = patternHost.slice(2).toLowerCase();
-      var h = u.hostname.toLowerCase();
-      if (h !== suffix && h.slice(-(suffix.length + 1)) !== "." + suffix) return false;
-    } else if (patternHost === "") {
-      if (u.hostname !== "") return false;
-    } else if (u.hostname.toLowerCase() !== patternHost.toLowerCase()) return false;
-    if (patternPort !== "" && patternPort !== "*" && u.port !== patternPort) return false;
-    /* Not the fragment, as in Chrome's matcher and url-match.ts. */
-    var tail = u.pathname + u.search;
-    try { return globRx(path).test(tail); } catch (_e) { return false; }
-  }
-  function hasTldRule(m) {
-    /* A @match's `.tld` is found in its canonical forms, as
-       url-match.ts finds it. */
-    var all = m.includes.concat(m.excludes);
-    for (var j = 0; j < m.matches.length; j++) all = all.concat(canonicalPatterns(m.matches[j]));
-    for (var i = 0; i < all.length; i++) {
-      if (!isRegexPat(all[i]) && all[i] !== "<all_urls>" && tldIndex(all[i], true) >= 0) return true;
-    }
-    return false;
-  }
-  function isRegexPat(pat) {
-    return pat.length >= 2 && pat.charAt(0) === "/" && pat.charAt(pat.length - 1) === "/";
+  /* The URL recheck for scripts Chrome can't match exactly: those with
+     a regex or `.tld` rule, a glob @include (registered with
+     NO_PAGE_MATCH; see injector.ts), or any @exclude. A script whose
+     @match patterns carry the whole registration ships no
+     cfg.matching and skips it.
+     The service worker builds the regexes (`pageMatcher` in
+     src/url-match.ts), each a [source, flags] pair: `include` for the
+     @match and @include rules, `exclude` for the @exclude ones. A
+     `.tld` rule is read loosely here and exactly by the service
+     worker's sm:check-pending reply, which `tld` says to wait for. */
+  function testRx(rx, url) {
+    try { return new RegExp(rx[0], rx[1]).test(url); } catch (_e) { return false; }
   }
   function matchScript(url, m) {
-    for (var i = 0; i < m.excludes.length; i++) {
-      var ex = m.excludes[i];
-      /* See the `.tld` note above: the service worker decides these. */
-      if (!isRegexPat(ex) && tldIndex(ex, true) >= 0) continue;
-      if (includeMatch(ex, url)) return false;
-    }
-    for (var j = 0; j < m.matches.length; j++) if (matchPattern(m.matches[j], url)) return true;
-    for (var k = 0; k < m.includes.length; k++) if (includeMatch(m.includes[k], url)) return true;
+    for (var i = 0; i < m.exclude.length; i++) if (testRx(m.exclude[i], url)) return false;
+    for (var j = 0; j < m.include.length; j++) if (testRx(m.include[j], url)) return true;
     return false;
   }
 
@@ -1152,7 +1002,7 @@
   function canSkipDecision(cfg) {
     if (cfg.runAt !== "document-start") return false;
     if (cfg.needsGmValues) return false;
-    if (cfg.matching && hasTldRule(cfg.matching)) return false;
+    if (cfg.matching && cfg.matching.tld) return false;
     if (cfg.needsGmRuntime && !hasGmRuntime()) return false;
     try {
       if (window.top !== window) return false;
@@ -1454,14 +1304,14 @@
      The sandbox's own properties live on its Proxy target, so the
      Proxy invariants hold for them, non-configurable ones included.
      See docs/injection.md, "The sandbox window". */
-  var _Proxy = typeof Proxy === "function" ? Proxy : null;
-  var _WeakMap = typeof WeakMap === "function" ? WeakMap : null;
+  var _Proxy = Proxy;
+  var _WeakMap = WeakMap;
   /* The maps' methods, captured: the sandbox calls them on every read,
      and a page that replaced `WeakMap.prototype.get` could otherwise
      hand back a "bound" method of its own. */
-  var _wmGet = _WeakMap && _WeakMap.prototype.get;
-  var _wmSet = _WeakMap && _WeakMap.prototype.set;
-  var _wmHas = _WeakMap && _WeakMap.prototype.has;
+  var _wmGet = _WeakMap.prototype.get;
+  var _wmSet = _WeakMap.prototype.set;
+  var _wmHas = _WeakMap.prototype.has;
   function wmGet(m, k) { return _ReflectApply(_wmGet, m, [k]); }
   function wmSet(m, k, v) { _ReflectApply(_wmSet, m, [k, v]); }
   function wmHas(m, k) { return _ReflectApply(_wmHas, m, [k]); }
@@ -1480,14 +1330,14 @@
   var _unscopables = Symbol.unscopables;
   var NATIVE_CODE = /\{\s*\[native code\]\s*\}\s*$/;
   /* sandbox -> its scope Proxy. */
-  var sandboxes = _WeakMap ? new _WeakMap() : null;
-  var boundMethods = _WeakMap ? new _WeakMap() : null;
+  var sandboxes = new _WeakMap();
+  var boundMethods = new _WeakMap();
   /* function -> whether it is native code, so a page function's source
      is stringified once, not on every read. */
-  var nativeVerdicts = _WeakMap ? new _WeakMap() : null;
+  var nativeVerdicts = new _WeakMap();
 
   function isSandbox(v) {
-    return !!(sandboxes && v && (typeof v === "object") && wmHas(sandboxes, v));
+    return !!(v && (typeof v === "object") && wmHas(sandboxes, v));
   }
 
   /* The window's own methods, bound by name whatever their value: a
@@ -1516,7 +1366,7 @@
 
   /* Whether native `fn` has static members of its own (`Proxy.revocable`)
      past `length` and `name`, which a bound copy would lose. */
-  var staticVerdicts = _WeakMap ? new _WeakMap() : null;
+  var staticVerdicts = new _WeakMap();
   function hasStatics(fn) {
     var v = wmGet(staticVerdicts, fn);
     if (v === undefined) {
@@ -1713,7 +1563,6 @@
   }
 
   function makeSandbox(exposed) {
-    if (!_Proxy || !sandboxes) return window;
     /* The sandbox's own properties. */
     var own = _ObjectCreate(null);
     var proxy;

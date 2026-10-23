@@ -17,7 +17,6 @@ strategy/phasing that produced this surface, see
 | Symbol | Meaning |
 |:------:|---------|
 | ✅ | **Implemented** — granting the API exposes a real working binding. |
-| 🟡 | **Stubbed** — binding exists, throws "not implemented yet" on call (so the script at least sees a clear error and `typeof` reports `function`). |
 | ⚪ | **Not in catalog** — not exposed; granting it logs an "unknown @grant" warning to the page console + Log tab. |
 
 ## Granting

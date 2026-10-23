@@ -187,9 +187,6 @@ const INFO = {
 test('emitGmBindings: unsafeWindow is a plain window alias, not a stub', () => {
   const { js } = emitGmBindings(['unsafeWindow'], INFO);
   assert.match(js, /const unsafeWindow = window;/);
-  // It must NOT go through the notImplemented fall-through — that
-  // would throw on first use.
-  assert.doesNotMatch(js, /notImplemented\("unsafeWindow"\)/);
 });
 
 test('emitGmBindings: unsafeWindow gets no GM. alias (matches TM/VM)', () => {

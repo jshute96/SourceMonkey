@@ -1191,8 +1191,6 @@ Set aside while moving every write into the service worker
   - Options: per-origin patterns, so a second script on a covered site
     changes nothing; or `<all_urls>`, which `buildGmRuntimeSpecs`
     argues against (the runtime's load on every site).
-- **Audit what's in `wrapper-gm-runtime.js`** for code no current API
-  needs.
 
 ## Storage-key migration — remove after 2026-09-01
 

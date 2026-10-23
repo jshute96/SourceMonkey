@@ -85,7 +85,7 @@ and `lib/`.
 | `src/stack-link.ts` | Pure stack-ref helpers: parse refs in a log message, decode our URLs for reading, map a stack's lines back to its files |
 | `src/script-source-url.ts` | Canonical `sourcemonkey://SourceMonkey/…` URL builders for every `{code}` entry — main, config, prelude, require, plus page-wide bridge / GM runtime |
 | `src/userscript-header.ts` | Parser for the `// ==UserScript== … // ==/UserScript==` metadata block + header/body splitter, with per-tag line numbers |
-| `src/url-match.ts` | Pure URL-matching predicate for `@match` / `@include` / `@exclude` patterns (incl. `.tld` hosts), plus the `@match` grammar check and its lenient rewrites |
+| `src/url-match.ts` | Pure URL-matching predicate for `@match` / `@include` / `@exclude` patterns (incl. `.tld` hosts), the `@match` grammar check and lenient rewrites, and the wrapper's prebuilt regexes |
 | `src/public-suffixes.ts` | Generated: the ICANN public suffix rules that `.tld` host patterns match, one per line |
 | `src/unsafe-window-use.ts` | Text scan for an ungranted `unsafeWindow` reference, ignoring a source that declares the name itself |
 | `src/runtime-messages.ts` | The `sm:*` report types injected scripts send the service worker, plus its `sm:manual` for sm-dev |

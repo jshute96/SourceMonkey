@@ -41,8 +41,6 @@ test('sentinel tokens survive minification', () => {
   assert.match(WRAPPER_PRELUDE, /__smGate/);
   // The channel key's stand-in, swapped for the key at registration.
   for (const code of [WRAPPER_PRELUDE, WRAPPER_BRIDGE, WRAPPER_GM_RUNTIME]) assert.match(code, /"__SM_KEY__"/);
-  // The port-aware matcher's digit test (see the @match :port handling).
-  assert.ok(WRAPPER_PRELUDE.includes('\\d+'), 'prelude port regex should survive');
   // A full marker, not the shared `sourcemonkey-` prefix: that prefix
   // matches all the live markers, so it would pass even if the one the
   // request path needs were mistyped.

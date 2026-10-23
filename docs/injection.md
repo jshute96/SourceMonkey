@@ -1464,10 +1464,11 @@ The User Scripts API has no equivalent for `/regex/` `@include` /
     script pays that only on pages its coarse glob reaches.
 - **Wrapper layer.** When a script has any regex, `.tld` or glob
   pattern, or any `@exclude`,
-  the wrapper embeds the full `{matches, includes, excludes}` object
-  and a small self-contained matcher equivalent to
-  `urlMatchesScript()`. Before the body runs, the wrapper re-checks
-  `location.href` and silently returns if it doesn't match.
+  the wrapper embeds its rules as regexes the worker built
+  (`pageMatcher` in `url-match.ts`), equivalent to
+  `urlMatchesScript()`. Before the body runs, the wrapper tests
+  `location.href` against them and silently returns if it doesn't
+  match.
   - A regex and a glob are tested ignoring case, as Tampermonkey and
     Violentmonkey test them.
 

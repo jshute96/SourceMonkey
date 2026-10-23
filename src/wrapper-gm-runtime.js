@@ -3734,10 +3734,6 @@
   });
 
   var api = {
-    /* Placeholder for sync APIs still not wired. */
-    notImplemented: function (name) {
-      throw new _Error("[SourceMonkey] " + name + " is not implemented yet");
-    },
     /* Exposed for compile-in async bindings to route through. Returns
        a Promise that resolves with the SW's reply (or rejects if the
        transport is unavailable). Picks chrome.runtime.sendMessage or

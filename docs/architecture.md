@@ -196,9 +196,7 @@ details live in the topic-specific docs linked below.
   Emits real bodies for every catalog entry; `unsafeWindow` is a
   `window` alias rather than a call (what makes it the page's window
   is the execution world — see
-  [injection.md](injection.md#unsafewindow-is-the-pages-window)). The
-  `notImplemented` stub remains only as a fall-through for future
-  catalog additions whose bodies haven't landed yet.
+  [injection.md](injection.md#unsafewindow-is-the-pages-window)).
 - **GM_* page-side runtime** (`src/wrapper-gm-runtime.js`) —
   helper registered once per page **per execution world** that needs
   it. Puts itself in the world's registry (`reg.gm`, reached with the
