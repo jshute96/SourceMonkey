@@ -1,13 +1,13 @@
 // One table describing every userscript manager the cross-manager
-// suite can drive, so the Playwright fixture, the preflight, the sync
-// CLI, and the browser-opener shell script all agree on the profile
-// directory, CDP port, and extension ID for each.
+// suite can drive, so the Playwright fixture, the sync CLI, and the
+// browser-opener shell script all agree on each one's extension ID and
+// env vars. The profile directory and CDP port are the opener's: the
+// tests themselves launch a new browser each run (manager-launch.ts).
 //
 // "Manager" here means a userscript manager extension — SourceMonkey
 // itself, Tampermonkey (TM), or Violentmonkey (VM). SourceMonkey is
 // absent from this table on purpose: it is loaded unpacked from
-// `dist/` into a throwaway profile (see sourcemonkey-launch.ts) and
-// needs none of the persistent-profile machinery described here.
+// `dist/` (see sourcemonkey-launch.ts).
 //
 // Plain .mjs so the shell opener and the node CLIs can read it without
 // a build step; the TypeScript fixture imports it the same way it
@@ -30,12 +30,12 @@ const ROOT = path.resolve(__dirname, '../..');
  * @property {string} cwsUrl           Web Store listing, printed in first-run instructions.
  * @property {string} idEnv            Env var overriding the extension ID (e.g. a beta channel).
  * @property {string} portEnv          Env var overriding the CDP port.
- * @property {string} headedEnv        Env var that selects headed (CDP-attach) mode.
+ * @property {string} headedEnv        Env var that shows the test browser's windows.
  * @property {string} scriptSuffix     `tm` / `vm` — the package-script suffix
  *   (`test:e2e:<suffix>`), named here so messages don't re-derive it.
- * @property {number} defaultCdpPort   CDP port the opener script binds.
- * @property {string} profileDir       Absolute path to the persistent Chromium profile.
- * @property {boolean} preGrantDownloads  Whether the preflight must pre-grant Chrome's
+ * @property {number} defaultCdpPort   CDP port the opener script binds (and the sync CLI connects to).
+ * @property {string} profileDir       Absolute path to the opener's persistent Chromium profile.
+ * @property {boolean} preGrantDownloads  Whether the test browser's profile pre-grants Chrome's
  *   optional `downloads` permission for GM_download to work unattended.
  */
 
@@ -119,7 +119,7 @@ export function managerCdpPort(name) {
   return port;
 }
 
-/** True when the caller asked for headed (attach-to-running-browser) mode. */
+/** True when the caller asked to see the test browser's windows. */
 export function managerHeaded(name) {
   return process.env[managerConfig(name).headedEnv] === '1';
 }

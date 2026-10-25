@@ -602,32 +602,24 @@ pnpm run test:e2e tests/e2e/injection.spec.ts    # For one e2e test
 ```
 
 The examples suite (`tests/examples/`) can also run against
-Tampermonkey or Violentmonkey for cross-manager compliance checks:
+Tampermonkey or Violentmonkey for cross-manager compliance checks.
+Each run starts a new browser with the manager loaded, so there's
+nothing to set up:
 
 ```sh
-# One-off: install/update every example userscript into the running manager
-node scripts/sync-manager-scripts.mjs --manager tampermonkey
-
-# Run the examples suite against a manager, headless.
-# Its headed browser must be closed.
-pnpm run test:e2e:tm
+pnpm run test:e2e:tm          # headless
 pnpm run test:e2e:vm
-
-# Or, headed: connects via CDP (Chrome DevTools Protocol) to that manager's browser. The script's
-# preflight step launches it if it isn't already running.
-pnpm run test:e2e:tm:headed
+pnpm run test:e2e:tm:headed   # with the browser window shown
 pnpm run test:e2e:vm:headed
 ```
 
-The headed variants connect over CDP to the browser opened by
-`scripts/open-test-browser.sh <manager>`. The headless variants launch
-their own Chromium against the same persistent profile (so the same
-manager installation), but can't run while the headed browser is open
-against that profile.
+The manager is the copy `sm-dev` downloads from the Chrome Web Store,
+fetched on the first run. `scripts/sm-dev --manager tm manager fetch`
+(or `vm`) updates it.
 
 See [docs/testing.md](docs/testing.md) for the harness layout,
-[docs/cross-manager-testing.md](docs/cross-manager-testing.md) for the
-one-time profile setup each manager needs, and
+[docs/cross-manager-testing.md](docs/cross-manager-testing.md) for how
+the manager runs work, and
 [docs/cross-manager-test-results.md](docs/cross-manager-test-results.md)
 for known per-manager divergences.
 

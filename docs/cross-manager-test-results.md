@@ -75,28 +75,6 @@ Specs that opt out of a manager via
 
 None outstanding under either manager.
 
-### Duplicate installs in the profile — check this first
-
-The `gm-dom` and `headers-run-at` failures seen after the install path
-was repaired were **not** a manager divergence: the TM profile held two
-copies of fourteen example scripts, so each one ran twice on every
-matching page and every `toHaveCount(1)` saw 2.
-
-- The copies pre-dated the repair. Nothing in the suite creates them
-  now — sync matches on `@name` and updates in place — but the profile
-  is persistent, so old damage survives indefinitely.
-- `getInstalledMap` now prints a warning naming any duplicated script,
-  because from the spec end this looks like an injection bug and
-  nothing points at the profile.
-  - It compares `@name`s, so it misses a copy left under an example's
-    **old name** after a rename. That copy still matches the page and
-    runs too. In Oct 2026 both profiles held such copies, and both
-    managers ran many examples twice until they were deleted.
-- To clear them: TM dashboard → tick the extra rows → *Apply this to
-  all selected scripts* → **Delete** → Start, and accept the confirm.
-  Keep one copy of each `@name`, and delete any example listed under
-  a name it no longer has.
-
 ## Behavior diffs (SM vs TM/VM)
 
 Cases where the managers genuinely behave differently on the same
@@ -221,8 +199,8 @@ one.
     registration is unresolved.
   - Nothing the harness can arrange — recorded as a divergence, not a
     setup gap.
-  - TM still does need the toggle, and it's step 4 of the one-time
-    profile setup either way.
+  - TM still does need the toggle, which the test browser's profile
+    grants (see cross-manager-testing.md, "The test browser").
 
 - **`GM_download` needs Chrome's `downloads` permission granted to
   TM.**
@@ -235,13 +213,10 @@ one.
   - VM needs no equivalent: it uses `chrome.downloads` only when the
     permission is already granted and falls back to an anchor download
     otherwise, so nothing blocks.
-  - `scripts/e2e-manager-preflight.mjs` writes the grant into the test
-    profile's `Preferences` before the browser starts (browser must be
-    closed — Chrome rewrites that file from memory on exit). Same
-    shortcut `tests/fixtures/extension.ts` uses for
-    `user_scripts_enabled` on the SM profile.
-  - A one-time pre-edit backup is left at
-    `Preferences.pre-sm-downloads-grant`.
+  - The test browser's launch (`tests/fixtures/manager-launch.ts`)
+    writes the grant into the new profile's `Preferences` before the
+    browser starts. Same shortcut
+    the SM launch uses for `user_scripts_enabled`.
 - **TM's permission prompts are auto-answered.** The driver clicks OK
   on any `ask.html` permission page — see
   `autoApprovePermissionPrompts` in

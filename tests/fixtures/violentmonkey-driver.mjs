@@ -3,9 +3,8 @@
 // getInstalledMap / installFromFile — so tests/fixtures/manager.ts can
 // treat the two interchangeably.
 //
-// VM is installed from the Chrome Web Store into a persistent profile
-// (one-time manual step, see docs/cross-manager-testing.md) and the
-// suite attaches to that browser over CDP, exactly as for TM.
+// Callers pass the BrowserContext VM runs in, as for TM: the tests' own
+// browser, or one reached over CDP.
 //
 // Where this differs from the TM driver: we don't drive VM's UI.
 //

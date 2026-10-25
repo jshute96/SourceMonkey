@@ -119,9 +119,8 @@ test.describe('examples / gm-info', () => {
     // The example userscript ships a `file:///*/<api>/<api>.html`
     // match alongside the http one, so loading the page from disk
     // works without a local server. Under TM, this requires "Allow
-    // access to file URLs" enabled on the TM card in chrome://extensions
-    // — a step covered by the one-time setup in
-    // docs/cross-manager-testing.md.
+    // access to file URLs", which the test browser's profile grants
+    // (tests/fixtures/manager-launch.ts).
     //
     // VM doesn't inject into file:// pages here at all. Checked, not
     // assumed: the grant is live (`isAllowedFileSchemeAccess` returns

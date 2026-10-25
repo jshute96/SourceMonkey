@@ -20,10 +20,10 @@ delete process.env.FORCE_COLOR;
 // Projects:
 //   - sourcemonkey (default) — runs every spec under both directories.
 //   - sm-dev                 — tests/harness/, sm-dev's own suite.
-//   - tampermonkey           — runs only the examples suite against the
-//                              user's TM-equipped browser opened via
-//                              `scripts/open-test-browser.sh tampermonkey`.
-//   - violentmonkey          — the same, against a VM-equipped profile.
+//   - tampermonkey           — runs only the examples suite, each worker
+//                              in a new browser with TM loaded
+//                              (tests/fixtures/manager-launch.ts).
+//   - violentmonkey          — the same, with VM.
 //
 // SM-internals specs (e2e/) are skipped under the external managers
 // because they reach into the SM service worker, which doesn't exist
@@ -32,17 +32,15 @@ delete process.env.FORCE_COLOR;
 // `metadata.manager` is the source of truth for which backend
 // tests/fixtures/manager.ts uses. Pick the project explicitly with
 // `--project=<name>`; the `test:e2e` script wires the SM project so
-// `pnpm test` doesn't try to reach a TM or VM browser. See
+// `pnpm test` doesn't also run the TM and VM suites. See
 // docs/cross-manager-testing.md.
 export default defineConfig({
   testDir: './tests',
   // Half the cores. Each worker runs its own Chromium with the
   // extension loaded, so this trades memory for wall-clock; leaving
   // headroom keeps the box usable while a run is going.
-  //
-  // The external-manager projects must NOT run this way — each drives
-  // one real browser over CDP with no per-test reset — so
-  // `pnpm run test:e2e:tm` / `:vm` pass `--workers=1`.
+  // The TM and VM projects run the same way, each worker in its own
+  // browser (tests/fixtures/manager-launch.ts).
   fullyParallel: true,
   workers: '50%',
   reporter: 'list',
@@ -60,12 +58,8 @@ export default defineConfig({
       name: 'sourcemonkey',
       testMatch: ['e2e/**/*.spec.ts', 'examples/**/*.spec.ts'],
       metadata: { manager: 'sourcemonkey' },
-      // Scoped to this project on purpose: a retry here starts from a
-      // fresh browser (Playwright discards the crashed worker and its
-      // context), which is what makes it safe. The external-manager
-      // projects drive the developer's own long-lived profile over CDP
-      // with no per-test reset, where re-running a half-finished install
-      // is not the same proposition.
+      // A retry starts from a fresh browser (Playwright discards the
+      // crashed worker and its context), which is what makes it safe.
       retries: 1,
     },
     {
@@ -92,10 +86,8 @@ export default defineConfig({
       name: 'tampermonkey',
       testMatch: ['examples/**/*.spec.ts'],
       metadata: { manager: 'tampermonkey' },
-      // Documents intent where the setting lives. It does not by itself
-      // prevent cross-worker parallelism — `workers` is global — which
-      // is why tests/fixtures/manager.ts refuses to run this project
-      // with more than one.
+      // A spec file's tests stay in one worker, in order, so its
+      // scripts are installed into that worker's manager once.
       fullyParallel: false,
     },
     {

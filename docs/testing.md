@@ -56,11 +56,10 @@ with no browser. `tests/unit/harness/validate.test.mjs` spawns it over
   `fullyParallel: true`). Each worker launches its own Chromium with its
   own `mkdtemp` profile, and the fixture HTTP server binds to port 0, so
   workers share nothing.
-  - **The `tampermonkey` and `violentmonkey` projects must stay
-    serial.** Each attaches over CDP to one real browser with no
-    per-test state reset, so the package scripts pass `--workers=1`.
-    Invoking `playwright test --project=<name>` directly skips that —
-    pass it yourself.
+  - The `tampermonkey` and `violentmonkey` projects run in parallel
+    too, each worker in its own new browser with the manager loaded
+    (see [cross-manager-testing.md](cross-manager-testing.md#the-test-browser)).
+    They use the same worker count.
 - Typecheck: `pnpm run typecheck` — `tsconfig.json` builds the extension
   and covers `src/` only, so this runs `tsconfig.tests.json` over the
   tests as well. Playwright transpiles specs without checking types, so

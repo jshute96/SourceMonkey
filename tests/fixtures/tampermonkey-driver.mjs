@@ -9,11 +9,10 @@
 // closed-source so we drive its UI; VM is not, so we can talk to its
 // background directly.
 //
-// TM is not loaded as an unpacked extension under our control — the
-// test browser is opened via `scripts/open-test-browser.sh tampermonkey`
-// and the user installed TM from the Chrome Web Store into the
-// persistent profile (one-time setup). Callers connect to that browser
-// over CDP and pass the resulting BrowserContext to TampermonkeyDriver.
+// Callers pass the BrowserContext TM runs in: the tests' own browser
+// (tests/fixtures/manager-launch.ts), or one opened with
+// `scripts/open-test-browser.sh tampermonkey` and reached over CDP (the
+// sync CLI).
 //
 // All UI selectors used here are reasonable best-guesses against
 // Tampermonkey v5's dashboard. Update them if TM renames anything in a
@@ -83,7 +82,7 @@ export class TampermonkeyDriver {
    * downloads") calls `chrome.permissions.request`, which needs
    * Chrome's own native grant bubble — headless can't show one, so the
    * click lands and nothing happens. That permission is pre-granted in
-   * the profile by `scripts/e2e-manager-preflight.mjs`; don't drop that on
+   * the profile by `tests/fixtures/manager-launch.ts`; don't drop that on
    * the assumption this handler covers it.
    *
    * Only `input.button.permission[value="Ok"]` is clicked. The install
@@ -189,7 +188,9 @@ export class TampermonkeyDriver {
    * about them — a profile holding the same script twice runs it twice
    * on every page, and the only symptom is an example spec counting
    * two of something it expects one of. That is a slow thing to
-   * diagnose from the spec end; see `docs/cross-manager-test-results.md`.
+   * diagnose from the spec end. It can only happen in a persistent
+   * profile (the sync CLI's); see "Removing stale copies" in
+   * `docs/cross-manager-testing.md`.
    * @returns {Promise<Map<string, string>>}
    */
   async getInstalledMap() {
@@ -355,11 +356,29 @@ export class TampermonkeyDriver {
     for (const sel of candidates) {
       const loc = page.locator(sel).first();
       if (await loc.isVisible().catch(() => false)) {
-        await loc.click();
+        await clickClosing(page, loc);
         return;
       }
     }
-    await anyButton.click();
+    await clickClosing(page, anyButton);
+  }
+}
+
+/**
+ * Clicks `loc` on TM's confirmation page, which TM closes as soon as
+ * the install is done. On a busy machine that can happen before
+ * Playwright's click returns, which then throws "Target page, context
+ * or browser has been closed" for a click that worked. A failed install
+ * leaves the page open, so that error is still thrown.
+ * @param {import('@playwright/test').Page} page
+ * @param {import('@playwright/test').Locator} loc
+ * @returns {Promise<void>}
+ */
+async function clickClosing(page, loc) {
+  try {
+    await loc.click();
+  } catch (err) {
+    if (!page.isClosed()) throw err;
   }
 }
 

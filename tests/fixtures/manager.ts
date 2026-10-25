@@ -3,13 +3,14 @@
 //
 //   --project=sourcemonkey   — launches Chromium with the unpacked
 //     dist/ extension, same shape as tests/fixtures/extension.ts.
-//   --project=tampermonkey   — connects to a persistent profile with
-//     Tampermonkey (TM) installed from the Chrome Web Store.
+//   --project=tampermonkey   — launches Chromium in a new temporary
+//     profile with Tampermonkey (TM) loaded, from sm-dev's cache of
+//     the Web Store build (see manager-launch.ts).
 //   --project=violentmonkey  — the same, for Violentmonkey (VM).
 //
 // The two external managers share one code path here; everything that
-// differs between them (profile directory, CDP port, env-var names) is
-// a row in tests/fixtures/managers.mjs.
+// differs between them (label, extension ID, env-var names) is a row
+// in tests/fixtures/managers.mjs.
 //
 // The project's `metadata.manager` field is what we read. The
 // SM_MANAGER env var is a fallback for direct `pnpm exec playwright test
@@ -21,8 +22,7 @@
 // import-from-file per script under TM, and a background install
 // keyed to the fixture server's URL under VM.
 
-import { test as base, chromium, type BrowserContext } from '@playwright/test';
-import fs from 'node:fs';
+import { test as base, type BrowserContext } from '@playwright/test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeSwApi } from './sw-api';
@@ -34,20 +34,20 @@ import {
 } from './sourcemonkey-launch';
 import {
   TampermonkeyDriver,
-  getTampermonkeyExtensionId,
   syncTampermonkeyScripts,
 } from './tampermonkey-driver.mjs';
 import {
   ViolentmonkeyDriver,
-  getViolentmonkeyExtensionId,
   syncViolentmonkeyScripts,
 } from './violentmonkey-driver.mjs';
 import {
   EXTERNAL_MANAGERS,
-  managerCdpPort,
   managerConfig,
   managerHeaded,
 } from './managers.mjs';
+import { launchManagerContext } from './manager-launch';
+import { fetchedId } from '../../lib/harness/extension-launch.js';
+import { fetchedDir } from '../../lib/harness/manager-fetch.js';
 
 /**
  * The managers this fixture can drive. Everything but `sourcemonkey`
@@ -57,11 +57,6 @@ import {
  */
 export type ExternalManagerName = 'tampermonkey' | 'violentmonkey';
 export type ManagerName = 'sourcemonkey' | ExternalManagerName;
-
-/** Narrowing helper so the shared external-manager paths type-check. */
-function isExternal(name: ManagerName): name is ExternalManagerName {
-  return name !== 'sourcemonkey';
-}
 
 /**
  * Resolve which manager this worker is running against.
@@ -134,13 +129,11 @@ type TestFixtures = {
    * test start, then closes any new ones at test end. Runs
    * automatically per test (`auto: true`).
    *
-   * Necessary under TM and VM because the connected CDP context is
-   * the user's interactive browser; pages we open during a test (the
-   * spec's own `extensionContext.newPage()`, plus anything a manager
-   * driver might leave around) would otherwise pile up forever,
-   * especially after assertion failures that skip the spec's manual
-   * `page.close()`. Under SM the persistent context dies at worker
-   * teardown so this is mostly a no-op, but it doesn't hurt.
+   * A worker's browser lives for all its tests, so pages a test opens
+   * (the spec's own `extensionContext.newPage()`, plus anything a
+   * manager driver leaves around) would otherwise pile up, especially
+   * after assertion failures that skip the spec's manual
+   * `page.close()`.
    */
   _autoCloseTestPages: void;
 };
@@ -149,27 +142,6 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   manager: [
     async ({}, use, workerInfo) => {
       const name = resolveManager(workerInfo);
-      // An external-manager project drives ONE real browser over CDP,
-      // with the developer's own profile and no per-test state reset.
-      // Several workers would install and uninstall userscripts in each
-      // other's way in that single browser, and nothing would put it back.
-      //
-      // `workers` is a global Playwright option — it cannot be set per
-      // project — so the package scripts pass `--workers=1` and this catches
-      // an invocation that bypassed them. Failing here, before the CDP
-      // attach, beats discovering it halfway through a run against a
-      // browser that is now in an unknown state.
-      // `config.workers`, not `workerIndex`: this fails on the FIRST
-      // worker, before anything attaches, rather than letting worker 0
-      // proceed and only tripping its siblings.
-      if (isExternal(name) && workerInfo.config.workers > 1) {
-        throw new Error(
-          `The ${name} project must run with --workers=1 (it shares one real `
-          + `browser and does not reset state between tests). Use `
-          + `\`pnpm run test:e2e:${managerConfig(name).scriptSuffix}\`, `
-          + `or pass --workers=1 explicitly.`,
-        );
-      }
       await use(name);
     },
     { scope: 'worker' },
@@ -193,82 +165,22 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         return;
       }
 
-      const cfg = managerConfig(manager);
-      const port = managerCdpPort(manager);
-      const opener = `scripts/open-test-browser.sh ${manager}`;
-
-      if (managerHeaded(manager)) {
-        // Headed (debug) mode: connect to a browser the user already
-        // opened with the opener script. Don't close at teardown —
-        // it's their interactive session.
-        const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`).catch((err) => {
-          throw new Error(
-            `Could not connect to the ${cfg.label} test browser at CDP port ${port}. ` +
-            `Start it first with: ${opener}\n` +
-            `Underlying error: ${err?.message ?? err}`
-          );
-        });
-        const ctx = browser.contexts()[0];
-        if (!ctx) {
-          await browser.close();
-          throw new Error(`Connected to the ${cfg.label} browser but no context found.`);
-        }
-        await use(ctx);
-        // Don't close the user's browser.
-        return;
-      }
-
-      // Default: headless. Launch a fresh Chromium against the
-      // manager's persistent profile so the installed extension and the
-      // user's "Allow access to file URLs" toggle come along for the
-      // ride. `--headless=new` is required for extension support;
-      // `headless: false` keeps Playwright from forcing the old
-      // headless flag, then we pass --headless=new ourselves.
-      //
-      // Chromium locks the profile dir — if the user has the headed
-      // browser open against the same profile, this throws. Surface a
-      // friendly message in that case.
-      if (!fs.existsSync(cfg.profileDir)) {
-        throw new Error(
-          `${cfg.label} profile not found at ${cfg.profileDir}. ` +
-          `First-time setup: run ${opener} and install ${cfg.label} ` +
-          `from the Chrome Web Store, then close the browser. ` +
-          `See docs/cross-manager-testing.md.`
-        );
-      }
-      // `ignoreDefaultArgs: ['--disable-extensions']` is the load-bearing
-      // bit: Playwright passes `--disable-extensions` by default, which
-      // suppresses every extension in the profile. The SM fixture
-      // sidesteps this with `--disable-extensions-except=<unpacked-path>`,
-      // but these managers were CWS-installed into the profile so we have
-      // no unpacked path to point at — we have to suppress the default
-      // flag instead. Without this, the manager doesn't load and the
-      // chrome-extension:// URL returns ERR_BLOCKED_BY_CLIENT.
-      const ctx = await chromium.launchPersistentContext(cfg.profileDir, {
-        headless: false,
-        args: ['--headless=new'],
-        ignoreDefaultArgs: ['--disable-extensions'],
-      }).catch((err) => {
-        const msg = String(err?.message ?? err);
-        if (msg.includes('ProcessSingleton') || msg.includes('SingletonLock') || msg.includes('already in use')) {
-          throw new Error(
-            `The ${cfg.label} profile is locked — another Chromium is using ${cfg.profileDir}. ` +
-            `Close the headed browser (or set ${cfg.headedEnv}=1 to connect to it instead). ` +
-            `Underlying error: ${msg}`
-          );
-        }
-        throw err;
-      });
-      await use(ctx);
-      await ctx.close();
+      // A new browser and profile per worker, with the manager freshly
+      // loaded: see manager-launch.ts. `test:e2e:tm:headed` and
+      // `:vm:headed` set the headed env var, to watch the run.
+      const launched = await launchManagerContext(manager, managerHeaded(manager));
+      await use(launched.ctx);
+      await launched.close();
     },
-    { scope: 'worker' },
+    // Room for the first run, which downloads the manager before the
+    // browser starts. Playwright's default for a worker fixture is 30s.
+    { scope: 'worker', timeout: 180_000 },
   ],
 
   externalDriver: [
     async ({ manager, extensionContext }, use) => {
       if (manager === 'tampermonkey') {
-        const driver = new TampermonkeyDriver(extensionContext, getTampermonkeyExtensionId());
+        const driver = new TampermonkeyDriver(extensionContext, fetchedId(fetchedDir(manager), manager));
         // Nobody is watching to click "OK" on TM's GM-permission prompts
         // (GM_download raises one), and an unanswered prompt means the GM
         // call never settles. VM needs no equivalent — it falls back to
@@ -278,7 +190,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         return;
       }
       if (manager === 'violentmonkey') {
-        await use(new ViolentmonkeyDriver(extensionContext, getViolentmonkeyExtensionId()));
+        await use(new ViolentmonkeyDriver(extensionContext, fetchedId(fetchedDir(manager), manager)));
         return;
       }
       await use(null);
@@ -318,10 +230,10 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     }
 
     // TM / VM: reuse the worker-scoped driver so the installed-scripts
-    // list is read only once per worker. Scripts persist in the user's
-    // profile across tests AND runs, and both sync helpers are
-    // idempotent (skip when name+version matches), so after the initial
-    // read the per-test cost is just a Map lookup.
+    // list is read only once per worker. Scripts stay installed across
+    // the worker's tests, and both sync helpers are idempotent (skip
+    // when name+version matches), so after the first install the
+    // per-test cost is just a Map lookup.
     if (!externalDriver) throw new Error(`externalDriver missing under the ${manager} manager`);
 
     // Dispatch on the manager name, the same way the driver fixture

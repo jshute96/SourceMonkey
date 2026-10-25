@@ -42,7 +42,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright';
+import { chromium } from '@playwright/test';
 import { TampermonkeyDriver } from '../tests/fixtures/tampermonkey-driver.mjs';
 import { ViolentmonkeyDriver } from '../tests/fixtures/violentmonkey-driver.mjs';
 import { managerCdpPort, managerConfig, managerExtensionId } from '../tests/fixtures/managers.mjs';

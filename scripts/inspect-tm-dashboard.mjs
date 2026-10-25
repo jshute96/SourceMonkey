@@ -26,7 +26,7 @@
 // (or whatever the new class names are) into `listInstalled`'s
 // `tr.querySelector(...)` calls.
 
-import { chromium } from 'playwright';
+import { chromium } from '@playwright/test';
 import { managerCdpPort, managerExtensionId } from '../tests/fixtures/managers.mjs';
 
 const TM_ID = managerExtensionId('tampermonkey');

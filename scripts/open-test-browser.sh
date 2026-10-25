@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 #
-# Open a test browser configured for cross-manager testing against one
-# of the external userscript managers (Tampermonkey or Violentmonkey).
-# Tests connect to it via CDP (see tests/fixtures/manager.ts).
+# Open a browser with one of the external userscript managers
+# (Tampermonkey or Violentmonkey) in a persistent profile, for trying
+# the examples by hand and for scripts/sync-manager-scripts.mjs, which
+# connects to it over CDP. The test suites don't use it: they start a
+# new browser each run (see tests/fixtures/manager-launch.ts).
 #
 # The profile directory, CDP port, and Web Store listing all come from
 # tests/fixtures/managers.mjs, so this script and the Playwright
@@ -15,9 +17,9 @@
 #      Web Store (the URL is printed below).
 #   3. Open chrome://extensions, enable "Developer mode", and on the
 #      manager's card flip "Allow access to file URLs" — a couple of
-#      specs load example pages over file://.
-#   4. Close the browser. The persistent profile keeps the manager
-#      installed across runs.
+#      examples load their pages over file://.
+#
+# The persistent profile keeps the manager installed across runs.
 #
 # Usage:
 #   scripts/open-test-browser.sh <manager>          # about:blank

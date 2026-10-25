@@ -7,43 +7,25 @@ managers.
 
 - **`sourcemonkey` project** (default) — runs the e2e suite and the
   examples suite against an unpacked-extension build of SourceMonkey.
-- **`tampermonkey` project** — runs only the examples suite against a
-  persistent Chromium profile with Tampermonkey (TM) installed.
+- **`tampermonkey` project** — runs only the examples suite, in a new
+  browser with Tampermonkey (TM) loaded.
 - **`violentmonkey` project** — the same, for Violentmonkey (VM).
 
 "TM" and "VM" below are those two extensions; both are third-party
-userscript managers installed from the Chrome Web Store rather than
-built from this repo.
+userscript managers from the Chrome Web Store rather than built from
+this repo.
 
 ## Running the suite
 
 - `pnpm run test:e2e` — SM project only (`pnpm test` runs it, then
   the `sm-dev` project).
 - `pnpm run test:e2e:tm` / `pnpm run test:e2e:vm` — TM / VM project,
-  **headless**.
-  - Launches its own Chromium against that manager's persistent profile.
-  - The headed browser for the same manager must **not** be open at the
-    same time — Chromium can't share a profile between two processes.
-  - Preflight (`scripts/e2e-manager-preflight.mjs <manager>
-    --need-closed`): if a CDP-attached browser is already up, calls
-    `page.bringToFront()` to surface the offending tab (best-effort —
-    on Linux/X11 this activates the tab but may not raise the window
-    above other apps), prints a "close it" message, and exits 1
-    before Playwright runs.
+  headless, with Playwright's worker count from `playwright.config.ts`
+  (half the cores), as for the SM project.
 - `pnpm run test:e2e:tm:headed` / `pnpm run test:e2e:vm:headed` — the
-  same projects, **headed**.
-  - Sets `TM_HEADED=1` / `VM_HEADED=1` and connects via CDP to the
-    browser opened by `scripts/open-test-browser.sh <manager>`.
-  - Use this when you want to watch the run or debug interactively.
-  - Preflight (`--need-open`): if the CDP port isn't answering, spawns
-    the opener script (detached) and waits up to 15s for the port to
-    come up, so the command "just works" from a cold start.
-- `pnpm exec playwright test --project=<name>` works directly too, but
-  skips the preflight — make sure the browser state is right yourself.
-  - It also skips the `--workers=1` the package scripts pass. The
-    external-manager projects each drive one real browser with no
-    per-test reset, so they refuse to start with more than one worker
-    (`tests/fixtures/manager.ts`) rather than corrupt that session.
+  same, with the browser windows shown and one worker, to watch a run
+  or debug it.
+- `pnpm exec playwright test --project=<name>` works directly too.
 
 Each Playwright project carries `metadata.manager` and the manager
 fixture (`tests/fixtures/manager.ts`) reads it. No env var needed for
@@ -51,78 +33,63 @@ manager selection — `--project=<name>` picks the backend on its own.
 
 Env vars used by the TM / VM paths:
 
-- `TM_HEADED=1` / `VM_HEADED=1` — connect to a CDP-attached browser
-  instead of launching headless. Set automatically by the `:headed`
-  package scripts.
-- `TM_CDP_PORT` / `VM_CDP_PORT` — override the default CDP port (9223
-  for TM, 9224 for VM).
-- `TM_EXTENSION_ID` / `VM_EXTENSION_ID` — override the extension ID
-  (e.g. to test a beta channel).
+- `TM_HEADED=1` / `VM_HEADED=1` — show the browser windows. Set by the
+  `:headed` package scripts.
+- `TM_EXTENSION_ID` / `VM_EXTENSION_ID` — for the sync CLI, override
+  the extension ID it looks the manager up by (e.g. a beta channel
+  installed in the opener's profile). The tests use the ID of the copy
+  they load.
 - `SM_MANAGER` — fallback for direct
   `pnpm exec playwright test path/to/spec.ts` runs that bypass
   `--project`. If `SM_MANAGER` and project metadata are set and
   disagree, the fixture throws.
 
-Every one of those defaults — port, profile path, Web Store ID — is a
-row in `tests/fixtures/managers.mjs`, which the fixture, the preflight,
-the sync CLI, and the opener shell script all read.
+Those defaults are rows in `tests/fixtures/managers.mjs`, which the
+fixture, the sync CLI and the browser-opener script all read.
 
-## One-time profile setup
+## The test browser
 
-Each external manager gets its own persistent Chromium profile with the
-extension already installed:
+`tests/fixtures/manager-launch.ts` gives each worker a new browser
+with the manager loaded, in a new temporary profile. Nothing needs
+setting up by hand.
 
-| Manager | Profile (gitignored) | CDP port |
-| --- | --- | --- |
-| Tampermonkey | `.chrome-tampermonkey-profile/` | 9223 |
-| Violentmonkey | `.chrome-violentmonkey-profile/` | 9224 |
+- It launches through `sm-dev`'s own launcher (`launchExtensionBrowser`
+  in `src/harness/extension-launch.ts`), as the SM project does, so
+  the browser is set up the way an `sm-dev --manager tm|vm` run's is.
+  That includes turning off TM's "installed" tab, which TM otherwise
+  opens a moment after each start.
 
-Steps, per manager:
-
-1. `scripts/open-test-browser.sh <tampermonkey|violentmonkey>` — opens
-   Playwright's bundled Chromium with that profile and CDP enabled. It
-   prints the Web Store URL to install from.
-2. In that browser, install the manager from the Chrome Web Store.
-3. Open `chrome://extensions` and flip "Developer mode" on.
-4. On the manager's card, click "Details" and enable "Allow access to
-   file URLs". A couple of specs load example pages over `file://`
-   (see gm-info), and both managers block file URLs by default.
-   - VM still won't inject into `file://` pages even with the grant;
-     that case is skipped under VM. See
-     [cross-manager-test-results.md](cross-manager-test-results.md).
-5. Close the browser (headless runs need the profile free), or leave it
-   running and use the `:headed` scripts.
-
-The profile persists across runs, so steps 2–4 only happen once.
-
-**Per checkout, not per machine.** The profiles live inside the working
-tree, so a second clone starts with no manager installed and every spec
-fails against a browser that has none in it. Either redo the steps
-above there, or, with every test browser closed, copy the directory
-over from the checkout that has it:
-
-```sh
-cp -a ../other-checkout/.chrome-tampermonkey-profile .
-```
-
-Nothing else is manual. What a manager would otherwise ask a human for
-is handled by the harness:
-
-- **Chrome's `downloads` permission** (optional in TM's manifest, and
-  required by `GM_download`) is written into the profile's
-  `Preferences` by `scripts/e2e-manager-preflight.mjs`, which runs
-  before the browser starts. VM needs no equivalent — it only reaches
-  for `chrome.downloads` when the permission is already granted, and
-  falls back to an anchor download otherwise. (That fallback is what
-  crashes headless Chromium 153, so the download-completing
-  `gm-download` tests are skipped under VM; granting the permission
-  doesn't help. See
-  [cross-manager-test-results.md](cross-manager-test-results.md).)
+- **The manager** is the unpacked copy `sm-dev` keeps in its cache
+  (`~/.cache/sm-dev/managers/<name>`), the same one
+  `sm-dev --manager tm|vm` loads.
+  - The fixture fetches it from the Chrome Web Store when the cache
+    has none, with one worker downloading while the others wait. After
+    that, runs keep using that copy, so results only change when you
+    update it:
+    `scripts/sm-dev --manager tm manager fetch` (or `vm`).
+  - The fetched manifest keeps the store's `key`, so the manager has
+    its Web Store extension ID.
+- **Nothing carries over between runs.** Each worker starts with an
+  empty manager, so stale or renamed copies of the examples can't
+  build up and run twice.
+- **What a person would click is written into the profile's
+  `Preferences`** before the browser starts, using the keys Chrome
+  writes for those clicks:
+  - "Allow User Scripts", which Chrome requires before
+    `chrome.userScripts` works.
+  - "Allow access to file URLs", for the specs that load example pages
+    over `file://` (see gm-info). VM still won't inject into `file://`
+    pages; that case is skipped under VM (see
+    [cross-manager-test-results.md](cross-manager-test-results.md)).
+  - For TM only, Chrome's `downloads` permission, which `GM_download`
+    needs. It's optional in TM's manifest, and TM asks for it through
+    Chrome's grant bubble, which a headless browser can't show. VM
+    needs no equivalent: it only uses `chrome.downloads` when the
+    permission is already granted, and falls back to an anchor
+    download otherwise. `preGrantDownloads` in `managers.mjs` is the
+    switch.
 - **TM's own permission prompts** (`ask.html`) are auto-OK'd by the
   driver.
-
-Both are explained in
-[cross-manager-test-results.md](cross-manager-test-results.md).
 
 ## How script-install works
 
@@ -204,13 +171,21 @@ version comparison:
   anyway. The Playwright fixture has no downgrade path — tests
   shouldn't roll a script back.
 
-Idempotent across runs: a no-op run is one script-list read with no
-install churn.
+Idempotent: a sync with nothing to change is one script-list read with
+no install churn.
 
 ## Standalone sync CLI
 
 `scripts/sync-manager-scripts.mjs` runs the same sync logic outside the
-Playwright harness, against the same running browser:
+Playwright harness, against a browser you opened yourself with
+`scripts/open-test-browser.sh <tampermonkey|violentmonkey>`:
+
+- That opener keeps a persistent profile per manager in the checkout
+  (`.chrome-tampermonkey-profile/`, `.chrome-violentmonkey-profile/`,
+  gitignored), with CDP on port 9223 for TM and 9224 for VM
+  (`TM_CDP_PORT` / `VM_CDP_PORT` override them).
+- The first time, install the manager in it from the Chrome Web Store
+  link the opener prints. The tests don't use these profiles.
 
 ```sh
 node scripts/sync-manager-scripts.mjs                       # TM, install/update everything
@@ -223,9 +198,8 @@ node scripts/sync-manager-scripts.mjs --allow-downgrade     # also install older
 It prints a clear plan per script (`INSTALL` / `UPDATE` / `SKIP`)
 before doing any work, and a final re-read for confirmation.
 
-This is the easiest way to (a) prime a fresh profile with every
-example script and (b) debug install issues when a manager's UI
-changes.
+It's the easiest way to try every example by hand in a real TM or VM,
+and to debug install issues when a manager's UI changes.
 
 - It also lists installed examples that no local file is named for any
   more (`[STALE]`): ones renamed or deleted. It doesn't remove them;
@@ -235,36 +209,24 @@ changes.
 
 ## Removing stale copies
 
+This applies to the opener's persistent profiles only; the tests start
+from an empty manager each run.
+
 Installed examples are matched by `@name`, so a renamed example
 installs as a new script beside the old copy, and both run on the
-example pages. Tests then fail by seeing everything twice (`Expected:
-1, Received: 2`, two log lines, two inserted elements).
+example pages: everything shows twice. With the opener's browser
+running, `sm-dev` can list and uninstall them:
 
-`sm-dev` can list and uninstall a manager's scripts in the test
-profile's browser:
-
-1. Start the profile's browser headless on its CDP port (9223 for
-   TM, 9224 for VM; see the table above), with Playwright's Chromium:
-
-   ```sh
-   CHROME=$(find ~/.cache/ms-playwright/chromium-*/chrome-linux*/chrome | sort -V | tail -1)
-   "$CHROME" --headless=new --user-data-dir="$PWD/.chrome-tampermonkey-profile" \
-     --no-first-run --no-default-browser-check --remote-debugging-port=9223 about:blank &
-   ```
-
-   Or `scripts/open-test-browser.sh tampermonkey` for a headed one.
-2. List the installed scripts with their `E` IDs:
+1. List the installed scripts with their `E` IDs:
    `scripts/sm-dev --manager tm --browser 9223 script list`.
    Current examples' names start with their folder
    (`SourceMonkey example: gm-dom: ...`); a copy under any other name
    is stale.
-3. Remove each stale one:
+2. Remove each stale one:
    `scripts/sm-dev --manager tm --browser 9223 script E46 uninstall --force`.
    `--force` is required, since it removes a real installed script.
-4. Close the browser (the headless suites need the profile free).
 
-For VM, use `.chrome-violentmonkey-profile`, port 9224 and
-`--manager vm`.
+For VM, use port 9224 and `--manager vm`.
 
 ## Diagnostic scripts
 
@@ -283,10 +245,10 @@ break shows up as a named command failure instead.
 
 ## Script-list state across tests
 
-Under TM and VM, the installed scripts persist *across* tests AND
-across runs. The sync helpers are idempotent, so the per-test
-`setup.installScriptsFrom(__dirname)` call is cheap after the first
-install (one list read, no install churn).
+Under TM and VM, the installed scripts persist across the tests in one
+worker, in that worker's browser. The sync helpers are idempotent, so
+the per-test `setup.installScriptsFrom(__dirname)` call is cheap after
+the first install (one list read, no install churn).
 
 There is intentionally no per-test reset on the external-manager side —
 that would push UI churn into every test, and the example userscripts
@@ -313,7 +275,3 @@ previously-failing spec, or (c) discover a new divergence.
   "Violentmonkey did not answer the '<cmd>' command"; the fix is to
   read the current `src/background/utils/db.js` in the VM tree and
   update `tests/fixtures/violentmonkey-driver.mjs`.
-- **CDP attachment**: `connectOverCDP` against a running Chromium
-  doesn't trigger automation-detection (e.g. for Google login) in the same way as
-  `launchPersistentContext` would. Worth keeping in mind if we ever extend
-  the cross-manager suite to manager dashboards that re-check automation.

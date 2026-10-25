@@ -42,7 +42,7 @@
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright';
+import { chromium } from '@playwright/test';
 import { managerCdpPort, managerExtensionId } from '../tests/fixtures/managers.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
