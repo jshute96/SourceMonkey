@@ -114,7 +114,6 @@ test('manager install, enable and disable, with a warning for the other one enab
   expect(before.slice(2)).toEqual([
     `Managers: SourceMonkey ${SM_VERSION} (chosen), Violentmonkey 9.9.9`,
     'Warning: Violentmonkey is also enabled in this browser, so its scripts run too. To turn it off, use `sm-dev --existing-browser --manager vm manager disable`.',
-    '',
     'No other active runs',
     '',
   ]);

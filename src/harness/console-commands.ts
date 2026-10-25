@@ -3206,6 +3206,18 @@ export interface PromptIO {
   exit: (now?: boolean) => void;
 }
 
+/** The prompt's first line, after the line's own commands have run. */
+export const PROMPT_READY = '[sm-dev] Ready for commands. Use `help commands` to list them.';
+
+/**
+ * The prompt's first lines when the line gave no commands: no run yet,
+ * so how to start one.
+ */
+export const PROMPT_STARTED = [
+  '[sm-dev] Interactive session started. Use `start [script] [url]` to launch a browser.',
+  '[sm-dev] Other suggested commands: `status`, `help`, or `help commands`.',
+];
+
 /**
  * The `> ` prompt of `sm-dev --interactive`, reading the terminal: line
  * editing and history (readline's own keys: arrows, Ctrl-A/E, Ctrl-U
@@ -3216,8 +3228,10 @@ export interface PromptIO {
  * typed command, and on an empty line it or Ctrl-D leaves. Each command goes to `runLine` once typed, in order.
  * Returns a function that closes the prompt.
  */
-export function readPromptCommands(io: PromptIO, runLine: (line: string, hooks?: { start?: () => void }) => Promise<unknown>): () => void {
-  io.out('[sm-dev] Ready for commands. Use `help commands` to list them.');
+export function readPromptCommands(
+  io: PromptIO, runLine: (line: string, hooks?: { start?: () => void }) => Promise<unknown>, greeting = [PROMPT_READY],
+): () => void {
+  for (const line of greeting) io.out(line);
   // A dumb terminal can't move the cursor, so writeOutputLine couldn't
   // redraw around a prompt there.
   const terminal = Boolean(process.stdout.isTTY) && process.env.TERM !== 'dumb';

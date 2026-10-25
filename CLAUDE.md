@@ -235,11 +235,11 @@ user before elaborating further. Default to action over planning.
   README table row and the `index.html` link are easy to miss.
   `tests/unit/examples.test.mjs` checks them.
 - When changing the body of any `tests/examples/**/*.user.js`, bump
-  its `@version` header. `scripts/sync-manager-scripts.mjs` compares
-  local `@version` against the installed copy with dotted-numeric
-  ordering — without a bump, a manager that already has the script (in
-  the `open-test-browser.sh` profiles, or a person's own browser) keeps
-  the old body. The `test:e2e:tm` / `:vm` runs start from an empty
-  manager, so they always install the current file.
+  its `@version` header. Managers update an installed script only when
+  the file's `@version` is newer (dotted-numeric ordering), so without
+  a bump, a browser that already has the script (a person's own, or an
+  `sm-dev --open-browser` profile) keeps the old body. The
+  `test:e2e:tm` / `:vm` runs start from an empty manager, so they
+  always install the current file.
 - A patch-level bump (e.g. `1.1.0` → `1.1.1`) is enough; just make sure
   the new value compares strictly greater than the installed one.

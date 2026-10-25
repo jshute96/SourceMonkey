@@ -35,17 +35,12 @@ Env vars used by the TM / VM paths:
 
 - `TM_HEADED=1` / `VM_HEADED=1` — show the browser windows. Set by the
   `:headed` package scripts.
-- `TM_EXTENSION_ID` / `VM_EXTENSION_ID` — for the sync CLI, override
-  the extension ID it looks the manager up by (e.g. a beta channel
-  installed in the opener's profile). The tests use the ID of the copy
-  they load.
 - `SM_MANAGER` — fallback for direct
   `pnpm exec playwright test path/to/spec.ts` runs that bypass
   `--project`. If `SM_MANAGER` and project metadata are set and
   disagree, the fixture throws.
 
-Those defaults are rows in `tests/fixtures/managers.mjs`, which the
-fixture, the sync CLI and the browser-opener script all read.
+Each manager's settings are a row in `tests/fixtures/managers.mjs`.
 
 ## The test browser
 
@@ -155,100 +150,46 @@ enough to call directly:
 - The server binds a fresh port per worker, so the install URL is
   computed per run.
 
-### Sync policy (both managers)
+## Trying the examples by hand
 
-`syncTampermonkeyScripts` / `syncViolentmonkeyScripts` walk every
-`*.user.js` in the example directory, parse the local `@name`/`@version`
-(`tests/fixtures/userscript-files.mjs`), and, using dotted-numeric
-version comparison:
-
-- **INSTALL** if no entry with that `@name` is installed.
-- **UPDATE** if local `@version` > installed.
-- **SKIP** if local == installed.
-- **SKIP** if local < installed (annotated "would downgrade").
-- The standalone CLI also supports `--allow-downgrade`, which
-  reclassifies older-than-installed as **DOWNGRADE** and installs
-  anyway. The Playwright fixture has no downgrade path — tests
-  shouldn't roll a script back.
-
-Idempotent: a sync with nothing to change is one script-list read with
-no install churn.
-
-## Standalone sync CLI
-
-`scripts/sync-manager-scripts.mjs` runs the same sync logic outside the
-Playwright harness, against a browser you opened yourself with
-`scripts/open-test-browser.sh <tampermonkey|violentmonkey>`:
-
-- That opener keeps a persistent profile per manager in the checkout
-  (`.chrome-tampermonkey-profile/`, `.chrome-violentmonkey-profile/`,
-  gitignored), with CDP on port 9223 for TM and 9224 for VM
-  (`TM_CDP_PORT` / `VM_CDP_PORT` override them).
-- The first time, install the manager in it from the Chrome Web Store
-  link the opener prints. The tests don't use these profiles.
+`sm-dev` opens the same manager the tests use, in a browser of its
+own, with the examples loaded (see the README's "Starting test
+browsers and running scripts with `sm-dev`" for more):
 
 ```sh
-node scripts/sync-manager-scripts.mjs                       # TM, install/update everything
-node scripts/sync-manager-scripts.mjs --manager violentmonkey
-node scripts/sync-manager-scripts.mjs --dry-run             # report plan only
-node scripts/sync-manager-scripts.mjs --dir <path>          # alternate root
-node scripts/sync-manager-scripts.mjs --allow-downgrade     # also install older-than-installed
+# All of them, in SourceMonkey, on the examples' index page
+scripts/sm-dev start tests/examples/ https://jshute96.github.io/SourceMonkey/tests/examples/index.html
+# One example, in Tampermonkey, on its own page
+scripts/sm-dev --manager tm start tests/examples/gm-info https://jshute96.github.io/SourceMonkey/tests/examples/gm-info/gm-info.html
 ```
 
-It prints a clear plan per script (`INSTALL` / `UPDATE` / `SKIP`)
-before doing any work, and a final re-read for confirmation.
+- A `start` with scripts and no URL opens the page the first script's
+  `@match` names, but the examples' patterns (`*://*/*gm-info/gm-info.html`)
+  name none, so give the page. The GitHub Pages copies match every
+  example's `@match`.
+- The scripts run from this checkout, so local edits apply; only the
+  pages come from GitHub Pages.
 
-It's the easiest way to try every example by hand in a real TM or VM,
-and to debug install issues when a manager's UI changes.
+When a manager update breaks a driver:
 
-- It also lists installed examples that no local file is named for any
-  more (`[STALE]`): ones renamed or deleted. It doesn't remove them;
-  see [Removing stale copies](#removing-stale-copies).
-- Under VM the CLI also starts a throwaway static server over the
-  scripts directory, for the same install-URL reason described above.
-
-## Removing stale copies
-
-This applies to the opener's persistent profiles only; the tests start
-from an empty manager each run.
-
-Installed examples are matched by `@name`, so a renamed example
-installs as a new script beside the old copy, and both run on the
-example pages: everything shows twice. With the opener's browser
-running, `sm-dev` can list and uninstall them:
-
-1. List the installed scripts with their `E` IDs:
-   `scripts/sm-dev --manager tm --browser 9223 script list`.
-   Current examples' names start with their folder
-   (`SourceMonkey example: gm-dom: ...`); a copy under any other name
-   is stale.
-2. Remove each stale one:
-   `scripts/sm-dev --manager tm --browser 9223 script E46 uninstall --force`.
-   `--force` is required, since it removes a real installed script.
-
-For VM, use port 9224 and `--manager vm`.
-
-## Diagnostic scripts
-
-When TM updates change the DOM and `listInstalled` or the install
-button click stops working:
-
-- `scripts/inspect-tm-dashboard.mjs` — dumps every visible row on the
-  dashboard with cell classes, so you can pick the right selector.
-- `scripts/inspect-tm-install.mjs` — drives one install (defaults to
-  `gm-info`), opens the confirmation page, and dumps every visible
-  button-like element. Set `SCRIPT=<path>` to inspect with a
-  different file.
-
-There is no VM equivalent: the VM driver touches no selectors, so a VM
-break shows up as a named command failure instead.
+- A failing test's `test-results/<test>/error-context.md` shows the
+  page the driver gave up on, as an accessibility snapshot: the
+  dashboard rows or the Install button as TM drew them.
+- `scripts/sm-dev --manager tm --headed start` opens the same TM
+  build in a window, to look at its dashboard
+  (`chrome-extension://<id>/options.html#nav=dashboard`) by hand.
 
 ## Script-list state across tests
 
 Under TM and VM, the installed scripts persist across the tests in one
-worker, in that worker's browser. The sync helpers are idempotent, so
-the per-test `setup.installScriptsFrom(__dirname)` call is cheap after
-the first install (one list read, no install churn).
+worker, in that worker's browser.
+
+- A test's `setup.installScriptsFrom(__dirname)` installs each
+  `*.user.js` in the directory that isn't installed yet, by its
+  `@name`, and skips the rest.
+- The worker's browser started with an empty manager, so a script
+  already there is the copy an earlier test installed. After the first
+  install, the call costs one list read, cached by the driver.
 
 There is intentionally no per-test reset on the external-manager side —
 that would push UI churn into every test, and the example userscripts

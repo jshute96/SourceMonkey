@@ -261,11 +261,11 @@ the spec targets each row through that attribute.
 When you change the body or metadata of an existing `*.user.js`,
 **bump its `@version`**. Version-sensitive managers (Tampermonkey,
 Violentmonkey, …) install by `@namespace`+`@name` and only update
-when the installed version is older than the file. Without a bump,
-the cross-manager sync (`scripts/sync-manager-scripts.mjs`) classifies
-your edit as `SKIP` and TM keeps running the stale copy. SourceMonkey
-re-reads source files directly so it doesn't care, but the cross-
-manager workflow does.
+when the installed version is older than the file. Without a bump, a
+browser that already has the script installed keeps running the stale
+copy. SourceMonkey re-reads source files directly so it doesn't care,
+and the TM and VM test runs start from an empty manager, but a
+person's own TM or VM does.
 
 Pick the smallest bump that conveys the change (patch for tweaks,
 minor for new behaviour). The values are not user-facing — they only

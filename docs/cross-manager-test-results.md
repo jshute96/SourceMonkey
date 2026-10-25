@@ -49,11 +49,6 @@ Specs that opt out of a manager via
   **TM**. `relative/relative-require.user.js` loads its libraries by
   relative path on purpose, and TM takes absolute URLs only. VM
   resolves the paths against the fixture-server URL it installs from.
-  - `test:e2e:tm` never installs it: the skip fires first. But
-    `scripts/sync-manager-scripts.mjs` installs every `*.user.js` under
-    its path, subdirectories included, so a manual sync into TM tries
-    this one too. TM prefetches `@require`s at its install prompt, so
-    expect that install to fail or stall.
 - **`gm-download/`** (the two tests that let a download complete) —
   skipped under **VM**. Not a VM bug: a Chromium one.
   - VM saves a download by clicking an anchor on a

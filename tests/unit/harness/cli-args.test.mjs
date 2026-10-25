@@ -339,13 +339,12 @@ test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
   assert.deepEqual(cli('tabs'), none);
   // status needs no run: it says there are none, after the browser the line names.
   const bare = spawnSync(process.execPath, [CLI, 'status'], { encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
-  assert.equal(bare.stdout, 'No current run. (Use `start` or `attach` to connect to one.)\n\nNo other active runs\n');
+  assert.equal(bare.stdout, 'No current run. (Use `start` or `attach` to connect to one.)\nNo other active runs\n');
   const status = spawnSync(process.execPath, [CLI, '--existing-browser', '--browser', '1', 'status'], { encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
   assert.equal(status.status, 0);
   assert.equal(status.stdout, [
     'No current run. (Use `start` or `attach` to connect to one.)',
     'Browser: None answering at 127.0.0.1:1. Start one with `sm-dev --open-browser --browser 127.0.0.1:1`.',
-    '',
     'No other active runs',
     '',
   ].join('\n'));
@@ -406,13 +405,12 @@ test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
   assert.deepEqual(cli('tabs'), none);
   // status needs no run: it says there are none, after the browser the line names.
   const bare = spawnSync(process.execPath, [CLI, 'status'], { encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
-  assert.equal(bare.stdout, 'No current run. (Use `start` or `attach` to connect to one.)\n\nNo other active runs\n');
+  assert.equal(bare.stdout, 'No current run. (Use `start` or `attach` to connect to one.)\nNo other active runs\n');
   const status = spawnSync(process.execPath, [CLI, '--existing-browser', '--browser', '1', 'status'], { encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
   assert.equal(status.status, 0);
   assert.equal(status.stdout, [
     'No current run. (Use `start` or `attach` to connect to one.)',
     'Browser: None answering at 127.0.0.1:1. Start one with `sm-dev --open-browser --browser 127.0.0.1:1`.',
-    '',
     'No other active runs',
     '',
   ].join('\n'));

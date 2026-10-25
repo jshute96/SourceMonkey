@@ -1,7 +1,6 @@
 // Shared HTTP-fixture primitives used by the Playwright fixture server
-// (tests/fixtures/sourcemonkey-launch.ts), the standalone
-// serve-examples CLI (scripts/serve-examples.mjs), and the
-// cross-manager sync CLI (scripts/sync-manager-scripts.mjs). Kept here
+// (tests/fixtures/sourcemonkey-launch.ts) and the standalone
+// serve-examples CLI (scripts/serve-examples.mjs). Kept here
 // so the `/__slow/` route, the static content-type table, the tiny PNG
 // blob, and the static-file serving all have a single source of truth
 // — if a consumer drifts, the `headers-run-at` example silently
@@ -85,10 +84,7 @@ export function serveStaticFile(res, root, name) {
  * A static server over `root` plus the `/__slow/` route. Pass port 0
  * for an ephemeral port; `listen` resolves with the bound base URL.
  *
- * Used by the serve-examples CLI and by the sync CLI, which needs the
- * example scripts reachable over http:// while it installs them into
- * Violentmonkey (VM records the URL it installed from and resolves
- * relative `@require` / `@resource` refs against it).
+ * Used by the serve-examples CLI.
  */
 export function createStaticServer(root) {
   const server = http.createServer((req, res) => {

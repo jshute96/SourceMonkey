@@ -205,7 +205,7 @@ export async function validateAll(sources: ScriptSource[], roots: ScriptRoots, o
 }
 
 /** The line after `validate`'s scripts. */
-function validateSummary(counts: Record<ValidateVerdict, number>): string {
+export function validateSummary(counts: Record<ValidateVerdict, number>): string {
   return `${counts.ok} ok, ${counts.invalid} invalid${counts.unchecked ? `, ${counts.unchecked} unchecked` : ''}`;
 }
 

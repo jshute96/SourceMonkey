@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 
 import { CommandAssembler, NONE_RUN, echoCommand, parseCommandList, shellWord, unclosedBlockMessage, type AssembledCommand } from './command-lines.js';
 import {
-  commandWords, managerCommandOf, managerCommand, onlyInspects, readPromptCommands, runCommandHelp, runCommandMistake, runLogLabelUi, setJsonOutput, writeOutputLine,
+  commandWords, managerCommandOf, managerCommand, onlyInspects, PROMPT_READY, PROMPT_STARTED, readPromptCommands, runCommandHelp, runCommandMistake, runLogLabelUi, setJsonOutput, writeOutputLine,
 } from './console-commands.js';
 import { parseLang } from './browser-lang.js';
 import { helpRequest, parseCommandArgs, splitWords } from './command-args.js';
@@ -46,7 +46,7 @@ import { parseLogSources, type LogSource } from './run-logs.js';
 import { preparedScriptName, withDefaultScheme } from './prepare.js';
 import { pagesToOpen, type PageWord, type SavedPageStart } from './saved-pages.js';
 import {
-  REMOTE_SCRIPT, SCRIPT_ARG, UsageError, expandPathArgs, matchJson, matchLines, prepareSource, scriptFile, scriptSources, validateAll, validateSources,
+  REMOTE_SCRIPT, SCRIPT_ARG, UsageError, expandPathArg, matchJson, matchLines, prepareSource, scriptFile, scriptSources, validateAll, validateSources,
   type ScriptRoots,
 } from './checks.js';
 
@@ -267,9 +267,17 @@ async function validate(opts: Opts): Promise<number> {
 
 // `start` and `match` arguments: scripts, and the URLs the rest are,
 // after globs are expanded and directories searched for scripts.
-// `pages`: the rest as typed, beside their URLs.
-function scriptsAndUrls(words: string[]): { scripts: string[]; urls: string[]; pages: PageWord[] } {
-  const args = expandPathArgs(words, process.cwd(), { scripts: true });
+// `pages`: the rest as typed, beside their URLs. `found`: the scripts
+// that came from a directory search or a glob rather than being named,
+// which `start` skips when they're invalid.
+function scriptsAndUrls(words: string[]): { scripts: string[]; urls: string[]; pages: PageWord[]; found: Set<string> } {
+  const searched = new Set<string>();
+  const named = new Set<string>();
+  const args = [...new Set(words.flatMap((word) => {
+    const out = expandPathArg(word, process.cwd(), { scripts: true });
+    for (const a of out) (out.length === 1 && out[0] === word ? named : searched).add(path.resolve(a));
+    return out;
+  }))];
   // Each once, so a repeat is neither checked nor opened twice.
   const pages = new Map<string, PageWord>();
   for (const word of args.filter((a) => !SCRIPT_ARG.test(a))) {
@@ -291,6 +299,8 @@ function scriptsAndUrls(words: string[]): { scripts: string[]; urls: string[]; p
     scripts: [...scripts.values()],
     urls: [...pages.keys()],
     pages: [...pages.values()],
+    // A script named outright is never skipped, though a search found it too.
+    found: new Set([...scripts.values()].filter((w) => searched.has(path.resolve(w)) && !named.has(path.resolve(w)))),
   };
 }
 
@@ -336,9 +346,9 @@ async function match(opts: Opts): Promise<number> {
  * `--new`. `words` are the command's own, for that process.
  */
 async function startCommand(opts: Opts, words: string[], client: Client): Promise<number> {
-  const { urls, files, scripts, saved } = await checkStart(opts);
+  const { urls, files, scripts, saved, found } = await checkStart(opts);
   // The background process: the run itself.
-  if (detachedLog) return runHere(opts, { files, given: scripts, urls, saved }, client.runId);
+  if (detachedLog) return runHere(opts, { files, given: scripts, urls, saved, found }, client.runId);
   const { liveRuns, stopRun } = await import('./runs.js');
   const live = await liveRuns();
   // Stopped first, which also frees a tab for this one to reuse. The
@@ -373,8 +383,8 @@ async function startCommand(opts: Opts, words: string[], client: Client): Promis
 // `start`'s arguments and flags, checked: its URLs, and its script
 // files, which must exist. Also done before a line of several commands
 // runs any.
-async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]; scripts: string[]; saved: (SavedPageStart | null)[] }> {
-  const { scripts, urls, pages } = scriptsAndUrls(opts.args);
+async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]; scripts: string[]; saved: (SavedPageStart | null)[]; found: string[] }> {
+  const { scripts, urls, pages, found } = scriptsAndUrls(opts.args);
   if (opts.all && urls.length > 0) throw new UsageError('The --all flag opens each script\'s own page, so it can\'t be used with a URL');
   const remote = scripts.find((s) => REMOTE_SCRIPT.test(s));
   if (remote) throw new UsageError(`The start command loads scripts from files, and ${remote} is a URL. Save it to a file first.`);
@@ -409,7 +419,10 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
   if (opts.fromSaved) clash('--from-saved', [[opts.all, '--all'], [opts.noTab, '--notab']]);
   // Read before the run starts, so a file that can't be opened is said now.
   const opened = await pagesToOpen(pages, opts);
-  return { urls: opened.map((p) => p.url), files, scripts, saved: opened.map((p) => p.saved ?? null) };
+  return {
+    urls: opened.map((p) => p.url), files, scripts, saved: opened.map((p) => p.saved ?? null),
+    found: files.filter((_, i) => found.has(scripts[i])),
+  };
 }
 
 // The run, in the background process `start` began: until a client
@@ -418,7 +431,7 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
 // saved page each serves, if any.
 async function runHere(
   opts: Opts,
-  { files, given, urls, saved }: { files: string[]; given: string[]; urls: string[]; saved: (SavedPageStart | null)[] },
+  { files, given, urls, saved, found }: { files: string[]; given: string[]; urls: string[]; saved: (SavedPageStart | null)[]; found: string[] },
   runId: string | undefined,
 ): Promise<number> {
   // The run has no input: commands come from its clients.
@@ -474,6 +487,7 @@ async function runHere(
     return await run({
       files,
       given,
+      found: new Set(found),
       urls,
       saved,
       all: opts.all,
@@ -928,7 +942,8 @@ async function statusWithoutRun(words: string[], source: CommandSource): Promise
   const browser = lineOpenBrowser || lineExistingBrowser ? await browserStatus(json) : undefined;
   const runs = await liveRuns();
   if (!json) {
-    print('');
+    // A blank line sets off a list of runs, not the line saying there are none.
+    if (runs.length > 0) print('');
     print(runs.length === 0 ? 'No other active runs' : S.ui`${S.heading('Other active runs')}:`);
   }
   const statuses: StatusData[] = [];
@@ -1307,7 +1322,7 @@ async function stdinCommands(client: Client): Promise<number | null> {
  * doesn't stop the next, since the person decides. The last one's exit
  * code.
  */
-function promptCommands(client: Client): Promise<number> {
+function promptCommands(client: Client, greeting: string[]): Promise<number> {
   return new Promise((resolve) => {
     let code = 0;
     let queue: Promise<unknown> = Promise.resolve();
@@ -1349,7 +1364,7 @@ function promptCommands(client: Client): Promise<number> {
       });
       queue = turn.catch(() => undefined);
       return turn;
-    });
+    }, greeting);
   });
 }
 
@@ -2151,7 +2166,7 @@ async function main(): Promise<void> {
         if (read !== null) code = read;
         else if (commands.length === 0) code = printMistake(new UsageError(NO_COMMANDS));
       } else if (flags.interactive) {
-        code = await promptCommands(client);
+        code = await promptCommands(client, commands.length === 0 && client.runId === undefined ? PROMPT_STARTED : [PROMPT_READY]);
       } else if (watching) {
         await client.watch();
       } else {

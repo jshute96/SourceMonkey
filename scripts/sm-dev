@@ -5,7 +5,7 @@
 # `bin` entry points at lib/harness/cli.js, which pnpm links into that
 # repo's node_modules/.bin. Here there is no such link, so this is it.
 #
-#   scripts/sm-dev run tests/examples/gm-storage/gm-storage.user.js
+#   scripts/sm-dev start tests/examples/gm-storage/gm-storage.user.js
 #   scripts/sm-dev --help
 #
 # Runs what lib/ has, and never builds it: a build swaps in a new lib/,

@@ -912,6 +912,7 @@ export const HELP_SECTIONS: HelpSection[] = [
                 ],
                 commands: ['start'],
               },
+              { term: '--profile DIR', about: ['With `--open-browser`: the browser profile, kept between launches. When given, a browser already on the port must be using it.', '(Default: `~/.config/sm-dev/browser-profile-<port>`)'] },
               {
                 term: '--manager NAME',
                 about: [
@@ -922,7 +923,6 @@ export const HELP_SECTIONS: HelpSection[] = [
               },
               { term: '--headed, --headless', about: ['When launching a browser: show its window or not.', '(Default: headed for `--open-browser`, and for a temp browser in `--interactive` mode; headless otherwise)'] },
               { term: '--mute, --nomute', about: ['When launching a browser: turn its sound off or on.', '(Default: muted for a temp browser, sound on for `--open-browser`)'] },
-              { term: '--profile DIR', about: ['With `--open-browser`: the browser profile, kept between launches.', '(Default: `~/.config/sm-dev/browser-profile-<port>`)'] },
             ],
           },
           {

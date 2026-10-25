@@ -98,10 +98,9 @@ const EXAMPLES_DIR = path.resolve(__dirname, '../examples');
 
 export interface SetupApi {
   /**
-   * Install or sync every `*.user.js` in `dir` into the active manager.
+   * Install every `*.user.js` in `dir` into the active manager.
    * Under SourceMonkey, registers the directory as a collection. Under
-   * TM and VM, installs or updates each script, skipping entries
-   * already present at the same-or-newer version.
+   * TM and VM, installs each script not installed yet, by `@name`.
    */
   installScriptsFrom(dir: string): Promise<void>;
   /** Which manager this run is exercising. Tests can branch on this. */

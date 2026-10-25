@@ -34,11 +34,6 @@ lib/
 /blob-report/
 /.playwright/
 
-# cross-manager test profiles (see docs/cross-manager-testing.md)
-/.chrome-sourcemonkey-profile/
-/.chrome-tampermonkey-profile/
-/.chrome-violentmonkey-profile/
-
 # GreasyFork corpus: bulky or machine-specific inputs and derived data.
 # The checked-in corpus.json is the artifact these reproduce from.
 tests/greasyfork-examples/greasyfork-dump

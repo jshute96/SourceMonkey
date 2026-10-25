@@ -1,7 +1,5 @@
 // Drives the Tampermonkey dashboard to keep example userscripts in
-// sync. Shared between the Playwright fixture (manager.ts) and the
-// standalone CLI (scripts/sync-manager-scripts.mjs) so the install/list
-// logic and selectors stay in one place.
+// sync, for the Playwright fixture (manager.ts).
 //
 // The Violentmonkey equivalent is violentmonkey-driver.mjs, which
 // exposes the same shape (listInstalled / getInstalledMap /
@@ -10,26 +8,15 @@
 // background directly.
 //
 // Callers pass the BrowserContext TM runs in: the tests' own browser
-// (tests/fixtures/manager-launch.ts), or one opened with
-// `scripts/open-test-browser.sh tampermonkey` and reached over CDP (the
-// sync CLI).
+// (tests/fixtures/manager-launch.ts), and TM's extension ID.
 //
 // All UI selectors used here are reasonable best-guesses against
 // Tampermonkey v5's dashboard. Update them if TM renames anything in a
-// future release — `scripts/inspect-tm-*.mjs` produce the diagnostic
-// dumps needed to pick new selectors.
+// future release. A failing test's `error-context.md` shows the page as
+// the driver found it; `sm-dev --manager tm start` opens the same TM to
+// look at by hand.
 
-import { managerExtensionId } from './managers.mjs';
-import { compareVersions, listUserscripts } from './userscript-files.mjs';
-
-/**
- * Tampermonkey's extension ID in this profile. Defaults to TM Stable's
- * Chrome Web Store ID; `TM_EXTENSION_ID` overrides it (e.g. TM Beta).
- * @returns {string}
- */
-export function getTampermonkeyExtensionId() {
-  return managerExtensionId('tampermonkey');
-}
+import { listUserscripts } from './userscript-files.mjs';
 
 /**
  * @typedef {Object} InstalledScript
@@ -237,14 +224,6 @@ export class TampermonkeyDriver {
   }
 
   /**
-   * Release any pages the driver is holding. This driver opens and
-   * closes a page per operation, so there's nothing to do — it exists
-   * so callers can treat both manager drivers alike (the VM one caches
-   * a page and does need closing).
-   */
-  async close() {}
-
-  /**
    * Install (or reinstall / update / downgrade) a single userscript by
    * feeding the file to Tampermonkey's "Import from file" flow. TM
    * auto-detects existing scripts by @namespace+@name and offers one
@@ -383,40 +362,22 @@ async function clickClosing(page, loc) {
 }
 
 /**
- * Install every `*.user.js` directly under `dir` into Tampermonkey,
- * skipping any already installed at the same-or-newer version.
+ * Install every `*.user.js` directly under `dir` into Tampermonkey
+ * that isn't installed yet, by `@name`.
  *
- * Uses the driver's cached installed-versions map, so calling this
- * repeatedly across a worker's tests doesn't re-scrape the dashboard
- * each time. The cache is mutated in place after each successful
- * install.
- *
- * Used by the Playwright fixture (`tests/fixtures/manager.ts`) on
- * per-test setup — no downgrade path because tests shouldn't roll a
- * script back. The standalone CLI implements a richer plan with
- * `--allow-downgrade`.
+ * Each worker's browser starts with an empty TM, so a script is either
+ * missing or the copy installed earlier in the same run: there's no
+ * older version to update. Uses the driver's cached installed map, so
+ * calling this for every test doesn't re-read the dashboard.
  * @param {TampermonkeyDriver} driver
  * @param {string} dir
- * @returns {Promise<{installed: string[]; updated: string[]; skipped: string[]}>}
+ * @returns {Promise<void>}
  */
 export async function syncTampermonkeyScripts(driver, dir) {
-  const local = listUserscripts(dir);
   const byName = await driver.getInstalledMap();
-
-  const result = { installed: [], updated: [], skipped: [] };
-  for (const script of local) {
-    const current = byName.get(script.name);
-    if (current === undefined) {
-      await driver.installFromFile(script.filepath);
-      driver.recordInstalled(script.name, script.version);
-      result.installed.push(script.name);
-    } else if (compareVersions(script.version, current) > 0) {
-      await driver.installFromFile(script.filepath);
-      driver.recordInstalled(script.name, script.version);
-      result.updated.push(script.name);
-    } else {
-      result.skipped.push(script.name);
-    }
+  for (const script of listUserscripts(dir)) {
+    if (byName.has(script.name)) continue;
+    await driver.installFromFile(script.filepath);
+    driver.recordInstalled(script.name, script.version);
   }
-  return result;
 }

@@ -524,6 +524,55 @@ ln -s ../../node_modules/sourcemonkey/skills/SourceMonkey-dev .claude/skills/
 ln -s ../../node_modules/sourcemonkey/skills/SourceMonkey-friction .claude/skills/
 ```
 
+### Starting test browsers and running scripts with `sm-dev`
+
+`sm-dev` starts a browser with a userscript manager loaded. Use
+`--manager sm`, `tm` or `vm` to select SourceMonkey (the default),
+Tampermonkey or Violentmonkey.
+
+```sh
+# Start a fresh browser with SourceMonkey, in a new profile, closed when the run ends.
+npx sm-dev start
+
+# Start a visible browser and leave it running, without an interactive sm-dev prompt.
+npx sm-dev --headed start my-scripts/ --detach
+npx sm-dev status  # Send it commands (like status)
+npx sm-dev stop    # Stop it
+
+# Start with a script loaded, and open the page its @match names, or the one given.
+npx sm-dev start my-script.user.js
+npx sm-dev start my-script.user.js https://example.com/
+
+# Start all the scripts in a directory. (A tab opens on the first one's default page, if its @match names one.)
+npx sm-dev start my-scripts/
+
+# Start a browser with Tampermonkey or Violentmonkey instead.
+npx sm-dev --manager tm start my-script.user.js
+npx sm-dev --manager vm start my-script.user.js
+
+# Start a browser on port 9300, with a persistent profile that's kept between launches.
+npx sm-dev --browser 9300 --open-browser
+npx sm-dev --browser 9300 --existing-browser manager install  # once: add SourceMonkey
+npx sm-dev --browser 9300 --existing-browser start my-script.user.js
+
+# Start with Tampermonkey, using a profile directory of your own.
+npx sm-dev --browser 9301 --open-browser --profile ~/my-browser-profile
+npx sm-dev --browser 9301 --existing-browser --manager tm manager install
+npx sm-dev --browser 9301 --existing-browser --manager tm start my-script.user.js
+```
+
+- At a terminal, `start` opens the browser's window and a `> ` prompt
+  for more commands. `exit` (or Ctrl-D) ends the run, and closes the
+  browser if `start` launched it.
+- A browser started with `--open-browser` stays open after `sm-dev`
+  ends. Its profile is
+  `~/.config/sm-dev/browser-profile-<port>` unless `--profile` selects
+  a profile dir explicitly.
+- `npx sm-dev` alone opens an interactive prompt to type commands at.
+- Use `npx sm-dev help`, and see
+  [docs/harness-guide.md](docs/harness-guide.md), for more commands and
+  details.
+
 ### Validate userscripts from the command line
 
 `sm-dev validate` runs the install-time checks (header validation,

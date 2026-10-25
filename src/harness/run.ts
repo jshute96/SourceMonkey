@@ -40,6 +40,7 @@ import { DEFAULT_LOG_SOURCES, inSources, RunLog, streamLine, type LogFields, typ
 import { runDownloadsDir } from './run-log.js';
 import { comparableUrl, openingSavedLine, type SavedPageStart } from './saved-pages.js';
 import { echoLine, INVALID_PREFIX, plainLine, quoted } from './output-style.js';
+import { validateLines, validateSummary } from './checks.js';
 // The roles for marked-up output, as S.id(...): their names are common locals here.
 import * as S from './output-style.js';
 import { browserSentence, checkRunsDir, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentCommand, type SentLineHandler } from './runs.js';
@@ -57,6 +58,12 @@ export interface RunOptions extends ConnectOptions {
    * that won't prepare is named as the person named it.
    */
   typed?: Map<string, string>;
+  /**
+   * The `files` found by searching a directory or by a glob, rather than
+   * named. One that won't prepare at the start is reported and left out,
+   * where a named one stops the run.
+   */
+  found?: Set<string>;
   /**
    * The pages to open, one tab each. Defaults to the first URL the first
    * script's `@match` implies.
@@ -532,12 +539,15 @@ function isSelected(page: Page): Promise<boolean> {
   return pageSays(page, () => document.visibilityState === 'visible');
 }
 
-const NO_URL = 'No URL was given, and the first script\'s @match names no page to open. Give a URL.';
+// No URL given, and the first script names no page: the tab stays blank,
+// for the person to open one in.
+const NO_URL = `[sm-dev] No URL was given, and the first script's @match names no page to open, so T1 is a blank tab. Use ${quoted('open <url>')} to load a page.`;
 const NO_URL_ALL = 'None of the scripts\' @match names a page to open. Give a URL instead of --all.';
 
-// The pages a run opens: the URLs given, or the first script's default page,
-// or with `--all` each script's, once per distinct page. Null, with
-// the reason printed, when there is none.
+// The pages a run opens: the URLs given, or the first script's default page
+// (none, leaving the first tab blank, when it names none), or with
+// `--all` each script's, once per distinct page. Null, with the reason
+// printed, when `--all` finds none.
 interface StartPages {
   urls: string[];
   /** For each of `urls`, the saved page served there, or null. */
@@ -562,8 +572,11 @@ function startPages(opts: RunOptions, prepared: PreparedScript[]): StartPages | 
   if (!opts.all) {
     if (given.urls.length > 0) return given;
     const url = defaultPageUrl(prepared[0]);
-    if (!url) opts.out(S.err(NO_URL));
-    return url ? { urls: [url], saved: [null], skipped: [] } : null;
+    if (!url) {
+      opts.out(NO_URL);
+      return given;
+    }
+    return { urls: [url], saved: [null], skipped: [] };
   }
   const urls = new Set<string>();
   const skipped: StartPages['skipped'] = [];
@@ -975,7 +988,7 @@ async function runInBrowser(
     held.attachment = attachment;
     await tabs.start(page, attachment, dialogs);
   }
-  const prepared = await prepareAll(opts);
+  const prepared = await prepareAtStart(opts);
   if (!prepared) return 1;
   const start = startPages(opts, prepared);
   if (!start) return 2;
@@ -984,7 +997,9 @@ async function runInBrowser(
   // The loaded scripts, and the files they came from, in step: `load`
   // adds to both, `update` and `--watch` replace scripts in place.
   let scripts = prepared;
-  const files = [...opts.files];
+  // The files the scripts came from: those left out are no longer listed.
+  const files = prepared.map((p) => fileURLToPath(p.script.fileUrl));
+  if (files.length < opts.files.length) remote.setScripts(files);
   // When each script's files were last modified, as it was read.
   const stamps = new Map<PreparedScript, string>();
   for (const script of prepared) stamps.set(script, await filesStamp(script));
@@ -1697,6 +1712,47 @@ async function filesStamp(script: PreparedScript): Promise<string> {
 
 function typedName(opts: RunOptions, file: string): string {
   return opts.typed?.get(file) ?? shownPath(file);
+}
+
+/**
+ * The run's scripts at the start, checked as `validate` checks them.
+ * Those with something to report (invalid, or a warning or note) are
+ * listed as `validate` lists them, under a heading, so each line says
+ * which script it's for; the rest are only counted. An invalid script found in a
+ * directory or by a glob (`opts.found`) is left out; one named stops
+ * the run, as does finding no valid script. Null when it stops.
+ */
+async function prepareAtStart(opts: RunOptions): Promise<PreparedScript[] | null> {
+  const results = await Promise.all(opts.files.map(async (file) => ({
+    file, p: await prepareScript({ file, collectionRoot: opts.collectionRoot, localRoots: opts.localRoots }),
+  })));
+  const reports = results.map(({ file, p }) => ({ file, p, ...validateLines(typedName(opts, file), p) }));
+  const counts = { ok: 0, invalid: 0, unchecked: 0 };
+  for (const r of reports) counts[r.verdict]++;
+  const shown = reports.filter((r) => r.verdict !== 'ok' || r.warnings.length > 0);
+  if (shown.length > 0) {
+    opts.out('[sm-dev] ' + S.ui`${S.heading('Script validation results')}:`);
+    for (const r of shown) r.lines.forEach((line) => opts.out(line));
+  }
+  const invalid = reports.filter((r) => r.verdict === 'invalid');
+  const named = invalid.filter((r) => !opts.found?.has(r.file));
+  const kept = reports.filter((r) => r.verdict !== 'invalid').map((r) => r.p);
+  // After a list, its counts, so it always ends the same way.
+  const summary = `Validation: ${validateSummary(counts)}`;
+  if (invalid.length === 0) {
+    if (shown.length > 0) opts.out(`[sm-dev] ${summary}`);
+    return kept;
+  }
+  if (named.length > 0) {
+    opts.out(`[sm-dev] ${summary}. ${named.length === 1 ? 'A script given by name is invalid' : 'Scripts given by name are invalid'}, so the run stopped.`);
+    return null;
+  }
+  if (kept.length === 0) {
+    opts.out(`[sm-dev] ${summary}. All the scripts found are invalid, so the run stopped.`);
+    return null;
+  }
+  opts.out(`[sm-dev] ${summary}. Starting without the invalid ${invalid.length === 1 ? 'script' : 'scripts'}.`);
+  return kept;
 }
 
 async function prepareAll(opts: RunOptions, files = opts.files): Promise<PreparedScript[] | null> {

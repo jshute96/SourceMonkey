@@ -609,8 +609,13 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
     but it isn't reported as `ok` either.
 - Under each script it prints every warning, valid or not, with the
   line it is about: the load-time notes the viewer's Log tab shows
-  (`warningLines` in `prepare.ts`). `start` and `load` print the same
-  lines, with an undecided syntax check as a `warn:` line.
+  (`warningLines` in `prepare.ts`). `load` prints the same lines, with
+  an undecided syntax check as a `warn:` line.
+- `start` checks its scripts the same way, and lists the ones with
+  something to report (an error, a warning or a note) as `validate`
+  does, under `Script validation results:`, then the counts and what
+  the run does next (`prepareAtStart` in `run.ts`). The others are only
+  counted, and with nothing to report it prints nothing.
 - File arguments go through `expandPathArg`, for `start`, `match`,
   `validate`, `load`, `open` and `newtab`.
 - Globs are expanded by `path-args.ts` rather than the shell, since
@@ -625,6 +630,17 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
   a link up the tree can't loop.
 - A directory stands for its scripts. Expanding to nothing is a usage
   error.
+- An invalid script in a directory doesn't stop `start`: the run
+  reports it as `INVALID`, with the reason, and starts without it.
+  - `scriptsAndUrls` notes which scripts came from a directory or a
+    glob (`found`). `prepareAtStart` leaves out one of those that fails
+    its checks, and the run's script list is the ones that passed.
+  - A script named on the command line still stops the start: naming
+    it says it's wanted.
+  - When every script is skipped, the run stops rather than run with
+    none.
+  - Only at the start: `load`, `update` and `--watch` still refuse an
+    invalid script.
 
 #### `match` output
 
@@ -882,6 +898,13 @@ A browser that outlives sm-dev, started before the line's commands.
 - Spawned on its own (detached), not with Playwright's `launch`, which
   ties the browser to the Node process.
 - Idempotent: a browser answering on the port is used as is.
+  - With `--profile`, it must be the browser holding that profile: the
+    lock's process, listening on that port (`otherProfile`). Otherwise
+    sm-dev stops with an error, without running any commands, rather
+    than use a browser with another profile.
+  - Not checked on Windows, which locks a profile another way, nor for
+    another machine's lock. A lock whose process has ended holds
+    nothing.
 - A profile per port, since Chrome locks a profile.
   - The lock is `SingletonLock`, a link to `host-pid`. A second browser
     on the same profile hands its window to the first and drops its
@@ -1106,6 +1129,8 @@ response, so it says so directly.
 - A script's default page (`defaultPageUrl` in `prepare.ts`) is the one
   `start` opens when given no URL; `open`, `newtab` and `--all` use the
   same one.
+  - When the first script has none, `start` leaves its tab blank and
+    says so, rather than fail after the browser and scripts are ready.
 
 ## Running scripts in SourceMonkey
 

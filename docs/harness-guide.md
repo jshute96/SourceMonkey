@@ -365,8 +365,11 @@ sm-dev --open-browser --browser 9300            # another one, on port 9300
   `~/.config/sm-dev/browser-profile-<port>`, or `--profile DIR`.
   - One per port, since only one browser at a time can use a profile.
     One already in use is refused, naming the port its browser is on.
-- A browser already answering on the port is used as it is, whatever
-  its profile, so `--open-browser` can go on any command line.
+- A browser already answering on the port is used as it is, so
+  `--open-browser` can go on any command line.
+  - With `--profile`, that browser must be the one using that profile.
+    Another is refused, naming the port of the browser that has the
+    profile, if any.
 - It only starts one on this machine: `--browser` has to be a port alone
   (`9300`), or one on `127.0.0.1` or `localhost`.
 - A browser that can't start, or whose port doesn't open within 10
@@ -613,6 +616,9 @@ sm-dev start [script.user.js]... [url]... [options]
   error reports.
 - With no URL, it opens the first script's **default page**: the first
   URL its `@match` implies.
+  - When its `@match` names no page (a wildcard such as
+    `*://*/*page.html`), the tab stays blank, with a note to `open` a
+    page in it.
 - Several scripts go into the same page, for interaction tests.
 - Without `--detach`, the run stops when sm-dev ends.
 
@@ -652,6 +658,13 @@ Details on each are in [`start` options in detail](#start-options-in-detail).
 - Where scripts are expected (`start`, `match`, `validate`, `load`), a
   directory stands for all `*.user.js` files under it, skipping
   `node_modules` and hidden directories.
+- `start` checks its scripts as `validate` does. The ones that are
+  invalid, or have a warning or note, it lists as `validate` would,
+  under `Script validation results:`, then the counts of all of them.
+  - An invalid script found in a directory or by a glob is left out,
+    and the run starts without it.
+  - An invalid script named outright stops the start, as does finding
+    no valid script.
 - `validate` and `match` also take a script by its `http(s)` URL, and
   fetch it. `start` needs a file.
 

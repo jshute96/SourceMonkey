@@ -248,7 +248,9 @@ ok       sites/x/y.user.js
   nesting). The script still loads and the exit code is 0, but its
   syntax wasn't verified.
 - An invalid script is refused by `start` and `loadUserscript` with the
-  same message, so fixing it here saves a failed run.
+  same message, so fixing it here saves a failed run. (`start` skips one
+  it found in a directory or by a glob. You will see validation error lines
+  with `INVALID` and a message with the count of skipped scripts.)
 - It doesn't check that `@grant` covers every `GM_*` the code calls; a
   missing one shows up at runtime as `GM_x is not defined`.
 - In a run, `validate` re-reads the selected script from disk, and
