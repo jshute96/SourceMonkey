@@ -160,6 +160,15 @@ test('start skips an invalid script it found in a directory, and stops on one na
   expect(named.some((l) => l.startsWith('INVALID ') && l.endsWith('bad.user.js'))).toBe(true);
   expect(named).toContain('[sm-dev] Validation: 0 ok, 1 invalid. A script given by name is invalid, so the run stopped.');
 
+  // A manifest's scripts are found too: its invalid one is left out.
+  const manifest = path.join(scriptsDir.path, 'script_manifest.json');
+  writeFileSync(manifest, JSON.stringify(['good.user.js', 'sub/bad.user.js']));
+  const listed = await driveCli([manifest, `${base}/target.html`, '--root', scriptsDir.path], [
+    ['[script log] [good] on /target.html', 'exit'],
+  ]);
+  expect(listed.some((l) => l.startsWith('INVALID ') && l.endsWith('bad.user.js'))).toBe(true);
+  expect(listed).toContain('[sm-dev] Validation: 1 ok, 1 invalid. Starting without the invalid script.');
+
   // A directory whose scripts are all invalid leaves the run none, so it stops.
   const none = await driveCli([path.dirname(bad), `${base}/target.html`, '--root', scriptsDir.path], []);
   expect(none).toContain('[sm-dev] Validation: 0 ok, 1 invalid. All the scripts found are invalid, so the run stopped.');

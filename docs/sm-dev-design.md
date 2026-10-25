@@ -641,6 +641,22 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
     none.
   - Only at the start: `load`, `update` and `--watch` still refuse an
     invalid script.
+- `start` also takes web scripts (`http(s)` `.user.js` URLs) and
+  manifests (`isManifestArg` and `manifestScripts` in `checks.ts`).
+  A manifest is parsed and its
+  entries resolved by the extension's own code
+  (`parseManifest`, `resolveManifestEntryUrl` in `src/collection-scan.ts`).
+  - A web script is fetched once, at the start (`prepareAtStart`), and
+    its text kept for the push. One that can't be fetched is reported
+    as `INVALID`.
+  - The run sends the extension the text of every `@require` and
+    `@resource` file the script names, as sm-dev fetched them
+    (`pushedFiles(…, true)`). The extension stores a run's scripts at
+    URLs of its own, so it can't resolve a relative ref itself.
+  - `--watch` and `update` only re-read scripts from disk, so they
+    never re-fetch a web script.
+  - GitHub folder URLs aren't taken: a bare `github.com` URL stays a
+    page to open, since a script under test may target GitHub's pages.
 
 #### `match` output
 

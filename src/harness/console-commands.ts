@@ -57,7 +57,7 @@ import {
 } from './saved-pages.js';
 import {
   SCRIPT_ARG, UsageError, expandPathArg, expandPathArgs, matchJson, matchLines, prepareSource, scriptSources, validateAll, validateSources,
-  type MatchTarget, type ScriptRoots, type ScriptSource,
+  type MatchTarget, type ScriptRoots, type ScriptSource, type ValidateSource,
 } from './checks.js';
 
 /**
@@ -1412,7 +1412,7 @@ async function matchCommand(ctx: ConsoleContext, words: string[], cwd: string, w
  */
 async function validateCommand(ctx: ConsoleContext, words: string[], cwd: string): Promise<number> {
   const loaded: PreparedScript[] = [];
-  const sources: ScriptSource[] = [];
+  const sources: ValidateSource[] = [];
   const paths: string[] = [];
   for (const word of words) {
     if (word.toLowerCase() === 'all') {

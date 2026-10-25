@@ -43,10 +43,10 @@ import { isJsonLine, jsonLayoutMistake, jsonResult, jsonResultData, STDERR_LINE,
 // Node built-ins only, so as cheap to load as the rest here.
 import { runIdOf, type CommandSource, type RunClient, type RunRecord } from './runs.js';
 import { parseLogSources, type LogSource } from './run-logs.js';
-import { preparedScriptName, withDefaultScheme } from './prepare.js';
+import { preparedScriptName, shownPath, withDefaultScheme } from './prepare.js';
 import { pagesToOpen, type PageWord, type SavedPageStart } from './saved-pages.js';
 import {
-  REMOTE_SCRIPT, SCRIPT_ARG, UsageError, expandPathArg, matchJson, matchLines, prepareSource, scriptFile, scriptSources, validateAll, validateSources,
+  REMOTE_SCRIPT, SCRIPT_ARG, UsageError, expandPathArg, isManifestArg, manifestScripts, matchJson, matchLines, prepareSource, scriptFile, scriptSources, validateAll, validateSources,
   type ScriptRoots,
 } from './checks.js';
 
@@ -270,10 +270,12 @@ async function validate(opts: Opts): Promise<number> {
 // `pages`: the rest as typed, beside their URLs. `found`: the scripts
 // that came from a directory search or a glob rather than being named,
 // which `start` skips when they're invalid.
-function scriptsAndUrls(words: string[]): { scripts: string[]; urls: string[]; pages: PageWord[]; found: Set<string> } {
+function scriptsAndUrls(words: string[]): { scripts: string[]; urls: string[]; pages: PageWord[]; found: Set<string>; manifests: string[] } {
   const searched = new Set<string>();
   const named = new Set<string>();
-  const args = [...new Set(words.flatMap((word) => {
+  // A manifest stands for the scripts it lists, read once they're needed.
+  const manifests = words.filter((w) => isManifestArg(w));
+  const args = [...new Set(words.filter((w) => !isManifestArg(w)).flatMap((word) => {
     const out = expandPathArg(word, process.cwd(), { scripts: true });
     for (const a of out) (out.length === 1 && out[0] === word ? named : searched).add(path.resolve(a));
     return out;
@@ -292,7 +294,7 @@ function scriptsAndUrls(words: string[]): { scripts: string[]; urls: string[]; p
   // The first spelling is kept.
   const scripts = new Map<string, string>();
   for (const word of args.filter((a) => SCRIPT_ARG.test(a))) {
-    const file = path.resolve(word);
+    const file = scriptKey(word);
     if (!scripts.has(file)) scripts.set(file, word);
   }
   return {
@@ -301,15 +303,38 @@ function scriptsAndUrls(words: string[]): { scripts: string[]; urls: string[]; p
     pages: [...pages.values()],
     // A script named outright is never skipped, though a search found it too.
     found: new Set([...scripts.values()].filter((w) => searched.has(path.resolve(w)) && !named.has(path.resolve(w)))),
+    manifests,
   };
+}
+
+// What tells two script words apart: the file a path names, or a URL.
+function scriptKey(word: string): string {
+  return REMOTE_SCRIPT.test(word) ? word : path.resolve(word);
+}
+
+// The scripts `manifests` list, added to `scripts` (each once) and to
+// `found`: a manifest's scripts are found rather than named, so an
+// invalid one is left out of a run.
+async function withManifestScripts(scripts: string[], found: Set<string>, manifests: string[]): Promise<void> {
+  const have = new Set(scripts.map(scriptKey));
+  for (const manifest of manifests) {
+    for (const listed of await manifestScripts(manifest)) {
+      // A file as other paths are shown: relative, under this directory.
+      const entry = REMOTE_SCRIPT.test(listed) ? listed : shownPath(listed);
+      if (have.has(scriptKey(entry))) continue;
+      have.add(scriptKey(entry));
+      scripts.push(entry);
+      found.add(entry);
+    }
+  }
 }
 
 // Every script against every URL, in the order given. Arguments can
 // come in any order: a `.user.js` one (or a directory of them) is a
 // script, the rest are URLs.
 function checkMatch(opts: Opts): void {
-  const { scripts, urls } = scriptsAndUrls(opts.args);
-  if (scripts.length === 0 || urls.length === 0) {
+  const { scripts, urls, manifests } = scriptsAndUrls(opts.args);
+  if (scripts.length + manifests.length === 0 || urls.length === 0) {
     throw new UsageError(MATCH_NEEDS);
   }
   if (opts.frames) throw new UsageError(MATCH_FRAMES_NEEDS_RUN);
@@ -317,7 +342,8 @@ function checkMatch(opts: Opts): void {
 
 async function match(opts: Opts): Promise<number> {
   checkMatch(opts);
-  const { scripts, urls } = scriptsAndUrls(opts.args);
+  const { scripts, urls, manifests, found } = scriptsAndUrls(opts.args);
+  await withManifestScripts(scripts, found, manifests);
   const sources = await scriptSources(scripts);
   if (opts.json ?? lineJson) {
     const results: MatchData['results'] = [];
@@ -384,10 +410,9 @@ async function startCommand(opts: Opts, words: string[], client: Client): Promis
 // files, which must exist. Also done before a line of several commands
 // runs any.
 async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]; scripts: string[]; saved: (SavedPageStart | null)[]; found: string[] }> {
-  const { scripts, urls, pages, found } = scriptsAndUrls(opts.args);
+  const { scripts, urls, pages, found, manifests } = scriptsAndUrls(opts.args);
+  await withManifestScripts(scripts, found, manifests);
   if (opts.all && urls.length > 0) throw new UsageError('The --all flag opens each script\'s own page, so it can\'t be used with a URL');
-  const remote = scripts.find((s) => REMOTE_SCRIPT.test(s));
-  if (remote) throw new UsageError(`The start command loads scripts from files, and ${remote} is a URL. Save it to a file first.`);
   // Flags that contradict another, or would silently do nothing with it.
   const clash = (flag: string, others: [boolean, string][]): void => {
     const used = others.filter(([on]) => on).map(([, name]) => name);
@@ -415,7 +440,9 @@ async function checkStart(opts: Opts): Promise<{ urls: string[]; files: string[]
   }
   if (lineOpenBrowser && opts.cdp !== undefined) throw new UsageError('The `start` command connects to the browser `--open-browser` starts, so give `--browser` once, first: `sm-dev --open-browser --browser ... start ...`');
   if (!opts.detach && !detachedLog && opts.newRun) throw new UsageError('The `--new` flag only applies with `--detach`');
-  const files = await Promise.all(scripts.map((s) => scriptFile(s)));
+  // A web script stays its URL, which the run fetches. A found one
+  // (from a manifest) that's missing is the run's to report and skip.
+  const files = await Promise.all(scripts.map((s) => (REMOTE_SCRIPT.test(s) ? s : found.has(s) ? path.resolve(s) : scriptFile(s))));
   if (opts.fromSaved) clash('--from-saved', [[opts.all, '--all'], [opts.noTab, '--notab']]);
   // Read before the run starts, so a file that can't be opened is said now.
   const opened = await pagesToOpen(pages, opts);

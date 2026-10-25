@@ -1,6 +1,8 @@
 // Checks on the example pages in tests/examples/: each one keeps the
 // shared page skeleton's footer, its scripts' names start with the
-// directory, and it's listed in the README table and the index page (see "Adding a new example" in tests/examples/README.md).
+// directory, it's listed in the README table and the index page, and
+// the script_manifest.json files are up to date (see "Adding a new
+// example" in tests/examples/README.md).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -45,3 +47,18 @@ test('every example userscript is named for its directory', () => {
     }
   }
 });
+
+// Each script_manifest.json lists every userscript under its directory,
+// sorted, so loading it (in sm-dev or as a collection) gets them all.
+// Regenerate it with `sh ../../scripts/make_manifest.sh > script_manifest.json`
+// from that directory.
+for (const dir of [EXAMPLES, path.resolve(EXAMPLES, '../bad-examples')]) {
+  test(`${path.basename(dir)}/script_manifest.json lists every userscript there`, () => {
+    const files = fs.readdirSync(dir, { recursive: true })
+      .map((f) => String(f).split(path.sep).join('/'))
+      .filter((f) => f.endsWith('.user.js'))
+      .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    const listed = JSON.parse(fs.readFileSync(path.join(dir, 'script_manifest.json'), 'utf8'));
+    assert.deepEqual(listed, files, `Out of date: in ${path.relative(process.cwd(), dir)}, run sh ../../scripts/make_manifest.sh > script_manifest.json`);
+  });
+}

@@ -78,7 +78,7 @@ and `lib/`.
 | `src/github-urls.ts` | Maps a GitHub raw URL to its github.com page |
 | `src/github-auth.ts` | Persisted GitHub PAT cache + `githubAuthHeaders(url)` host-gated helper for attaching `Authorization: Bearer …` to api/raw/github.com-raw fetches |
 | `src/markup-response.ts` | Detects an HTML page served where JavaScript was expected (Content-Type + leading `<`), and words the failure |
-| `src/collection-scan.ts` | Cycle-neutral scan primitives shared by `directories.ts` and `github-provider.ts` |
+| `src/collection-scan.ts` | Scan primitives shared by the collection scanners, and the manifest parser and entry resolver sm-dev uses too |
 | `src/script-build.ts` | Builds a script row from text: header parse and validation, matching, startup logs, `@require` loading, parse check |
 | `src/script-display.ts` | Pure display helpers: size/status/storage-usage formatting, the shared status view + viewer / preview / compare URLs, the script label and full source, slash-aware wrapping, name/path decoding, SRI-fragment strip, enable-toggle tooltip, pending-on-disk summary |
 | `src/script-icon.ts` | A script's own `@icon`: which header tag declares it, and the size and type rules an icon file must meet |
@@ -556,6 +556,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/missing-scripts.test.mjs` | Unit tests for the never-started Log warnings, their hints, and the CSP `sandbox` check |
 | `tests/examples/README.md` | Overview of the interactive userscript example pages; how to serve and use as a cross-manager compliance reference |
 | `tests/examples/index.html` | Index page linking the per-example subdirs |
+| `tests/examples/script_manifest.json` | Manifest listing every example script, so the examples load from a manifest URL; regenerated with `make_manifest.sh` |
 | `tests/examples/examples.css` | Shared styling for all example pages |
 | `tests/examples/<api>/` | Each example dir holds `<api>.html`, `<api>.user.js`, and `<api>.spec.ts` — the page, the userscript that drives it, and its Playwright e2e |
 | `tests/examples/gm-info/` | `GM_info` example: a header-heavy script hands its `GM_info` to the page, which renders a cross-manager comparison table |
@@ -584,6 +585,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/examples/require-scope/` | `@require` scope example: a shared lib reaching both injection worlds, plus relative `@require` paths |
 | `tests/examples/xmlhttp-connect/` | `@connect` example: scripts declaring none, one site, and `*`, with buttons to try each site and prompt answer |
 | `tests/bad-examples/` | Deliberately broken `*.user.js` files (plus the `@require` libraries some of them need, and the ones that merely warn) for the SM-only spec; outside `tests/examples/` so the TM loader doesn't see them |
+| `tests/bad-examples/script_manifest.json` | Manifest listing every script in `tests/bad-examples/`; regenerated with `make_manifest.sh` |
 | `tests/userscripts/` | Userscripts for manual testing, not loaded by default |
 | `tests/userscripts/no-click-nav.user.js` | Follows links, goes back, or opens a URL after a delay, so it works with the popup open |
 | `tests/e2e/bad-scripts.spec.ts` | SM-only e2e: each bad script gets the expected status, error location, and byte-for-byte viewer render |
@@ -600,6 +602,7 @@ unit tests.
 | `tests/unit/harness/run-log.test.mjs` | Unit tests for a run's log files: the timestamp format and unique names |
 | `tests/unit/harness/wait.test.mjs` | Unit tests for `wait`'s delays and the message when a tab doesn't settle |
 | `tests/unit/harness/path-args.test.mjs` | Unit tests for sm-dev's glob matching and file argument expansion |
+| `tests/unit/harness/manifest-args.test.mjs` | Unit tests for sm-dev's manifest arguments: which words are manifests, and the scripts one lists |
 | `tests/unit/harness/cli-args.test.mjs` | Unit tests for `sm-dev`'s command line: `start` flags, `match` output, scripts by URL, `--run`, `--` lines, misuse |
 | `tests/unit/harness/page-commands.test.mjs` | Unit tests for how the page commands name keys for `key`, read `click`'s flags and `cdp` calls, and word errors |
 | `tests/unit/harness/command-args.test.mjs` | Unit tests for the command parser: quotes, flags with `=` or not, tabs, text, forms, refused arguments |

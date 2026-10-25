@@ -40,7 +40,7 @@ import { DEFAULT_LOG_SOURCES, inSources, RunLog, streamLine, type LogFields, typ
 import { runDownloadsDir } from './run-log.js';
 import { comparableUrl, openingSavedLine, type SavedPageStart } from './saved-pages.js';
 import { echoLine, INVALID_PREFIX, plainLine, quoted } from './output-style.js';
-import { validateLines, validateSummary } from './checks.js';
+import { REMOTE_SCRIPT, scriptSources, validateLines, validateSummary } from './checks.js';
 // The roles for marked-up output, as S.id(...): their names are common locals here.
 import * as S from './output-style.js';
 import { browserSentence, checkRunsDir, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentCommand, type SentLineHandler } from './runs.js';
@@ -988,7 +988,9 @@ async function runInBrowser(
     held.attachment = attachment;
     await tabs.start(page, attachment, dialogs);
   }
-  const prepared = await prepareAtStart(opts);
+  // The text of each web script, by its URL, fetched once at the start.
+  const remoteTexts = new Map<string, string>();
+  const prepared = await prepareAtStart(opts, remoteTexts);
   if (!prepared) return 1;
   const start = startPages(opts, prepared);
   if (!start) return 2;
@@ -998,7 +1000,7 @@ async function runInBrowser(
   // adds to both, `update` and `--watch` replace scripts in place.
   let scripts = prepared;
   // The files the scripts came from: those left out are no longer listed.
-  const files = prepared.map((p) => fileURLToPath(p.script.fileUrl));
+  const files = prepared.map((p) => scriptFileOf(p));
   if (files.length < opts.files.length) remote.setScripts(files);
   // When each script's files were last modified, as it was read.
   const stamps = new Map<PreparedScript, string>();
@@ -1024,11 +1026,12 @@ async function runInBrowser(
   let pushedAny = false;
   const push = async (list: PreparedScript[], seed = false): Promise<boolean> => {
     for (const script of list) {
-      const file = fileURLToPath(script.script.fileUrl);
+      const file = scriptFileOf(script);
       // The extension keeps the run's scripts by this: the path as
       // typed to start or load, so files of the same name stay apart.
       const name = typedName(opts, file);
-      const text = await readFile(file, 'utf8');
+      const fetchedText = remoteTexts.get(script.script.fileUrl);
+      const text = fetchedText ?? await readFile(file, 'utf8');
       if (manager !== 'sourcemonkey' && !external) {
         opts.out(`[sm-dev] ${label} was not on in this browser when the run started, so the run can't load scripts into it. Start a new run once it's on.`);
         return false;
@@ -1046,7 +1049,9 @@ async function runInBrowser(
         opts.out(`[sm-dev] ${S.ui`Installed in ${label} as ${S.id(`E${installed.id}`)}: ${S.url(preparedScriptPath(script))}${installed.replaced ? ' (replaced)' : ''}`}`);
         continue;
       }
-      const result = await link.push(text, name, pushedFiles(script), script.script.fileUrl);
+      // A web script's files all go with it: the extension keeps it at a
+      // URL of its own, where its relative @requires would resolve to nothing.
+      const result = await link.push(text, name, pushedFiles(script, fetchedText !== undefined), script.script.fileUrl);
       pushedAny = true;
       if (result.status !== 'ok') {
         opts.out(`${INVALID_PREFIX}${typedName(opts, file)}`);
@@ -1108,6 +1113,10 @@ async function runInBrowser(
     await apply(next, changed, 'No open tab runs or matches the updated scripts, so none was reloaded', false, timeoutMs);
   });
   const load = (input: string, timeoutMs?: number): Promise<void> => serial(async () => {
+    if (REMOTE_SCRIPT.test(input)) {
+      opts.out(`[sm-dev] The load command takes files, and ${input} is a URL. Give it to start instead.`);
+      return;
+    }
     const file = path.resolve(input);
     const info = await stat(file).catch(() => null);
     if (!info) {
@@ -1701,6 +1710,9 @@ function browserVisible(opts: ConnectOptions): boolean {
 // When a script's files (its own and local @requires) were last
 // modified, as one comparable string; a missing file counts too.
 async function filesStamp(script: PreparedScript): Promise<string> {
+  // A web script was fetched once, with no file to change: `update` and
+  // `--watch` leave it as it was, its local stand-ins too.
+  if (!script.script.fileUrl.startsWith('file:')) return '';
   const paths = [script.script.fileUrl, ...script.requires.map((r) => r.localUrl ?? '')]
     .filter((u) => u.startsWith('file:')).map((u) => fileURLToPath(u));
   const times = await Promise.all(paths.map((p) => stat(p).then((st) => st.mtimeMs, () => -1)));
@@ -1711,7 +1723,12 @@ async function filesStamp(script: PreparedScript): Promise<string> {
 // they did; else as paths are shown.
 
 function typedName(opts: RunOptions, file: string): string {
-  return opts.typed?.get(file) ?? shownPath(file);
+  return opts.typed?.get(file) ?? (REMOTE_SCRIPT.test(file) ? file : shownPath(file));
+}
+
+/** The file a loaded script came from, or its URL for a web script. */
+function scriptFileOf(script: PreparedScript): string {
+  return script.script.fileUrl.startsWith('file:') ? fileURLToPath(script.script.fileUrl) : script.script.fileUrl;
 }
 
 /**
@@ -1722,11 +1739,32 @@ function typedName(opts: RunOptions, file: string): string {
  * directory or by a glob (`opts.found`) is left out; one named stops
  * the run, as does finding no valid script. Null when it stops.
  */
-async function prepareAtStart(opts: RunOptions): Promise<PreparedScript[] | null> {
-  const results = await Promise.all(opts.files.map(async (file) => ({
-    file, p: await prepareScript({ file, collectionRoot: opts.collectionRoot, localRoots: opts.localRoots }),
-  })));
-  const reports = results.map(({ file, p }) => ({ file, p, ...validateLines(typedName(opts, file), p) }));
+async function prepareAtStart(opts: RunOptions, texts: Map<string, string>): Promise<PreparedScript[] | null> {
+  type Report = ReturnType<typeof validateLines> & { file: string; p?: PreparedScript };
+  const reports = await Promise.all(opts.files.map(async (file): Promise<Report> => {
+    const label = typedName(opts, file);
+    const roots = { collectionRoot: opts.collectionRoot, localRoots: opts.localRoots };
+    if (!REMOTE_SCRIPT.test(file)) {
+      // A manifest can list a file that isn't there.
+      if (!await stat(file).catch(() => null)) {
+        const error = noSuchFileMessage(label);
+        return { file, lines: [`${INVALID_PREFIX}${label}`, S.asError(`    ${error}`)], verdict: 'invalid', error, warnings: [] };
+      }
+      const p = await prepareScript({ file, ...roots });
+      return { file, p, ...validateLines(label, p) };
+    }
+    // A web script, fetched now: one that can't be is invalid too.
+    let fetched: { url: string; text: string };
+    try {
+      fetched = (await scriptSources([file]))[0] as { url: string; text: string };
+    } catch (err) {
+      const error = (err as Error).message;
+      return { file, lines: [`${INVALID_PREFIX}${label}`, S.asError(`    ${error}`)], verdict: 'invalid', error, warnings: [] };
+    }
+    texts.set(fetched.url, fetched.text);
+    const p = await prepareScript({ text: fetched.text, sourceUrl: fetched.url, ...roots });
+    return { file, p, ...validateLines(label, p) };
+  }));
   const counts = { ok: 0, invalid: 0, unchecked: 0 };
   for (const r of reports) counts[r.verdict]++;
   const shown = reports.filter((r) => r.verdict !== 'ok' || r.warnings.length > 0);
@@ -1736,7 +1774,7 @@ async function prepareAtStart(opts: RunOptions): Promise<PreparedScript[] | null
   }
   const invalid = reports.filter((r) => r.verdict === 'invalid');
   const named = invalid.filter((r) => !opts.found?.has(r.file));
-  const kept = reports.filter((r) => r.verdict !== 'invalid').map((r) => r.p);
+  const kept = reports.filter((r) => r.verdict !== 'invalid').map((r) => r.p!);
   // After a list, its counts, so it always ends the same way.
   const summary = `Validation: ${validateSummary(counts)}`;
   if (invalid.length === 0) {

@@ -1,0 +1,22 @@
+[
+  "blank-lines.user.js",
+  "empty-header.user.js",
+  "empty.user.js",
+  "invalid-header-fields.user.js",
+  "invalid-match.user.js",
+  "leading-text.user.js",
+  "malformed-field.user.js",
+  "missing-require.user.js",
+  "no-header.user.js",
+  "require-collision.user.js",
+  "stray-brace-at-end.user.js",
+  "stray-brace.user.js",
+  "syntax-error-body.user.js",
+  "syntax-error-require.user.js",
+  "throwing-require.user.js",
+  "two-headers.user.js",
+  "unclosed-header.user.js",
+  "unknown-grant.user.js",
+  "unparsable-require.user.js",
+  "unusable-match.user.js"
+]

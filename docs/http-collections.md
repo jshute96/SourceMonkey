@@ -385,5 +385,6 @@ Fetchers and parsers:
   worker when a page asks — see `src/http-read.ts`); returns
   `{kind: 'ok', text, etag?, lastModified?}` or `{kind: 'unchanged'}`,
   throws on 4xx/5xx.
-- `parseManifest(body)` — array-or-`{scripts}` JSON parser, exported
-  for tests.
+- `parseManifest(body)` — array-or-`{scripts}` JSON parser. It and
+  `resolveManifestEntryUrl` live in `src/collection-scan.ts`, shared
+  with sm-dev, and `directories.ts` re-exports them.

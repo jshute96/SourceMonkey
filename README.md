@@ -135,6 +135,13 @@ To try them:
 2. Open the [examples index page](https://jshute96.github.io/SourceMonkey/tests/examples/index.html).
    Each example's page runs its scripts and shows what they did.
 
+Or open them in a fresh browser with [`sm-dev`](#starting-test-browsers-and-running-scripts-with-sm-dev):
+
+```sh
+npx sm-dev start https://jshute96.github.io/SourceMonkey/tests/examples/script_manifest.json \
+  https://jshute96.github.io/SourceMonkey/tests/examples/index.html
+```
+
 These also function as the beginnings of a **compliance test suite** for userscript managers, with tests (`*.spec.ts` files in the same directory) that compare behavior across SourceMonkey, Tampermonkey, and Violentmonkey.
 
 The [jshute96/userscripts](https://github.com/jshute96/userscripts) GitHub repo is an example of a repo with many scripts built using SourceMonkey and Claude Code.
@@ -545,6 +552,10 @@ npx sm-dev start my-script.user.js https://example.com/
 
 # Start all the scripts in a directory. (A tab opens on the first one's default page, if its @match names one.)
 npx sm-dev start my-scripts/
+
+# Start the scripts listed in a manifest file (at a path or URL), or one script from a URL.
+npx sm-dev start https://example.com/scripts/script_manifest.json https://example.com/
+npx sm-dev start https://example.com/scripts/my-script.user.js
 
 # Start a browser with Tampermonkey or Violentmonkey instead.
 npx sm-dev --manager tm start my-script.user.js

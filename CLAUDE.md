@@ -232,8 +232,13 @@ user before elaborating further. Default to action over planning.
 - When adding an example under `tests/examples/`, follow the page
   skeleton and the "Adding a new example" checklist in
   `tests/examples/README.md`: the footer, the `@name` prefix, the
-  README table row and the `index.html` link are easy to miss.
-  `tests/unit/examples.test.mjs` checks them.
+  README table row, the `index.html` link and the regenerated
+  `script_manifest.json` are easy to miss. `tests/unit/examples.test.mjs`
+  checks them.
+- Adding, removing or renaming a script in `tests/examples/` or
+  `tests/bad-examples/` means regenerating that directory's
+  `script_manifest.json`: `sh ../../scripts/make_manifest.sh >
+  script_manifest.json` from inside it.
 - When changing the body of any `tests/examples/**/*.user.js`, bump
   its `@version` header. Managers update an installed script only when
   the file's `@version` is newer (dotted-numeric ordering), so without
