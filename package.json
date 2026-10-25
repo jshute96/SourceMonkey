@@ -31,7 +31,7 @@
   "packageManager": "pnpm@12.6.0",
   "scripts": {
     "preinstall": "npx only-allow pnpm",
-    "prepare": "node scripts/build.mjs",
+    "prepack": "node scripts/build.mjs",
     "build": "node scripts/build.mjs",
     "prepublishOnly": "echo 'Publish with scripts/release.sh, which packs the npm README and checks the release.' >&2 && exit 1",
     "typecheck": "tsc -p tsconfig.tests.json --noEmit",
@@ -43,7 +43,7 @@
     "test:e2e:tm:headed": "node scripts/build.mjs && node scripts/e2e-manager-preflight.mjs tampermonkey --need-open && TM_HEADED=1 playwright test --project=tampermonkey --workers=1",
     "test:e2e:vm": "node scripts/build.mjs && node scripts/e2e-manager-preflight.mjs violentmonkey --need-closed && playwright test --project=violentmonkey --workers=1",
     "test:e2e:vm:headed": "node scripts/build.mjs && node scripts/e2e-manager-preflight.mjs violentmonkey --need-open && VM_HEADED=1 playwright test --project=violentmonkey --workers=1",
-    "test:headed": "playwright test --project=sourcemonkey --headed --workers=1",
+    "test:headed": "node scripts/clean-stale-test-profiles.mjs && node scripts/build.mjs && playwright test --project=sourcemonkey --headed --workers=1",
     "test:vm-api": "node scripts/build.mjs && playwright test --project=vm-api",
     "test:tm-api": "node scripts/build.mjs && playwright test --project=tm-api",
     "test:unit": "node scripts/build.mjs && node --test 'tests/unit/**/*.test.mjs'",

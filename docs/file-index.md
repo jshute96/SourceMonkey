@@ -746,3 +746,5 @@ For userscript repos to install, so their coding agents know how to use `sm-dev`
 | `docs/sm-dev-logs.md` | A run's logs: the sources, what the stream, `logs` and `wait log` show, positions, and attributing lines |
 | `docs/sm-dev-json.md` | sm-dev's `--json` output: how it prints, each command's result type, and examples |
 | `docs/harness-guide.md` | User-facing: what a userscript repo installs, the `sm-dev` commands, the Playwright fixture API, known limitations |
+| `docs/releasing.md` | How to cut a release: the GitHub release, the npm packages and the Chrome Web Store upload |
+| `docs/chrome-web-store/` | Files for the Chrome Web Store listing: the description, screenshots, and the promo tile with the source that renders it |

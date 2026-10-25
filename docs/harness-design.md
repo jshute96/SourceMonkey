@@ -95,9 +95,10 @@ up-front check before a push:
       are importable.
   - `files` for the built outputs and `skills` (the agent skill ships
     beside the code), and `bin: { "sm-dev": ... }`.
-  - A `prepare` script that runs the build in a checkout, and
-    `prepublishOnly`, which refuses a manual `pnpm publish`: that would
-    skip the npm README and the release's checks.
+  - A `prepack` script that runs the build, so `pnpm pack` packs fresh
+    `lib/` and `dist/`.
+  - A `prepublishOnly` script, which refuses a manual `pnpm publish`:
+    that would skip the npm README and the release's checks.
     - `scripts/release.sh` publishes packed `.tgz` files instead, which
       runs no scripts, so it isn't blocked.
   - `@playwright/test` as an optional peer dependency, used by the

@@ -1,26 +1,475 @@
 # SourceMonkey - Userscript manager Chrome extension
 
-Userscripts are JavaScript patch scripts that modify specific web
+> [!NOTE]
+> SourceMonkey is experimental and under development. There's no Chrome Web Store release yet, but you can [install the extension](#getting-started) from the released zip file, or build from source.
+
+**Userscripts** are JavaScript patches that modify specific web
 pages. They're like lightweight Chrome extensions that are easy to
-write, update and share. A userscript manager handles your registered
-scripts.
+write, update and share. A userscript manager stores your registered
+scripts and injects them into matching web pages.
 
-SourceMonkey is a userscript manager that treats userscripts like source code,
-built and managed with real coding tools.
+**SourceMonkey's collections page (showing loaded scripts)**
 
-During development, userscripts live on local disk, where you can work
-on them with standard software engineering tools (editors, IDEs,
-debuggers) and vibe-coding or agentic coding tools (like Claude Code).
-You can write tests and use source control (like GitHub) easily.
-SourceMonkey picks up the newest version from disk and installs it in
-Chrome automatically.
+![The collections page, with a collection from GitHub and one from a local directory](docs/chrome-web-store/screenshot1.png)
 
-Userscripts can also be loaded from the web, including from GitHub repos, and
-from sites like [Greasy Fork](https://greasyfork.org/).
+**SourceMonkey's toolbar popup (showing scripts running on a page)**
 
-SourceMonkey is generally compatible with
+![The Active scripts popup on example.com, listing the scripts running there](docs/chrome-web-store/screenshot2.png)
+
+## How SourceMonkey is different
+
+Traditional userscript managers (like [Tampermonkey](https://www.tampermonkey.net/) and [Violentmonkey](https://violentmonkey.github.io/)) are designed as script editing tools, where you view and write scripts in an editable text box in your browser.
+
+SourceMonkey optimizes for script serving and script development as separate use cases.
+
+In SourceMonkey, the userscript manager's main job is read-only script hosting, injecting scripts into web pages, and supporting external development.
+The userscript manager inside Chrome is *not an editing or development environment*.
+Scripts under development live on local disk, and are *developed using real developer tools*: a **real text editor or IDE**, **GitHub version control**, and **coding agents like Claude Code**.
+Then SourceMonkey picks up local changes immediately.
+
+SourceMonkey is optimized for those development workflows, and particularly, for **agentic userscript development**:
+*Use Claude Code to easily build a userscript modifying any web page* as you like.
+
+You can also install scripts from the web (like from [Greasy Fork](https://greasyfork.org/), or from a GitHub repo).
+Here, SourceMonkey stores and serves an installed copy of the script, but isn't editing it.
+The installed copy gets updated with new versions from the web source.
+
+### Userscript development in SourceMonkey
+
+Here's a typical setup:
+
+* You have a local directory where you do userscript development.
+  * If you're using GitHub, that's a checkout of your GitHub repo.
+* You register a "Directory Collection" in SourceMonkey pointing at that directory.
+  * SourceMonkey loads all userscripts (`*.user.js`) under that directory.
+  * On refresh, SourceMonkey picks up any scripts added, deleted or renamed under that directory.
+  * When you edit an existing script file, SourceMonkey picks up the new version immediately.
+    * SourceMonkey checks for updates every time you switch to a tab, or load a page.
+    * If a reload is needed to update scripts, SourceMonkey notifies you with a purple badge.
+* You can do development using exactly the same script you publish.
+  * You don't need to edit anything to make a "local" version.
+  * Even for `@require` files: SourceMonkey can load local versions from your source directory, overriding remote URLs.
+
+When you create a local script, you trigger a one-time SourceMonkey refresh to pick it up.
+After that, you just edit the script, and SourceMonkey picks up the current code automatically.
+
+If you commit your scripts to GitHub, then you can access them on non-development machines too.
+Just register the GitHub repo as a collection, and SourceMonkey will load the current version of all scripts from that repo.
+
+### Testing userscripts
+
+SourceMonkey provides several tools to make testing easier and less manual.
+
+Would you like to write unit tests for your scripts? You can.
+SourceMonkey includes a client-side Playwright test fixture for testing userscripts.
+It starts a real Chromium browser, with the real SourceMonkey extension, so you get the full functionality, including all `GM*` APIs.
+The test can drive the web page using Playwright, and inspect or control page state and script state.
+
+*One use case*: Write tests to detect when your script stops working because the page changed.
+
+What about interactive testing?
+SourceMonkey provides `sm-dev`, a client-side command-line tool that lets you start a browser, load scripts, load web pages, and then inspect or drive the page and the script.
+You can see status and logs, read and write stored values, drive script menus, and even run JavaScript inside the script to inspect or update state.
+
+### Agentic userscript development
+
+**SourceMonkey and the `sm-dev` tools are optimized to work well with coding agents like Claude Code.**
+
+SourceMonkey skills teach the coding agent how to build, test and debug userscripts using these tools.
+
+You can start by just asking *"Build me a script to do X on site Y."*
+Claude can fetch the page, figure out how it works, and write a userscript to do what you want, all working in a hidden temporary browser.
+Then Claude can use `sm-dev` to try the script, on the live page.
+If it doesn't work, Claude will iterate and debug until it does.
+
+When Claude tells you it's done, just reload the page yourself in your real browser.
+If it's not doing what you expected, or you want to refine further, just ask.
+Claude will update your script, test it, and let you know when it's done.
+Then just reload and try it again.
+
+Simple scripts (like changing visual layout or adding buttons) are trivial to build this way, often in a single prompt.
+Agentic development scales from there up to very complex stateful scripts, modifying complicated interactive web applications, media sites, or multi-page interactions.
+
+Revising your script later uses the same process.
+Just tell Claude what you want to change!
+
+> [!TIP]
+> The [SeeWhatISee](https://github.com/jshute96/SeeWhatISee) screenshot extension works great with SourceMonkey to complete the loop.
+> For any page you're looking at, take a screenshot (and an HTML snapshot), highlight what you want to change, describe the change you want in the prompt, and send it to Claude Code with one click.
+> Claude builds your userscript, then you reload the page and try it.
+
+> [!TIP]
+> For pages that require login or complex setup, development also works offline, directly from an HTML snapshot, building and testing a script without logging in to the live page.
+
+## Compatibility and status
+
+SourceMonkey works and is generally compatible with
 [Tampermonkey](https://www.tampermonkey.net/) and other common
 userscript managers.
+
+Most common `GM*` APIs work, and most common script headers are supported.
+See [docs/supported-GM-APIs.md](docs/supported-GM-APIs.md) and
+[docs/supported-headers.md](docs/supported-headers.md) for details.
+
+SourceMonkey isn't in the Chrome Web Store yet.
+[Install it](#getting-started) from a release zip or build it from source.
+SourceMonkey requires **Chrome 152 or newer**.
+
+## Example userscripts
+
+[`tests/examples`](tests/examples/README.md) includes example scripts
+that interactively demonstrate supported `GM` APIs and other
+functionality.
+
+These also function as the beginnings of a **compliance test suite** for userscript managers, with tests that compare behavior across SourceMonkey, Tampermonkey, and Violentmonkey.
+
+The [jshute96/userscripts](https://github.com/jshute96/userscripts) GitHub repo is an example of a repo with many scripts built using SourceMonkey and Claude Code.
+
+> [!NOTE]
+> **TODO**: That repo has some additional scripts and skills for userscript development.
+> Extracting those as a template for other userscript repos is pending.
+
+## Getting started
+
+> [!NOTE]
+> A Chrome Web Store release is coming.
+
+1. Install the extension with **Load unpacked**:
+   1. Get the code:
+       - **From a release zip:** Download `SourceMonkey-vX.Y.Z.zip` from the
+        [Releases page](https://github.com/jshute96/SourceMonkey/releases)
+        and unzip it.
+       - **From source:** Check out this repo and build it (see [SourceMonkey Development](#sourcemonkey-development)) into `dist/`.
+
+   2. In Chrome, open `chrome://extensions`, enable **Developer mode**,
+      click **Load unpacked**, and select that directory.
+
+2. On `chrome://extensions`, for SourceMonkey enable:
+   - **Pin to toolbar**, so the SourceMonkey icon is visible.
+   - **"Allow User Scripts"**. Without it Chrome can't inject scripts.
+   - **"Allow access to file URLs"**, if you want to load scripts from
+     local disk.
+
+3. Double-click the SourceMonkey toolbar icon to open the **collections page**.
+   - On the first run, it adds a default collection of examples so the page isn't empty.  You can remove that if you want.
+   - Use the **Add** box to add scripts or collections, from URLs or file paths. Adding a directory creates a collection with all scripts under that directory.
+   - Opening userscripts (`*.user.js` URLs) in Chrome will redirect to SourceMonkey's script install page.  (You can disable this on the Options page.)
+
+## Using SourceMonkey
+
+> [!NOTE]
+> **TODO**: The rest of these docs need updates and cleanup.
+
+### The collections page
+
+The collections page is where scripts are registered and managed.
+
+- Each collection has a section listing its scripts, with:
+  - enable toggles, per collection and per script
+  - buttons to refresh, remove, or reorder the collection, and access additional options.
+- **Refresh All**, in the header bar at the top of the page, updates everything.
+
+Each script row shows a status, linking to that script's log, where there
+are usually more details:
+
+| Status | Meaning |
+| --- | --- |
+| `OK` | Loaded and registered |
+| `INVALID` | The script can't run: bad or missing headers, a `@require` that wouldn't load, or a syntax error |
+| `REJECTED` | The script is fine, but Chrome refused to register it |
+| `REFRESH FAILED` | Still running its last good copy, but the newest update attempt failed |
+| `OUTDATED` | Running and current with its own source, but the script's `@updateURL` / `@downloadURL` advertises a newer version |
+| `ERROR` / `WARNING` | Loaded fine, but this script has produced errors or warnings this session |
+
+Local scripts that have been deleted or edited since last read show a `DELETED` or `MODIFIED` chip.
+Local collections with changes on disk show `REFRESH PENDING`.
+
+Clicking a script name opens the **script viewer**, which shows the script's
+headers, content (including the `@require` files it loads), status, and a
+**Log** tab showing errors and other log messages.
+
+A script that lives in a scripts collection can be moved to another one
+from the viewer's **Collection** row, keeping its log and its stored
+`GM_setValue` data.
+
+**Local copy…** on the same row writes an editable copy of any installed
+script into `SourceMonkey/` under the browser's Downloads folder, which
+becomes the **Scripts copied in Downloads** collection. The copy takes
+over as the running version, and edits made to it in any editor are
+picked up by Refresh. The dialog lets you rename the file, adjust the
+version (`-local` by default) and description, and optionally copy the
+script's `@require` / `@resource` files beside it.
+
+The badged trash can beside it (a can with a small disk, the glyph
+reserved for deleting a file rather than just a record) deletes such a
+copy: the file on disk and its record in SourceMonkey, after a
+confirmation naming the path and every dependency file the copy loads,
+saying which of them go with it. Copies are the one thing SourceMonkey
+can delete from disk, since the browser downloaded them.
+
+The **⋯** menus, in the header and on each collection, export all
+collections or one collection to a zip file: a backup, or a way to move scripts to
+another machine. Tampermonkey and Violentmonkey can import it too. See
+[docs/export.md](docs/export.md).
+
+When the same script is installed more than once (the same URL under two
+collections, or the same `@name` and `@namespace` from two different places), the
+viewer lists the copies in an **Other versions** panel at the top of the page,
+where each one can be enabled, updated, opened, or removed. Clicking another
+copy's row switches the page to it in place, leaving the panel as it is. Enabling one
+copy disables the others, since two enabled copies of a script both run.
+Ctrl-click a checkbox (cmd-click on a Mac) to override that. The same rule holds
+everywhere a script or collection is turned on, including the collections page,
+the toolbar popup, and adding a collection; turning a collection back off restores
+the copies it displaced. The panel's
+**Compare** column shows whether each copy's code matches the one on screen,
+and a **DIFF** button opens a **compare page** showing the two copies'
+header fields side by side and a diff of each file.
+
+The **Options** link at the top, beside Refresh All, covers `.user.js` link capture,
+debug logging, local file override directories, the Downloads folder
+local copies land in, and a GitHub token (for private repos and a
+higher API rate limit).
+
+Details: [docs/storage.md](docs/storage.md) (status model),
+[docs/script-viewer.md](docs/script-viewer.md),
+[docs/script-identity.md](docs/script-identity.md),
+[docs/script-enablement.md](docs/script-enablement.md),
+[docs/compare.md](docs/compare.md),
+[docs/local-copy.md](docs/local-copy.md),
+[docs/local-delete.md](docs/local-delete.md),
+[docs/script-log.md](docs/script-log.md),
+[docs/diagnostics.md](docs/diagnostics.md).
+
+### Registering collections
+
+Type a path or URL into the Add field and click **Add**. The path can be:
+
+- An **absolute path or `file://` URL to a directory** of userscripts.
+  Scanned recursively; every `*.user.js` becomes a row.
+- A **single `.user.js`**, by local path or `http(s)://` URL. This
+  opens a preview in a new tab first (see below).
+- A **manifest** (`script_manifest.json`): a list of userscripts to
+  load. See [Manifest files](#manifest-files-script_manifestjson).
+- A **GitHub URL**, pasted straight from the browser. A repo, a
+  `/tree/…` directory, or a `/blob/…` file all work; directories are
+  scanned via the GitHub API.
+- A **name**, or nothing at all, to make an empty collection for
+  scripts you install one at a time.
+
+A directory, manifest, or name opens a small dialog first, where you can
+give the collection a name and set its options; it checks that the
+location can be read before creating anything.
+
+Single scripts go into **scripts collections**: folders you create
+and name, or the defaults created on demand (`Scripts from local disk`,
+`Scripts from web`, `Scripts from GitHub`). One scripts collection can
+mix local, web, and GitHub scripts. An `sm-dev test collection`
+holds the scripts an `sm-dev` run pushed, whose only copy
+is in SourceMonkey itself; it goes when the run ends (see
+[docs/harness-guide.md](docs/harness-guide.md)).
+
+Details: [docs/file-access.md](docs/file-access.md),
+[docs/http-collections.md](docs/http-collections.md).
+
+### Installing scripts from a `.user.js` link
+
+Click a `.user.js` raw file link anywhere (Greasy Fork, GitHub, a file on your
+own disk, etc.) and SourceMonkey previews it instead of letting Chrome show
+the bare source.
+
+The preview shows the script's source code and some summary information,
+and validates the script and its `@require` libraries, reporting errors for
+invalid scripts. Pick which collection to put it in (or make a new
+one), and **Install** loads the script, the same as adding its URL on
+the collections page.
+
+If the script is already registered, the preview lists every copy and
+lets you open or update each one, or install another copy elsewhere.
+A script that arrives via a collection you already subscribe to can
+still be installed as a copy of your own.
+
+Link capture can be turned off on the Options page if you want Chrome's
+defaults or have another userscript manager handling links.
+
+Details: [docs/install-capture.md](docs/install-capture.md),
+[docs/parse-check.md](docs/parse-check.md).
+
+### Local development vs deployed scripts
+
+Scripts can reference and load other files with `@require`, `@resource` and `@icon` headers.
+Tampermonkey and Greasemonkey require absolute paths.
+
+To make local development on disk easier, SourceMonkey also allows relative
+paths, resolved against the script's own location. A script loaded over
+http(s) may point anywhere it could already name with an absolute URL
+(`../lib/util.js`, `//cdn.example.com/util.js`), matching Violentmonkey;
+a script loaded from disk is confined to its own directory.
+Tampermonkey resolves neither, so relative paths still cost portability.
+
+Therefore, when publishing a script, absolute http paths are preferred.
+
+SourceMonkey enables local development on these scripts by **reading local files
+in place of http references**. For scripts run from local files, if there's
+a file under the script's directory, or under the directory of the collection
+it came from, matching any suffix of the requested host and path, the local
+file will be read instead. So a shared `lib/` at the top of a scripts
+directory is reachable from a script nested inside it.
+
+Additional local directories can be added to the search path on the Options page.
+
+This allows local development of the script and its resource files, without
+adjusting the file paths.
+
+See [docs/local-file-overrides.md](docs/local-file-overrides.md).
+
+### Manifest files (`script_manifest.json`)
+
+SourceMonkey allows adding a directory as a collection, and then
+automatically loading all userscripts under that directory.
+
+For local directories, and supported web hosts like GitHub,
+SourceMonkey can list files to find the userscripts. Other file hosting
+sites may not support listing files. Manifest files allow loading
+multi-userscript collections from these sites too.
+
+A manifest file is a JSON file containing a list of userscripts to
+load, typically using relative paths starting from the manifest file's
+location.
+
+The manifest body is JSON in one of two shapes: a bare array, or an
+object with a `scripts` key. Each entry is a URL string, or an object
+with a `path` field holding that string; other fields are ignored:
+
+```json
+["foo.user.js", "sub/bar.user.js", "https://elsewhere/baz.user.js"]
+```
+
+```json
+{ "scripts": ["foo.user.js", "sub/bar.user.js"] }
+```
+
+```json
+{
+  "scripts": [
+    { "path": "foo.user.js", "note": "my fork of upstream" },
+    { "path": "sub/bar.user.js", "note": "another script" }
+  ]
+}
+```
+
+Entry paths resolve like this:
+
+- **Relative** entries resolve against the manifest's own location, so
+  the same manifest works unchanged whether it's served over HTTP or
+  read from a local directory.
+- **Absolute** URLs (`https://…`, `file:///…`) are used verbatim, and
+  can point anywhere.
+
+To generate a manifest from a directory of userscripts, run
+`scripts/make_manifest.sh` inside that directory and redirect stdout to
+`script_manifest.json`.
+
+### Keeping scripts up to date
+
+Nothing polls on a timer. A script's source is re-checked at these
+moments, and any change is loaded immediately: the toolbar badge then
+turns purple, and its tooltip says a reload is needed.
+
+- **Loading a page** re-checks the scripts that run on it.
+- **Switching to a tab** re-checks the scripts on it that came from
+  local disk. So editing a script in your editor and switching back to
+  the browser turns the badge purple before you reload, and that reload
+  runs the new version. Scripts installed from the web are left alone
+  here, to avoid a request to their site every time you change tabs.
+- **Reloading a tab picks up edits on the same click**: SourceMonkey
+  races a quick re-check against the page load, so a script you just
+  saved usually runs on that very reload.
+- The same script is re-checked at most once every 10 seconds, so two
+  edits in quick succession may need a moment before the second is
+  noticed.
+- **Refresh** (per collection, or **Refresh All**) checks for updates manually.
+  External tools can trigger a refresh by opening the collections page with
+  one of these, where `<id>` is the extension's ID:
+  - `chrome-extension://<id>/collections.html?refresh`: every collection.
+  - `chrome-extension://<id>/collections.html?refresh_local`: only the
+    collections that live on local disk, skipping the web ones.
+  - `chrome-extension://<id>/collections.html?refresh_file=<path>`: only
+    what covers that file or directory, including the collections that
+    scan it, so a file you added, renamed, or deleted is noticed too.
+- Re-fetches are cheap: HTTP collections use conditional GETs, local files
+  compare size + mtime, and unchanged content is detected by hash.
+- Every script updates from the place you installed it. A declared
+  `@updateURL` / `@downloadURL` is read for its `@version` and reported
+  as `OUTDATED`, but never fetched from, so a script can't quietly
+  move its own update channel to a site you didn't approve.
+
+Details: [docs/updates.md](docs/updates.md).
+
+### The toolbar icon
+
+As you browse, the toolbar icon shows the count of how many scripts match the
+current page, colored by health:
+
+| Color | Meaning |
+| --- | --- |
+| **Green** | All scripts are running. |
+| **Orange** | Scripts are missing, unexpected, or still loading. |
+| **Purple** | A reload is needed to pick up scripts that were updated, enabled or disabled. |
+| **Red** | A script had an error, Chrome refused to register it, or user scripts are disabled in Chrome. |
+| **Grey** | No scripts ran, on purpose (*Reload page with no userscripts* on the context menu). |
+
+Hovering the icon shows a more detailed summary.
+
+Clicking the icon opens the **Active scripts** popup: the scripts that
+match the page, grouped by collection, with their status. From there
+you can:
+
+- Turn scripts and collections on or off.
+- Run a script's menu commands (`GM_registerMenuCommand`).
+- Run a manual script (`@run-at context-menu`), which runs only when asked.
+- Click a script to open the script page. Click the status badge to jump directly to its log page.
+- Reload the page with no userscripts, with only one script, or
+  with one script excluded. This allows testing scripts in isolation, when multiple scripts target the same page.
+
+Double-clicking the icon opens the collections page.
+
+Details: [docs/status-popup.md](docs/status-popup.md).
+
+### Supported `GM_*` / `GM.*` APIs and headers
+
+SourceMonkey supports the standard header fields and `GM` APIs common to
+other userscript managers.
+
+A script gets the APIs it asks for with `@grant`, in either the classic
+`GM_setValue` spelling or the newer `GM.setValue` one. Anything it
+didn't ask for isn't there. `@require`d libraries see the same APIs
+their script does.
+
+For exactly which names work and how they compare to Tampermonkey,
+Violentmonkey, and Greasemonkey 4, see
+[docs/supported-GM-APIs.md](docs/supported-GM-APIs.md).
+
+For the header tags SourceMonkey honors, see
+[docs/supported-headers.md](docs/supported-headers.md).
+
+### How scripts run
+
+Like in Tampermonkey and Violentmonkey, scripts run in the page's own
+JavaScript world, so they can read its globals by name.
+Unless it has `@grant none`, a script gets its own `window` showing the
+browser's built-ins, so what it writes there (or a library it loads)
+stays its own; `unsafeWindow` is the page's. Set `@inject-into content` or
+`@sandbox DOM` to run a script in an isolated world instead.
+
+Whatever a script throws is caught and reported against that script,
+including failures that happen later, from timers, event listeners, and
+promises. They show up in the script's **Log** tab with a clickable
+stack trace that lands on the offending line, in the `@require`d
+library file when that's where it came from.
+
+Details: [docs/injection.md](docs/injection.md),
+[docs/injection-modes.md](docs/injection-modes.md).
 
 ### Testing your userscripts
 
@@ -61,375 +510,38 @@ ln -s ../../node_modules/sourcemonkey/skills/SourceMonkey-dev .claude/skills/
 ln -s ../../node_modules/sourcemonkey/skills/SourceMonkey-friction .claude/skills/
 ```
 
-### Example userscripts
+### Validate userscripts from the command line
 
-[`tests/examples`](tests/examples/README.md) includes example scripts
-that interactively demonstrate supported `GM` APIs and other
-functionality.
+`sm-dev validate` runs the install-time checks (header validation,
+`@require` / `@resource` loading, and the compile-only syntax check)
+over files on disk, with no browser involved:
 
-These also function as a **compliance test suite** for userscript managers,
-with tests that compare behavior between SourceMonkey, Tampermonkey,
-and Violentmonkey.
-
-### Status
-
-SourceMonkey works end-to-end for script development, and loading
-scripts that use common features. Most `GM*` APIs are wired up, and
-common headers including `@require` and `@resource` are supported. See
-[docs/supported-GM-APIs.md](docs/supported-GM-APIs.md) and
-[docs/supported-headers.md](docs/supported-headers.md) for details.
-
-SourceMonkey isn't in the Chrome Web Store — install it from a release
-zip or [build from source](#development). It requires **Chrome 152 or
-newer**; the manifest declares that floor, so older Chrome refuses to
-load it.
-
-## Getting started
-
-1. Get an extension directory, either way:
-   - **From a release zip:** download `SourceMonkey-vX.Y.Z.zip` from the
-     [Releases page](https://github.com/jshute96/SourceMonkey/releases)
-     and unzip it.
-   - **From source:** build it — see [Development](#development) — which
-     writes `dist/`.
-
-   Then in Chrome open `chrome://extensions`, enable **Developer mode**,
-   click **Load unpacked**, and select that directory.
-2. On `chrome://extensions`, for SourceMonkey enable:
-   - **Pin to toolbar**, so the SourceMonkey icon is visible.
-   - **"Allow User Scripts"**. Without it Chrome refuses to inject
-     anything.
-   - **"Allow access to file URLs"**, if you want to load scripts from
-     local disk.
-
-   The permission toggles persist across browser restarts, and
-   SourceMonkey shows a banner with a link to the toggle whenever one is
-   missing.
-3. Double-click the SourceMonkey toolbar icon to open the **collections page**.
-   On first run it seeds a default collection of examples so the page isn't
-   empty; remove it like any other collection.
-
-## Using SourceMonkey
-
-### The collections page
-
-The collections page is where scripts are registered and managed. Each
-collection has a section listing its scripts, with enable toggles (per
-collection and per script), reorder buttons, a trash can that removes
-the collection, a gear that opens its rename/options dialog, and a
-circular arrow that refreshes it. **Refresh All**, in the header bar at
-the top of the page, re-checks everything at once. A local script whose
-file has been deleted or edited since it was read gets a `DELETED` /
-`MODIFIED` chip, and a local directory or manifest collection with
-changes on disk (files modified, deleted, or new; the manifest itself
-edited) wears `REFRESH PENDING`.
-
-Each script row shows a status, linking to that script's log, where there
-are usually more details:
-
-| Status | Meaning |
-| --- | --- |
-| `OK` | Loaded and registered |
-| `INVALID` | The script can't run: bad or missing headers, a `@require` that wouldn't load, or a syntax error |
-| `REJECTED` | The script is fine, but Chrome refused to register it |
-| `REFRESH FAILED` | Still running its last good copy, but the newest update attempt failed |
-| `OUTDATED` | Running and current with its own source, but the script's `@updateURL` / `@downloadURL` advertises a newer version |
-| `ERROR` / `WARNING` | Loaded fine, but this script has produced errors or warnings this session |
-
-Clicking a script name opens the **script viewer**, which shows the script's
-headers, content (including the `@require` files it loads), status, and a
-**Log** tab showing errors and other log messages.
-
-A script that lives in a scripts collection can be moved to another one
-from the viewer's **Collection** row, keeping its log and its stored
-`GM_setValue` data.
-
-**Local copy…** on the same row writes an editable copy of any installed
-script into `SourceMonkey/` under the browser's Downloads folder, which
-becomes the **Scripts copied in Downloads** collection. The copy takes
-over as the running version, and edits made to it in any editor are
-picked up by Refresh. The dialog lets you rename the file, adjust the
-version (`-local` by default) and description, and optionally copy the
-script's `@require` / `@resource` files beside it.
-
-The badged trash can beside it — a can with a small disk, the glyph
-reserved for deleting a file rather than just a record — deletes such a
-copy: the file on disk and its record in SourceMonkey, after a
-confirmation naming the path and every dependency file the copy loads,
-saying which of them go with it. Copies are the one thing SourceMonkey
-can delete from disk, since the browser downloaded them.
-
-The **⋯** menus, in the header and on each collection, export all
-collections or one collection to a zip file: a backup, or a way to move scripts to
-another machine. Tampermonkey and Violentmonkey can import it too. See
-[docs/export.md](docs/export.md).
-
-When the same script is installed more than once — the same URL under two
-collections, or the same `@name` and `@namespace` from two different places — the
-viewer lists the copies in an **Other versions** panel at the top of the page,
-where each one can be enabled, updated, opened, or removed. Clicking another
-copy's row switches the page to it in place, leaving the panel as it is. Enabling one
-copy disables the others, since two enabled copies of a script both run —
-ctrl-click a checkbox (cmd-click on a Mac) to override that. The same rule holds
-everywhere a script or collection is turned on, including the collections page,
-the toolbar popup, and adding a collection; turning a collection back off restores
-the copies it displaced. The panel's
-**Compare** column says whether each copy's code matches the one on screen,
-and a **DIFF** button opens a **compare page** showing the two copies'
-header fields side by side and a diff of each file.
-
-The **Options** link at the top, beside Refresh All, covers `.user.js` link capture,
-debug logging, local file override directories, the Downloads folder
-local copies land in, and a GitHub token (for private repos and a
-higher API rate limit).
-
-Details: [docs/storage.md](docs/storage.md) (status model),
-[docs/script-viewer.md](docs/script-viewer.md),
-[docs/script-identity.md](docs/script-identity.md),
-[docs/script-enablement.md](docs/script-enablement.md),
-[docs/compare.md](docs/compare.md),
-[docs/local-copy.md](docs/local-copy.md),
-[docs/local-delete.md](docs/local-delete.md),
-[docs/script-log.md](docs/script-log.md),
-[docs/diagnostics.md](docs/diagnostics.md).
-
-### Registering collections
-
-Type a path or URL into the Add field and click **Add**. What you type
-can be:
-
-- An **absolute path or `file://` URL to a directory** of userscripts.
-  Scanned recursively; every `*.user.js` becomes a row.
-- A **single `.user.js`**, by local path or `http(s)://` URL. This
-  opens a preview in a new tab first (see below).
-- A **manifest** (`script_manifest.json`) — a list of userscripts to
-  load. See [Manifest files](#manifest-files-script_manifestjson).
-- A **GitHub URL**, pasted straight from the browser. A repo, a
-  `/tree/…` directory, or a `/blob/…` file all work; directories are
-  scanned via the GitHub API.
-- A **name**, or nothing at all, to make an empty collection for
-  scripts you install one at a time.
-
-A directory, manifest, or name opens a small dialog first, where you can
-give the collection a name and set its options; it checks that the
-location can be read before creating anything.
-
-Single scripts go into **scripts collections** — folders you create
-and name, or the defaults created on demand (`Scripts from local disk`,
-`Scripts from web`, `Scripts from GitHub`). One scripts collection can
-mix local, web, and GitHub scripts. An `sm-dev test collection`
-holds the scripts an `sm-dev` run pushed, whose only copy
-is in SourceMonkey itself; it goes when the run ends (see
-[docs/harness-guide.md](docs/harness-guide.md)).
-
-Details: [docs/file-access.md](docs/file-access.md),
-[docs/http-collections.md](docs/http-collections.md).
-
-### Installing scripts from a `.user.js` link
-
-Click a `.user.js` raw file link anywhere — Greasy Fork, GitHub, a file on your
-own disk, etc. — and SourceMonkey previews it instead of letting Chrome show
-the bare source.
-
-The preview shows the script's source code and some summary information,
-and validates the script and its `@require` libraries, reporting errors for
-invalid scripts. Pick which collection to put it in — or make a new
-one — and **Install** loads the script, the same as adding its URL on
-the collections page.
-
-If the script is already registered, the preview lists every copy and
-lets you open or update each one, or install another copy elsewhere.
-A script that arrives via a collection you already subscribe to can
-still be installed as a copy of your own.
-
-Link capture can be turned off on the Options page if you want Chrome's
-defaults or have another userscript manager handling links.
-
-Details: [docs/install-capture.md](docs/install-capture.md),
-[docs/parse-check.md](docs/parse-check.md).
-
-### Local development vs deployed scripts
-
-Scripts can reference and load other files with `@require`, `@resource` and `@icon` headers.
-Tampermonkey and Greasemonkey require absolute paths.
-
-To make local development on disk easier, SourceMonkey also allows relative
-paths, resolved against the script's own location. A script loaded over
-http(s) may point anywhere it could already name with an absolute URL
-(`../lib/util.js`, `//cdn.example.com/util.js`), matching Violentmonkey;
-a script loaded from disk is confined to its own directory.
-Tampermonkey resolves neither, so relative paths still cost portability.
-
-Therefore, when publishing a script, absolute http paths are preferred.
-
-SourceMonkey enables local development on these scripts by **reading local files
-in place of http references**. For scripts run from local files, if there's
-a file under the script's directory — or under the directory of the collection
-it came from — matching any suffix of the requested host and path, the local
-file will be read instead. So a shared `lib/` at the top of a scripts
-directory is reachable from a script nested inside it.
-
-Additional local directories can be added to the search path on the Options page.
-
-This allows local development of the script and its resource files, without
-adjusting the file paths.
-
-See [docs/local-file-overrides.md](docs/local-file-overrides.md).
-
-### Manifest files (`script_manifest.json`)
-
-SourceMonkey allows adding a directory as a collection, and then
-automatically loading all userscripts under that directory.
-
-For local directories, and supported web hosts like GitHub,
-SourceMonkey can list files to find the userscripts. Other file hosting
-sites may not support listing files. Manifest files allow loading
-multi-userscript collections from these sites too.
-
-A manifest file is a JSON file containing a list of userscripts to
-load, typically using relative paths starting from the manifest file's
-location.
-
-The manifest body is JSON in one of two shapes — a bare array, or an
-object with a `scripts` key. Each entry is a URL string, or an object
-with a `path` field holding that string; other fields are ignored:
-
-```json
-["foo.user.js", "sub/bar.user.js", "https://elsewhere/baz.user.js"]
+```sh
+npx sm-dev validate path/to/scripts/    # a directory, or single files
 ```
 
-```json
-{ "scripts": ["foo.user.js", "sub/bar.user.js"] }
-```
+It reports each script as `ok` or `invalid` with the same message the
+extension would show, plus any warnings. The GreasyFork corpus
+(`tests/greasyfork-examples/`) has its own bulk validator that serves
+dependencies from a downloaded tree; see
+[docs/corpus-validation.md](docs/corpus-validation.md). That corpus
+also tracks per-script test results; see its
+[README](tests/greasyfork-examples/README.md#test-results).
 
-```json
-{
-  "scripts": [
-    { "path": "foo.user.js", "note": "my fork of upstream" },
-    { "path": "sub/bar.user.js", "note": "another script" }
-  ]
-}
-```
-
-Entry paths resolve like this:
-
-- **Relative** entries resolve against the manifest's own location, so
-  the same manifest works unchanged whether it's served over HTTP or
-  read from a local directory.
-- **Absolute** URLs (`https://…`, `file:///…`) are used verbatim, and
-  can point anywhere.
-
-To generate a manifest from a directory of userscripts, run
-`scripts/make_manifest.sh` inside that directory and redirect stdout to
-`script_manifest.json`.
-
-### Keeping scripts up to date
-
-Nothing polls on a timer. A script's source is re-checked at these
-moments, and any change is loaded immediately — the toolbar badge then
-turns purple, and its tooltip says a reload is needed.
-
-- **Loading a page** re-checks the scripts that run on it.
-- **Switching to a tab** re-checks the scripts on it that came from
-  local disk. So editing a script in your editor and switching back to
-  the browser turns the badge purple before you reload, and that reload
-  runs the new version. Scripts installed from the web are left alone
-  here, to avoid a request to their site every time you change tabs.
-- **Reloading a tab picks up edits on the same click** — SourceMonkey
-  races a quick re-check against the page load, so a script you just
-  saved usually runs on that very reload.
-- The same script is re-checked at most once every 10 seconds, so two
-  edits in quick succession may need a moment before the second is
-  noticed.
-- **Refresh** (per collection, or **Refresh All**) checks for updates manually.
-  External tools can trigger a refresh by opening the collections page with
-  one of these, where `<id>` is the extension's ID:
-  - `chrome-extension://<id>/collections.html?refresh` — every collection.
-  - `chrome-extension://<id>/collections.html?refresh_local` — only the
-    collections that live on local disk, skipping the web ones.
-  - `chrome-extension://<id>/collections.html?refresh_file=<path>` — only
-    what covers that file or directory, including the collections that
-    scan it, so a file you added, renamed, or deleted is noticed too.
-- Re-fetches are cheap: HTTP collections use conditional GETs, local files
-  compare size + mtime, and unchanged content is detected by hash.
-- Every script updates from the place you installed it. A declared
-  `@updateURL` / `@downloadURL` is read for its `@version` and reported
-  as `OUTDATED`, but never fetched from — so a script can't quietly
-  move its own update channel to a site you didn't approve.
-
-Details: [docs/updates.md](docs/updates.md).
-
-### The toolbar icon
-
-As you browse, the toolbar icon shows how many scripts apply to the
-current page, colored by health: **green** all good, **orange**
-scripts missing or unexpected, **purple** a reload is needed (a newer
-version is available, or scripts were turned on or off or deleted since
-the page loaded), **red** a script errored or Chrome refused to register it.
-
-Hovering the icon sums up the page: how many scripts are running, and
-any errors, warnings or reloads needed.
-
-Clicking the icon opens the **Active scripts** popup: the scripts that
-match the page, grouped by collection, with their status. From there
-you can:
-
-- Turn scripts and collections on or off.
-- Run a script's own menu commands (`GM_registerMenuCommand`).
-- Run a manual script (`@run-at context-menu`), which runs only when
-  asked.
-- Open a script's page or its log.
-- Reload the page with no userscripts, with only one script, or
-  without one. Handy for finding which script is breaking a page; the
-  next ordinary reload runs them all again.
-
-Double-clicking the icon opens the collections page. Its right-click
-menu does too, and can reload the page with no userscripts.
-
-Details: [docs/status-popup.md](docs/status-popup.md).
-
-### Supported `GM_*` / `GM.*` APIs and headers
-
-SourceMonkey supports the standard header fields and `GM` APIs common to
-other userscript managers.
-
-A script gets the APIs it asks for with `@grant`, in either the classic
-`GM_setValue` spelling or the newer `GM.setValue` one. Anything it
-didn't ask for isn't there. `@require`d libraries see the same APIs
-their script does.
-
-For exactly which names work and how they compare to Tampermonkey,
-Violentmonkey, and Greasemonkey 4, see
-[docs/supported-GM-APIs.md](docs/supported-GM-APIs.md).
-
-For the header tags SourceMonkey honors, see
-[docs/supported-headers.md](docs/supported-headers.md).
-
-### How scripts run
-
-Like in Tampermonkey and Violentmonkey, scripts run in the page's own
-JavaScript world, so they can read its globals by name.
-Unless it has `@grant none`, a script gets its own `window` showing the
-browser's built-ins, so what it writes there (or a library it loads)
-stays its own; `unsafeWindow` is the page's. Set `@inject-into content` or
-`@sandbox DOM` to run a script in an isolated world instead.
-
-Whatever a script throws is caught and reported against that script —
-including failures that happen later, from timers, event listeners, and
-promises. They show up in the script's **Log** tab with a clickable
-stack trace that lands on the offending line, in the `@require`d
-library file when that's where it came from.
-
-Details: [docs/injection.md](docs/injection.md),
-[docs/injection-modes.md](docs/injection-modes.md).
-
-## Development
+## SourceMonkey Development
 
 ### Setup
 
-Requires Node.js 22 or newer and [pnpm](https://pnpm.io) (the package
-manager this repo uses; `corepack enable pnpm` installs it from a Node
-checkout).
+Node.js 22 or newer is required.
+
+This repo uses the [pnpm](https://pnpm.io) package manager. Install it:
+
+```sh
+npm install -g corepack   # only on Node 25+, which no longer includes Corepack
+corepack enable pnpm
+```
+
+Then install the dependencies and Playwright's Chromium:
 
 ```sh
 pnpm install
@@ -439,35 +551,22 @@ pnpm exec playwright install chromium
 ### Build
 
 ```sh
-pnpm run build       # one-shot build into dist/
-pnpm run watch       # rebuild on TS changes
+pnpm run build       # build into dist/
+pnpm run watch       # automatically rebuild when TypeScript files change
 ```
 
-The built extension is written to `dist/`. Load it into Chrome via
-`chrome://extensions` → "Load unpacked" → select the `dist/`
-directory, then enable the toggles listed under [Getting
-started](#getting-started).
+The built extension is written to `dist/`. Install as described in
+[Getting started](#getting-started).
 
-`pnpm install` runs the same build (the package's `prepare` script), so
-a fresh checkout has a `dist/` as soon as its dependencies are in.
-
-The build writes two directories. `dist/` is the unpacked extension,
-and nothing else: you load it in Chrome, and
-`scripts/zip_extension.sh` packs it. `lib/` is the `sourcemonkey`
-package, which adds the development harness and the type declarations
-a consumer needs. See
-[docs/architecture.md](docs/architecture.md#two-outputs-dist-and-lib).
-
-`scripts/sm-dev` runs the harness's command line from this checkout
-(a repo that installs the package gets `sm-dev` on its path instead):
+The build also generates `sm-dev` and the test harness code in `lib/`.
+([Details here](docs/architecture.md#two-outputs-dist-and-lib).)
+`scripts/sm-dev` runs the `sm-dev` built here.
 
 ```sh
+# Example: Run the sm-dev built here.
 scripts/sm-dev --help
 scripts/sm-dev validate tests/examples
 ```
-
-It runs what `lib/` has and never builds it, so run `pnpm run build`
-first, and again after changing the harness.
 
 ### Test
 
@@ -484,7 +583,7 @@ pnpm run test:tm-api   # whether the fetched Tampermonkey still answers sm-dev's
 To narrow a run to one file:
 
 ```sh
-node --test tests/unit/header-parser.test.mjs    # For one unit test
+node --test tests/unit/header-parser.test.mjs    # For one unit test (run `pnpm run build` first)
 pnpm run test:e2e tests/e2e/injection.spec.ts    # For one e2e test
 ```
 
@@ -500,7 +599,7 @@ node scripts/sync-manager-scripts.mjs --manager tampermonkey
 pnpm run test:e2e:tm
 pnpm run test:e2e:vm
 
-# Or, headed: connects via CDP to that manager's browser — the script's
+# Or, headed: connects via CDP (Chrome DevTools Protocol) to that manager's browser. The script's
 # preflight step launches it if it isn't already running.
 pnpm run test:e2e:tm:headed
 pnpm run test:e2e:vm:headed
@@ -518,80 +617,34 @@ one-time profile setup each manager needs, and
 [docs/cross-manager-test-results.md](docs/cross-manager-test-results.md)
 for known per-manager divergences.
 
-### Validate userscripts from the command line
-
-`sm-dev validate` runs the install-time checks (header validation,
-`@require` / `@resource` loading, and the compile-only syntax check)
-over files on disk, with no browser involved:
-
-```sh
-scripts/sm-dev validate path/to/scripts/    # a directory, or single files
-```
-
-It reports each script as `ok` or `invalid` with the same message the
-extension would show, plus any warnings. The GreasyFork corpus
-(`tests/greasyfork-examples/`) has its own bulk validator that serves
-dependencies from a downloaded tree; see
-[docs/corpus-validation.md](docs/corpus-validation.md). That corpus
-also tracks per-script test results; see its
-[README](tests/greasyfork-examples/README.md#test-results).
-
-### Releasing
-
-A release is one version, tagged `vX.Y.Z`, of the extension (a zip on
-GitHub, and on the Chrome Web Store) and of the npm packages
-`sourcemonkey` and `sm-dev`.
-
-1. Bump the version in `package.json`, `src/manifest.json` and
-   `packages/sm-dev/package.json` to the same value. Commit and push.
-2. Build the release and create a draft GitHub release with its files:
-   ```sh
-   scripts/release.sh
-   ```
-3. Open the draft on GitHub (the script prints its URL), check it, and
-   click **Publish release**.
-4. Publish the release's packages to npm:
-   ```sh
-   scripts/release.sh --publish-npm vX.Y.Z
-   ```
-5. Upload `/tmp/SourceMonkey-vX.Y.Z-store.zip` in the Chrome Web Store
-   developer dashboard and submit it for review.
-
-`scripts/release.sh --help` describes each command, and the comment at
-the top of the script each step it takes.
-
-To build a distributable zip without releasing:
-
-```sh
-scripts/zip_extension.sh                   # writes /tmp/SourceMonkey.zip
-scripts/zip_extension.sh --release X.Y.Z   # versioned zip, plus the store zip
-```
-
 ### Code layout
 
-- `src/` — source (TypeScript + manifest + HTML). See
+- `src/`: source (TypeScript + manifest + HTML). See
   [Source layout](docs/architecture.md#source-layout).
-  - `src/extension/` — modules only the extension loads.
-  - `src/harness/` — the Node-only development harness (`sm-dev`).
-  - Directly in `src/` — modules both use, plus the pages and manifest.
-- `scripts/build.mjs` — bundler-free build script.
-- `scripts/zip_extension.sh` — builds and zips `dist/` for distribution.
-- `scripts/release.sh` — cuts a tagged release: the zip on GitHub, and
-  both packages on npm.
-- `scripts/pack-npm.sh` — packs both npm packages, as the release
-  does.
-- `packages/sm-dev/` — the `sm-dev` npm package, which runs
-  `sourcemonkey`'s CLI so `npx sm-dev` works.
-- `packages/sourcemonkey/README.md` — the `sourcemonkey` npm page.
-- `tests/unit/` — Node `--test` unit tests.
-- `tests/e2e/` — Playwright tests that load the unpacked extension.
-- `tests/examples/` — interactive userscript example pages with paired
-  userscripts; double as a cross-manager compliance reference. See
-  [tests/examples/README.md](tests/examples/README.md).
-- `docs/` — design docs. Start with
+  - `src/extension/`: modules only the extension loads.
+  - `src/harness/`: the development harness (`sm-dev`).
+  - `src/`: code shared by both.
+- `scripts/`: build, test and release scripts.
+- `tests/`: tests and test data. See [docs/testing.md](docs/testing.md).
+  - `tests/unit/`: unit tests.
+  - `tests/e2e/`: Playwright tests that load the unpacked extension.
+  - `tests/examples/`: interactive userscript example pages with paired
+    userscripts; double as a cross-manager compliance test. See
+    [tests/examples/README.md](tests/examples/README.md).
+  - `tests/bad-examples/`: example userscripts with errors.
+  - `tests/greasyfork-examples/`: results and analysis from testing
+    SourceMonkey on a selection of top scripts from Greasy Fork.
+- `docs/`: design docs. Start with
   [docs/architecture.md](docs/architecture.md) for the component map,
   and [docs/file-index.md](docs/file-index.md) for a one-line
   description of every file.
+- `packages/sm-dev/`: the `sm-dev` npm package, which runs
+  `sourcemonkey`'s CLI so `npx sm-dev` works.
+- `packages/sourcemonkey`: the `sourcemonkey` npm page.
+
+## Privacy
+
+SourceMonkey collects no data. See the [privacy policy](PRIVACY.md).
 
 ## License
 

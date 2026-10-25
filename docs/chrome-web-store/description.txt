@@ -1,0 +1,48 @@
+SourceMonkey is a userscript manager built for developing userscripts with real coding tools, and especially with coding agents like Claude Code.
+
+Userscripts are small JavaScript patches that change how specific web pages look or work. They're like lightweight extensions that are easy to write, update and share. A userscript manager stores your scripts and runs them on the pages they target.
+
+HOW SOURCEMONKEY IS DIFFERENT
+
+Most userscript managers are script editors: you write scripts in a text box inside the browser. SourceMonkey treats userscripts as source code instead.
+
+• Your scripts live in a folder on your own disk, or in a GitHub repo.
+• You edit them with your own editor or IDE, keep them in version control, or have a coding agent write them.
+• SourceMonkey picks up each change right away. Switch back to the browser and reload the page.
+• The script you develop is the same file you publish. @require files can load from your local folder while you work, with no edits.
+
+You can also install scripts from the web, from sites like Greasy Fork or a GitHub repo. SourceMonkey updates them when the source publishes new versions.
+
+BUILT FOR AGENTIC DEVELOPMENT
+
+Ask your coding agent "Build me a script that does X on site Y."
+
+The agent writes the script and tries it on the real page, using SourceMonkey's developer tools. If it doesn't work, the agent debugs it and tries again.
+
+When it's done, reload the page in your own browser to see the result. To change anything, just ask.
+
+DEVELOPER TOOLS
+
+SourceMonkey's developer tools are on npm (npx sm-dev):
+• sm-dev, a command-line tool to run a script in a real browser, inspect and drive the page, and read the script's logs and stored values.
+• A Playwright test fixture for writing automated tests of your userscripts.
+• Skills that teach coding agents how to use these tools to write userscripts.
+
+FEATURES
+
+• Install any .user.js link, with a pre-install preview and validation.
+• Load script "collections": load all the userscripts in a local folder or a GitHub repo, and keep them in sync.
+• Supports all common GM* APIs and script headers, compatible with Tampermonkey and Violentmonkey scripts.
+• Import and export scripts across other managers.
+
+PRIVACY
+
+SourceMonkey collects no data. It has no analytics, tracking or account, and your scripts and settings stay in your browser.
+
+Privacy policy:
+https://github.com/jshute96/SourceMonkey/blob/main/PRIVACY.md
+
+OPEN SOURCE
+
+For source code and documentation:
+https://github.com/jshute96/SourceMonkey
