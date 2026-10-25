@@ -181,8 +181,10 @@ enough to call directly:
 - So the harness hands VM the fixture server's URL for the same file
   rather than its path on disk, and VM fetches the dependencies from
   there for real.
-- That is what lets the `require-scope` and `gm-resource` examples —
-  both of which use relative refs — run under VM at all.
+- Only `require-scope/relative/` relies on it now, since it uses
+  relative paths on purpose. The other examples name their dependency
+  files by GitHub Pages URL, which TM can fetch too (see
+  [tests/examples/README.md](../tests/examples/README.md)).
 - The server binds a fresh port per worker, so the install URL is
   computed per run.
 

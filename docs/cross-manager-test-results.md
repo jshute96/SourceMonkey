@@ -21,8 +21,8 @@ Update this doc when a result changes.
 
 ## Status
 
-- **TM**: 33 passed, 0 failed, 7 skipped (TM 5.5.0).
-- **VM**: 32 passed, 0 failed, 8 skipped (VM 2.49.0).
+- **TM**: 44 passed, 0 failed, 6 skipped (TM 5.5.1).
+- **VM**: 38 passed, 0 failed, 12 skipped (VM 2.49.0).
 
 ## Intentional skips
 
@@ -45,39 +45,15 @@ Specs that opt out of a manager via
   implement `window.onurlchange` at all (no mention in its source),
   and the example page duly reports the feature as unavailable. Every
   assertion in that spec is about events only it can produce.
-- **`gm-resource/`** — skipped under **TM only**. The example uses
-  relative `@resource` refs (`./resource.css`, etc.). SM resolves those
-  against the host script's URL; VM resolves them against the URL the
-  script was installed from, which the harness makes a real fixture
-  server URL, so VM installs and fetches them for real. TM accepts
-  absolute URLs only, so it can't install the example cleanly. SM
-  coverage: `tests/examples/gm-resource/gm-resource.spec.ts`.
-- **`require-scope/`** — skipped under **TM only**, same shape, for
-  `@require ./lib.js`. TM installs these examples from a local file, so
-  it has no base URL to resolve a relative ref against even in
-  principle, and the fixture server's port is assigned per run so an
-  absolute URL can't be baked into the file. SM coverage:
-  `tests/examples/require-scope/require-scope.spec.ts`.
-  - Consequence worth stating plainly: **no example exercises
-    `@require` under TM at all**, so the TM-compatibility claim for
-    the concatenated injection arrangement rests on unit and SM-only
-    e2e coverage, plus the VM run — VM installs from the fixture
-    server's URL and resolves the relative ref against it. See the
-    "Cross-manager coverage" entry in [TODO.md](../TODO.md).
-  - `test:e2e:tm` is unaffected — the skip fires before the install
-    step, and that package script never invokes
-    `scripts/sync-manager-scripts.mjs`. A manual sync run *will* try to
-    install both variants; TM prefetches `@require` URLs at the install
-    prompt, so expect that install to error or stall rather than
-    complete.
-- **`use-strict/`** (the "with a @require" test) — skipped under **TM
-  only**, for the same relative `@require` reason. The rest of the
-  example (a top-level `'use strict'` in both worlds) runs under all
-  managers.
-  - TM's `@require` behavior was checked once by hand, with a library
-    served from an absolute local URL: as in VM and SM, a first
-    library's `'use strict'` makes the script strict, and the script's
-    own after a library does nothing.
+- **`require-scope/`** (the relative-paths test only) — skipped under
+  **TM**. `relative/relative-require.user.js` loads its libraries by
+  relative path on purpose, and TM takes absolute URLs only. VM
+  resolves the paths against the fixture-server URL it installs from.
+  - `test:e2e:tm` never installs it: the skip fires first. But
+    `scripts/sync-manager-scripts.mjs` installs every `*.user.js` under
+    its path, subdirectories included, so a manual sync into TM tries
+    this one too. TM prefetches `@require`s at its install prompt, so
+    expect that install to fail or stall.
 - **`gm-download/`** (the two tests that let a download complete) —
   skipped under **VM**. Not a VM bug: a Chromium one.
   - VM saves a download by clicking an anchor on a
@@ -112,9 +88,14 @@ matching page and every `toHaveCount(1)` saw 2.
 - `getInstalledMap` now prints a warning naming any duplicated script,
   because from the spec end this looks like an injection bug and
   nothing points at the profile.
+  - It compares `@name`s, so it misses a copy left under an example's
+    **old name** after a rename. That copy still matches the page and
+    runs too. In Oct 2026 both profiles held such copies, and both
+    managers ran many examples twice until they were deleted.
 - To clear them: TM dashboard → tick the extra rows → *Apply this to
   all selected scripts* → **Delete** → Start, and accept the confirm.
-  Keep one copy of each `@name`.
+  Keep one copy of each `@name`, and delete any example listed under
+  a name it no longer has.
 
 ## Behavior diffs (SM vs TM/VM)
 
@@ -124,6 +105,15 @@ behavior down and each picked its own rule. The cross-manager
 assertion has been loosened to accept all of them; SM's specific rule
 stays enforced in an SM-only spec.
 
+- **`gm-resource/`** (`GM_getResourceURL`, and an unknown resource
+  name) — measured under TM 5.5.1, once the example's `@resource`
+  refs became absolute URLs TM could fetch.
+  - `GM_getResourceURL` returns a base64 `data:` URL under TM, where SM
+    and VM mint a `blob:` URL. The page renders either, so the spec
+    checks the scheme per manager and fetches the URL under all three.
+  - An unknown name gives `null` from both `GM_getResourceText` and
+    `GM_getResourceURL` under TM, and `undefined` under SM and VM. The
+    spec expects each manager's own value.
 - **`headers-inject-into/`** (content-world isolation) — TM doesn't
   implement `@inject-into` at all. It's a Violentmonkey /
   SourceMonkey header; TM's nearest equivalent is `@sandbox`. VM does

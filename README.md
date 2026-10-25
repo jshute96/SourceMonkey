@@ -115,13 +115,27 @@ SourceMonkey isn't in the Chrome Web Store yet.
 [Install it](#getting-started) from a release zip or build it from source.
 SourceMonkey requires **Chrome 152 or newer**.
 
+The [example scripts](#example-userscripts) also run as tests against
+Tampermonkey and Violentmonkey.
+[docs/cross-manager-test-results.md](docs/cross-manager-test-results.md)
+has the latest results, and the places where the managers behave
+differently.
+
 ## Example userscripts
 
 [`tests/examples`](tests/examples/README.md) includes example scripts
 that interactively demonstrate supported `GM` APIs and other
 functionality.
 
-These also function as the beginnings of a **compliance test suite** for userscript managers, with tests that compare behavior across SourceMonkey, Tampermonkey, and Violentmonkey.
+To try them:
+
+1. Add the examples as a collection: on the collections page, add
+   `https://github.com/jshute96/SourceMonkey/tree/main/tests/examples`.
+   - A new install adds this collection on its first run.
+2. Open the [examples index page](https://jshute96.github.io/SourceMonkey/tests/examples/index.html).
+   Each example's page runs its scripts and shows what they did.
+
+These also function as the beginnings of a **compliance test suite** for userscript managers, with tests (`*.spec.ts` files in the same directory) that compare behavior across SourceMonkey, Tampermonkey, and Violentmonkey.
 
 The [jshute96/userscripts](https://github.com/jshute96/userscripts) GitHub repo is an example of a repo with many scripts built using SourceMonkey and Claude Code.
 

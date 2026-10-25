@@ -1,5 +1,5 @@
 // Shared library pulled in by both scripts in this example via
-// `@require ./lib.js`.
+// `@require`, by its GitHub Pages URL.
 //
 // The declaration forms here are the point. Requires are concatenated
 // ahead of the script body into a single injected entry, so all three

@@ -467,21 +467,6 @@ scripts, checked against Tampermonkey 5.5.1 with `sm-dev --manager tm`
 
 ## Cross-manager coverage
 
-- **No `tests/examples/` script exercises `@require` under
-  Tampermonkey.** `require-scope/` covers both injection worlds, but
-  skips under `--project=tampermonkey`: it uses a relative `@require`,
-  which TM doesn't resolve, and TM installs these examples from a
-  local file so there's no base URL to resolve against. Baking in an
-  absolute URL doesn't work either — the fixture server's port is
-  assigned per run.
-  - Closing it needs either a fixed-port fixture server for the TM
-    project, or a rewrite step that stamps the server URL into a
-    generated copy of the script before TM installs it. Until then
-    the TM-compatibility claim for `@require` — the whole premise of
-    the concatenated arrangement — rests on unit and SM-only e2e
-    coverage, plus the VM project below.
-  - The `violentmonkey` project does exercise it: VM installs from
-    the fixture server's URL and resolves the relative ref against it.
 - **VM doesn't inject into `file://` pages in the test profile**, so
   `gm-info`'s file:// case is skipped there. Verified it isn't the
   file-access toggle: the grant is live, the script is installed with
@@ -492,13 +477,6 @@ scripts, checked against Tampermonkey 5.5.1 with `sm-dev --manager tm`
   Worth pinning down before we claim anything about VM and local
   files. See
   [docs/cross-manager-test-results.md](docs/cross-manager-test-results.md).
-- **`gm-info`'s stub `@require` / `@resource` / `@icon` refs are
-  relative**, so when the script is installed by hand into TM/VM
-  (rather than through the sync script's local server) TM reports a
-  "forbidden URL" error in `GM_info.script.resources` and VM fails to
-  fetch them. Once the repo is public, point them at raw GitHub URLs
-  for `tests/examples/gm-info/{lib.js,resource.txt,icon.svg}` so the
-  comparison shows a clean fetch under every manager.
 - The known divergences to expect across managers are catalogued in
   [docs/supported-GM-APIs.md](docs/supported-GM-APIs.md) and
   [docs/supported-headers.md](docs/supported-headers.md).
