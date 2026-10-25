@@ -13,6 +13,8 @@ One-line descriptions of every source file, grouped by directory.
 | `package.json` | Node project manifest, scripts, devDependencies |
 | `pnpm-lock.yaml` | pnpm dependency lockfile |
 | `.pnpmfile.cjs` | pnpm hook run when packing for npm: drops `scripts`, and sets `sourcemonkey`'s npm description |
+| `.npmrc` | Makes npm show install scripts' output, so the pnpm-only `preinstall` check explains itself under npm or npx |
+| `.nojekyll` | Empty marker so GitHub Pages serves the repo's files as they are, without Jekyll processing |
 | `packages/sourcemonkey/README.md` | The `sourcemonkey` npm page: the tools, install, and a first run and test |
 | `pnpm-workspace.yaml` | pnpm workspace: the root `sourcemonkey` package plus `packages/sm-dev` |
 | `packages/sm-dev/package.json` | The `sm-dev` npm package, a wrapper over `sourcemonkey` so `npx sm-dev` works |
