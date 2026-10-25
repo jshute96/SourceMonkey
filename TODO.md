@@ -991,11 +991,6 @@ See [docs/harness-design.md](docs/harness-design.md).
   `running` in its JSON: that's its fallback for a status it doesn't
   know. Fall back to a neutral state instead (`not-started`, or a new
   `unknown-status`), so a later new status reads as unknown too.
-- Publishing: the package is installed from a checkout or a git tag.
-  `package.json` keeps `"private": true` until then; drop it to
-  publish.
-  Once it is on npm, the guide's install step and the consumer's
-  `dependenciesMeta.injected` workaround both get simpler.
 - A command sent to a run from another shell (or from stdin) exits 0
   when it fails in the run, unless it is a `match` or `validate` miss
   or it threw: the others only print why. Have each return its exit

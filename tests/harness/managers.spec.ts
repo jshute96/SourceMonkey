@@ -84,7 +84,7 @@ test('manager install, enable and disable, with a warning for the other one enab
   expect(await installedManagers(endpoint)).toEqual([]);
   expect(await managersIn('http://127.0.0.1:1')).toBeNull();
   const sm = await cli('manager', 'install');
-  expect(sm.stdout).toMatch(/^Installed SourceMonkey 0\.0\.1 from .*dist, with Allow User Scripts on\n$/);
+  expect(sm.stdout).toMatch(/^Installed SourceMonkey \d+\.\d+\.\d+ from .*dist, with Allow User Scripts on\n$/);
   const managers = await installedManagers(endpoint);
   expect(managers.map((m) => [m.manager, m.name, m.enabled, m.userScripts])).toEqual([['sourcemonkey', 'SourceMonkey', true, true]]);
   expect(managerState(managers, 'sourcemonkey')).toBe('installed');

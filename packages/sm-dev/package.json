@@ -1,0 +1,25 @@
+{
+  "name": "sm-dev",
+  "version": "0.5.0",
+  "description": "Runs the sm-dev command from the sourcemonkey package, so `npx sm-dev` works",
+  "license": "MIT",
+  "homepage": "https://github.com/jshute96/SourceMonkey",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jshute96/SourceMonkey.git",
+    "directory": "packages/sm-dev"
+  },
+  "type": "module",
+  "bin": {
+    "sm-dev": "./cli.js"
+  },
+  "files": [
+    "cli.js"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "sourcemonkey": "workspace:*"
+  }
+}

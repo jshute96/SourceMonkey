@@ -43,6 +43,8 @@ userscripts installs SourceMonkey as a package and gets two things:
   so a test can replay it without logging in. It also fetches and loads
   Tampermonkey or Violentmonkey, to run and manage scripts under them.
 
+Both come from npm. Use `pnpm add -D sourcemonkey` in a repo of
+userscripts, or `npx sm-dev` to run `sm-dev` without installing it.
 See [docs/harness-guide.md](docs/harness-guide.md) to use it, and
 [docs/harness-design.md](docs/harness-design.md) for how it works.
 
@@ -86,7 +88,7 @@ load it.
 
 1. Get an extension directory, either way:
    - **From a release zip:** download `SourceMonkey-vX.Y.Z.zip` from the
-     [Releases page](https://github.com/jshute96/VibeMonkey/releases)
+     [Releases page](https://github.com/jshute96/SourceMonkey/releases)
      and unzip it.
    - **From source:** build it — see [Development](#development) — which
      writes `dist/`.
@@ -536,27 +538,33 @@ also tracks per-script test results; see its
 
 ### Releasing
 
-Cut a GitHub release with `scripts/release-extension.sh` (tag `vX.Y.Z`).
+A release is one version, tagged `vX.Y.Z`, of the extension (a zip on
+GitHub, and on the Chrome Web Store) and of the npm packages
+`sourcemonkey` and `sm-dev`.
 
-1. Bump the version in **both** `package.json` and `src/manifest.json`
-   to the same value, and commit.
-2. From a clean `main`, run:
+1. Bump the version in `package.json`, `src/manifest.json` and
+   `packages/sm-dev/package.json` to the same value. Commit and push.
+2. Build the release and create a draft GitHub release with its files:
    ```sh
-   scripts/release-extension.sh             # draft (default)
-   scripts/release-extension.sh --publish   # publish immediately
+   scripts/release.sh
    ```
+3. Open the draft on GitHub (the script prints its URL), check it, and
+   click **Publish release**.
+4. Publish the release's packages to npm:
+   ```sh
+   scripts/release.sh --publish-npm vX.Y.Z
+   ```
+5. Upload `/tmp/SourceMonkey-vX.Y.Z-store.zip` in the Chrome Web Store
+   developer dashboard and submit it for review.
 
-The script verifies the versions match, `main` is clean and in sync with
-`origin/main`, and the tag is unused; then builds + zips the extension as
-`/tmp/SourceMonkey-vX.Y.Z.zip`, creates and pushes an annotated tag, and
-calls `gh release create` (the [GitHub CLI](https://cli.github.com/)) with
-auto-generated notes and the zip attached. The default is a draft so you can
-review and publish from the GitHub UI.
+`scripts/release.sh --help` describes each command, and the comment at
+the top of the script each step it takes.
 
 To build a distributable zip without releasing:
 
 ```sh
-scripts/zip_extension.sh   # writes /tmp/SourceMonkey.zip
+scripts/zip_extension.sh                   # writes /tmp/SourceMonkey.zip
+scripts/zip_extension.sh --release X.Y.Z   # versioned zip, plus the store zip
 ```
 
 ### Code layout
@@ -568,8 +576,13 @@ scripts/zip_extension.sh   # writes /tmp/SourceMonkey.zip
   - Directly in `src/` — modules both use, plus the pages and manifest.
 - `scripts/build.mjs` — bundler-free build script.
 - `scripts/zip_extension.sh` — builds and zips `dist/` for distribution.
-- `scripts/release-extension.sh` — cuts a tagged GitHub release with the
-  zip attached.
+- `scripts/release.sh` — cuts a tagged release: the zip on GitHub, and
+  both packages on npm.
+- `scripts/pack-npm.sh` — packs both npm packages, as the release
+  does.
+- `packages/sm-dev/` — the `sm-dev` npm package, which runs
+  `sourcemonkey`'s CLI so `npx sm-dev` works.
+- `packages/sourcemonkey/README.md` — the `sourcemonkey` npm page.
 - `tests/unit/` — Node `--test` unit tests.
 - `tests/e2e/` — Playwright tests that load the unpacked extension.
 - `tests/examples/` — interactive userscript example pages with paired

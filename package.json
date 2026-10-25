@@ -1,9 +1,11 @@
 {
   "name": "sourcemonkey",
-  "version": "0.0.1",
-  "private": true,
-  "description": "Userscript manager Chrome extension that treats userscripts like source code, built and managed with real coding tools",
+  "version": "0.5.0",
+  "description": "A userscript manager Chrome extension that treats userscripts like source code, built and managed with real developer tools, including coding agents",
   "license": "MIT",
+  "homepage": "https://github.com/jshute96/SourceMonkey",
+  "bugs": "https://github.com/jshute96/SourceMonkey/issues",
+  "keywords": ["userscript", "chrome-extension", "playwright", "tampermonkey", "violentmonkey"],
   "repository": {
     "type": "git",
     "url": "https://github.com/jshute96/SourceMonkey.git"
@@ -31,6 +33,7 @@
     "preinstall": "npx only-allow pnpm",
     "prepare": "node scripts/build.mjs",
     "build": "node scripts/build.mjs",
+    "prepublishOnly": "echo 'Publish with scripts/release.sh, which packs the npm README and checks the release.' >&2 && exit 1",
     "typecheck": "tsc -p tsconfig.tests.json --noEmit",
     "watch": "node scripts/build.mjs --watch",
     "test": "pnpm run test:unit && pnpm run test:e2e && pnpm run test:sm-dev",
@@ -45,6 +48,9 @@
     "test:tm-api": "node scripts/build.mjs && playwright test --project=tm-api",
     "test:unit": "node scripts/build.mjs && node --test 'tests/unit/**/*.test.mjs'",
     "clean": "rm -rf dist lib .build-* test-results playwright-report"
+  },
+  "dependencies": {
+    "playwright-core": "^1.64.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",

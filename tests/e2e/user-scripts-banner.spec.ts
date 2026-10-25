@@ -212,9 +212,12 @@ test.describe('user-scripts banner', () => {
     await sm.addCollection(dir.path);
     await sm.syncNow();
     const sw = await getServiceWorker();
-    const worlds = () => sw.evaluate(async () => JSON.stringify(await chrome.userScripts.getWorldConfigurations()));
+    // Neither call is in this @types/chrome version yet.
+    type WorldApi = { getWorldConfigurations(): Promise<unknown[]>; resetWorldConfiguration(): Promise<void> };
+    const worlds = () => sw.evaluate(async () =>
+      JSON.stringify(await (chrome.userScripts as unknown as WorldApi).getWorldConfigurations()));
     try {
-      await sw.evaluate(() => chrome.userScripts.resetWorldConfiguration());
+      await sw.evaluate(() => (chrome.userScripts as unknown as WorldApi).resetWorldConfiguration());
       expect(await worlds()).toBe('[]');
 
       const page = await extensionContext.newPage();

@@ -13,7 +13,7 @@ test('service worker exposes the SourceMonkey api', async ({ getServiceWorker })
     }).SourceMonkey;
     return { version: api.version, echoed: api.ping('hi') };
   });
-  expect(result.version).toBe('0.0.1');
+  expect(result.version).toMatch(/^\d+\.\d+\.\d+$/);
   expect(result.echoed).toBe('hi');
 });
 

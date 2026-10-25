@@ -70,28 +70,28 @@ has them log where the tools got in the way.
 - Node 22+ and pnpm.
 - A browser to work in. By default each run launches its own, with
   SourceMonkey loaded. See [A browser to work in](#a-browser-to-work-in).
+- `@playwright/test` in the repo (`pnpm add -D @playwright/test`), for
+  the fixture and the `playwright` command below.
 - Playwright's Chromium, for that browser. `pnpm install` doesn't fetch
   it: run `pnpm exec playwright install chromium`, and again after
   each Playwright update, since each version wants its own build.
+  - Where `@playwright/test` isn't installed beside it, as under
+    `npx sm-dev`, sm-dev uses its own copy of Playwright, and gives the
+    command to run when that copy's Chromium is missing.
 - For a lasting browser of your own: SourceMonkey loaded in it, with
   "Allow User Scripts" on. See [Setting it up](#setting-it-up).
 
 ### Install
 
+In a repo of userscripts, install the `sourcemonkey` package from npm:
+
 ```sh
-pnpm add -D github:jshute96/SourceMonkey#v0.x
+pnpm add -D sourcemonkey
 ```
 
-SourceMonkey builds itself on install, and pnpm runs a dependency's
-build only for packages the project allows. So allow it in
-`pnpm-workspace.yaml`:
-
-```yaml
-# The key is the dependency spec as the lockfile records it; pnpm
-# prints the one it wants if this is wrong.
-allowBuilds:
-  "sourcemonkey@git+https://github.com/jshute96/SourceMonkey.git#<sha>": true
-```
+To run `sm-dev` without installing anything, use `npx sm-dev`
+(`npx sm-dev --help`). The `sm-dev` package only runs the command
+from `sourcemonkey`.
 
 When you install from a checkout on disk (`file:../SourceMonkey`, while
 working on both), also add this to `package.json`:
@@ -115,6 +115,7 @@ working on both), also add this to `package.json`:
 - Installing the package puts `sm-dev` on your project's path (pnpm
   links it into `node_modules/.bin`). Run it as `pnpm sm-dev …` or
   `pnpm exec sm-dev …`.
+- Without installing it, run `npx sm-dev …`.
 - In a SourceMonkey checkout it is `scripts/sm-dev`. It runs what
   `lib/` has and never builds it; `pnpm run build` does.
 - The examples below write it as plain `sm-dev`.
@@ -415,8 +416,8 @@ too, given that port.
   - `status` and the run's first line say which: `has SourceMonkey`,
     `SourceMonkey disabled` or `no SourceMonkey` (see
     [Managing runs](#managing-runs)). `status` also lists the browser's
-    managers: `Managers: SourceMonkey 0.0.1 (in use), Tampermonkey
-    5.5.1 (disabled)`.
+    managers, for example `Managers: SourceMonkey 0.5.0 (in use),
+    Tampermonkey 5.5.1 (disabled)`.
   - Another manager enabled there runs its scripts in the run's tabs
     too, so the run's first lines and `status` warn of it, with how to
     turn it off.

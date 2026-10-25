@@ -39,3 +39,9 @@ test('gives the path when it has no build folder', () => {
   const msg = missingChromium('/nowhere/chrome');
   assert.match(msg, /needs Chromium at \/nowhere\/chrome, which isn't installed\. Install it with `pnpm exec playwright install chromium`\.$/);
 });
+
+test('gives the install command it is handed, as for sm-dev\'s own Playwright', (t) => {
+  const dir = browsersDir(t);
+  const msg = missingChromium(wanted(dir), 'npx playwright-core@1.64.1 install chromium');
+  assert.match(msg, /Install it with `npx playwright-core@1\.64\.1 install chromium`\. /);
+});

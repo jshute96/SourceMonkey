@@ -31,6 +31,7 @@ import type { ErrorReport, ManualReport, PageLink, SkipReport, StartReport } fro
 import { attachPage, targetIdOf, type AttachOptions, type PageAttachment } from './page-watch.js';
 import { pageSays } from './page-commands.js';
 import { consoleSource, consoleText, decodeOwnRefs, formatConsoleArgs, isPreludeLine, pageErrorSource } from './page-output.js';
+import { loadPlaywright } from './playwright-chromium.js';
 import { FrameSessions, type FrameSession } from './frame-sessions.js';
 import {
   defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, preparedNoframes, preparedScriptPath, prepareScript, pushedFiles, shownPath, warningLines, type PreparedScript,
@@ -293,7 +294,7 @@ async function openBrowser(
   out: (line: string) => void,
   { runTab, openTab }: { runTab: boolean; openTab: boolean },
 ): Promise<RunSession | null> {
-  const { chromium } = await import('@playwright/test');
+  const { chromium } = await loadPlaywright();
   let browser: Browser;
   // Set for a connected browser only.
   let endpoint: string | null = null;

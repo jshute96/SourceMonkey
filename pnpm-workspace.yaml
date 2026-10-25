@@ -1,0 +1,6 @@
+# The root is the `sourcemonkey` package. `packages/sm-dev` is a
+# wrapper published beside it so `npx sm-dev` works.
+# `packages/sourcemonkey` isn't a package: it holds only the README that
+# scripts/pack-npm.sh packs into `sourcemonkey` for its npm page.
+packages:
+  - packages/*

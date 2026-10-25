@@ -12,6 +12,12 @@ One-line descriptions of every source file, grouped by directory.
 | `LICENSE` | MIT license text |
 | `package.json` | Node project manifest, scripts, devDependencies |
 | `pnpm-lock.yaml` | pnpm dependency lockfile |
+| `.pnpmfile.cjs` | pnpm hook run when packing for npm: drops `scripts`, and sets `sourcemonkey`'s npm description |
+| `packages/sourcemonkey/README.md` | The `sourcemonkey` npm page: the tools, install, and a first run and test |
+| `pnpm-workspace.yaml` | pnpm workspace: the root `sourcemonkey` package plus `packages/sm-dev` |
+| `packages/sm-dev/package.json` | The `sm-dev` npm package, a wrapper over `sourcemonkey` so `npx sm-dev` works |
+| `packages/sm-dev/cli.js` | The wrapper's `sm-dev` command: imports and so runs `sourcemonkey`'s CLI |
+| `packages/sm-dev/README.md` | The wrapper's npm page: what it is, and to install `sourcemonkey` in a repo instead |
 | `tsconfig.json` | TypeScript compiler config for the extension build |
 | `tsconfig.lib.json` | The `sourcemonkey` package build: every module plus the harness, with declarations, into `lib/` |
 | `tsconfig.tests.json` | Typecheck-only config extending the build one to cover `tests/` (`pnpm run typecheck`) |
@@ -36,8 +42,9 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `scripts/build.mjs` | Build the extension into `dist/` (assets + `tsc`) and the package into `lib/` (optional `--watch`) |
 | `scripts/sm-dev` | Runs the harness's command line from this checkout, from the built `lib/` (it never builds) |
-| `scripts/zip_extension.sh` | Build and zip the extension for distribution, packing all of `dist/` |
-| `scripts/release-extension.sh` | Cut a `vX.Y.Z` GitHub release: version/branch/tag checks, zip, push tag, `gh release create` (draft by default) |
+| `scripts/zip_extension.sh` | Build and zip `dist/` for distribution; release builds add a Chrome Web Store zip without `key` |
+| `scripts/pack-npm.sh` | Pack both npm packages into `.tgz` files, with `packages/sourcemonkey/README.md` as `sourcemonkey`'s README |
+| `scripts/release.sh` | Cut a `vX.Y.Z` release: checks, zips and package `.tgz`s, tag, GitHub release (draft by default), npm publish |
 | `scripts/serve-examples.mjs` | Local HTTP server for `tests/examples/`, including the `/__slow/?ms=N` delay route the `headers-run-at` demo needs |
 | `scripts/make_manifest.sh` | Scan the current dir for `*.user.js` and emit a SourceMonkey HTTP-manifest JSON array to stdout (redirect to `script_manifest.json`) |
 | `scripts/open-test-browser-with-SourceMonkey.sh` | Launch Chromium with the unpacked SM extension + CDP port 9222 for cross-manager Playwright runs |
@@ -268,7 +275,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/saved-pages.ts` | Serving a saved page at its URL for `--from-saved` and `serveHtml`, with its `_files` folder |
 | `src/harness/checks.ts` | `match` and `validate`'s shared half: finding the scripts named, and the lines each prints |
 | `src/harness/path-args.ts` | Globs (`*`, `**`) and directory searches for sm-dev's file arguments |
-| `src/harness/playwright-chromium.ts` | Explains why Playwright's Chromium is missing: the build its Playwright version wants, those installed, the fix |
+| `src/harness/playwright-chromium.ts` | Loads the repo's Playwright or sm-dev's own, and explains a missing Chromium build and the fix |
 | `src/harness/command-lines.ts` | Input lines into a run's commands: multi-line `{{ ... }}` blocks (`eval`, `set`, `type`, `cdp`), comments, sent lists |
 | `src/harness/command-list.ts` | Every sm-dev command in one list, in the help's named sections, with subcommands, their options, and the help views |
 | `src/harness/output-style.ts` | Output markup by role (IDs, URLs, commands), sm-dev's message prefixes, tables, and painting lines for a terminal |
