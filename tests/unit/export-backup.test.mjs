@@ -218,6 +218,23 @@ test('more than one collection: a folder per collection', () => {
     ['s/A/A.user.js', 'Scripts from web/W/W.user.js']);
 });
 
+test('a collection folder uses the name given, whole, over the base name', () => {
+  const named = { ...dirCollection, displayName: 'Work / tools' };
+  const web = { id: 'c-2', path: 'container:http', scriptIds: ['w'], enabled: true };
+  const w = script({ id: 'w', collectionId: 'c-2', header: header('W'), fileUrl: 'https://e.com/w.user.js' });
+  const p = plan([{ collection: named, scripts: [script()] }, { collection: web, scripts: [w] }]);
+  assert.equal(jsonOf(p, 'script_manifest.json').scripts[0].path, 'Work - tools/A/A.user.js');
+});
+
+test('a collection under its inferred name, stored as displayName, keeps the last segment', () => {
+  const inferred = { ...dirCollection, path: '/home/me/dev/scripts', displayName: '/home/me/dev/scripts' };
+  const web = { id: 'c-2', path: 'container:http', scriptIds: ['w'], enabled: true, displayName: 'Scripts from web' };
+  const w = script({ id: 'w', collectionId: 'c-2', header: header('W'), fileUrl: 'https://e.com/w.user.js' });
+  const p = plan([{ collection: inferred, scripts: [script()] }, { collection: web, scripts: [w] }]);
+  assert.deepEqual(jsonOf(p, 'script_manifest.json').scripts.map((s) => s.path),
+    ['scripts/A/A.user.js', 'Scripts from web/W/W.user.js']);
+});
+
 test('saveFailureMessage words the common reasons and shows the rest', () => {
   assert.equal(saveFailureMessage('FILE_NO_SPACE'), 'The disk is full');
   assert.equal(saveFailureMessage('NETWORK_FAILED'), 'Chrome stopped the save (NETWORK_FAILED)');

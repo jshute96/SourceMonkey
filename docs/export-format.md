@@ -346,8 +346,9 @@ sourcemonkey-backup-2026-10-17T12-34-56-789Z.zip
 | `<name>/<name>.storage.json` | GM values, as `{ts, data}` | All three |
 | Other files | Dependency and icon files, when included ([below](#dependency-bodies)) | SourceMonkey |
 
-- The collection folder is the collection's name, its last path segment
-  for one named by a path. Only written for more than one collection.
+- The collection folder is the collection's name. For one still under
+  the name inferred from its location, it's that name's last path
+  segment. Only written for more than one collection.
 - TM and VM read scripts at any folder depth, pairing a script's files
   by their full path without the suffix.
 - `<name>` is the script's `@name`, made safe for a file name:
