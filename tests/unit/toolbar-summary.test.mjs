@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildPopupView } from '../../dist/extension/popup-view.js';
-import { computeBadge, BADGE_GREEN, BADGE_ORANGE, BADGE_PURPLE, BADGE_RED } from '../../dist/extension/tab-status.js';
+import { computeBadge, BADGE_GREEN, BADGE_GREY, BADGE_ORANGE, BADGE_PURPLE, BADGE_RED } from '../../dist/extension/tab-status.js';
 import { summarizeToolbar } from '../../dist/extension/toolbar-summary.js';
 
 const URL_ = 'https://example.com/';
@@ -195,4 +195,23 @@ test('a page loaded while user scripts are still disabled: red, saying so and no
   assert.deepEqual(lines(s), ['User scripts are not allowed yet.']);
   assert.equal(s.color, BADGE_RED);
   assert.equal(s.count, 1);
+});
+
+test('kept-out scripts count only while nothing else has a status', () => {
+  const base = { documentId: 'd', url: URL_, matches: [m('a'), m('b'), m('c')], loadMatchIds: ['a', 'b', 'c'] };
+  // Reloaded with no userscripts: all of them, in grey.
+  const none = summary({ st: { ...base, actual: {}, scriptsSkipped: true }, scripts: [script('a'), script('b'), script('c')] });
+  assert.equal(none.count, 3);
+  assert.equal(none.color, BADGE_GREY);
+  // Then one run manually: just it, in its own color.
+  const one = summary({
+    st: { ...base, actual: { b: started('b') }, scriptsSkipped: true, manualRuns: { b: 1 } },
+    scripts: [script('a'), script('b'), script('c')],
+  });
+  assert.equal(one.count, 1);
+  assert.equal(one.color, BADGE_GREEN);
+  // Reloaded with only one script: the one that ran.
+  const only = summary({ st: { ...base, actual: { a: started('a') }, skipOnly: 'a' }, scripts: [script('a'), script('b'), script('c')] });
+  assert.equal(only.count, 1);
+  assert.equal(only.color, BADGE_GREEN);
 });

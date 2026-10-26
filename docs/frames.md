@@ -35,6 +35,9 @@ As in Tampermonkey and Violentmonkey:
 - **Manual scripts** (`@run-at context-menu`) still run in the top frame
   only. Choosing among several matching frames would add confusion for
   little use.
+- **Run now** runs a script that runs on load in each frame its rules
+  match, as a load would ([run-now.md](run-now.md#the-run)), top frame
+  or not.
 
 ## Telling a frame from a page
 

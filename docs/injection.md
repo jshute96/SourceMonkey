@@ -1317,7 +1317,7 @@ What crosses it:
   running out its timeout.
 - **SW-originated pushes** — `sm:gm-xhr-event`, `sm:gm-value-update`,
   `sm:gm-values-stale`, `sm:gm-tab-closed`, `sm:gm-notification-event`, `sm:gm-menu-fire`,
-  `sm:gm-download-event` (the bridge's `PUSHED` list is authoritative).
+  `sm:gm-download-event`, `sm:gm-retire-run` (the bridge's `PUSHED` list is authoritative).
   Those arrive on `chrome.runtime.onMessage`, which only USER_SCRIPT
   world can listen on, so the bridge re-sends them into the page as
   `sourcemonkey-push-<key>` events.
@@ -1901,7 +1901,10 @@ listener that handles these wrapper-originated message types:
 
 - `sm:check-pending` — round-trip; the SW replies with `run`,
   `run-new`, or `skip`. See [Reload fast-path](#reload-fast-path).
-- `sm:start` — the wrapper's baked-in body started running.
+- `sm:start` — the wrapper's baked-in body started running. With
+  `manualRun: true` for a run someone asked for, which replaces an
+  earlier error and clears the stale flag
+  ([run-now.md](run-now.md#status-and-badge)).
 - `sm:swapped` — the wrapper ran a SW-supplied body instead. Treated
   as `started` for badge purposes and clears any prior stale flag for
   this script id.

@@ -1139,7 +1139,33 @@ response, so it says so directly.
   - The page showing keeps its scripts until the load that follows; if
     that load fails, they run on there.
   - A tab switched off counts as running no script, whatever the host
-    last heard from it.
+    last heard from it, except one `run-now` ran there.
+
+### `run-now`
+
+`run-now [T<n>.][script]` runs a script in a tab now, without a
+reload, through the extension's `runScriptNow` (protocol 3.1,
+`requireMinor`). The design is in [run-now.md](run-now.md).
+
+- The script: the selected one, or the one named (`2`, `T2.2`, a name
+  or file name).
+- Only the run's own scripts: the claim keeps the installed ones out.
+  A tab switched to `--noscript` still takes one.
+- It runs in each of the tab's frames the script's rules match.
+- Over a copy already running, it runs the current version again,
+  after dropping the old copy's menu commands.
+- Prints `Ran <name> on T1` (or `Reran`), then a `Warning:` line for
+  each reason it may not work as expected. `--json` gives `tab`,
+  `script`, `rerun` and `warnings` ([sm-dev-json.md](sm-dev-json.md)).
+  - A script that opens a dialog before the extension answers prints
+    `Started <name> on T1` instead, with no warnings: the answer comes
+    only once the dialog closes.
+- A refusal prints `ERROR: <name> did not run: <why>`.
+- The start report of a run asked for carries `manualRun`, so the
+  run's event line reads `<name> started on <url> (run manually)`, and
+  `status` and `scripts` show `Active (run manually)` or `Active
+  (rerun manually)` (`manualRunOf` in host.ts).
+- The Playwright fixture's `gm.runNow()` does the same.
 
 ### Naming things (`console-commands.ts`, `tab-refs.ts`)
 
@@ -1225,6 +1251,8 @@ User-facing behavior is in [harness-guide.md](harness-guide.md).
     toolbar popup replaced; from 2.1 it takes the command's document,
     for a command in a frame), and from 1.6 `runManualScript` for a
     manual script (see [manual-scripts.md](manual-scripts.md#sm-dev));
+  - from 3.1, `runScriptNow(tabId, scriptId)` for `run-now` (see
+    [`run-now`](#run-now));
   - claims: `watchForNamingNavigation` and `namedTab` (which tab is
     which, see [Naming the tab](#naming-the-tab)), `claimTab`,
     `renewRun`, `releaseRun`, `setTabScriptsOff` (below). `releaseRun`

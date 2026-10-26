@@ -1860,7 +1860,8 @@ function wireHostOutput(host: ExtensionHost, emit: (fields: LogFields) => void, 
   // the page's console shows it.
   // A report from an iframe says so: its URL is the frame's, not the page's.
   const on = (r: { url: string; frame?: true }): string => `${r.frame ? 'in an iframe ' : ''}on ${r.url}`;
-  host.on('start', (r: StartReport) => event(r, 'started', `${r.name} started ${on(r)}`, ['sm']));
+  const how = (r: StartReport): string => (r.manualRun === 'rerun' ? ' (rerun manually)' : r.manualRun ? ' (run manually)' : '');
+  host.on('start', (r: StartReport) => event(r, 'started', `${r.name} started ${on(r)}${how(r)}`, ['sm']));
   // Not a script whose rules miss the page: otherwise each page load
   // would print a line for every run script that doesn't match it.
   // `match` shows why one doesn't run.

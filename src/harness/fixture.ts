@@ -93,6 +93,13 @@ export interface GmApi {
    * with SourceMonkey's reason when it can't run there.
    */
   runScript(script?: string): Promise<void>;
+  /**
+   * Runs a script now, as the toolbar popup's "Run now" (and sm-dev's
+   * `run-now`) does: one that hasn't started on the page, or the current
+   * version over a copy already running. Gives whether it was a rerun,
+   * and why it may not work as expected. Throws when it can't run.
+   */
+  runNow(script?: string): Promise<{ rerun: boolean; warnings: string[] }>;
   openedTabs(): HostReports['tabs'];
   notifications(): HostReports['notifications'];
   clickNotification(requestId: string): Promise<boolean>;
@@ -301,6 +308,7 @@ export const test = base.extend<HarnessFixtures & InternalFixtures>({
         return host.fireMenuCommand(label, id);
       },
       runScript: (script) => host.runManualScript(attachment, idOf(script)),
+      runNow: (script) => host.runScriptNow(attachment, idOf(script)),
       openedTabs: () => host.reports.tabs,
       notifications: () => host.reports.notifications,
       clickNotification: (requestId) => host.clickNotification(requestId),

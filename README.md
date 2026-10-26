@@ -450,6 +450,7 @@ you can:
 - Run a script's menu commands (`GM_registerMenuCommand`).
 - Run a manual script (`@run-at context-menu`), which runs only when asked.
 - Click a script to open the script page. Click the status badge to jump directly to its log page.
+- Run a script now without a reload: one left out of the page, enabled or updated since it loaded, or turned off.
 - Reload the page with no userscripts, with only one script, or
   with one script excluded. This allows testing scripts in isolation, when multiple scripts target the same page.
 

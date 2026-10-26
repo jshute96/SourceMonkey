@@ -209,9 +209,16 @@ export interface SmApi {
   // Stands in for a popup "Run this script" click: runs a manual
   // script (`@run-at context-menu`) on the tab now.
   runManualScript(tabId: number, scriptId: string): Promise<{ ok: boolean; error?: string }>;
+  // The popup's "Run now", and sm-dev's `run-now` (docs/run-now.md).
+  runScriptNow(tabId: number, scriptId: string): Promise<
+    { ok: true; rerun: boolean; warnings: string[] } | { ok: false; error: string }
+  >;
   // Stands in for a click on the popup's "Reload page with no
   // userscripts": reloads the tab with every wrapper told to skip.
   reloadWithoutScripts(tabId: number): Promise<void>;
+  // Stands in for a click on a disabled script's "Reload page with this
+  // script".
+  reloadWithScript(tabId: number, scriptId: string): Promise<void>;
   // Stands in for a toolbar-icon click in the given window (Playwright
   // can't click chrome.action). Pass null for the "no gesture window"
   // fallback path.
@@ -263,6 +270,8 @@ export interface PopupViewLike {
   smDev: boolean;
   banner: string | null;
   perScriptReload: boolean;
+  runEnabled?: { ids: string[]; warnings: string[] };
+  rerunUpdated?: { ids: string[]; warnings: string[] };
   enabled: PopupGroupLike[];
   frames: PopupGroupLike[];
   manual: PopupGroupLike[];
@@ -276,6 +285,7 @@ export interface PopupGroupLike {
     status: string | null; tooltip: string | null; versionLine: string | null;
     commands: { commandId: string; name: string; documentId?: string }[];
     runnable?: boolean;
+    runNow?: { kind: 'run' | 'rerun'; warnings: string[] };
   }[];
 }
 

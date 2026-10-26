@@ -823,3 +823,5 @@ a.site-icon-inner:hover { color: #444; }
 .menu button:hover:not(:disabled), .menu button:focus-visible { background: #f3efe9; }
 .menu button:disabled { color: #a0a0a0; cursor: default; }
 .menu hr { border: none; border-top: 1px solid var(--rule, #e3ddd4); margin: 4px 0; }
+/* A popup run that may not work as expected (docs/run-now.md). */
+.menu .warn-icon { color: #b26a00; margin-left: 6px; }

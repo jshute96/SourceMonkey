@@ -379,6 +379,18 @@ export const HELP_SECTIONS: HelpSection[] = [
         gap: true,
       },
       { usage: 'reload [T<n>|all]', syntax: { args: 'words', max: 1, tab: true }, about: 'Reload this tab, another tab, or all tabs.', gap: true },
+      {
+        managers: SM,
+        usage: 'run-now [T<n>.][script]',
+        syntax: TEXT,
+        about: [
+          'Run a script in the tab now, without a reload, as the toolbar popup\'s "Run now" does: the selected script, or the one named (`2`, `T2.2`).',
+          'It runs in each of the tab\'s frames its rules match, even in a tab switched to `--noscript`.',
+          'Over a copy already running there, it runs the current version again, after dropping the old copy\'s menu commands. What the old copy did to the page stays.',
+          'A `Warning:` line says when the script may not work as expected, as for a `document-start` script run after the page loaded.',
+        ],
+        gap: true,
+      },
       { usage: 'focus [T<n>]', syntax: { args: 'words', max: 1, tab: true }, about: 'Bring the tab to the front.', gap: true },
     ],
     optionsTitle: 'Options for `open`, `newtab`, `reload`',

@@ -380,6 +380,13 @@ export class ExtensionHost extends HarnessHost {
     await this.link.runManualScript(tabId, id);
   }
 
+  override async runScriptNow(page: PageLink, scriptId: string): Promise<{ rerun: boolean; warnings: string[] }> {
+    const tabId = this.tabsByPage.get(page);
+    const id = this.extensionIds.get(scriptId);
+    if (tabId === undefined || !id) throw new Error('Internal error: sm-dev has no tab or script to run it in');
+    return this.link.runScriptNow(tabId, id);
+  }
+
   override async fireMenuEntry(entry: MenuCommandRecord): Promise<boolean> {
     const page = this.pageOf(entry);
     const tabId = page && this.tabsByPage.get(page);
@@ -486,7 +493,7 @@ export class ExtensionHost extends HarnessHost {
       ...await frameNumber(),
     };
     if (event.type === SM_START_MSG || event.type === SM_SWAPPED_MSG) {
-      this.recordStart(state.page, fields);
+      this.recordStart(state.page, fields, event.manualRun === true);
     } else if (event.type === SM_ERROR_MSG) {
       this.recordError(state.page, { ...fields, message: event.message ?? '', stack: event.stack ?? '' });
     } else if (event.type === SM_MANUAL_MSG) {

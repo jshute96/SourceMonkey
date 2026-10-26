@@ -19,8 +19,10 @@ import {
   markScriptStale,
   mergeMatches,
   noteManualRun,
+  runsIn,
   pruneFrameRuns,
   setCurrentDoc,
+  wasRerun,
   writeDocState,
   BADGE_GREEN,
   BADGE_GREY,
@@ -608,14 +610,65 @@ test('computeBadge: a manual script that ran is OK, not UNEXPECTED, and counts o
   assert.deepEqual(view.rows.map((r) => `${r.name}|${r.status}`), ['Manual|OK']);
 });
 
-test('computeBadge: a manual script is never stale, since each run uses its current copy', () => {
+test('computeBadge: a script run manually that changed since its run reads RELOAD', () => {
+  // A manual run's start clears `stale` (the worker's report handler);
+  // a later change marks it again, as for a run on load.
   const state = {
     documentId: DOC, url: 'https://x', matches: [],
     actual: { m: { state: 'started', name: 'Manual' } },
     manualRuns: { m: 1 },
     staleScriptIds: ['m'],
   };
-  assert.deepEqual(computeBadge(state).rows.map((r) => r.status), ['OK']);
+  assert.deepEqual(computeBadge(state).rows.map((r) => r.status), ['RELOAD']);
+});
+
+test('noteManualRun: a run over a copy already running here is a rerun', () => {
+  let state = { documentId: DOC, url: 'https://x', matches: [], actual: {} };
+  state = noteManualRun(state, 'a');
+  // A run that never started leaves nothing to rerun over.
+  state = noteManualRun(state, 'a');
+  assert.equal(wasRerun(state, 'a'), false);
+  state = applyScriptReport(state, 'a', { state: 'started', name: 'A' }, true);
+  state = noteManualRun(state, 'a');
+  assert.equal(wasRerun(state, 'a'), true);
+  // Started on load, then run again.
+  state = { ...state, actual: { ...state.actual, b: { state: 'started', name: 'B' } } };
+  state = noteManualRun(state, 'b');
+  assert.equal(wasRerun(state, 'b'), true);
+  assert.deepEqual(state.manualRuns, { a: 3, b: 1 });
+});
+
+test('noteManualRun: a run into another frame is not a rerun', () => {
+  const run = { frameId: 3, url: 'https://f' };
+  let state = { documentId: DOC, url: 'https://x', matches: [], actual: { s: { state: 'started', name: 'S' } } };
+  state = noteManualRun(state, 's', ['fdoc']);
+  assert.equal(wasRerun(state, 's'), false);
+  state = applyFrameReport(state, 's', 'fdoc', { ...run, state: 'started', name: 'S' }, true);
+  assert.equal(runsIn(state, 's', ['fdoc']), true);
+  assert.equal(runsIn(state, 's', ['other']), false);
+  state = noteManualRun(state, 's', ['fdoc']);
+  assert.equal(wasRerun(state, 's'), true);
+});
+
+test('applyFrameReport: a manual run\'s start replaces the frame\'s error', () => {
+  const run = { frameId: 3, url: 'https://f' };
+  let state = { documentId: DOC, url: 'https://x', matches: [], actual: {} };
+  state = applyFrameReport(state, 's', 'fdoc', { ...run, state: 'error', name: 'S', message: 'Boom' });
+  assert.equal(applyFrameReport(state, 's', 'fdoc', { ...run, state: 'started', name: 'S' }).frameRuns.s.fdoc.state, 'error');
+  assert.equal(applyFrameReport(state, 's', 'fdoc', { ...run, state: 'started', name: 'S' }, true).frameRuns.s.fdoc.state, 'started');
+});
+
+test('computeBadge: kept-out scripts count only when nothing else has a status', () => {
+  const skipped = {
+    documentId: DOC, url: 'https://x', actual: {}, scriptsSkipped: true,
+    matches: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'c', name: 'C' }],
+  };
+  assert.equal(computeBadge(skipped).count, 3);
+  // One of them run manually: only it counts.
+  const ran = noteManualRun({ ...skipped, actual: { b: { state: 'started', name: 'B' } } }, 'b');
+  const view = computeBadge(ran);
+  assert.deepEqual(view.rows.map((r) => `${r.id}|${r.status}`), ['a|NOT_LOADED', 'b|OK', 'c|NOT_LOADED']);
+  assert.equal(view.count, 1);
 });
 
 test('applyScriptReport: a manual run\'s start replaces the last run\'s error', () => {

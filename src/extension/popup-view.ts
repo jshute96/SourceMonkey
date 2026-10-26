@@ -8,7 +8,7 @@
 import { RUN_SCRIPT_LABEL } from '../userscript-header.js';
 import { compareScriptNames } from '../script-display.js';
 import { comparePreferred, preferredCopy } from './copy-preference.js';
-import { isSettling, runsHere, skippedOnDocument, type BadgeRow, type RowStatus, type TabMatchState } from './tab-status.js';
+import { isSettling, runsHere, skippedOnDocument, wasRerun, type BadgeRow, type RowStatus, type TabMatchState } from './tab-status.js';
 
 // The badge's statuses, plus the ones only the popup shows:
 //   - PENDING: enabled since the page loaded; a reload would run it.
@@ -78,6 +78,8 @@ export interface PopupScriptInput {
   invalid?: string;
   // A manual script (`@run-at context-menu`), run only on request.
   manual?: boolean;
+  // `@run-at document-start`: run now, it runs late (docs/run-now.md).
+  documentStart?: boolean;
 }
 
 export interface PopupCollectionInput {
@@ -156,6 +158,22 @@ export interface PopupRow {
   // A manual script that can be run here now: the row's commands start
   // with "Run this script".
   runnable?: boolean;
+  // The script ⋯ menu's "Run now" (`run`) or "Rerun updated version
+  // now" (`rerun`), with why it may not work as expected. See
+  // docs/run-now.md.
+  runNow?: RunNowItem;
+}
+
+export interface RunNowItem {
+  kind: 'run' | 'rerun';
+  warnings: string[];
+}
+
+// The page ⋯ menu's runs of several scripts: the scripts, in the order
+// the popup lists them, and the warnings any of them has.
+export interface RunAllItem {
+  ids: string[];
+  warnings: string[];
 }
 
 export interface PopupGroup {
@@ -174,10 +192,14 @@ export interface PopupView {
   // When the banner may change with nothing else changing: the page
   // stops settling (`settleBy`) with Missing rows left out of it.
   bannerRecheckAt: number | null;
-  // The per-script "Reload page with only / without this script" items.
-  // Not in a tab an sm-dev run controls: which scripts run there is the
-  // run's choice.
+  // The per-script "Reload page with only / without this script" items,
+  // and the "Run now" items. Not in a tab an sm-dev run controls: which
+  // scripts run there is the run's choice.
   perScriptReload: boolean;
+  // The page ⋯ menu's "Run newly enabled scripts now" and "Rerun updated
+  // scripts now", when there are any.
+  runEnabled?: RunAllItem;
+  rerunUpdated?: RunAllItem;
   enabled: PopupGroup[];
   // Scripts running only in the page's iframes: neither matched nor ran
   // in the top frame (docs/frames.md). Below Enabled.
@@ -205,7 +227,8 @@ export const POPUP_VIEW_MESSAGE = 'sm:popup-view';
 export const POPUP_RELOAD_MESSAGE = 'sm:popup-reload';
 // Popup → worker: run one of a script's menu commands.
 export const POPUP_COMMAND_MESSAGE = 'sm:popup-command';
-// Popup → worker: run a manual script now ("Run this script").
+// Popup → worker: run scripts now: a manual script's "Run this script",
+// "Run now", and the page menu's runs of several.
 export const POPUP_RUN_SCRIPT_MESSAGE = 'sm:popup-run-script';
 // Popup → worker: tick or untick a script's or a collection's box. The
 // worker writes it, so the popup needn't load the script store.
@@ -228,11 +251,14 @@ export const POPUP_PORT_PREFIX = 'sm-popup:';
 // Which scripts a popup-driven reload keeps out:
 //   - none: every one ("Reload page with no userscripts");
 //   - only: all but `scriptId`;
-//   - without: just `scriptId`.
+//   - without: just `scriptId`;
+//   - with: none, and it runs `scriptId`, which is off, as well
+//     ("Reload page with this script", docs/run-now.md).
 export type ReloadMode =
   | { kind: 'none' }
   | { kind: 'only'; scriptId: string }
-  | { kind: 'without'; scriptId: string };
+  | { kind: 'without'; scriptId: string }
+  | { kind: 'with'; scriptId: string };
 
 export interface PopupViewRequest {
   type: typeof POPUP_VIEW_MESSAGE;
@@ -247,7 +273,7 @@ export interface PopupCommandRequest {
   type: typeof POPUP_COMMAND_MESSAGE; tabId: number; scriptId: string; commandId: string;
   documentId?: string;
 }
-export interface PopupRunScriptRequest { type: typeof POPUP_RUN_SCRIPT_MESSAGE; tabId: number; scriptId: string }
+export interface PopupRunScriptRequest { type: typeof POPUP_RUN_SCRIPT_MESSAGE; tabId: number; scriptIds: string[] }
 export interface PopupSetEnabledRequest {
   type: typeof POPUP_SET_ENABLED_MESSAGE; target: 'script' | 'collection'; id: string; enabled: boolean;
   // Ctrl/Cmd-clicked: change only this, leaving other copies alone.
@@ -280,6 +306,73 @@ const DEFAULT_TOOLTIPS: Record<PopupStatus, string> = {
 export function manualRunsText(runs: number): string {
   return runs === 1 ? 'Ran once on this page' : `Ran ${runs} times on this page`;
 }
+
+// OK's tooltip for any other script run on this page by "Run now".
+export const RUN_MANUALLY_TOOLTIP = 'Run manually';
+export const RERUN_MANUALLY_TOOLTIP = 'Rerun manually';
+
+// Why a script run now ("Run now" in the popup, sm-dev's `run-now`)
+// may not work as expected. The popup's warning tooltips use these, and
+// the worker gives them to sm-dev for its `Warning:` lines. See
+// docs/run-now.md.
+export interface RunNowRisks {
+  // A `document-start` script, run after the page loaded.
+  documentStart?: boolean;
+  // A copy of it already runs in the document.
+  rerun?: boolean;
+  // Another copy of the same script (`@namespace` + `@name`) runs there.
+  otherCopy?: boolean;
+  // The page loaded before this copy of the extension started.
+  loadedBefore?: boolean;
+}
+
+export const RUN_NOW_WARNING_DOCUMENT_START =
+  'This script runs at document-start, but the page has already loaded';
+export const RUN_NOW_WARNING_RERUN =
+  'A copy of this script is already running here. Its listeners, timers and changes to the page stay.';
+export const RUN_NOW_WARNING_OTHER_COPY = 'Another copy of this script is already running here';
+export const RUN_NOW_WARNING_LOADED_BEFORE =
+  'This page loaded before SourceMonkey started, so code from the earlier SourceMonkey may still be running';
+
+export function runNowWarnings(risks: RunNowRisks): string[] {
+  const out: string[] = [];
+  if (risks.documentStart) out.push(RUN_NOW_WARNING_DOCUMENT_START);
+  if (risks.rerun) out.push(RUN_NOW_WARNING_RERUN);
+  if (risks.otherCopy) out.push(RUN_NOW_WARNING_OTHER_COPY);
+  if (risks.loadedBefore) out.push(RUN_NOW_WARNING_LOADED_BEFORE);
+  return out;
+}
+
+// The menus' "Run now" items (docs/run-now.md).
+export const RUN_NOW_LABEL = 'Run now';
+export const RERUN_UPDATED_LABEL = 'Rerun updated version now';
+export const RUN_ENABLED_LABEL = 'Run newly enabled scripts now';
+export const RERUN_UPDATED_ALL_LABEL = 'Rerun updated scripts now';
+export const RELOAD_WITH_LABEL = 'Reload page with this script';
+
+// A run item's tooltip, when it has warnings.
+export function runNowTooltip(warnings: readonly string[]): string | undefined {
+  if (warnings.length === 0) return undefined;
+  const lines = warnings.map((w) => `• ${asSentence(w)}`);
+  return ['The script may not work as expected:', ...lines].join('\n');
+}
+
+// A warning as a sentence, for text that lists several in a row.
+export function asSentence(warning: string): string {
+  return /[.!?]$/.test(warning) ? warning : `${warning}.`;
+}
+
+// The statuses "Run now" is offered on, with how: a script that hasn't
+// started here (kept out, enabled since, expected but missing, or on a
+// page loaded before SourceMonkey started), and one running an older
+// version. A disabled script that isn't running gets it too.
+const RUN_NOW_STATUSES: Partial<Record<PopupStatus, RunNowItem['kind']>> = {
+  NOT_LOADED: 'run',
+  PENDING: 'run',
+  MISSING: 'run',
+  UNTRACKED: 'run',
+  RELOAD: 'rerun',
+};
 
 // OK's tooltip for a script running only in the page's iframes.
 const FRAMES_OK_TOOLTIP = 'Running in frames on this page';
@@ -426,6 +519,10 @@ export function buildPopupView(input: PopupViewInput): PopupView {
     shown.push({ script: pick, dup: false, otherCopies });
   }
 
+  // Whether another copy of `s` (by identity) runs here.
+  const copiesRunning = (s: PopupScriptInput): boolean => s.identity !== null
+    && input.scripts.some((o) => o.id !== s.id && o.identity === s.identity && isRunning(o.id));
+
   const causes: BannerCauses = {};
   const rowsByCollection = {
     enabled: new Map<string, PopupRow[]>(),
@@ -439,6 +536,9 @@ export function buildPopupView(input: PopupViewInput): PopupView {
     let status: PopupStatus | null = null;
     // PENDING only because the page changed its URL in place.
     let movedOnly = false;
+    // Run here by "Run now" (any script but a manual one, which has its
+    // own Run), even while it's off.
+    const ranManually = !s.manual && state?.manualRuns?.[s.id] !== undefined;
     if (s.invalid !== undefined && !isRunning(s.id)) {
       // Never registered, so no badge row, and a reload won't run it:
       // not PENDING, and no banner. Disabled ones say so too, so it's
@@ -467,6 +567,9 @@ export function buildPopupView(input: PopupViewInput): PopupView {
         status = 'PENDING';
         movedOnly = input.loadUrlMatchingIds !== undefined && !input.loadUrlMatchingIds.has(s.id);
       }
+    } else if (isRunning(s.id) && ranManually) {
+      // Off, but run here on purpose: no reload is asked for.
+      status = badge?.status ?? 'OK';
     } else if (isRunning(s.id)) {
       status = 'STILL_RUNNING';
     }
@@ -506,9 +609,24 @@ export function buildPopupView(input: PopupViewInput): PopupView {
       }
       const runs = state?.manualRuns?.[s.id];
       if (s.manual && status === 'OK' && runs) text = manualRunsText(runs);
+      if (ranManually && status === 'OK') text = wasRerun(state!, s.id) ? RERUN_MANUALLY_TOOLTIP : RUN_MANUALLY_TOOLTIP;
       const reloads = status === 'PENDING' || status === 'UNTRACKED';
       tooltip = `${text}\n${reloads ? POPUP_PILL_RELOAD_HINT : POPUP_PILL_CLICK_HINT}`;
     }
+    // "Run now": not in a tab an sm-dev run controls, nor for a manual
+    // script (it has its own Run), nor one that failed to load.
+    const runKind = !view.perScriptReload || s.manual || s.invalid !== undefined || input.userScriptsDisabled ? undefined
+      : status === null ? (active || isRunning(s.id) ? undefined : 'run')
+      : RUN_NOW_STATUSES[status];
+    const runNow: RunNowItem | undefined = runKind && {
+      kind: runKind,
+      warnings: runNowWarnings({
+        documentStart: s.documentStart,
+        rerun: isRunning(s.id),
+        otherCopy: copiesRunning(s),
+        loadedBefore: state?.loadedBefore === true,
+      }),
+    };
     const row: PopupRow = {
       id: s.id,
       name: s.name,
@@ -522,7 +640,11 @@ export function buildPopupView(input: PopupViewInput): PopupView {
       commands: active || isRunning(s.id) ? [...(input.menuCommands.get(s.id) ?? [])] : [],
       ...(s.manual ? { manual: true } : {}),
       ...(s.manual && active && s.invalid === undefined && input.manualRunnableIds?.has(s.id) ? { runnable: true } : {}),
+      ...(runNow ? { runNow } : {}),
     };
+    // Not one pending only because the page moved: it wasn't enabled.
+    if (runNow && status === 'PENDING' && !movedOnly) runAll(view, 'runEnabled', s.id, runNow);
+    if (runNow && status === 'RELOAD') runAll(view, 'rerunUpdated', s.id, runNow);
     // Anything running in the page is listed with the active scripts,
     // even when it's disabled now (Still running) or unexpected. Manual
     // scripts have their own section, by the same rule, and so do
@@ -569,4 +691,11 @@ export function buildPopupView(input: PopupViewInput): PopupView {
   }
   view.banner = bannerText(causes);
   return view;
+}
+
+// Add a script to one of the page menu's runs of several.
+function runAll(view: PopupView, key: 'runEnabled' | 'rerunUpdated', id: string, item: RunNowItem): void {
+  const all = view[key] ?? (view[key] = { ids: [], warnings: [] });
+  all.ids.push(id);
+  for (const w of item.warnings) if (!all.warnings.includes(w)) all.warnings.push(w);
 }

@@ -39,17 +39,20 @@ asked, each time it's asked, like a bookmarklet.
 
 ## A run
 
-`runManualScript` in `background.ts`, behind the popup's Run item and
-the `runManualScript` API sm-dev calls. It always answers: a throw
-partway becomes an `Internal error:` result.
+`runScriptNow` in `background.ts`, behind the popup's Run item and
+the API sm-dev calls (`runScriptNow`, or `runManualScript` from an
+sm-dev before protocol 3.1, which refuses a script that runs on load).
+"Run now" runs any other script through it too
+([run-now.md](run-now.md)). It always answers: a throw partway becomes
+an `Internal error:` result.
 
 1. Checks, each with its own message (`MANUAL_RUN_*` in
    `src/sm-dev-protocol.ts`, which sm-dev prints):
-   - installed, manual, `ok`, the script on and its collection on;
+   - installed, `ok`, the script on and its collection on;
    - the tab's page can take scripts, and the script's rules cover it;
-   - `manualRunAllowed`: the sm-dev rule for scripts that run on load.
-     A run's own scratch scripts only in its tabs, and in a tab a run
-     controls, only what it allows.
+   - `runNowAllowed`: a run's own scratch scripts only in its tabs,
+     and in a tab a run controls, only that run's scripts, even with
+     its scripts switched off (`--noscript`).
 2. Runs the parse check, since the registration sync never sees it.
 3. Builds the injection with `buildManualRunInjections` (injector.ts):
    - the same pieces as a registration (config, prelude, requires plus
@@ -135,7 +138,8 @@ partway becomes an `Internal error:` result.
   to the document like the rest of the state: kept across pushState,
   gone on reload.
 - `computeBadge`: a manual script that ran is OK (or ERROR), never
-  Unexpected, and never stale (each run uses the current copy).
+  Unexpected. It's never marked stale (`propagateStaleScripts` leaves it
+  out): each run uses the current copy.
 - The badge counts it once it has started, however many runs. Before
   that it's in neither the badge nor the tooltip (`summarizeToolbar`):
   not run is its normal state, and a page can match many.

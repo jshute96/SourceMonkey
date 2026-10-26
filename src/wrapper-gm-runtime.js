@@ -3331,6 +3331,16 @@
     for (var i = 0; i < ids.length; i++) menu.unregister(scriptId, ids[i]);
   }
 
+  /* The same, in this runtime only, for "Run now" (docs/run-now.md):
+     the worker has dropped the commands from its own list already, and
+     a script's next run may be registering beside them, so nothing is
+     sent back. */
+  function retireRunHere(scriptId) {
+    menuCommandsByScript[scriptId] = undefined;
+    var s = stores[scriptId];
+    if (s) s.listeners = null;
+  }
+
   function dispatchMenuFire(scriptId, commandId) {
     var bucket = menuCommandsByScript[scriptId];
     if (!bucket) return;
@@ -3717,8 +3727,8 @@
   };
 
   /* Wire the SW-originated tab-close, notification-event, menu-fire,
-     download-event, and url-change messages into the same push channel
-     as value-update and xhr. */
+     retire-run, download-event, and url-change messages into the same
+     push channel as value-update and xhr. */
   onPush(function (msg) {
     if (msg.type === "sm:gm-tab-closed" && typeof msg.requestId === "string") {
       dispatchTabClose(msg.requestId);
@@ -3726,6 +3736,8 @@
       dispatchNotificationEvent(msg.requestId, msg.event);
     } else if (msg.type === "sm:gm-menu-fire" && typeof msg.scriptId === "string" && typeof msg.commandId === "string") {
       dispatchMenuFire(msg.scriptId, msg.commandId);
+    } else if (msg.type === "sm:gm-retire-run" && typeof msg.scriptId === "string") {
+      retireRunHere(msg.scriptId);
     } else if (msg.type === "sm:gm-download-event" && typeof msg.requestId === "string" && msg.event) {
       dispatchDownloadEvent(msg.requestId, msg.event);
     } else if (msg.type === "sm:url-change" && typeof msg.url === "string") {

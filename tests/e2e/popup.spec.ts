@@ -181,10 +181,12 @@ test.describe('toolbar popup', () => {
     await expect(popup.locator('.row', { hasText: 'Alpha' }).locator('.pill')).toHaveText('Running');
     await expect(popup.locator('.row', { hasText: 'Alpha' }).locator('.pill')).toHaveAttribute('title', /Running on this page\nClick to open the script log\./);
     await expect(popup.locator('.row', { hasText: 'Beta' }).locator('.pill')).toHaveCount(0);
-    // A disabled script's per-script reloads are greyed; an active one's aren't.
+    // A disabled script reloads with itself, or runs now, in place of
+    // running alone or being kept out (docs/run-now.md).
     await popup.locator('.row', { hasText: 'Beta' }).locator('button.more-menu').click();
-    await expect(popup.getByRole('menuitem', { name: 'Reload page with only this script' })).toBeDisabled();
-    await expect(popup.getByRole('menuitem', { name: 'Reload page without this script' })).toBeDisabled();
+    await expect(popup.getByRole('menuitem', { name: 'Reload page with only this script' })).toHaveCount(0);
+    await expect(popup.getByRole('menuitem', { name: 'Reload page with this script' })).toBeEnabled();
+    await expect(popup.getByRole('menuitem', { name: 'Run now' })).toBeEnabled();
     await expect(popup.getByRole('menuitem', { name: 'Script details' })).toBeEnabled();
     await popup.locator('.row', { hasText: 'Alpha' }).locator('button.more-menu').click();
     await expect(popup.getByRole('menuitem', { name: 'Reload page with only this script' })).toBeEnabled();

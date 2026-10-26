@@ -22,14 +22,17 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 - Add `--json` when you'll parse the output, with `jq` or a script:
   `$R --json scripts | jq -r '.scripts[] | select(.status == "invalid") | .name'`.
   - `--json` works for `list`, `status`, `scripts`, `tabs`, `frames`,
-    `values`, `get`, `match`, `validate`, `menu`, `logs`, `probe`, and every
-    `collection` and `script` verb (`script list`, `script show`, ...).
-    Each prints one JSON object; other commands print text as usual.
+    `values`, `get`, `match`, `validate`, `menu`, `logs`, `probe`,
+    `run-now`, and every `collection` and `script` verb (`script
+    list`, `script show`, ...). Each prints one JSON object; other
+    commands print text as usual.
   - Other messages and failures stay text, on stderr, with the usual
     exit code.
   - An empty list means nothing was found.
-  - A script's `state` on a tab: `running`, `not-running`, or
-    `manual` (a `@run-at context-menu` script not run yet); for a
+  - A script's `state` on a tab: `running`, `not-running`,
+    `manual` (a `@run-at context-menu` script not run yet), or
+    `run-manually` / `rerun-manually` (running because `run-now` or a
+    manual script's Run asked for it); for a
     SourceMonkey-managed script (E1, ...) also `kept-out` (the run
     keeps it out of its tabs), `not-started`, `error` (it threw),
     `refused` (Chrome refused it), `unexpected` (running though it

@@ -274,7 +274,7 @@ interface ScriptCfgLiteral {
   matching: PageMatcher | null;
   startupLogs: ReadonlyArray<StartupLog>;
   // See `RegistrationSpecOptions.manualRun`.
-  manualRun?: { gmValues?: Record<string, unknown>; gmSeq?: number };
+  manualRun?: ManualRunConfig;
 }
 
 // Build the per-script config blob. Calls `reg.prelude.init(cfg)`
@@ -918,11 +918,20 @@ export interface RegistrationSpecOptions {
   // src/eval-hook.ts). A script in an sm-dev test collection gets its
   // run's without being asked; the person's own scripts never get one.
   evalHookKey?: string;
-  // Build for one on-request run of a manual script rather than a
-  // registration: the config carries the run decision, with the GM
-  // values snapshot a storage script seeds from (what a registered
-  // script gets from its check-pending answer).
-  manualRun?: { gmValues?: Record<string, unknown>; gmSeq?: number };
+  // Build for one on-request run rather than a registration: the config
+  // carries the run decision, with the GM values snapshot a storage
+  // script seeds from (what a registered script gets from its
+  // check-pending answer).
+  manualRun?: ManualRunConfig;
+}
+
+// A manual run's part of the config: the values snapshot, and for a
+// script that runs on load ("Run now", docs/run-now.md), that it still
+// waits for its @run-at.
+export interface ManualRunConfig {
+  gmValues?: Record<string, unknown>;
+  gmSeq?: number;
+  waitRunAt?: true;
 }
 
 export async function buildRegistrationSpec(
@@ -1363,6 +1372,8 @@ function gmRuntimeIdFor(world: InjectionWorld): string {
 // "Run this script" injects it into the tab's top frame with
 // `chrome.userScripts.execute`, built from the same pieces a
 // registration is, so it runs the same way. See docs/manual-scripts.md.
+// "Run now" runs any other script the same way, in each matching frame
+// (docs/run-now.md).
 
 export interface ManualRunInjection {
   world: InjectionWorld;
@@ -1386,7 +1397,10 @@ export async function buildManualRunInjections(
   isolated = false,
 ): Promise<ManualRunInjection[] | null> {
   const spec = await buildRegistrationSpec(isolated ? asIsolated(script) : script, scriptHandlerVersion, logLabel, {
-    manualRun: gmSnapshot !== undefined ? { gmValues: gmSnapshot.values, gmSeq: gmSnapshot.seq } : {},
+    manualRun: {
+      ...(gmSnapshot !== undefined ? { gmValues: gmSnapshot.values, gmSeq: gmSnapshot.seq } : {}),
+      ...(isManualScript(script) ? {} : { waitRunAt: true as const }),
+    },
   });
   if (!spec) return null;
   const world = (spec.world ?? 'USER_SCRIPT') as InjectionWorld;

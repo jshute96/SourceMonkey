@@ -129,7 +129,14 @@ export interface ScriptReport {
   frameNumber?: number;
 }
 
-export interface StartReport extends ScriptReport {}
+export interface StartReport extends ScriptReport {
+  /**
+   * A run someone asked for (`run-now`, the popup's "Run now" or a
+   * manual script's Run): `rerun` when the script had started in that
+   * document before.
+   */
+  manualRun?: 'run' | 'rerun';
+}
 
 /** What a manager's report gives for a `ScriptReport`; the host adds `at`. */
 export type ReportFields = Omit<ScriptReport, 'at'>;
@@ -288,6 +295,14 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
   isRunning(page: PageLink, scriptId: string): boolean {
     const { started, skipped } = this.lastStartAndSkip(page, scriptId);
     return started !== undefined && (!skipped || started.at >= skipped.at);
+  }
+
+  /**
+   * When a script is running in a page's top frame because someone
+   * asked for the run (`run-now`), whether it was a rerun.
+   */
+  manualRunOf(page: PageLink, scriptId: string): 'run' | 'rerun' | undefined {
+    return this.isRunning(page, scriptId) ? this.lastStartAndSkip(page, scriptId).started?.manualRun : undefined;
   }
 
   /**
@@ -531,9 +546,16 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
 
   // ---------- What the scripts reported ----------
 
-  /** A script started in `from`'s current document. */
-  protected recordStart(from: PageLink, fields: ReportFields): void {
-    const report: StartReport = this.baseReport(from, fields);
+  /**
+   * A script started in `from`'s current document; `manualRun` when
+   * someone asked for the run.
+   */
+  protected recordStart(from: PageLink, fields: ReportFields, manualRun = false): void {
+    const before = manualRun && fields.documentId !== undefined && this.reports.started.some((r) =>
+      r.scriptId === fields.scriptId && r.documentId === fields.documentId && this.recordPages.get(r) === from);
+    const report: StartReport = this.baseReport(from, {
+      ...fields, ...(manualRun ? { manualRun: before ? 'rerun' as const : 'run' as const } : {}),
+    });
     this.reports.started.push(report);
     this.notify('start', report);
   }
@@ -639,6 +661,13 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
    * Throws with the reason when it can't.
    */
   abstract runManualScript(page: PageLink, scriptId: string): Promise<void>;
+
+  /**
+   * Run any script in `page` now, as the popup's "Run now" does: whether
+   * it ran over a copy already there, and why it may not work as
+   * expected. Throws with the reason when it can't.
+   */
+  abstract runScriptNow(page: PageLink, scriptId: string): Promise<{ rerun: boolean; warnings: string[] }>;
 
   /** Click a shown notification, which runs the script's `onclick`. */
   abstract clickNotification(requestId: string): Promise<boolean>;

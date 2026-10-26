@@ -31,6 +31,17 @@ export const MANUAL_RUN_PAGE = 'SourceMonkey can\'t run scripts on this page';
 export const MANUAL_RUN_TAB_GONE = 'The tab was closed';
 export const MANUAL_RUN_PAGE_CHANGED = 'The page changed before the script could run. Try again.';
 export const MANUAL_RUN_SM_DEV = 'The sm-dev run controlling this tab keeps this script out';
+// "Run now" checks a script that runs on load in the page's iframes too.
+export const RUN_NOW_NOT_HERE = 'This script\'s @match and @include rules don\'t cover this page or its iframes';
+
+/**
+ * `runScriptNow`'s answer. A run that went ahead says whether it ran
+ * over a copy already there (`rerun`), and why it may not work as
+ * expected (`warnings`).
+ */
+export type RunNowResult =
+  | { ok: true; rerun: boolean; warnings: string[] }
+  | { ok: false; error: string };
 
 /**
  * The event types of the markers sm-dev puts in its browser's pages,
@@ -91,7 +102,9 @@ export const SKIP_REASON_SM_DEV = 'tab controlled by sm-dev';
 //   `sandbox` turns off script in its own world, the page-world scripts
 //   run isolated instead, which sm-dev notes rather than warning that
 //   they can't run.
-export const SM_DEV_PROTOCOL = { major: 3, minor: 0 } as const;
+// 3.1: `runScriptNow`, which runs any script in a tab now ("Run now",
+//   docs/run-now.md); a start report can carry `manualRun`.
+export const SM_DEV_PROTOCOL = { major: 3, minor: 1 } as const;
 
 export interface ProtocolVersion {
   major: number;

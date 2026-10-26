@@ -28,7 +28,14 @@ import {
   POPUP_STATUS_LABELS,
   POPUP_VIEW_MESSAGE,
   RELOAD_NO_SCRIPTS_LABEL,
+  RELOAD_WITH_LABEL,
   REMOVED_GROUP_ID,
+  RERUN_UPDATED_ALL_LABEL,
+  RERUN_UPDATED_LABEL,
+  RUN_ENABLED_LABEL,
+  RUN_NOW_LABEL,
+  RUN_NOW_WARNING_OTHER_COPY,
+  runNowTooltip,
   type PopupChangedMessage,
   type PopupClosingMessage,
   type PopupCommandRequest,
@@ -59,6 +66,14 @@ import { probeUserScriptsApi, USER_SCRIPTS_OFF_HEADING, userScriptsFixLine } fro
 // The checkbox tooltip's second line under a disabled collection: the
 // box still sets the script's own flag, which has no effect for now.
 const SCRIPT_COLLECTION_OFF_HINT = 'Script will not run because its collection is disabled';
+
+// The page menu's run of several scripts, hidden when there are none.
+function runAllItem(label: string, all: PopupView['runEnabled']): MenuItem {
+  return {
+    label, hidden: !all, warning: runNowTooltip(all?.warnings ?? []),
+    run: () => runScripts(all?.ids ?? []),
+  };
+}
 
 // Why a disabled script's per-script reloads are greyed.
 const INACTIVE_RELOAD_TITLE = 'This script is disabled, so it isn\'t running on this page';
@@ -106,6 +121,11 @@ pageMenuBtn.addEventListener('click', () => {
       hidden: !view?.perScriptReload
         || (view.enabled.length === 0 && view.frames.length === 0 && view.disabled.length === 0),
     },
+    // Rather than reloading for them: docs/run-now.md.
+    { separator: true, hidden: !view?.runEnabled && !view?.rerunUpdated },
+    runAllItem(RUN_ENABLED_LABEL, view?.runEnabled),
+    runAllItem(RERUN_UPDATED_ALL_LABEL, view?.rerunUpdated),
+    { separator: true, hidden: !view?.runEnabled && !view?.rerunUpdated },
     namedPageItem('SourceMonkey options', 'options'),
   ]);
 });
@@ -590,19 +610,34 @@ function scriptRow(row: PopupRow, group: PopupGroup): HTMLElement {
   // Not for a manual script: no reload runs it, so running it alone or
   // keeping it out is nothing.
   const perScriptReload = view?.perScriptReload === true && !row.manual;
+  // A script that's off: "Reload page with this script" stands in for
+  // the two that would do nothing, unless it failed to load.
+  const reloadWith = perScriptReload && !row.active && row.status !== 'INVALID';
+  const run = row.runNow;
   menuBtn.addEventListener('click', () => openMenu(menuBtn, [
     pageItem('Script details', viewerUrl(row.id)),
     pageItem('Script log', viewerUrl(row.id, 'log')),
     { separator: true, hidden: !perScriptReload },
     // Greyed for a script that won't run (its box or its collection is
-    // off): running it alone or keeping it out would do nothing.
+    // off) and can't be run either: running it alone or keeping it out
+    // would do nothing.
     {
       label: 'Reload page with only this script', run: () => reloadTab({ kind: 'only', scriptId: row.id }),
-      hidden: !perScriptReload, disabled: !row.active, title: row.active ? undefined : INACTIVE_RELOAD_TITLE,
+      hidden: !perScriptReload || reloadWith, disabled: !row.active, title: row.active ? undefined : INACTIVE_RELOAD_TITLE,
     },
     {
       label: 'Reload page without this script', run: () => reloadTab({ kind: 'without', scriptId: row.id }),
-      hidden: !perScriptReload, disabled: !row.active, title: row.active ? undefined : INACTIVE_RELOAD_TITLE,
+      hidden: !perScriptReload || reloadWith, disabled: !row.active, title: row.active ? undefined : INACTIVE_RELOAD_TITLE,
+    },
+    {
+      label: RELOAD_WITH_LABEL, run: () => reloadTab({ kind: 'with', scriptId: row.id }),
+      hidden: !reloadWith, warning: runNowTooltip(run?.warnings.filter((w) => w === RUN_NOW_WARNING_OTHER_COPY) ?? []),
+    },
+    { separator: true, hidden: !run },
+    {
+      label: run?.kind === 'rerun' ? RERUN_UPDATED_LABEL : RUN_NOW_LABEL,
+      run: () => runScripts([row.id]),
+      hidden: !run, warning: runNowTooltip(run?.warnings ?? []),
     },
   ]));
   main.append(menuBtn);
@@ -634,7 +669,7 @@ function commandList(row: PopupRow): HTMLElement {
   // the script's commands.
   if (row.runnable) {
     const run = el('button', { type: 'button', class: 'command run-script' }, RUN_SCRIPT_LABEL);
-    run.addEventListener('click', () => quietly(runScript(row.id)));
+    run.addEventListener('click', () => quietly(runScripts([row.id])));
     list.append(run);
   }
   if (row.commands.length === 0) return list;
@@ -717,11 +752,12 @@ async function runCommand(scriptId: string, commandId: string, documentId?: stri
   closeSoon();
 }
 
-// Run a manual script. The popup stays open, so the row's status and
-// any commands the run registers show up as they arrive.
-async function runScript(scriptId: string): Promise<void> {
-  if (tabId === null) return;
-  const req: PopupRunScriptRequest = { type: POPUP_RUN_SCRIPT_MESSAGE, tabId, scriptId };
+// Run scripts now: a manual script's Run, or "Run now". The popup stays
+// open, so the rows' statuses and any commands the runs register show
+// up as they arrive.
+async function runScripts(scriptIds: string[]): Promise<void> {
+  if (tabId === null || scriptIds.length === 0) return;
+  const req: PopupRunScriptRequest = { type: POPUP_RUN_SCRIPT_MESSAGE, tabId, scriptIds };
   await chrome.runtime.sendMessage(req);
 }
 
