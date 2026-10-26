@@ -88,24 +88,37 @@ test('the choices decide each script', () => {
   ];
   const installed = [copy('u', 'Up'), copy('k', 'Kept', { stored: true }), copy('s', 'Same', { contentHash: 'h4' })];
   const plan = planImport(backup(scripts), installed, ['h0', 'h1', 'h2', 'h3', 'h4']);
-  const act = (choices) => plan.map((p) => actionFor(p, { ...DEFAULT_CHOICES, ...choices }));
+  const act = ({ fresh = {}, existing = {} } = {}) => plan.map((p) => actionFor(p, {
+    ...DEFAULT_CHOICES,
+    new: { ...DEFAULT_CHOICES.new, ...fresh },
+    existing: { ...DEFAULT_CHOICES.existing, ...existing },
+  }));
 
-  const newer = act({});
+  // The defaults: only a newer stored text changes an existing script.
+  const newer = act();
   assert.deepEqual(newer[0], { kind: 'install', linkTo: 'https://example.com/w.user.js' });
   // Edited in the other manager: kept as its text.
   assert.deepEqual(newer[1], { kind: 'install' });
   // A copy that loads from its location keeps its text.
-  assert.deepEqual(newer[2], { kind: 'update', text: false, values: true, enabled: false });
-  assert.deepEqual(newer[3], { kind: 'update', text: true, values: false, enabled: true });
+  assert.deepEqual(newer[2], { kind: 'skip' });
+  assert.deepEqual(newer[3], { kind: 'update', text: true, values: false, enabled: false });
   assert.deepEqual(newer[4], { kind: 'skip' });
 
-  assert.deepEqual(act({ linkLocations: false })[0], { kind: 'install' });
-  assert.deepEqual(act({ existing: 'leave' }).slice(2).map((a) => a.kind), ['skip', 'skip', 'skip']);
-  // Replace them all: the same text still takes the file's values.
-  assert.deepEqual(act({ existing: 'always' })[4], { kind: 'update', text: false, values: true, enabled: false });
-  assert.deepEqual(act({ existing: 'always', values: false })[4], { kind: 'skip' });
-  // A newer version for a copy with a location, and nothing else to change.
-  assert.deepEqual(act({ values: false })[2], { kind: 'skip' });
+  assert.deepEqual(act({ fresh: { link: false } })[0], { kind: 'install' });
+  // Values and enabled state apply whatever the text choice.
+  const all = act({ existing: { values: true, enabled: true } });
+  assert.deepEqual(all[2], { kind: 'update', text: false, values: true, enabled: false });
+  assert.deepEqual(all[3], { kind: 'update', text: true, values: false, enabled: true });
+  assert.deepEqual(all[4], { kind: 'update', text: false, values: true, enabled: false });
+  assert.deepEqual(act({ existing: { text: 'leave' } }).slice(2).map((a) => a.kind), ['skip', 'skip', 'skip']);
+  assert.deepEqual(act({ existing: { text: 'leave', enabled: true } })[3], { kind: 'update', text: false, values: false, enabled: true });
+  // A copy with a location never takes the backup's text.
+  assert.deepEqual(act({ existing: { text: 'always' } })[4], { kind: 'skip' });
+  // Always replaces a stored copy's text even when it's the same.
+  const same = planImport(backup([backupScript(0, 'Kept')]), [copy('k', 'Kept', { stored: true, contentHash: 'h0' })], ['h0']);
+  assert.equal(same[0].here, 'same');
+  assert.deepEqual(actionFor(same[0], { ...DEFAULT_CHOICES, existing: { ...DEFAULT_CHOICES.existing, text: 'always' } }),
+    { kind: 'update', text: true, values: false, enabled: false });
 });
 
 test('the request carries what each kept row needs', () => {
@@ -118,7 +131,8 @@ test('the request carries what each kept row needs', () => {
   const b = backup(scripts);
   const plan = planImport(b, installed, ['h0', 'h1', 'h2']);
   // Without the file's enabled states, a new script loads enabled.
-  const request = buildImportRequest(b, plan, new Set([0, 1]), { ...DEFAULT_CHOICES, enabledFromFile: false }, { newCollectionName: 'Imported' });
+  const request = buildImportRequest(b, plan, new Set([0, 1]),
+    { ...DEFAULT_CHOICES, new: { ...DEFAULT_CHOICES.new, enabled: false } }, { newCollectionName: 'Imported' });
   assert.equal(request.source, 'tampermonkey');
   assert.deepEqual(request.into, { newCollectionName: 'Imported' });
   assert.equal(request.installs.length, 1);
@@ -203,6 +217,12 @@ test('a restore takes its collection\'s scripts whatever their match, and the re
   ]);
   // Loose was unchecked.
   assert.deepEqual(request.installs, []);
+  // A restore follows its own section's choices, not the New section's.
+  const own = buildImportRequest(b, plan, new Set(), { ...DEFAULT_CHOICES, restore: { values: false, enabled: false, link: false } },
+    { newCollectionName: 'Imported' }, planned, new Set(['d', 'w']));
+  assert.deepEqual(own.restores.map((r) => [r.enabled, r.installs.map((i) => [i.linkTo, i.values])]), [
+    [true, [[undefined, undefined]]], [true, [[undefined, undefined]]],
+  ]);
   // Not restoring: they import one by one.
   const plain = buildImportRequest(b, plan, new Set([0, 1, 2]), DEFAULT_CHOICES, { newCollectionName: 'Imported' }, planned, new Set());
   assert.equal(plain.restores, undefined);

@@ -99,7 +99,9 @@ test.describe('backup import', () => {
     await expect(page.locator(`${IMPORT_DIALOG} #import-invalid`)).toBeHidden();
     expect(await confirmImport(page))
       .toBe('Imported 2 scripts.\n\nThese scripts’ files couldn’t be read, so they use the backup’s copy and won’t get updates:\n\nBeta');
-    await closeImport(page);
+    // An information dialog by now: Esc closes it.
+    await page.keyboard.press('Escape');
+    await expect(page.locator(IMPORT_DIALOG)).toBeHidden();
 
     const into = await collectionByName(sm, 'Imported from SourceMonkey');
     const got = (await sm.getCollectionWithScripts(into.id))!.scripts;
@@ -113,6 +115,13 @@ test.describe('backup import', () => {
     await expect(page.locator(section)).toBeVisible();
     await expect(page.locator(`${section} .scheme-chip.chip-file`)).toHaveCount(1);
     await expect(page.locator(`${section} .scheme-chip.chip-imported`)).toHaveCount(1);
+
+    // Again the same day: the new collection's name is taken, so the
+    // choice shows the numbered name it will get.
+    await openImport(page, '#page-menu', saved);
+    await expect(page.locator(`${IMPORT_DIALOG} #import-into option`).first())
+      .toHaveText(`(New) ${(await sm.getCollections()).find((c) => c.id === into.id)!.displayName} (2)`);
+    await page.locator(`${IMPORT_DIALOG} .dlg-actions button`, { hasText: 'Cancel' }).click();
     await page.close();
   });
 
@@ -198,6 +207,13 @@ test.describe('backup import', () => {
     expect((await collectionRows(page)).map((r) => [r.name, r.kind, r.status, r.restore])).toEqual([
       [builtinName, 'Scripts (built-in)', 'New', true], ['Mine', 'Scripts', 'New', true],
     ]);
+    // Link only matters while a scripts collection is being restored.
+    const link = page.locator(`${IMPORT_DIALOG} #import-restore-link`);
+    await expect(link).toBeVisible();
+    await chooseImport(page, { restore: false });
+    await expect(link).toBeHidden();
+    await chooseImport(page, { restore: true });
+    await expect(link).toBeVisible();
     expect(await confirmImport(page)).toBe('Restored 2 collections with 2 scripts.');
     await closeImport(page);
 
@@ -232,6 +248,11 @@ test.describe('backup import', () => {
     await openImport(page, '#page-menu', saved);
     // The same text: the default, newer versions only, leaves it.
     expect(await existingRows(page)).toEqual([{ name: 'Alpha', compared: 'Same', type: 'file', affected: false }]);
+    // It shows the collection it's in, and each heading says what its
+    // column shows.
+    await expect(page.locator(`${IMPORT_DIALOG} #import-existing-table .import-collection`)).toHaveText([dir.path]);
+    await expect(page.locator(`${IMPORT_DIALOG} #import-existing-table th`, { hasText: 'Compared' }))
+      .toHaveAttribute('title', /^How the backup’s copy compares/);
     // Its name opens the installed copy.
     await expect(page.locator(`${IMPORT_DIALOG} #import-existing-table .import-name a`)).toHaveAttribute('href', `userscript.html?script=${alpha.id}`);
     await expect(page.locator(`${IMPORT_DIALOG} #import-confirm-btn`)).toBeDisabled();
@@ -241,13 +262,23 @@ test.describe('backup import', () => {
     await expect(page.locator(`${IMPORT_DIALOG} #import-existing .import-heading`)).toHaveText('Existing scripts (1)');
     await expect(page.locator(`${IMPORT_DIALOG} #import-existing-newer`)).toBeDisabled();
     await expect(page.locator(`${IMPORT_DIALOG} label`, { has: page.locator('#import-existing-newer') }))
-      .toHaveText('Replace the ones the backup has a newer version of (0)');
+      .toHaveText('Replace when the imported version is newer (0)');
     await expect(page.locator(`${IMPORT_DIALOG} #import-existing-leave`)).toBeChecked();
+    const alphaBox = page.locator(`${IMPORT_DIALOG} #import-existing-table tbody input`);
+    const allBox = page.locator(`${IMPORT_DIALOG} #import-existing-table thead input`);
+    // Nothing to do to it: its box is off limits, and so is the all box.
+    await expect(alphaBox).toBeDisabled();
+    await expect(allBox).toBeDisabled();
     await chooseImport(page, { existing: 'always' });
-    // It loads from its own file, so only its values and state change.
+    // It loads from its own file, so its text isn't replaced: only its
+    // values or state can change, and those start off.
+    expect((await existingRows(page))[0].affected).toBe(false);
+    await expect(alphaBox).toBeDisabled();
+    await chooseImport(page, { existingValues: true });
     expect((await existingRows(page))[0].affected).toBe(true);
-    await chooseImport(page, { enabled: false });
-    expect((await existingRows(page))[0].affected).toBe(true);
+    await expect(alphaBox).toBeEnabled();
+    await expect(alphaBox).toBeChecked();
+    await expect(allBox).toBeEnabled();
     expect(await confirmImport(page)).toBe('Updated 1.');
     await closeImport(page);
 
@@ -293,7 +324,11 @@ test.describe('backup import', () => {
     // Opened from the collection, new scripts go into it.
     await expect(page.locator(`${IMPORT_DIALOG} #import-into`)).toHaveValue(into.id);
     expect(await existingRows(page)).toEqual([{ name: 'Kept', compared: 'Backup is newer', type: 'imported', affected: true }]);
-    expect(await newRows(page)).toEqual([{ name: 'Fresh', version: '1.0', type: '', href: '' }]);
+    // No location: it comes in as an imported script.
+    expect(await newRows(page)).toEqual([{ name: 'Fresh', version: '1.0', type: 'imported', href: '' }]);
+    // An existing script's values are only replaced when asked.
+    await expect(page.locator(`${IMPORT_DIALOG} #import-existing-values`)).not.toBeChecked();
+    await chooseImport(page, { existingValues: true });
     expect(await confirmImport(page)).toBe('Imported 1 script and updated 1.');
     await closeImport(page);
 
@@ -399,7 +434,7 @@ test.describe('backup import', () => {
       .toHaveText('This is a userscript, not a backup file. Add it with the Add field instead.');
     await page.locator(`${IMPORT_DIALOG} #import-file`).setInputFiles(path.join(dir.path, 'notes.txt'));
     await expect(page.locator(`${IMPORT_DIALOG} #import-error`)).toContainText('This is not a backup file SourceMonkey can read.');
-    await expect(page.locator(`${IMPORT_DIALOG} #import-include`)).toBeHidden();
+    await expect(page.locator(`${IMPORT_DIALOG} #import-sections`)).toBeHidden();
     await expect(page.locator(`${IMPORT_DIALOG} #import-confirm-btn`)).toBeDisabled();
     await page.close();
   });

@@ -137,6 +137,15 @@ export function collectionNameInUse(
   );
 }
 
+// `base`, or `base (2)`, `base (3)`, …: the first name no collection
+// has and a user collection may use. `path` is as for
+// `mayUseReservedName`.
+export function freeCollectionName(base: string, collections: readonly StoredCollection[], path: string | null): string {
+  let name = base;
+  for (let n = 2; collectionNameInUse(name, collections) || !mayUseReservedName(name, path); n++) name = `${base} (${n})`;
+  return name;
+}
+
 // True for manifest collections of any scheme. Thin wrapper so callers
 // don't have to import `directories` just for this. Container
 // collections can never be manifests — their `path` is the synthetic

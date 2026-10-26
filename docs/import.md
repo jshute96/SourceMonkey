@@ -134,16 +134,17 @@ scripts (`planCollections`, then `restores` in the request).
 - **Only one that isn't here is restored.** One that is shows as
   Already here, and its scripts import one by one, as from any backup.
 - A restored collection takes its name, kind, location and local-files
-  flag from the backup. Its enabled flag too, with Enabled state on;
-  otherwise it is on.
+  flag from the backup. Its enabled flag too, with the Collections
+  section's Enabled state on; otherwise it is on.
 - **All its scripts go into it,** whatever they match here, from the
   backup's text:
   - In a directory, manifest or GitHub collection, each at its
     `relativePath`: the path the collection's scan names it by.
   - In a scripts collection, placed as a new script would be: linked
     to its location, or kept as an imported script.
-- Their values and enabled state are restored too, per the Include
-  options. So even a local directory's scripts get their values back.
+- Their values and enabled state are restored too, per the Collections
+  section's options. So even a local directory's scripts get their
+  values back.
 - **The next refresh loads what the location has now.** It matches
   rows by path, so each script keeps its id and values, takes the
   file's current version, or is dropped when its file is gone.
@@ -160,10 +161,16 @@ scripts (`planCollections`, then `restores` in the request).
 Choosing a file reads it and shows the preview. Nothing is written until
 Import.
 
-- A section per kind of script: New, Existing and Invalid. Each is
-  headed with its count ("New scripts (3)"), shows only when the file
-  has such scripts, and has its own controls and a table of just the
-  scripts they apply to.
+- A section per kind of script: Collections, New, Existing and
+  Invalid.
+  - Each is headed with its count ("New scripts (3)") and shows only
+    when the file has such scripts.
+  - Each has its own options, then a table of just the scripts they
+    apply to.
+  - A line above each section and below the last sets them apart.
+- **Values and enabled state are options per section.** Scripts that
+  arrive fresh (restored or new) take the backup's by default. For an
+  existing script they'd overwrite what it has now, so they start off.
 - **Collections**, first, for an SM export with collections to restore
   ([above](#restoring-collections)): Name, Kind (Directory, GitHub,
   Manifest, Scripts, or Scripts (built-in)), Location (linked), Scripts, and Status (New,
@@ -172,53 +179,78 @@ Import.
     can't be checked; the Status tooltip says why.
   - The scripts a checked collection takes aren't listed in the New or
     Existing sections. Unchecking it moves them there.
+  - Its options, all on:
+    - **Use stored values from the backup.**
+    - **Use enabled state from the backup**, for the collections and their
+      scripts. Off, they load enabled.
+    - **Link scripts in Scripts collections to their location**, as
+      for new scripts below. Shown only with a scripts collection to
+      restore; a directory or manifest collection's scripts always
+      load from it.
 - The New and Existing tables have a checkbox per script (and one for
   all), a **Type** column and a **Values** column:
   - Type is the scheme chip the collections page shows (`http`,
     `github`, `file`, `imported`, `scratch`), linked to the location
     when it is a URL or a file. For a new script it is where the backup
-    says it loaded from; for an existing one, the installed copy's.
+    says it loaded from (`imported` when it gives none); for an
+    existing one, the installed copy's.
   - Values has a check when the file has stored values for the script.
+  - Each column heading's tooltip says what the column shows, in these
+    tables and the Collections and Invalid ones.
 - **New scripts:** Name, Version, Type, Values.
-  - **Into:** a new scripts collection, "Imported from Tampermonkey
-    (date)", or an existing scripts collection.
-- **Existing scripts:** Name (a link to the installed copy an update
-  goes to, in the viewer), Backup version, Installed version, Compared
-  (the copies here in its tooltip), Type, Values.
-  - A row the current choice leaves alone is greyed.
-  - **Leave them as they are.**
-  - **Replace the ones the backup has a newer version of** (the default),
-    with how many that is. Greyed out at zero, and Leave chosen instead;
-    the default comes back if restoring fewer collections raises the
-    count, unless a choice was made.
-  - **Replace them all.**
-  - Replacing changes the text only of a copy kept as text (imported or
-    scratch). Any other copy loads from its own location, so only its
-    values and enabled state change.
-- **Invalid scripts:** "These scripts cannot be imported", and a table
-  of each one's file in the zip and the reason.
-- **Include:**
-  - **Link scripts to their location from the import** (on): a new
-    script, or one restored into a scripts collection, with a location
-    (an http(s) URL or a file) is installed at it, starting from the
-    file's text, and can get updates from there. Off, or without one,
-    it is kept as an imported script.
+  - **Add to collection:** a new scripts collection, "(New) Imported
+    from Tampermonkey (date)", or an existing scripts collection.
+    - When a collection already has that name, the choice shows the
+      numbered name the import will give it ("… (2)"), worked out as
+      the worker does (`freeCollectionName`).
+  - **Use stored values from the backup** (on).
+  - **Use enabled state from the backup** (on). Off, they load enabled, as
+    any install does.
+  - **Link scripts to their location from the import** (on): a script
+    with a location (an http(s) URL or a file) is installed at it,
+    starting from the file's text, and can get updates from there.
+    Off, or without one, it is kept as an imported script.
     - A script edited in TM (`user_modified`) is always kept as its
       text: its location serves something else.
     - A file is linked only if it can be read at import time, since a
       refresh drops a scripts-collection row whose file is gone. One
       that can't be read uses the backup's copy instead, and the result
       lists those scripts.
-  - **Stored values** (on): they replace an updated script's values
+- **Existing scripts:** Collection (the installed copy's), Name (a link
+  to the installed copy an update goes to, in the viewer), Backup
+  version, Installed version, Compared (the copies here in its
+  tooltip), Type, Values.
+  - Rows are grouped by collection, in the page's order.
+  - A row the current choices do nothing to is greyed, with its
+    checkbox disabled; it keeps its check for when the choices change.
+    Its tooltip says why.
+    An unchecked row is greyed too.
+  - Which texts to replace:
+    - **Keep existing version.**
+    - **Replace when the imported version is newer** (the default),
+      with how many that is. Greyed out at zero, and Keep chosen
+      instead; the default comes back if restoring fewer
+      collections raises the count, unless a choice was made.
+    - **Replace with imported version always**, even when the text is
+      the same, which also brings the backup's dependency files.
+    - These change only a copy kept as text (imported or scratch). A
+      script that loads from a URL or file keeps loading from there,
+      and the hint under them says so.
+  - **Replace stored values with values from the backup** (off):
     whole, as TM and VM do.
-  - **Enabled state** (on): use enabled states from the backup.
-    Otherwise, new scripts and restored collections load enabled, as
-    any install does, and existing ones keep theirs.
+  - **Replace enabled state with the state from the backup** (off).
+  - Values and enabled state apply to each checked row, whatever the
+    text choice.
+- **Invalid scripts:** "These scripts cannot be imported", and a table
+  of each one's file in the zip and the reason.
 - The button counts what will happen: "Import 3 scripts", restored
   collections' scripts included.
-- Afterwards the dialog says what was restored, imported and updated,
-  and what failed. Closing it lands the page on the collection new
-  scripts went into, else the first one restored.
+- Afterwards the dialog shows only the results: what was restored,
+  imported and updated, and what failed.
+  - The choices are gone, since there's nothing left to do there. To
+    import more, or retry after a failure, open the dialog again.
+  - Close or Esc closes it, landing the page on the collection new
+    scripts went into, else the first one restored.
 
 ## Applying it
 

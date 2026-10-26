@@ -132,6 +132,7 @@ import {
 } from '../diagnostic-location.js';
 import {
   collectionNameInUse,
+  freeCollectionName,
   inferDisplayName,
   mayUseReservedName,
   RESERVED_COLLECTION_NAME,
@@ -2035,10 +2036,7 @@ async function installImported(
         // when a collection is added (`createLocationCollection`), and a
         // built-in collection may use its own reserved name.
         const base = target.create.displayName ?? 'Imported scripts';
-        let name = base;
-        if (base !== inferDisplayName(target.create.path)) {
-          for (let n = 2; collectionNameInUse(name, collections) || !mayUseReservedName(name, target.create.path); n++) name = `${base} (${n})`;
-        }
+        const name = base === inferDisplayName(target.create.path) ? base : freeCollectionName(base, collections, target.create.path);
         current = { ...target.create, displayName: name };
       }
       const held = new Set<string>();

@@ -254,7 +254,7 @@ test.describe('backups across managers', () => {
       expect((await existingRows(page)).map((r) => [r.name, r.compared]).sort())
         .toEqual([['Alpha', 'Same'], ['Beta', 'Same'], ['Gamma', 'Same']]);
       expect((await newRows(page)).map((r) => r.name)).toEqual(['Only in TM']);
-      await chooseImport(page, { existing: 'always' });
+      await chooseImport(page, { existing: 'always', existingValues: true, existingEnabled: true });
       await confirmImport(page);
       await closeImport(page);
       // TM's copy of the values, decoded.
@@ -357,7 +357,7 @@ test.describe('backups across managers', () => {
     // VM keeps no ids: what's here is found by namespace and name.
     expect((await existingRows(page)).map((r) => [r.name, r.compared]).sort()).toEqual([['Alpha', 'Same'], ['Beta', 'Same']]);
     expect((await newRows(page)).map((r) => r.name)).toEqual(['VM own']);
-    await chooseImport(page, { existing: 'always' });
+    await chooseImport(page, { existing: 'always', existingValues: true, existingEnabled: true });
     await confirmImport(page);
     await closeImport(page);
     expect(await sm.getGmValues(byName.get('Alpha')!.id)).toEqual({ theme: 'dark', count: 3 });

@@ -211,8 +211,8 @@ test.describe('backup round trip', () => {
     await localBox.check();
     await expect(page.locator(`${IMPORT_DIALOG} #import-new`)).toBeHidden();
     await expect(page.locator(`${IMPORT_DIALOG} #import-invalid`)).toBeHidden();
-    // Link applies to the restored scripts collections, so it shows.
-    await expect(page.locator(`${IMPORT_DIALOG} #import-link`)).toBeVisible();
+    // Restoring scripts collections, so their Link option shows.
+    await expect(page.locator(`${IMPORT_DIALOG} #import-restore-link`)).toBeVisible();
     const result = await confirmImport(page);
     await closeImport(page);
     expect(result).toBe('Restored 6 collections with 13 scripts.');

@@ -154,24 +154,41 @@ export function restorePath(script: BackupScript, collection: BackupCollection):
 
 // ---------- The dialog's choices ----------
 
+// Each of the dialog's sections has its own choices. Scripts that come
+// in fresh, restored or new, take the backup's values and enabled
+// state by default; for a script already here those would overwrite
+// what it has now, so they start off.
 export interface ImportChoices {
-  // What to do with scripts already here.
-  existing: 'leave' | 'newer' | 'always';
-  // Bring the file's stored values. They replace an updated script's.
+  // Restored collections and their scripts.
+  restore: ArrivingChoices;
+  // New scripts.
+  new: ArrivingChoices;
+  // Scripts already here.
+  existing: {
+    // Which stored texts the backup's replaces.
+    text: 'leave' | 'newer' | 'always';
+    // The backup's stored values replace the script's.
+    values: boolean;
+    // The script takes the backup's enabled state.
+    enabled: boolean;
+  };
+}
+
+export interface ArrivingChoices {
+  // Bring the backup's stored values.
   values: boolean;
-  // Take the file's enabled state; otherwise new scripts come in enabled,
-  // and updated ones keep theirs.
-  enabledFromFile: boolean;
+  // Take the backup's enabled state; otherwise it comes in enabled.
+  enabled: boolean;
   // Link a script with a location (a URL or a file) to it, so it can
-  // take updates from there; otherwise it is kept as its text.
-  linkLocations: boolean;
+  // take updates from there; otherwise it is kept as its text. A
+  // restored directory or manifest collection's scripts always link.
+  link: boolean;
 }
 
 export const DEFAULT_CHOICES: ImportChoices = {
-  existing: 'newer',
-  values: true,
-  enabledFromFile: true,
-  linkLocations: true,
+  restore: { values: true, enabled: true, link: true },
+  new: { values: true, enabled: true, link: true },
+  existing: { text: 'newer', values: false, enabled: false },
 };
 
 export type RowAction =
@@ -186,21 +203,26 @@ function isLinkable(location: string): boolean {
   return isHttpUrl(location) || isFileUrl(location) || location.startsWith('/');
 }
 
+// What happens to one script of the New or Existing section.
 export function actionFor(p: PlannedScript, choices: ImportChoices): RowAction {
-  if (!p.match) {
-    const url = p.script.location;
-    // A script edited in the other manager is kept as that text: its
-    // location serves something else.
-    const link = choices.linkLocations && url && isLinkable(url) && !p.script.userModified;
-    return link ? { kind: 'install', linkTo: url } : { kind: 'install' };
-  }
-  if (choices.existing === 'leave') return { kind: 'skip' };
-  if (choices.existing === 'newer' && p.here !== 'older-here') return { kind: 'skip' };
-  const text = p.match.stored && p.here !== 'same';
-  const values = choices.values && p.script.values !== undefined;
-  const enabled = choices.enabledFromFile && p.script.enabled !== p.match.enabled;
+  if (!p.match) return installAction(p.script, choices.new);
+  const { existing } = choices;
+  // Always replaces even the same text, as it says: the backup's
+  // dependency files come with it.
+  const text = p.match.stored
+    && (existing.text === 'always' || (existing.text === 'newer' && p.here === 'older-here'));
+  const values = existing.values && p.script.values !== undefined;
+  const enabled = existing.enabled && p.script.enabled !== p.match.enabled;
   if (!text && !values && !enabled) return { kind: 'skip' };
   return { kind: 'update', text, values, enabled };
+}
+
+function installAction(s: BackupScript, choices: ArrivingChoices): RowAction & { kind: 'install' } {
+  const url = s.location;
+  // A script edited in the other manager is kept as that text: its
+  // location serves something else.
+  const link = choices.link && url && isLinkable(url) && !s.userModified;
+  return link ? { kind: 'install', linkTo: url } : { kind: 'install' };
 }
 
 // How an existing script compares with the backup's, for its table's
@@ -236,8 +258,8 @@ export function restoredScripts(collections: readonly PlannedCollection[], resto
   return out;
 }
 
-function installItem(s: BackupScript, choices: ImportChoices, linkTo: string | undefined): ImportInstall {
-  const item: ImportInstall = { name: s.name, text: s.text, enabled: choices.enabledFromFile ? s.enabled : true };
+function installItem(s: BackupScript, choices: ArrivingChoices, linkTo: string | undefined): ImportInstall {
+  const item: ImportInstall = { name: s.name, text: s.text, enabled: choices.enabled ? s.enabled : true };
   if (linkTo) item.linkTo = linkTo;
   if (s.location) item.location = s.location;
   if (s.foreignId) item.foreignId = s.foreignId;
@@ -263,15 +285,12 @@ export function buildImportRequest(
     const bc = c.collection;
     const installs = c.scripts.map((i) => {
       const p = plan[i];
-      if (bc.kind === 'scripts') {
-        const action = actionFor({ ...p, copies: [], match: undefined, here: 'new' }, choices);
-        return installItem(p.script, choices, action.kind === 'install' ? action.linkTo : undefined);
-      }
-      return { ...installItem(p.script, choices, undefined), relativePath: restorePath(p.script, bc)! };
+      if (bc.kind === 'scripts') return installItem(p.script, choices.restore, installAction(p.script, choices.restore).linkTo);
+      return { ...installItem(p.script, choices.restore, undefined), relativePath: restorePath(p.script, bc)! };
     });
     const restore: ImportRestore = {
       name: bc.name, kind: bc.kind, location: bc.location,
-      enabled: choices.enabledFromFile ? bc.enabled : true, localFiles: bc.localFiles, installs,
+      enabled: choices.restore.enabled ? bc.enabled : true, localFiles: bc.localFiles, installs,
     };
     if (bc.builtin) restore.builtin = bc.builtin;
     restores.push(restore);
@@ -284,7 +303,7 @@ export function buildImportRequest(
     const action = actionFor(p, choices);
     const s = p.script;
     if (action.kind === 'install') {
-      installs.push(installItem(s, choices, action.linkTo));
+      installs.push(installItem(s, choices.new, action.linkTo));
     } else if (action.kind === 'update' && p.match) {
       const update: ImportUpdate = { scriptId: p.match.id };
       if (action.text) {

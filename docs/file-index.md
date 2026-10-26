@@ -204,7 +204,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/script-store.ts` | Persistent userscript store (chrome.storage.local) plus load/refresh pipeline, addCollection / createCollection / installScript / moveScript / setCollectionOptions / probeCollectionLocation, refreshAllCollections, the enable write that stamps active times, membership reconcile, first-run flag + DEFAULT_COLLECTIONS, legacy `source:*` key migration, the storage format gate |
 | `src/extension/script-updater.ts` | Single entry point for refresh; rate-limits opportunistic background checks, and mirrors every load/refresh outcome into the per-script Log |
 | `src/extension/version-probe-fetch.ts` | Fetching half of update probes — reads a probe URL's `@version`, with bounded size, timeout, and fan-out |
-| `src/extension/collection-display.ts` | Collection-display helpers: bubble key (kind + scheme) and its tooltip, per-row scheme chip, display-name inference, name-in-use + reserved-name checks, manifest flag, anchor id, disabled-collection tooltip |
+| `src/extension/collection-display.ts` | Collection-display helpers: bubble key (kind + scheme) and its tooltip, per-row scheme chip, display-name inference, name-in-use + reserved-name checks, free-name numbering, manifest flag, anchor id, disabled-collection tooltip |
 | `src/extension/glyph.ts` | Renders a sprite glyph into a button, with the label/tooltip pair and the in-flight spin state |
 | `src/extension/script-sites.ts` | Rewrites a script's URL into the hosting site's listing page (Greasy Fork, Sleazy Fork, OpenUserJS, gists) and decides the viewer's row |
 | `src/extension/script-url-hash.ts` | Pure `parseHash` / `buildHash` for the viewer's `#<filename>[:<line>[:<col>]]` / `#Log` URL fragment |

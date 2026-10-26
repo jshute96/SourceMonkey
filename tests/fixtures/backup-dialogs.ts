@@ -33,14 +33,22 @@ export async function closeExport(page: Page): Promise<void> {
   await expect(page.locator(EXPORT_DIALOG)).toBeHidden();
 }
 
+// Each section's options, by the section: restored collections, new
+// scripts and existing ones.
 export interface ImportChoicesInput {
+  restoreValues?: boolean;
+  restoreEnabled?: boolean;
+  restoreLink?: boolean;
+  newValues?: boolean;
+  newEnabled?: boolean;
+  newLink?: boolean;
+  // Which existing scripts' text the backup's replaces.
   existing?: 'leave' | 'newer' | 'always';
-  values?: boolean;
-  enabled?: boolean;
-  link?: boolean;
+  existingValues?: boolean;
+  existingEnabled?: boolean;
   // Restore the backup's collections that aren't here (all of them).
   restore?: boolean;
-  // The `Into` option's label, or its start.
+  // The Add to collection option's label, or part of it.
   into?: string;
 }
 
@@ -57,9 +65,12 @@ export async function openImport(page: Page, menuButton: string, file: string): 
 export async function chooseImport(page: Page, choices: ImportChoicesInput): Promise<void> {
   const d = IMPORT_DIALOG;
   if (choices.existing) await page.locator(`${d} #import-existing-${choices.existing}`).check();
-  if (choices.values !== undefined) await page.locator(`${d} #import-values`).setChecked(choices.values);
-  if (choices.enabled !== undefined) await page.locator(`${d} #import-enabled`).setChecked(choices.enabled);
-  if (choices.link !== undefined) await page.locator(`${d} #import-link`).setChecked(choices.link);
+  const boxes: [boolean | undefined, string][] = [
+    [choices.restoreValues, 'restore-values'], [choices.restoreEnabled, 'restore-enabled'], [choices.restoreLink, 'restore-link'],
+    [choices.newValues, 'new-values'], [choices.newEnabled, 'new-enabled'], [choices.newLink, 'new-link'],
+    [choices.existingValues, 'existing-values'], [choices.existingEnabled, 'existing-enabled'],
+  ];
+  for (const [on, id] of boxes) if (on !== undefined) await page.locator(`${d} #import-${id}`).setChecked(on);
   if (choices.restore !== undefined) {
     for (const box of await page.locator(`${d} #import-collections-table tbody input:enabled`).all()) await box.setChecked(choices.restore);
   }
@@ -69,10 +80,9 @@ export async function chooseImport(page: Page, choices: ImportChoicesInput): Pro
   }
 }
 
-// Waits for the preview of a chosen file: its Include section shows
-// with it.
+// Waits for the preview of a chosen file: its sections show with it.
 export async function previewShown(page: Page): Promise<void> {
-  await expect(page.locator(`${IMPORT_DIALOG} #import-include`)).toBeVisible();
+  await expect(page.locator(`${IMPORT_DIALOG} #import-sections`)).toBeVisible();
 }
 
 // The New scripts table's rows: Name, Version, and the Type chip with
@@ -119,6 +129,10 @@ export async function existingRows(page: Page): Promise<{ name: string; compared
 export async function confirmImport(page: Page): Promise<string> {
   await page.locator(`${IMPORT_DIALOG} #import-confirm-btn`).click();
   await expect(page.locator(IMPORT_RESULT)).toBeVisible();
+  // The results replace the choices.
+  await expect(page.locator(`${IMPORT_DIALOG} .dlg-title`)).toHaveText('Import finished');
+  await expect(page.locator(`${IMPORT_DIALOG} :is(.dlg-intro, .dlg-file, .import-section)`).filter({ visible: true })).toHaveCount(0);
+  await expect(page.locator(`${IMPORT_DIALOG} #import-confirm-btn`)).toHaveText('Close');
   return await page.locator(IMPORT_RESULT).innerText();
 }
 

@@ -15,6 +15,7 @@ import {
   collectionHasManifest,
   reservedNameOwner,
   mayUseReservedName,
+  freeCollectionName,
 } from '../../dist/extension/collection-display.js';
 
 // ---------- inferCollectionType ----------
@@ -261,4 +262,13 @@ test('mayUseReservedName: only the default that owns the name may carry it', () 
   // Another collection may not take it.
   assert.equal(mayUseReservedName('Scripts from web', 'container:file'), false);
   assert.equal(mayUseReservedName('Scripts from web', 'container:uuid-1'), false);
+});
+
+// ---------- freeCollectionName ----------
+
+test('freeCollectionName numbers a taken name, ignoring case, and skips reserved ones', () => {
+  const row = (displayName) => ({ id: displayName, path: 'container:x', displayName, scriptIds: [], enabled: true, lastRefreshedAt: 0 });
+  assert.equal(freeCollectionName('Mine', [], null), 'Mine');
+  assert.equal(freeCollectionName('Mine', [row('mine'), row('Mine (2)')], null), 'Mine (3)');
+  assert.equal(freeCollectionName('Scripts from web', [], null), 'Scripts from web (2)');
 });
