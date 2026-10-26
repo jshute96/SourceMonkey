@@ -185,7 +185,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/export-backup.ts` | The backup export: plans the zip's entries (manifest, TM metadata, values, dependency files), gathers inputs, saves |
 | `src/extension/zip-writer.ts` | Builds the export's zip through the vendored fflate library |
 | `src/extension/import-backup.ts` | Reads a backup (SourceMonkey, Tampermonkey zip or JSON, Violentmonkey, plain zip) into one list of scripts with values and files |
-| `src/extension/import-plan.ts` | Matches a backup's scripts to installed ones, compares them, and turns the import dialog's choices into a request |
+| `src/extension/import-plan.ts` | Matches a backup's scripts and collections to what's here, compares them, and turns the import dialog's choices into a request |
 | `src/vendor/fflate.d.ts` | Types for fflate, which the build copies to `dist/vendor/fflate.js` |
 | `src/extension/script-details.ts` | Builds the viewer's curated details `<dl>` — chosen header fields, the resolved provenance rows, and the Collection row's trailing slot — for both modes; lends the compare page its Collection cell |
 | `src/extension/details-tooltips.ts` | The one table of tooltip text for the details panel's row labels, plus the mode/site-name lookups |
@@ -386,8 +386,9 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/local-delete.spec.ts` | Deleting a local copy: own dependencies go, shared ones are kept, an untracked file blocks until deleted by hand, files gone from disk, from every trash can that offers it, control placement |
 | `tests/e2e/local-copy.spec.ts` | Local copies: first copy creates the Downloads collection and takes over, Replace for files and installed scripts, name rules, dependency files, cleanup after a refused write, a copy refusing its own name |
 | `tests/e2e/export.spec.ts` | Backup export: the ⋯ menus and dialog, the saved zip's manifest, TM metadata, values, dependency files |
-| `tests/e2e/import.spec.ts` | Backup import: the dialog's preview and choices, imported scripts, matching by id, newer versions, bundled files, refusals |
+| `tests/e2e/import.spec.ts` | Backup import: the dialog's preview and choices, restored collections, imported scripts, matching by id, newer versions, refusals |
 | `tests/e2e/backup-interop.spec.ts` | Backups across real Tampermonkey and Violentmonkey: SM → TM/VM → SM, and their own backups into SM |
+| `tests/e2e/backup-roundtrip.spec.ts` | An export of every collection and script kind restored into an empty SourceMonkey gives the same state back |
 | `tests/e2e/script-log-relay.spec.ts` | The viewer's Clear log is performed by the worker, through its `sm:op` `clearScriptLog` request |
 | `tests/e2e/membership.spec.ts` | Collection membership vs. the script rows: moves and removals that land mid-refresh, and the repair sweep |
 | `tests/e2e/manifest.spec.ts` | Manifest collection refresh: vanished-entry deletion, unreadable-manifest preservation |
@@ -429,7 +430,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/export-backup.test.mjs` | Unit tests for the export planner: value encoding, names, manifest and options fields, empty scripts, files and subfolders |
 | `tests/unit/zip-writer.test.mjs` | Unit tests for the zip writer, read back with an independent reader |
 | `tests/unit/import-backup.test.mjs` | Unit tests for the backup reader: each format, value decoding, dependency files, an SM export read back |
-| `tests/unit/import-plan.test.mjs` | Unit tests for the import planner: matching order, Here states, the choices' actions, the request |
+| `tests/unit/import-plan.test.mjs` | Unit tests for the import planner: matching order, Here states, collection restores, the choices' actions, the request |
 | `tests/unit/version-probe.test.mjs` | Unit tests for probe target selection, the outdated verdict, and the staleness gate |
 | `tests/e2e/version-probe.spec.ts` | E2E for update probes: newer/older upstream, unreachable probe, own-URL skip, OUTDATED status + viewer rows |
 | `tests/unit/collection-display.test.mjs` | Unit tests for collection-display helpers: type classification, manifest flag, short-name inference, effective display name |

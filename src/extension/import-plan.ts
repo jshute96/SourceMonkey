@@ -7,9 +7,10 @@
 import { compareVersions } from '../version-compare.js';
 import { getValue, type ParsedHeader } from '../userscript-header.js';
 import { identityKey, locationKey } from './script-keys.js';
-import { isHttpUrl } from '../file-locations.js';
-import type { BackupScript, ParsedBackup } from './import-backup.js';
-import type { ImportInstall, ImportRequest, ImportUpdate } from './script-store.js';
+import { canonicalCollectionInput, containerKind, isContainerCollection, isFileUrl, isHttpUrl, locationFsPath } from '../file-locations.js';
+import { githubDirScriptFileUrl, parseGithubUrl } from './github-provider.js';
+import { isEmptyScript, type BackupCollection, type BackupScript, type ParsedBackup } from './import-backup.js';
+import type { ImportInstall, ImportRequest, ImportRestore, ImportUpdate } from './script-store.js';
 
 // A script installed here, as the planner needs it.
 export interface InstalledCopy {
@@ -83,6 +84,74 @@ function compareCopies(script: BackupScript, hash: string, match: InstalledCopy)
   return cmp > 0 ? 'older-here' : cmp < 0 ? 'newer-here' : 'changed';
 }
 
+// ---------- Restoring collections ----------
+
+// A collection here, as matching the backup's needs it.
+export interface HereCollection {
+  id: string;
+  name: string;
+  path: string;
+}
+
+export interface PlannedCollection {
+  collection: BackupCollection;
+  // The backup's scripts a restore puts in it, by index.
+  scripts: number[];
+  // The collection here it already is. Such a collection isn't made
+  // again: its scripts import one by one, as from any backup.
+  here?: HereCollection;
+  // Set when it can't be restored: its scripts' paths in it aren't
+  // known. Its scripts import one by one.
+  cantRestore?: boolean;
+}
+
+// The backup's collections that have scripts to restore, each matched
+// to a collection here by its id, its location, its built-in scheme,
+// or (a scripts collection) its name.
+export function planCollections(backup: ParsedBackup, here: readonly HereCollection[]): PlannedCollection[] {
+  const out: PlannedCollection[] = [];
+  for (const collection of backup.collections) {
+    const members = backup.scripts.filter((s) => s.collection === collection.uuid);
+    if (members.length === 0) continue;
+    const scripts = members.filter((s) => restorePath(s, collection) !== null).map((s) => s.index);
+    const planned: PlannedCollection = { collection, scripts };
+    if (scripts.length < members.length) {
+      planned.scripts = members.map((s) => s.index);
+      planned.cantRestore = true;
+    }
+    const match = here.find((h) => h.id === collection.uuid) ?? here.find((h) => sameCollection(h, collection));
+    if (match) planned.here = match;
+    out.push(planned);
+  }
+  return out;
+}
+
+function sameCollection(h: HereCollection, c: BackupCollection): boolean {
+  if (c.location) return canonicalCollectionInput(h.path) === canonicalCollectionInput(c.location);
+  if (c.builtin) return containerKind(h.path) === c.builtin;
+  return isContainerCollection(h.path) && !containerKind(h.path)
+    && h.name.trim().toLowerCase() === c.name.trim().toLowerCase();
+}
+
+// Where `script` goes in a restored `collection`: '' for a scripts
+// collection, which places it by its location; its path in a
+// directory, manifest or GitHub one. Null when it isn't one of that
+// collection's, or its path there isn't known: an export from before
+// the manifest carried it, for a manifest. A local or GitHub
+// directory's is worked out from the script's location.
+export function restorePath(script: BackupScript, collection: BackupCollection): string | null {
+  if (script.collection !== collection.uuid) return null;
+  if (collection.kind === 'scripts') return '';
+  if (script.relativePath) return script.relativePath;
+  if (collection.kind !== 'directory' || !collection.location || !script.location) return null;
+  const github = parseGithubUrl(collection.location);
+  const dir = github ? githubDirScriptFileUrl(collection.location, '')
+    : isHttpUrl(collection.location) ? null
+      : locationFsPath(collection.location).replace(/\/+$/, '') + '/';
+  const file = github ? script.location : locationFsPath(script.location);
+  return dir && file.startsWith(dir) && file.length > dir.length ? file.slice(dir.length) : null;
+}
+
 // ---------- The dialog's choices ----------
 
 export interface ImportChoices {
@@ -90,82 +159,66 @@ export interface ImportChoices {
   existing: 'leave' | 'newer' | 'always';
   // Bring the file's stored values. They replace an updated script's.
   values: boolean;
-  // Take the file's on/off state; otherwise new scripts come in off,
+  // Take the file's enabled state; otherwise new scripts come in enabled,
   // and updated ones keep theirs.
   enabledFromFile: boolean;
-  // Install a script with a web address so it loads and updates from
-  // there; otherwise it is kept as its text.
-  followUrls: boolean;
+  // Link a script with a location (a URL or a file) to it, so it can
+  // take updates from there; otherwise it is kept as its text.
+  linkLocations: boolean;
 }
 
 export const DEFAULT_CHOICES: ImportChoices = {
   existing: 'newer',
   values: true,
   enabledFromFile: true,
-  followUrls: true,
+  linkLocations: true,
 };
 
 export type RowAction =
-  | { kind: 'install'; followUrl?: string }
+  | { kind: 'install'; linkTo?: string }
   // `text`: the stored text is replaced.
   | { kind: 'update'; text: boolean; values: boolean; enabled: boolean }
-  // `located`: a copy here that loads from its own location, with
-  // nothing else to replace.
-  | { kind: 'skip'; located?: boolean };
+  | { kind: 'skip' };
+
+// A location a script can be linked to: a URL, or a file (SourceMonkey
+// writes a local script's location as its path).
+function isLinkable(location: string): boolean {
+  return isHttpUrl(location) || isFileUrl(location) || location.startsWith('/');
+}
 
 export function actionFor(p: PlannedScript, choices: ImportChoices): RowAction {
   if (!p.match) {
     const url = p.script.location;
     // A script edited in the other manager is kept as that text: its
-    // web address serves something else.
-    const follow = choices.followUrls && url && isHttpUrl(url) && !p.script.userModified;
-    return follow ? { kind: 'install', followUrl: url } : { kind: 'install' };
+    // location serves something else.
+    const link = choices.linkLocations && url && isLinkable(url) && !p.script.userModified;
+    return link ? { kind: 'install', linkTo: url } : { kind: 'install' };
   }
   if (choices.existing === 'leave') return { kind: 'skip' };
   if (choices.existing === 'newer' && p.here !== 'older-here') return { kind: 'skip' };
   const text = p.match.stored && p.here !== 'same';
   const values = choices.values && p.script.values !== undefined;
   const enabled = choices.enabledFromFile && p.script.enabled !== p.match.enabled;
-  if (!text && !values && !enabled) return p.match.stored || p.here === 'same' ? { kind: 'skip' } : { kind: 'skip', located: true };
+  if (!text && !values && !enabled) return { kind: 'skip' };
   return { kind: 'update', text, values, enabled };
 }
 
-// What the Result column says.
-export function actionText(action: RowAction, p: PlannedScript): string {
-  switch (action.kind) {
-    case 'install':
-      return action.followUrl ? 'Install, updating from its web address' : 'Install as imported text';
-    case 'skip':
-      if (action.located) return 'Leave as it is: it loads from its own location';
-      return p.match ? 'Leave as it is' : 'Skip';
-    case 'update': {
-      const parts = [
-        ...(action.text ? ['text'] : []),
-        ...(action.values ? ['values'] : []),
-        ...(action.enabled ? ['on/off state'] : []),
-      ];
-      const list = parts.length === 1 ? parts[0]
-        : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
-      return `Replace its ${list}`;
-    }
-  }
-}
-
-// What the Here column says, and its tooltip.
+// How an existing script compares with the backup's, for its table's
+// Compared column, and its tooltip naming the copies here.
 export function hereText(p: PlannedScript): { text: string; title: string } {
   const texts: Record<HereState, string> = {
     'new': 'New',
     'same': 'Same',
-    'older-here': 'Older here',
-    'newer-here': 'Newer here',
-    'changed': 'Changed',
+    'older-here': 'Backup is newer',
+    'newer-here': 'Installed is newer',
+    'changed': 'Same version, different text',
   };
   const titles: Record<HereState, string> = {
-    'new': 'Not installed here',
-    'same': 'Installed here with the same text',
-    'older-here': 'The file has a newer @version than the copy here',
-    'newer-here': 'The copy here has a newer @version than the file',
-    'changed': 'Installed here with the same @version but different text',
+    'new': 'Not installed',
+    'same': 'Installed with the same text',
+    'older-here': 'The backup has a newer @version than the installed copy',
+    'newer-here': 'The installed copy has a newer @version than the backup',
+    'changed': 'Installed with the same @version but different text',
   };
   const where = p.copies.map((c) => `${p.copies.length > 1 && c === p.match ? '* ' : ''}${c.collectionName}`);
   const title = p.copies.length === 0 ? titles[p.here]
@@ -173,28 +226,65 @@ export function hereText(p: PlannedScript): { text: string; title: string } {
   return { text: texts[p.here], title };
 }
 
-// The request the worker applies, for the rows the user kept checked.
+// The scripts `restoring` (collections, by the backup's uuid) puts in
+// collections, which the New and Existing sections then leave out.
+export function restoredScripts(collections: readonly PlannedCollection[], restoring: ReadonlySet<string>): Set<number> {
+  const out = new Set<number>();
+  for (const c of collections) {
+    if (!c.here && !c.cantRestore && restoring.has(c.collection.uuid)) for (const i of c.scripts) out.add(i);
+  }
+  return out;
+}
+
+function installItem(s: BackupScript, choices: ImportChoices, linkTo: string | undefined): ImportInstall {
+  const item: ImportInstall = { name: s.name, text: s.text, enabled: choices.enabledFromFile ? s.enabled : true };
+  if (linkTo) item.linkTo = linkTo;
+  if (s.location) item.location = s.location;
+  if (s.foreignId) item.foreignId = s.foreignId;
+  if (choices.values && s.values) item.values = s.values;
+  if (Object.keys(s.files).length > 0) item.files = s.files;
+  return item;
+}
+
+// The request the worker applies: the collections in `restoring` with
+// all their scripts, then the rows the user kept checked.
 export function buildImportRequest(
   backup: ParsedBackup,
   plan: readonly PlannedScript[],
   checked: ReadonlySet<number>,
   choices: ImportChoices,
   into: ImportRequest['into'],
+  collections: readonly PlannedCollection[] = [],
+  restoring: ReadonlySet<string> = new Set(),
 ): ImportRequest {
+  const restores: ImportRestore[] = [];
+  for (const c of collections) {
+    if (c.here || c.cantRestore || !restoring.has(c.collection.uuid)) continue;
+    const bc = c.collection;
+    const installs = c.scripts.map((i) => {
+      const p = plan[i];
+      if (bc.kind === 'scripts') {
+        const action = actionFor({ ...p, copies: [], match: undefined, here: 'new' }, choices);
+        return installItem(p.script, choices, action.kind === 'install' ? action.linkTo : undefined);
+      }
+      return { ...installItem(p.script, choices, undefined), relativePath: restorePath(p.script, bc)! };
+    });
+    const restore: ImportRestore = {
+      name: bc.name, kind: bc.kind, location: bc.location,
+      enabled: choices.enabledFromFile ? bc.enabled : true, localFiles: bc.localFiles, installs,
+    };
+    if (bc.builtin) restore.builtin = bc.builtin;
+    restores.push(restore);
+  }
+  const restored = restoredScripts(collections, restoring);
   const installs: ImportInstall[] = [];
   const updates: ImportUpdate[] = [];
   for (const p of plan) {
-    if (!checked.has(p.script.index)) continue;
+    if (!checked.has(p.script.index) || restored.has(p.script.index) || isEmptyScript(p.script.text)) continue;
     const action = actionFor(p, choices);
     const s = p.script;
     if (action.kind === 'install') {
-      const item: ImportInstall = { name: s.name, text: s.text, enabled: choices.enabledFromFile ? s.enabled : false };
-      if (action.followUrl) item.followUrl = action.followUrl;
-      if (s.location) item.location = s.location;
-      if (s.foreignId) item.foreignId = s.foreignId;
-      if (choices.values && s.values) item.values = s.values;
-      if (Object.keys(s.files).length > 0) item.files = s.files;
-      installs.push(item);
+      installs.push(installItem(s, choices, action.linkTo));
     } else if (action.kind === 'update' && p.match) {
       const update: ImportUpdate = { scriptId: p.match.id };
       if (action.text) {
@@ -206,5 +296,7 @@ export function buildImportRequest(
       updates.push(update);
     }
   }
-  return { source: backup.source, into, installs, updates };
+  const request: ImportRequest = { source: backup.source, into, installs, updates };
+  if (restores.length > 0) request.restores = restores;
+  return request;
 }

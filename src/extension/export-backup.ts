@@ -80,6 +80,10 @@ interface ManifestScript {
   uuid: string;
   collection: string;
   location: string | null;
+  // Its path in a directory, manifest or GitHub collection, as that
+  // collection's scan names it, so a restore keeps the row a refresh
+  // matches. Absent for a scripts collection, whose `location` is it.
+  relative_path?: string;
   enabled: boolean;
 }
 
@@ -350,13 +354,15 @@ export function planExportEntries(input: ExportInput): ExportPlan {
       if (own.has(path.toLowerCase())) continue;
       entries.push({ path: `${folder}${path}`, data: f.data });
     }
-    manifestScripts.push({
+    const entry: ManifestScript = {
       path: manifestEntryPath(`${stem}.user.js`),
       uuid: script.id,
       collection: collection.id,
       location,
       enabled: isScriptEnabled(script),
-    });
+    };
+    if (collectionKind(collection.path) !== 'scripts') entry.relative_path = script.relativePath;
+    manifestScripts.push(entry);
   }
   for (const [path, data] of shared) entries.push({ path, data });
 

@@ -1893,11 +1893,16 @@ Left from its design:
     (`src/extension/script-store.ts`), and the boot log replay in
     `src/extension/script-updater.ts`. Both want `mapWithConcurrency`.
 - Import follow-ups (see [docs/import.md](docs/import.md)):
-  - **Restore collections from SourceMonkey's export.** New scripts all
-    go into one scripts collection. The manifest names each script's
-    collection, with its kind and location, so a restore could re-add
-    a directory or manifest collection by its location, and put the
-    rest back into scripts collections of their old names.
+  - **Restoring into a collection that's already here.** A restore
+    makes only collections that aren't here. For one that is, its
+    scripts import one by one, and new ones go to the Into collection
+    rather than back into it. Merging into it (adding its missing
+    scripts there, taking the values of a directory's rows) would need
+    its own choices.
+  - **Restoring a manifest collection from an older export.** Before
+    `relative_path`, the manifest didn't say where such a script sat in
+    its collection, so it can't be restored. A local or GitHub
+    directory's path is worked out from the script's location.
   - **Replace the text of a copy that has a location.** Today only a
     copy kept as text takes the file's text; any other gets only its
     values and on/off state. Options: refresh it from its location, or

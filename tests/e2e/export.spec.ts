@@ -66,8 +66,8 @@ test.describe('backup export', () => {
       local_files: true,
     }]);
     expect(manifest.scripts).toEqual(expect.arrayContaining([
-      { path: 'Alpha/Alpha.user.js', uuid: alpha.id, collection: collection!.id, location: `${scriptsDir.path}/alpha.user.js`, enabled: true },
-      { path: 'Beta/Beta.user.js', uuid: beta.id, collection: collection!.id, location: `${scriptsDir.path}/sub/beta.user.js`, enabled: false },
+      { path: 'Alpha/Alpha.user.js', uuid: alpha.id, collection: collection!.id, location: `${scriptsDir.path}/alpha.user.js`, relative_path: 'alpha.user.js', enabled: true },
+      { path: 'Beta/Beta.user.js', uuid: beta.id, collection: collection!.id, location: `${scriptsDir.path}/sub/beta.user.js`, relative_path: 'sub/beta.user.js', enabled: false },
     ]));
 
     expect(byPath.get('Alpha/Alpha.user.js')!.data.toString('utf8'))

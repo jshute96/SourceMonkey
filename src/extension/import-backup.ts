@@ -44,27 +44,40 @@ export interface BackupScript {
   // Edited in the other manager (Tampermonkey's `user_modified`), so its
   // location no longer serves what it runs.
   userModified?: boolean;
-  // From SourceMonkey: the `uuid` of the collection it was in.
+  // From SourceMonkey: the `uuid` of the collection it was in, and its
+  // path in that collection when it is a directory, manifest or GitHub
+  // one (the row a refresh of it matches).
   collection?: string;
+  relativePath?: string;
 }
 
 // A collection in SourceMonkey's export (`collections` in its manifest).
 export interface BackupCollection {
   uuid: string;
   name: string;
-  kind: string;
+  kind: 'directory' | 'manifest' | 'scripts';
+  // The folder, manifest or GitHub URL it loads from. Null for a
+  // scripts collection.
   location: string | null;
+  // For a built-in scripts collection: the scheme it is the default for.
+  builtin?: 'file' | 'http' | 'github';
   enabled: boolean;
+  localFiles: boolean;
 }
 
 export interface ParsedBackup {
   source: ImportSource;
-  // What the file is, for the dialog: "Tampermonkey backup".
-  label: string;
   scripts: BackupScript[];
   collections: BackupCollection[];
   // Scripts the file has but that could not be read.
-  problems: string[];
+  problems: BackupProblem[];
+}
+
+// A script in the file that can't be imported: its zip entry (or, in
+// Tampermonkey's JSON, its name), and why.
+export interface BackupProblem {
+  file: string;
+  reason: string;
 }
 
 // Thrown for a file that is not a backup we can read. The message is
@@ -76,13 +89,7 @@ export const IMPORT_IS_USERSCRIPT =
 export const IMPORT_NOT_A_BACKUP =
   'This is not a backup file SourceMonkey can read. Choose an export from SourceMonkey, Tampermonkey or Violentmonkey.';
 export const IMPORT_NO_SCRIPTS = 'This backup has no userscripts in it';
-
-const SOURCE_LABELS: Record<ImportSource, string> = {
-  sourcemonkey: 'SourceMonkey export',
-  tampermonkey: 'Tampermonkey backup',
-  violentmonkey: 'Violentmonkey backup',
-  other: 'Zip file of userscripts',
-};
+export const IMPORT_SCRIPT_EMPTY = 'The script is empty';
 
 // The manager's name, for "Imported from Tampermonkey".
 export const SOURCE_NAMES: Record<ImportSource, string> = {
@@ -153,7 +160,7 @@ function readText(text: string): ParsedBackup {
   }
   if (!isObject(root) || !Array.isArray(root.scripts)) throw new ImportFormatError(IMPORT_NOT_A_BACKUP);
   const scripts: BackupScript[] = [];
-  const problems: string[] = [];
+  const problems: BackupProblem[] = [];
   const order: number[] = [];
   root.scripts.forEach((entry, i) => {
     try {
@@ -161,21 +168,22 @@ function readText(text: string): ParsedBackup {
       scripts.push(script);
       order.push(numberOr(isObject(entry) ? entry.position : undefined, Infinity));
     } catch (err) {
-      problems.push(errorText(err));
+      const name = isObject(entry) ? stringOr(entry.name, '') : '';
+      problems.push({ file: name || `Script ${i + 1}`, reason: errorText(err) });
     }
   });
-  return finish({ source: 'tampermonkey', label: SOURCE_LABELS.tampermonkey, scripts: sortBy(scripts, order), collections: [], problems });
+  return finish({ source: 'tampermonkey', scripts: sortBy(scripts, order), collections: [], problems });
 }
 
 // One script of Tampermonkey's JSON backup: flat fields, base64 text.
 function readTampermonkeyJsonScript(entry: unknown, i: number): BackupScript {
-  if (!isObject(entry)) throw new Error(`Script ${i + 1} in the backup could not be read`);
+  if (!isObject(entry)) throw new Error('The entry is not a script');
   const label = stringOr(entry.name, '') || `Script ${i + 1}`;
   let text: string;
   try {
     text = utf8FromBase64(stringOr(entry.source, ''));
   } catch {
-    throw new Error(`${label}: Its text could not be read`);
+    throw new Error('Its text could not be read');
   }
   const options = isObject(entry.options) ? entry.options : {};
   const deps: Dependency[] = [];
@@ -191,7 +199,7 @@ function readTampermonkeyJsonScript(entry: unknown, i: number): BackupScript {
       } catch { /* a body that won't decode is fetched instead */ }
     }
   }
-  return withLabel(label, () => script({
+  return script({
     index: i,
     fallbackName: label,
     text,
@@ -201,16 +209,14 @@ function readTampermonkeyJsonScript(entry: unknown, i: number): BackupScript {
     values: decodeValues(isObject(entry.storage) ? entry.storage.data : undefined),
     userModified: options.user_modified != null && options.user_modified !== false,
     deps,
-  }));
+  });
 }
 
-// `make()`, with a failure's message led by the script's label.
-function withLabel<T>(label: string, make: () => T): T {
-  try {
-    return make();
-  } catch (err) {
-    throw new Error(`${label}: ${errorText(err)}`);
-  }
+// A script with no text: one only a restore brings back, as the empty
+// file it was. Imported on its own it would be a script that does
+// nothing, so the dialog lists it as invalid.
+export function isEmptyScript(text: string): boolean {
+  return !text.trim();
 }
 
 // ---------- Zip files ----------
@@ -276,7 +282,7 @@ function readZip(bytes: Uint8Array): ParsedBackup {
 
   const scripts: BackupScript[] = [];
   const order: number[] = [];
-  const problems: string[] = [];
+  const problems: BackupProblem[] = [];
   scriptPaths.forEach((path, fileIndex) => {
     const stem = path.slice(0, -'.user.js'.length);
     const base = stem.slice(stem.lastIndexOf('/') + 1);
@@ -318,11 +324,13 @@ function readZip(bytes: Uint8Array): ParsedBackup {
         values,
         userModified: opts.user_modified != null && opts.user_modified !== false,
         collection: stringOr(smEntry?.collection, '') || undefined,
+        relativePath: stringOr(smEntry?.relative_path, '') || undefined,
+        allowEmpty: smEntry !== undefined,
         deps,
       }));
       order.push(smOrder.get(path) ?? numberOr(settings.position ?? vmEntry?.position, Infinity));
     } catch (err) {
-      problems.push(`${path}: ${errorText(err)}`);
+      problems.push({ file: path, reason: errorText(err) });
     }
   });
 
@@ -330,16 +338,24 @@ function readZip(bytes: Uint8Array): ParsedBackup {
   if (sm && Array.isArray(sm.collections)) {
     for (const c of sm.collections) {
       if (!isObject(c) || typeof c.uuid !== 'string') continue;
-      collections.push({
+      const kind = c.kind === 'directory' || c.kind === 'manifest' || c.kind === 'scripts' ? c.kind : null;
+      const location = typeof c.location === 'string' && c.location ? c.location : null;
+      // A collection this importer can't recreate is left out; its
+      // scripts still import one by one.
+      if (!kind || (kind !== 'scripts' && !location)) continue;
+      const collection: BackupCollection = {
         uuid: c.uuid,
         name: stringOr(c.name, ''),
-        kind: stringOr(c.kind, ''),
-        location: typeof c.location === 'string' ? c.location : null,
+        kind,
+        location: kind === 'scripts' ? null : location,
         enabled: c.enabled !== false,
-      });
+        localFiles: c.local_files !== false,
+      };
+      if (kind === 'scripts' && (c.builtin === 'file' || c.builtin === 'http' || c.builtin === 'github')) collection.builtin = c.builtin;
+      collections.push(collection);
     }
   }
-  return finish({ source, label: SOURCE_LABELS[source], scripts: sortBy(scripts, order), collections, problems });
+  return finish({ source, scripts: sortBy(scripts, order), collections, problems });
 }
 
 // A manifest entry is a URL, with `#` and `%` percent-encoded
@@ -433,9 +449,14 @@ function script(args: {
   values?: Record<string, unknown>;
   userModified?: boolean;
   collection?: string;
+  relativePath?: string;
+  // A script SourceMonkey exported is read even when empty: it was a
+  // row there, which a restore brings back. Anything else does nothing
+  // with it (`isEmptyScript`).
+  allowEmpty?: boolean;
   deps: readonly Dependency[];
 }): BackupScript {
-  if (!args.text.trim()) throw new Error('The script is empty');
+  if (!args.allowEmpty && isEmptyScript(args.text)) throw new Error(IMPORT_SCRIPT_EMPTY);
   const header = parseHeader(args.text);
   // Unsaid, the header's `@downloadURL` is where it came from. SourceMonkey
   // says so outright, `null` for a script it kept only as text.
@@ -457,6 +478,7 @@ function script(args: {
   if (args.values) out.values = args.values;
   if (args.userModified) out.userModified = true;
   if (args.collection) out.collection = args.collection;
+  if (args.relativePath) out.relativePath = args.relativePath;
   return out;
 }
 
@@ -481,7 +503,7 @@ function filesByRef(header: ParsedHeader | null, location: string, deps: readonl
 function finish(backup: ParsedBackup): ParsedBackup {
   if (backup.scripts.length === 0) {
     throw new ImportFormatError(backup.problems.length > 0
-      ? `No script in this backup could be read. ${backup.problems[0]}.`
+      ? `No script in this backup could be read. ${backup.problems[0].file}: ${backup.problems[0].reason}.`
       : IMPORT_NO_SCRIPTS);
   }
   backup.scripts.forEach((s, i) => { s.index = i; });

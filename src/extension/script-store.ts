@@ -47,6 +47,7 @@
 
 import {
   canonicalCollectionInput,
+  containerKind,
   containerKindForSingleFileInput,
   containerPath,
   fetchScriptFileUrlText,
@@ -1799,9 +1800,11 @@ export interface ImportInstall {
   name: string;
   text: string;
   enabled: boolean;
-  // An http(s) URL to load from and update from later. Without one the
-  // script is kept as its text (an `imported:///` location).
-  followUrl?: string;
+  // Its location, an http(s) URL or a file, to link it to: it loads
+  // from there on its next refresh, and takes updates. Without one, or
+  // for a file that can't be read now, the script is kept as its text
+  // (an `imported:///` location).
+  linkTo?: string;
   // Where it loaded from before, and the id the file gave it, for its
   // import record.
   location?: string;
@@ -1809,6 +1812,23 @@ export interface ImportInstall {
   values?: Record<string, unknown>;
   // `@require` / `@resource` bodies from the file, by ref.
   files?: Record<string, PushedFile>;
+  // Its path in a restored directory, manifest or GitHub collection,
+  // which its scan names it by. Used as given, in place of `linkTo`.
+  relativePath?: string;
+}
+
+// A collection from a SourceMonkey export, made again with its scripts.
+// Its next refresh then loads what its location has now.
+export interface ImportRestore {
+  name: string;
+  kind: 'directory' | 'manifest' | 'scripts';
+  // The folder, manifest or GitHub URL. Null for a scripts collection.
+  location: string | null;
+  // A built-in scripts collection's scheme.
+  builtin?: 'file' | 'http' | 'github';
+  enabled: boolean;
+  localFiles: boolean;
+  installs: ImportInstall[];
 }
 
 // A change to a script already here. Each field is applied when present.
@@ -1828,24 +1848,46 @@ export interface ImportRequest {
   into: { collectionId: string } | { newCollectionName: string };
   installs: ImportInstall[];
   updates: ImportUpdate[];
+  restores?: ImportRestore[];
 }
 
 export interface ImportOutcome {
-  // The collection new scripts went into, when there were any.
+  // The collection new scripts went into, when there were any, else the
+  // first one restored.
   collectionId: string | null;
   installed: number;
+  // Collections made again, and their scripts (not in `installed`).
+  restored: number;
+  restoredScripts: number;
   updated: number;
+  // Scripts to be linked to a file that couldn't be read, kept as text.
+  keptAsText: string[];
   failed: { name: string; message: string }[];
 }
 
 export async function importScripts(request: ImportRequest): Promise<ImportOutcome> {
   const now = Date.now();
   const failed: ImportOutcome['failed'] = [];
+  const keptAsText: string[] = [];
   let collectionId: string | null = null;
   let installed = 0;
+  let restored = 0;
+  let restoredScripts = 0;
+  for (const restore of request.restores ?? []) {
+    try {
+      const out = await installImported({ create: await restoreTarget(restore, now) }, restore.installs, request.source, now, failed, keptAsText);
+      if (out.collectionId) {
+        collectionId ??= out.collectionId;
+        restored++;
+        restoredScripts += out.installed;
+      }
+    } catch (err) {
+      for (const item of restore.installs) failed.push({ name: item.name, message: describeError(err) });
+    }
+  }
   if (request.installs.length > 0) {
-    const out = await installImported(await importTarget(request.into), request, now, failed);
-    collectionId = out.collectionId;
+    const out = await installImported(await importTarget(request.into), request.installs, request.source, now, failed, keptAsText);
+    collectionId = out.collectionId ?? collectionId;
     installed = out.installed;
   }
   let updated = 0;
@@ -1858,7 +1900,7 @@ export async function importScripts(request: ImportRequest): Promise<ImportOutco
     }
   }
   await valueWritesSaved();
-  return { collectionId, installed, updated, failed };
+  return { collectionId, installed, restored, restoredScripts, updated, keptAsText, failed };
 }
 
 // Where new scripts go: a scripts collection here, or a new one, which
@@ -1879,6 +1921,24 @@ async function importTarget(into: ImportRequest['into']): Promise<ImportTarget> 
   };
 }
 
+// The row for a restored collection, written once its scripts are.
+async function restoreTarget(restore: ImportRestore, now: number): Promise<StoredCollection> {
+  let path: string;
+  if (restore.kind === 'scripts') path = restore.builtin ? containerPath(restore.builtin) : newContainerPath();
+  else if (restore.location) path = await canonicalLocation(restore.location);
+  else throw new Error('Internal error: A restored collection needs its location');
+  const seed: StoredCollection = {
+    id: crypto.randomUUID(),
+    path,
+    lastRefreshedAt: now,
+    scriptIds: [],
+    enabled: restore.enabled,
+    displayName: restore.name.trim() || inferDisplayName(path),
+  };
+  if (!restore.localFiles) seed.localFiles = false;
+  return seed;
+}
+
 // The scripts collection `id`, if new scripts can go into it.
 async function checkedImportCollection(id: string): Promise<StoredCollection> {
   const found = await getRaw<StoredCollection>(collectionKey(id));
@@ -1886,6 +1946,20 @@ async function checkedImportCollection(id: string): Promise<StoredCollection> {
   if (!isContainerCollection(found.path)) throw new Error('Internal error: Scripts can only be imported into a scripts collection');
   if (isSmDevCollection(found.path)) throw new Error(SM_DEV_COLLECTION_LOCKED);
   return found;
+}
+
+// Where a script linked to `location` sits in a scripts collection, or
+// null to keep it as text. A file must be readable now: a refresh drops
+// a row whose file is gone, which would lose the script.
+async function linkedLocation(location: string, containerPath: string): Promise<string | null> {
+  const path = await canonicalLocation(location);
+  if (isHttpUrl(path)) return path;
+  try {
+    await fetchScriptFileUrlText(scriptFileUrl(containerPath, path));
+    return path;
+  } catch {
+    return null;
+  }
 }
 
 // The rows behind an imported script's text.
@@ -1899,21 +1973,27 @@ function storedTextKeys(url: string): string[] {
 // other manager, and nothing is fetched but its dependencies.
 async function installImported(
   target: ImportTarget,
-  request: ImportRequest,
+  installs: readonly ImportInstall[],
+  source: ImportSource,
   now: number,
   failed: ImportOutcome['failed'],
+  keptAsText: string[],
 ): Promise<{ collectionId: string | null; installed: number }> {
   const container = 'existing' in target ? target.existing : target.create;
   const fetchCache: FileFetchCache = new Map();
   const localFiles = localFileScope(container);
-  const built = await mapWithConcurrency(request.installs, FETCH_SCRIPTS_PER_COLLECTION_CONCURRENCY, async (item) => {
+  const built = await mapWithConcurrency(installs, FETCH_SCRIPTS_PER_COLLECTION_CONCURRENCY, async (item) => {
     const id = crypto.randomUUID();
-    let relativePath: string | null = null;
+    let relativePath: string | null = item.relativePath ?? null;
     try {
-      relativePath = item.followUrl ? await canonicalLocation(item.followUrl) : importedUrl(item.name);
+      if (relativePath === null && item.linkTo) {
+        relativePath = await linkedLocation(item.linkTo, container.path);
+        if (relativePath === null) keptAsText.push(item.name);
+      }
+      relativePath ??= importedUrl(item.name);
       const stored = isStoredTextUrl(relativePath);
       if (stored) {
-        const info: ImportInfo = { source: request.source, importedAt: now };
+        const info: ImportInfo = { source, importedAt: now };
         if (item.foreignId) info.foreignId = item.foreignId;
         if (item.location) info.location = item.location;
         await writeLocal({
@@ -1944,11 +2024,21 @@ async function installImported(
       if ('existing' in target) {
         current = await checkedImportCollection(container.id);
       } else {
+        // A restored collection whose location or built-in collection
+        // is here already: that one holds these scripts.
+        if (!isContainerCollection(target.create.path) || containerKind(target.create.path)) {
+          const path = canonicalCollectionInput(target.create.path);
+          if (collections.some((c) => canonicalCollectionInput(c.path) === path)) throw new Error(COLLECTION_ALREADY_REGISTERED);
+        }
         // A name already taken gets a number, as a second import the
-        // same day would.
+        // same day would. A name inferred from the path may repeat, as
+        // when a collection is added (`createLocationCollection`), and a
+        // built-in collection may use its own reserved name.
         const base = target.create.displayName ?? 'Imported scripts';
         let name = base;
-        for (let n = 2; collectionNameInUse(name, collections) || !mayUseReservedName(name, null); n++) name = `${base} (${n})`;
+        if (base !== inferDisplayName(target.create.path)) {
+          for (let n = 2; collectionNameInUse(name, collections) || !mayUseReservedName(name, target.create.path); n++) name = `${base} (${n})`;
+        }
         current = { ...target.create, displayName: name };
       }
       const held = new Set<string>();

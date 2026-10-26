@@ -1,7 +1,7 @@
 // Backups across managers: SourceMonkey's export imported into
 // Tampermonkey (TM) and Violentmonkey (VM), and theirs into SourceMonkey,
 // through each manager's own import and export pages. Checks what each
-// side can carry: scripts, on/off state, ids, stored values, and
+// side can carry: scripts, enabled state, ids, stored values, and
 // dependency files. See docs/import.md and docs/export-format.md.
 //
 // Each test runs a second browser with the copy of TM or VM that
@@ -11,7 +11,7 @@ import { testWithBrowserDownloads as test, expect } from '../fixtures/extension'
 import type { BrowserContext, Page } from '@playwright/test';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 import {
-  chooseImport, closeExport, closeImport, confirmImport, exportVia, importRows, openImport,
+  chooseImport, closeExport, closeImport, confirmImport, existingRows, exportVia, newRows, openImport,
 } from '../fixtures/backup-dialogs';
 import { readZip } from '../fixtures/zip-read.mjs';
 import type { StoredScriptLike } from '../fixtures/sw-api';
@@ -210,7 +210,7 @@ test.describe('backups across managers', () => {
   test.beforeEach(() => { dir = ScriptsDir.create(); });
   test.afterEach(() => { dir.cleanup(); });
 
-  test('SourceMonkey → Tampermonkey → SourceMonkey: ids, on/off and values survive', async ({
+  test('SourceMonkey → Tampermonkey → SourceMonkey: ids, enabled state and values survive', async ({
     extensionContext, extensionId, sm, fixtureServer,
   }) => {
     test.skip(fetchedVersion('tampermonkey') === null, 'No Tampermonkey fetched: run sm-dev --manager tm manager fetch');
@@ -251,10 +251,9 @@ test.describe('backups across managers', () => {
 
       await sm.writeGmValues(byName.get('Alpha')!.id, [{ key: 'theme', value: 'light' }]);
       await openImport(page, '#page-menu', back);
-      const rows = await importRows(page);
-      expect(rows.map((r) => [r.name, r.here]).sort()).toEqual([
-        ['Alpha', 'Same'], ['Beta', 'Same'], ['Gamma', 'Same'], ['Only in TM', 'New'],
-      ]);
+      expect((await existingRows(page)).map((r) => [r.name, r.compared]).sort())
+        .toEqual([['Alpha', 'Same'], ['Beta', 'Same'], ['Gamma', 'Same']]);
+      expect((await newRows(page)).map((r) => r.name)).toEqual(['Only in TM']);
       await chooseImport(page, { existing: 'always' });
       await confirmImport(page);
       await closeImport(page);
@@ -295,7 +294,7 @@ test.describe('backups across managers', () => {
     fs.writeFileSync(jsonFile, json);
     const page = await smPage(extensionContext, extensionId);
     await openImport(page, '#page-menu', jsonFile);
-    expect((await importRows(page)).map((r) => [r.name, r.here])).toEqual([['Stores', 'New'], ['Off', 'New'], ['Uses lib', 'New']]);
+    expect((await newRows(page)).map((r) => r.name)).toEqual(['Stores', 'Off', 'Uses lib']);
     expect(await confirmImport(page)).toBe('Imported 3 scripts.');
     await closeImport(page);
 
@@ -310,8 +309,8 @@ test.describe('backups across managers', () => {
 
     // The zip has the same scripts, known by TM's uuids.
     await openImport(page, '#page-menu', zip);
-    expect((await importRows(page)).map((r) => [r.name, r.here]).sort())
-      .toEqual([['Off', 'Same'], ['Stores', 'Same'], ['Uses lib', 'Same']]);
+    expect((await existingRows(page)).map((r) => [r.name, r.compared, r.type]).sort())
+      .toEqual([['Off', 'Same', 'imported'], ['Stores', 'Same', 'imported'], ['Uses lib', 'Same', 'imported']]);
     await page.close();
   });
 
@@ -356,8 +355,8 @@ test.describe('backups across managers', () => {
     await sm.writeGmValues(byName.get('Alpha')!.id, [{ key: 'theme', value: 'light' }]);
     await openImport(page, '#page-menu', back);
     // VM keeps no ids: what's here is found by namespace and name.
-    expect((await importRows(page)).map((r) => [r.name, r.here]).sort())
-      .toEqual([['Alpha', 'Same'], ['Beta', 'Same'], ['VM own', 'New']]);
+    expect((await existingRows(page)).map((r) => [r.name, r.compared]).sort()).toEqual([['Alpha', 'Same'], ['Beta', 'Same']]);
+    expect((await newRows(page)).map((r) => r.name)).toEqual(['VM own']);
     await chooseImport(page, { existing: 'always' });
     await confirmImport(page);
     await closeImport(page);

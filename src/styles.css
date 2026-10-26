@@ -157,6 +157,17 @@ dialog.sm-dialog {
   box-sizing: border-box;
 }
 dialog.sm-dialog::backdrop { background: rgba(20, 24, 32, 0.35); }
+/* While a modal dialog is open, the page behind it doesn't scroll. A
+   wheel or arrow key that the dialog can't use (it fits, or it's at
+   its end) would otherwise scroll the page instead. The dialog itself
+   scrolls (the browser caps its height), and keeps a scroll that
+   reaches its end from passing on.
+   Pages with these dialogs (`has-dialogs`) always keep the scrollbar's
+   space, so hiding it doesn't shift the page sideways, whether or not
+   the page was scrolling. */
+html.has-dialogs { scrollbar-gutter: stable; }
+html:has(dialog.sm-dialog:modal) { overflow: hidden; }
+dialog.sm-dialog { overscroll-behavior: contain; }
 /* Wider than the shared default: every row here can hold a long name
    or path — the collection name, the file name with its subdirectory,
    each dependency's path, the description. */
@@ -171,6 +182,9 @@ dialog.sm-dialog.export-dialog { width: 560px; }
    text sit in the grid's columns and a click on the text still ticks. */
 :is(.export-dialog, .import-dialog) .dlg-option { display: grid; grid-template-columns: auto 1fr; column-gap: 6px; align-items: baseline; }
 :is(.export-dialog, .import-dialog) .dlg-option .dlg-check { display: contents; }
+/* `display: contents` drops the label's own opacity, so a greyed option
+   greys its text instead. */
+:is(.export-dialog, .import-dialog) .dlg-option .dlg-check.off > span { opacity: 0.5; }
 :is(.export-dialog, .import-dialog) .dlg-option .dlg-hint { grid-column: 2; }
 :is(.export-dialog, .import-dialog) .dlg-includes { display: flex; flex-direction: column; gap: 8px; padding-top: 5px; }
 :is(.export-dialog, .import-dialog) .dlg-result { grid-column: 1 / -1; overflow-wrap: anywhere; }
@@ -179,25 +193,26 @@ dialog.sm-dialog.export-dialog { width: 560px; }
 .export-dialog .dlg-saved-path { overflow-wrap: anywhere; }
 .export-dialog .dlg-saved .copy-btn { display: inline-flex; vertical-align: middle; width: 20px; height: 20px; margin-left: 0.4em; }
 /* The import dialog (src/extension/import-dialog.ts) shares the export
-   dialog's option rows above, and adds the file row and the script table. */
+   dialog's option rows above, and adds the file row and a section per
+   kind of script, each with its table. */
 dialog.sm-dialog.import-dialog { width: 760px; }
 .import-dialog [hidden] { display: none !important; }
-.import-dialog .dlg-file { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.import-dialog .dlg-file { grid-column: 1 / -1; display: flex; gap: 8px; align-items: baseline; min-width: 0; }
 .import-dialog .dlg-file-name { color: #444; overflow-wrap: anywhere; }
-.import-dialog .dlg-summary,
-.import-dialog .dlg-problems,
-.import-dialog .import-table-wrap { grid-column: 1 / -1; margin: 0; }
-.import-dialog .dlg-problems { color: #92400e; }
-.import-dialog .dlg-problems p, .import-dialog .dlg-problems ul { margin: 0; }
-/* Tall enough for a handful of rows; a big backup scrolls inside it. */
-.import-dialog .import-table-wrap { max-height: 260px; overflow: auto; border: 1px solid #e5e7eb; border-radius: 4px; }
+/* Each section spans the dialog: its heading, its controls, then the
+   table of the scripts they apply to. Tall enough for a handful of
+   rows; a big backup scrolls inside it. */
+.import-dialog .import-section { grid-column: 1 / -1; min-width: 0; }
+.import-dialog .import-heading { font-size: 1em; font-weight: 600; margin: 4px 0 2px; }
+.import-dialog .import-section .import-table-wrap:not(:empty) { margin-top: 8px; max-height: 220px; overflow: auto; border: 1px solid #e5e7eb; border-radius: 4px; }
 .import-table { width: 100%; border-collapse: collapse; font-size: 0.93em; }
 .import-table th { position: sticky; top: 0; background: #f6f7f9; text-align: left; font-weight: 600; }
 .import-table th, .import-table td { padding: 3px 8px; border-bottom: 1px solid #eef0f3; vertical-align: baseline; }
-.import-table td:first-child, .import-table th:first-child { width: 1.5em; padding-right: 0; }
-.import-table .import-name { overflow-wrap: anywhere; }
+.import-table.with-checks td:first-child, .import-table.with-checks th:first-child { width: 1.5em; padding-right: 0; }
+.import-table :is(.import-name, .import-location) { overflow-wrap: anywhere; }
+.import-table .import-type a { text-decoration: none; }
 .import-table .import-version, .import-table .import-here, .import-table .import-values { white-space: nowrap; }
-.import-table .import-values { text-align: right; }
+.import-table .import-values { text-align: center; }
 .import-table .import-skip { color: #888; }
 .import-dialog .dlg-into select { font: inherit; padding: 2px 6px; max-width: 100%; }
 .sm-dialog .dlg-title {

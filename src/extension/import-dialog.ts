@@ -5,15 +5,21 @@
 
 import { describeError, getAllScriptMetas, getCollections, type StoredCollection } from './script-store.js';
 import { importScripts } from './worker-client.js';
-import { effectiveDisplayName } from './collection-display.js';
-import { importInfoKey, isContainerCollection, isImportedUrl, isSmDevCollection, isStoredTextUrl, type ImportInfo } from './directories.js';
-import { ImportFormatError, readBackup, SOURCE_NAMES, type ParsedBackup } from './import-backup.js';
+import { effectiveDisplayName, makeSchemeChip } from './collection-display.js';
 import {
-  actionFor, actionText, buildImportRequest, DEFAULT_CHOICES, hereText, planImport,
-  type ImportChoices, type InstalledCopy, type PlannedScript,
+  githubRawToBlobUrl, importInfoKey, isContainerCollection, isGithubDirCollection, isFileUrl, isHttpUrl, isImportedUrl, isSmDevCollection, isStoredTextUrl,
+  pathToFileUrl, type ImportInfo,
+} from './directories.js';
+import {
+  IMPORT_SCRIPT_EMPTY, ImportFormatError, isEmptyScript, readBackup, SOURCE_NAMES, type BackupProblem, type ParsedBackup,
+} from './import-backup.js';
+import {
+  actionFor, buildImportRequest, DEFAULT_CHOICES, hereText, planCollections, planImport, restoredScripts,
+  type ImportChoices, type InstalledCopy, type PlannedCollection, type PlannedScript,
 } from './import-plan.js';
 import { sha256Hex } from '../bytes.js';
-import { displayLocation } from '../script-display.js';
+import { displayLocation, viewerUrl } from '../script-display.js';
+import { getValue } from '../userscript-header.js';
 
 interface DialogElements {
   dialog: HTMLDialogElement;
@@ -21,12 +27,15 @@ interface DialogElements {
   fileInput: HTMLInputElement;
   chooseBtn: HTMLButtonElement;
   fileName: HTMLElement;
-  summary: HTMLElement;
-  problems: HTMLElement;
-  tableWrap: HTMLElement;
-  options: HTMLElement[];
+  // Shown once a file is read: each only when it has something in it.
+  collectionsSection: Section;
+  newSection: Section;
+  existingSection: Section;
+  invalidSection: Section;
+  includeSection: HTMLElement;
+  newerLabel: HTMLElement;
   into: HTMLSelectElement;
-  follow: HTMLInputElement;
+  link: HTMLInputElement;
   existing: HTMLInputElement[];
   values: HTMLInputElement;
   enabled: HTMLInputElement;
@@ -34,6 +43,14 @@ interface DialogElements {
   error: HTMLElement;
   cancel: HTMLButtonElement;
   ok: HTMLButtonElement;
+}
+
+// One of the dialog's sections: a heading that carries its count, its
+// controls, and a table of the scripts they apply to.
+interface Section {
+  root: HTMLElement;
+  heading: HTMLElement;
+  tableWrap: HTMLElement;
 }
 
 let elements: DialogElements | null = null;
@@ -59,6 +76,17 @@ function option(type: 'checkbox' | 'radio', id: string, label: string, hint?: st
   return { wrap, input };
 }
 
+function section(id: string, controls: Node[]): Section {
+  const root = el<HTMLElement>('section', 'import-section');
+  root.id = id;
+  const heading = el<HTMLElement>('h3', 'import-heading');
+  const box = el<HTMLElement>('div', 'dlg-includes');
+  box.append(...controls);
+  const tableWrap = el<HTMLElement>('div', 'import-table-wrap');
+  root.append(heading, box, tableWrap);
+  return { root, heading, tableWrap };
+}
+
 function buildDialog(): DialogElements {
   const dialog = el<HTMLDialogElement>('dialog', 'sm-dialog import-dialog');
   const title = el<HTMLElement>('h2', 'dlg-title');
@@ -79,48 +107,44 @@ function buildDialog(): DialogElements {
   chooseBtn.id = 'import-choose';
   const fileName = el<HTMLElement>('span', 'dlg-file-name');
   fileRow.append(fileInput, chooseBtn, fileName);
-  body.append(el('span', 'dlg-label', 'File'), fileRow);
+  body.appendChild(fileRow);
 
-  const summary = el<HTMLElement>('p', 'dlg-summary');
-  summary.id = 'import-summary';
-  const problems = el<HTMLElement>('div', 'dlg-problems');
-  problems.id = 'import-problems';
-  const tableWrap = el<HTMLElement>('div', 'import-table-wrap');
-  body.append(summary, problems, tableWrap);
+  // A SourceMonkey export's collections, made again with their scripts.
+  const collectionsSection = section('import-collections', [el('div', 'dlg-hint',
+    'Restore these collections with their scripts from the backup. Each collection’s next refresh loads what its location has then.')]);
 
-  // New scripts.
-  const newLabel = el<HTMLElement>('span', 'dlg-label', 'New scripts');
-  const newSlot = el<HTMLElement>('div', 'dlg-includes');
+  // Scripts not installed here.
   const intoRow = el<HTMLElement>('label', 'dlg-into');
   const into = el<HTMLSelectElement>('select');
   into.id = 'import-into';
   intoRow.append(el('span', undefined, 'Into '), into);
-  const follow = option('checkbox', 'import-follow', 'Update from their web addresses',
-    'A script with a web address loads from it and takes its updates. The rest are kept as the file’s text.');
-  newSlot.append(intoRow, follow.wrap);
+  const link = option('checkbox', 'import-link', 'Link scripts to their location from the import',
+    'If the script has a URL or file location, it can get updates from that location.');
+  const newSection = section('import-new', [intoRow]);
 
-  // Scripts already here.
-  const existingLabel = el<HTMLElement>('span', 'dlg-label', 'Already here');
-  const existingSlot = el<HTMLElement>('div', 'dlg-includes');
+  // Scripts installed here.
   const leave = option('radio', 'import-existing-leave', 'Leave them as they are', undefined, 'import-existing');
-  const newer = option('radio', 'import-existing-newer', 'Replace the ones the file has a newer version of', undefined, 'import-existing');
+  const newer = option('radio', 'import-existing-newer', newerLabel(0), undefined, 'import-existing');
   const always = option('radio', 'import-existing-always', 'Replace them all', undefined, 'import-existing');
   leave.input.value = 'leave';
   newer.input.value = 'newer';
   always.input.value = 'always';
-  existingSlot.append(leave.wrap, newer.wrap, always.wrap,
-    el('div', 'dlg-hint', 'The text of a script kept only in SourceMonkey is replaced. Any other loads from its own location, so only its values and on/off state change.'));
+  const existingSection = section('import-existing', [leave.wrap, newer.wrap, always.wrap,
+    el('div', 'dlg-hint', 'The text of a script kept only in SourceMonkey is replaced. Any other loads from its own location, so only its values and enabled state change.')]);
+
+  // Scripts the file has that can't be imported.
+  const invalidSection = section('import-invalid', [el('div', undefined, 'These scripts cannot be imported.')]);
 
   // What comes with each script.
-  const includeLabel = el<HTMLElement>('span', 'dlg-label', 'Include');
-  const includeSlot = el<HTMLElement>('div', 'dlg-includes');
   const values = option('checkbox', 'import-values', 'Stored values',
     'Each script’s GM_setValue data. They replace the values of a script already here.');
-  const enabled = option('checkbox', 'import-enabled', 'On/off state',
-    'Without it, new scripts come in turned off.');
-  includeSlot.append(values.wrap, enabled.wrap);
+  const enabled = option('checkbox', 'import-enabled', 'Enabled state',
+    'Use enabled states from the backup. Otherwise, new scripts load enabled.');
+  const include = section('import-include', [link.wrap, values.wrap, enabled.wrap]);
+  include.heading.textContent = 'Include';
+  include.tableWrap.remove();
 
-  body.append(newLabel, newSlot, existingLabel, existingSlot, includeLabel, includeSlot);
+  body.append(collectionsSection.root, newSection.root, existingSection.root, invalidSection.root, include.root);
   const result = el<HTMLElement>('div', 'dlg-result');
   result.id = 'import-result';
   result.hidden = true;
@@ -145,9 +169,10 @@ function buildDialog(): DialogElements {
 
   document.body.appendChild(dialog);
   return {
-    dialog, title, fileInput, chooseBtn, fileName, summary, problems, tableWrap,
-    options: [newLabel, newSlot, existingLabel, existingSlot, includeLabel, includeSlot],
-    into, follow: follow.input, existing: [leave.input, newer.input, always.input],
+    dialog, title, fileInput, chooseBtn, fileName,
+    collectionsSection, newSection, existingSection, invalidSection, includeSection: include.root,
+    newerLabel: newer.wrap.querySelector<HTMLElement>('.dlg-check')!,
+    into, link: link.input, existing: [leave.input, newer.input, always.input],
     values: values.input, enabled: enabled.input, result, error, cancel, ok,
   };
 }
@@ -170,9 +195,16 @@ export function openImportDialog(request: ImportDialogRequest = {}): Promise<str
     let landed: string | null = null;
     let backup: ParsedBackup | null = null;
     let plan: PlannedScript[] = [];
+    let planned: PlannedCollection[] = [];
     let containers: StoredCollection[] = [];
     const checked = new Set<number>();
-    const resultCells = new Map<number, HTMLElement>();
+    // The backup's collections to restore, by uuid, and the scripts
+    // that puts in them.
+    const restoring = new Set<string>();
+    let restored = new Set<number>();
+    // Each existing script's row, greyed when the choice leaves it alone.
+    const existingRows = new Map<number, HTMLElement>();
+    const sections = [ui.collectionsSection.root, ui.newSection.root, ui.existingSection.root, ui.invalidSection.root, ui.includeSection];
     const abort = new AbortController();
     const on = <K extends keyof HTMLElementEventMap>(target: HTMLElement, type: K, fn: (ev: HTMLElementEventMap[K]) => void): void => {
       target.addEventListener(type, fn as EventListener, { signal: abort.signal });
@@ -186,15 +218,10 @@ export function openImportDialog(request: ImportDialogRequest = {}): Promise<str
 
     ui.title.textContent = 'Import scripts';
     ui.fileInput.value = '';
-    ui.fileName.textContent = 'No file chosen';
-    ui.summary.textContent = '';
-    ui.summary.hidden = true;
-    ui.problems.replaceChildren();
-    ui.problems.hidden = true;
-    ui.tableWrap.replaceChildren();
-    ui.tableWrap.hidden = true;
-    for (const node of ui.options) node.hidden = true;
-    ui.follow.checked = DEFAULT_CHOICES.followUrls;
+    ui.fileName.textContent = '';
+    for (const node of sections) node.hidden = true;
+    for (const sec of [ui.collectionsSection, ui.newSection, ui.existingSection, ui.invalidSection]) sec.tableWrap.replaceChildren();
+    ui.link.checked = DEFAULT_CHOICES.linkLocations;
     for (const r of ui.existing) r.checked = r.value === DEFAULT_CHOICES.existing;
     ui.values.checked = DEFAULT_CHOICES.values;
     ui.enabled.checked = DEFAULT_CHOICES.enabledFromFile;
@@ -204,8 +231,9 @@ export function openImportDialog(request: ImportDialogRequest = {}): Promise<str
     ui.cancel.hidden = false;
     ui.ok.textContent = 'Import';
     const controls = (): (HTMLInputElement | HTMLButtonElement | HTMLSelectElement)[] => [
-      ui.chooseBtn, ui.into, ui.follow, ...ui.existing, ui.values, ui.enabled,
-      ...ui.tableWrap.querySelectorAll('input'),
+      ui.chooseBtn, ui.into, ui.link, ...ui.existing, ui.values, ui.enabled,
+      // Not a collection that's here already, which stays off.
+      ...ui.dialog.querySelectorAll<HTMLInputElement>('.import-table input:not([data-fixed])'),
     ];
     for (const c of controls()) c.disabled = false;
 
@@ -213,22 +241,29 @@ export function openImportDialog(request: ImportDialogRequest = {}): Promise<str
       existing: (ui.existing.find((r) => r.checked)?.value ?? DEFAULT_CHOICES.existing) as ImportChoices['existing'],
       values: ui.values.checked,
       enabledFromFile: ui.enabled.checked,
-      followUrls: ui.follow.checked,
+      linkLocations: ui.link.checked,
     });
 
-    // Each row's Result, and the button's count, from the choices now.
+    // How many scripts here the backup has a newer version of.
+    let newerCount = 0;
+    // Set once the person picks a choice for existing scripts. Until
+    // then it follows the default as the count changes.
+    let existingPicked = false;
+
+    // The existing rows' greying, and the button's count, from the
+    // choices now.
     const refresh = (): void => {
+      const newerOff = busy || done || newerCount === 0;
+      ui.existing[1].disabled = newerOff;
+      ui.newerLabel.classList.toggle('off', newerOff);
       const now = choices();
-      let count = 0;
+      let count = restored.size;
       for (const p of plan) {
-        const action = actionFor(p, now);
+        if (restored.has(p.script.index)) continue;
         const kept = checked.has(p.script.index);
-        const cell = resultCells.get(p.script.index);
-        if (cell) {
-          cell.textContent = kept ? actionText(action, p) : 'Skip';
-          cell.classList.toggle('import-skip', !kept || action.kind === 'skip');
-        }
-        if (kept && action.kind !== 'skip') count++;
+        const acts = kept && actionFor(p, now).kind !== 'skip';
+        existingRows.get(p.script.index)?.classList.toggle('import-skip', !acts);
+        if (acts) count++;
       }
       ui.ok.disabled = busy || count === 0;
       ui.ok.textContent = count > 0 ? `Import ${count} ${count === 1 ? 'script' : 'scripts'}` : 'Import';
@@ -250,6 +285,11 @@ export function openImportDialog(request: ImportDialogRequest = {}): Promise<str
       ui.fileName.textContent = file.name;
       backup = null;
       plan = [];
+      planned = [];
+      restoring.clear();
+      restored = new Set();
+      newerCount = 0;
+      existingPicked = false;
       try {
         const parsed = readBackup(new Uint8Array(await file.arrayBuffer()));
         const [installed, hashes, collections] = await Promise.all([
@@ -258,13 +298,12 @@ export function openImportDialog(request: ImportDialogRequest = {}): Promise<str
         if (gen !== fileGen) return;
         backup = parsed;
         plan = planImport(parsed, installed, hashes);
-        containers = collections.filter((c) => isContainerCollection(c.path) && !isSmDevCollection(c.path));
+        const mine = collections.filter((c) => !isSmDevCollection(c.path));
+        planned = planCollections(parsed, mine.map((c) => ({ id: c.id, name: effectiveDisplayName(c), path: c.path })));
+        containers = mine.filter((c) => isContainerCollection(c.path));
       } catch (err) {
         if (gen !== fileGen) return;
-        ui.summary.hidden = true;
-        ui.problems.hidden = true;
-        ui.tableWrap.hidden = true;
-        for (const node of ui.options) node.hidden = true;
+        for (const node of sections) node.hidden = true;
         ui.error.textContent = err instanceof ImportFormatError ? err.message : `This file could not be read: ${describeError(err)}`;
         refresh();
         return;
@@ -273,23 +312,16 @@ export function openImportDialog(request: ImportDialogRequest = {}): Promise<str
     };
 
     const showPlan = (parsed: ParsedBackup): void => {
-      const here = plan.filter((p) => p.match).length;
-      ui.summary.textContent = `${parsed.label}: ${plan.length} ${plan.length === 1 ? 'script' : 'scripts'}`
-        + (here > 0 ? `, ${here} already here.` : '.');
-      ui.summary.hidden = false;
-      ui.problems.replaceChildren();
-      if (parsed.problems.length > 0) {
-        ui.problems.appendChild(el('p', undefined, 'These could not be read, and are left out:'));
-        const list = el<HTMLUListElement>('ul');
-        for (const text of parsed.problems) list.appendChild(el('li', undefined, text));
-        ui.problems.appendChild(list);
-      }
-      ui.problems.hidden = parsed.problems.length === 0;
-
       checked.clear();
       for (const p of plan) checked.add(p.script.index);
-      ui.tableWrap.replaceChildren(buildTable());
-      ui.tableWrap.hidden = false;
+      restoring.clear();
+      for (const c of planned) if (!c.here && !c.cantRestore) restoring.add(c.collection.uuid);
+      ui.collectionsSection.heading.textContent = `Collections (${planned.length})`;
+      ui.collectionsSection.tableWrap.replaceChildren(collectionsTable(planned, restoring, () => {
+        showScripts();
+      }, on));
+      ui.collectionsSection.root.hidden = planned.length === 0;
+      ui.includeSection.hidden = false;
 
       // New scripts go into a new collection unless the dialog was
       // opened from one.
@@ -297,24 +329,87 @@ export function openImportDialog(request: ImportDialogRequest = {}): Promise<str
         ? `Imported scripts (${new Date().toLocaleDateString()})`
         : `Imported from ${SOURCE_NAMES[parsed.source]} (${new Date().toLocaleDateString()})`;
       ui.into.replaceChildren();
-      const fresh = el<HTMLOptionElement>('option', undefined, `A new collection, “${newName}”`);
-      fresh.value = '';
-      fresh.dataset.newName = newName;
-      ui.into.appendChild(fresh);
+      const newOption = el<HTMLOptionElement>('option', undefined, `A new collection, “${newName}”`);
+      newOption.value = '';
+      newOption.dataset.newName = newName;
+      ui.into.appendChild(newOption);
       for (const c of containers) {
         const o = el<HTMLOptionElement>('option', undefined, effectiveDisplayName(c));
         o.value = c.id;
         ui.into.appendChild(o);
       }
       ui.into.value = containers.some((c) => c.id === request.collectionId) ? request.collectionId! : '';
-      for (const node of ui.options) node.hidden = false;
+      showScripts();
+    };
+
+    // The New, Existing and Invalid sections, of the scripts no
+    // restored collection takes.
+    const showScripts = (): void => {
+      if (!backup) return;
+      restored = restoredScripts(planned, restoring);
+      existingRows.clear();
+      const outside = plan.filter((p) => !restored.has(p.script.index));
+      // An empty script only a restore can bring back.
+      const empty = outside.filter((p) => isEmptyScript(p.script.text));
+      const rest = outside.filter((p) => !empty.includes(p));
+      const problems: BackupProblem[] = [
+        ...backup.problems, ...empty.map((p) => ({ file: p.script.name, reason: IMPORT_SCRIPT_EMPTY })),
+      ];
+      ui.invalidSection.heading.textContent = `Invalid scripts (${problems.length})`;
+      ui.invalidSection.tableWrap.replaceChildren(invalidTable(problems));
+      ui.invalidSection.root.hidden = problems.length === 0;
+      const added = rest.filter((p) => !p.match);
+      const here = rest.filter((p) => p.match);
+      const newer = here.filter((p) => p.here === 'older-here').length;
+
+      ui.newSection.heading.textContent = `New scripts (${added.length})`;
+      ui.newSection.tableWrap.replaceChildren(scriptTable('import-new-table', added, ['Name', 'Version', 'Type', 'Values'], (p) => [
+        el('td', 'import-name', p.script.name),
+        el('td', 'import-version', p.script.version),
+        typeCell(p.script.location, 'Where the backup says it loaded from'),
+        valuesCell(p.script.values !== undefined),
+      ]));
+      ui.existingSection.heading.textContent = `Existing scripts (${here.length})`;
+      ui.existingSection.tableWrap.replaceChildren(scriptTable('import-existing-table', here,
+        ['Name', 'Backup version', 'Installed version', 'Compared', 'Type', 'Values'], (p, tr) => {
+          existingRows.set(p.script.index, tr);
+          const compared = hereText(p);
+          const cell = el<HTMLTableCellElement>('td', 'import-here', compared.text);
+          cell.title = compared.title;
+          return [
+            installedNameCell(p),
+            el('td', 'import-version', p.script.version),
+            el('td', 'import-version', (p.match?.header ? getValue(p.match.header, 'version') : '') ?? ''),
+            cell,
+            typeCell(p.match?.fileUrl, 'Where the installed copy loads from'),
+            valuesCell(p.script.values !== undefined),
+          ];
+        }));
+      ui.newSection.root.hidden = added.length === 0;
+      ui.existingSection.root.hidden = here.length === 0;
+
+      ui.newerLabel.querySelector('span')!.textContent = newerLabel(newer);
+      newerCount = newer;
+      // The default, unless it has nothing to do: then it is greyed,
+      // and Leave is the choice. A choice the person made stays, unless
+      // it is the greyed one.
+      if (!existingPicked) {
+        const start = newer === 0 && DEFAULT_CHOICES.existing === 'newer' ? 'leave' : DEFAULT_CHOICES.existing;
+        for (const r of ui.existing) r.checked = r.value === start;
+      } else if (newer === 0 && ui.existing[1].checked) {
+        ui.existing[0].checked = true;
+      }
       refresh();
     };
 
-    const buildTable = (): HTMLElement => {
-      resultCells.clear();
-      const table = el<HTMLTableElement>('table', 'import-table');
-      table.id = 'import-table';
+    // A section's table: a checkbox per script (and one for all), then
+    // `cells` for each.
+    const scriptTable = (
+      id: string, rows: readonly PlannedScript[], headings: readonly string[],
+      cells: (p: PlannedScript, tr: HTMLTableRowElement) => HTMLElement[],
+    ): HTMLElement => {
+      const table = el<HTMLTableElement>('table', 'import-table with-checks');
+      table.id = id;
       const head = el<HTMLTableRowElement>('tr');
       const all = el<HTMLInputElement>('input');
       all.type = 'checkbox';
@@ -323,17 +418,17 @@ export function openImportDialog(request: ImportDialogRequest = {}): Promise<str
       all.setAttribute('aria-label', 'Import all');
       const allCell = el<HTMLTableCellElement>('th');
       allCell.appendChild(all);
-      head.append(allCell, ...['Name', 'Version', 'Here', 'Values', 'Result'].map((t) => el('th', undefined, t)));
+      head.append(allCell, ...headings.map((t) => el('th', undefined, t)));
       table.appendChild(el('thead')).appendChild(head);
       const tbody = el<HTMLTableSectionElement>('tbody');
       const boxes: HTMLInputElement[] = [];
-      for (const p of plan) {
+      for (const p of rows) {
         const s = p.script;
         const tr = el<HTMLTableRowElement>('tr');
         tr.dataset.index = String(s.index);
         const box = el<HTMLInputElement>('input');
         box.type = 'checkbox';
-        box.checked = true;
+        box.checked = checked.has(s.index);
         box.setAttribute('aria-label', `Import ${s.name}`);
         on(box, 'change', () => {
           if (box.checked) checked.add(s.index);
@@ -342,24 +437,18 @@ export function openImportDialog(request: ImportDialogRequest = {}): Promise<str
           refresh();
         });
         boxes.push(box);
+        all.checked &&= box.checked;
         const boxCell = el<HTMLTableCellElement>('td');
         boxCell.appendChild(box);
-        const name = el<HTMLTableCellElement>('td', 'import-name', s.name);
-        if (s.location) name.title = displayLocation(s.location);
-        const here = hereText(p);
-        const hereCell = el<HTMLTableCellElement>('td', 'import-here', here.text);
-        hereCell.title = here.title;
-        const count = s.values ? Object.keys(s.values).length : 0;
-        const result = el<HTMLTableCellElement>('td', 'import-result');
-        resultCells.set(s.index, result);
-        tr.append(boxCell, name, el('td', 'import-version', s.version), hereCell,
-          el('td', 'import-values', count > 0 ? String(count) : ''), result);
+        tr.append(boxCell, ...cells(p, tr));
         tbody.appendChild(tr);
       }
       on(all, 'change', () => {
         for (const b of boxes) b.checked = all.checked;
-        checked.clear();
-        if (all.checked) for (const p of plan) checked.add(p.script.index);
+        for (const p of rows) {
+          if (all.checked) checked.add(p.script.index);
+          else checked.delete(p.script.index);
+        }
         refresh();
       });
       table.appendChild(tbody);
@@ -379,15 +468,26 @@ export function openImportDialog(request: ImportDialogRequest = {}): Promise<str
         : { newCollectionName: selected?.dataset.newName ?? 'Imported scripts' };
       setBusy(true);
       try {
-        const out = await importScripts(buildImportRequest(backup, plan, checked, choices(), into));
+        const out = await importScripts(buildImportRequest(backup, plan, checked, choices(), into, planned, restoring));
         done = true;
-        landed = out.installed > 0 ? out.collectionId : null;
+        landed = out.installed > 0 || out.restored > 0 ? out.collectionId : null;
         const parts = [
+          ...(out.restored > 0
+            ? [`restored ${out.restored} ${out.restored === 1 ? 'collection' : 'collections'} with ${out.restoredScripts} ${out.restoredScripts === 1 ? 'script' : 'scripts'}`]
+            : []),
           ...(out.installed > 0 ? [`imported ${out.installed} ${out.installed === 1 ? 'script' : 'scripts'}`] : []),
           ...(out.updated > 0 ? [`updated ${out.updated}`] : []),
         ];
-        const line = parts.length > 0 ? `${parts.join(' and ')}.` : 'nothing changed.';
+        const line = parts.length > 0
+          ? `${parts.length > 2 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts.join(' and ')}.`
+          : 'nothing changed.';
         ui.result.replaceChildren(el('p', 'dlg-done', line.charAt(0).toUpperCase() + line.slice(1)));
+        if (out.keptAsText.length > 0) {
+          ui.result.appendChild(el('p', undefined, 'These scripts’ files couldn’t be read, so they use the backup’s copy and won’t get updates:'));
+          const list = el<HTMLUListElement>('ul');
+          for (const name of out.keptAsText) list.appendChild(el('li', undefined, name));
+          ui.result.appendChild(list);
+        }
         if (out.failed.length > 0) {
           ui.result.appendChild(el('p', undefined, 'These failed:'));
           const list = el<HTMLUListElement>('ul');
@@ -418,7 +518,13 @@ export function openImportDialog(request: ImportDialogRequest = {}): Promise<str
       const file = ui.fileInput.files?.[0];
       if (file) void onFile(file);
     });
-    for (const input of [ui.follow, ...ui.existing, ui.values, ui.enabled]) on(input, 'change', refresh);
+    for (const input of [ui.link, ui.values, ui.enabled]) on(input, 'change', refresh);
+    for (const input of ui.existing) {
+      on(input, 'change', () => {
+        existingPicked = true;
+        refresh();
+      });
+    }
     on(ui.ok, 'click', () => void onOk());
     on(ui.cancel, 'click', finish);
     // Esc while importing would leave the import running behind a
@@ -431,6 +537,160 @@ export function openImportDialog(request: ImportDialogRequest = {}): Promise<str
     ui.dialog.showModal();
     ui.chooseBtn.focus();
   });
+}
+
+const KIND_NAMES: Record<PlannedCollection['collection']['kind'], string> = {
+  directory: 'Directory',
+  manifest: 'Manifest',
+  scripts: 'Scripts',
+};
+
+// The Collections section's table: a checkbox for each collection a
+// restore can make, its kind and location, its scripts, and whether
+// it's here already. `changed` runs when a checkbox does.
+function collectionsTable(
+  planned: readonly PlannedCollection[],
+  restoring: Set<string>,
+  changed: () => void,
+  on: (target: HTMLElement, type: 'change', fn: () => void) => void,
+): HTMLElement {
+  const table = el<HTMLTableElement>('table', 'import-table with-checks');
+  table.id = 'import-collections-table';
+  const head = el<HTMLTableRowElement>('tr');
+  head.append(el('th'), ...['Name', 'Kind', 'Location', 'Scripts', 'Status'].map((t) => el('th', undefined, t)));
+  table.appendChild(el('thead')).appendChild(head);
+  const tbody = el<HTMLTableSectionElement>('tbody');
+  for (const c of planned) {
+    const bc = c.collection;
+    const tr = el<HTMLTableRowElement>('tr');
+    tr.dataset.uuid = bc.uuid;
+    const box = el<HTMLInputElement>('input');
+    box.type = 'checkbox';
+    box.checked = restoring.has(bc.uuid);
+    const fixed = c.here !== undefined || c.cantRestore === true;
+    if (fixed) {
+      box.disabled = true;
+      box.dataset.fixed = '';
+    }
+    box.setAttribute('aria-label', `Restore ${bc.name}`);
+    on(box, 'change', () => {
+      if (box.checked) restoring.add(bc.uuid);
+      else restoring.delete(bc.uuid);
+      changed();
+    });
+    const boxCell = el<HTMLTableCellElement>('td');
+    boxCell.appendChild(box);
+    const kind = bc.builtin ? `${KIND_NAMES[bc.kind]} (built-in)`
+      : bc.location && isGithubDirCollection(bc.location) ? 'GitHub' : KIND_NAMES[bc.kind];
+    const status = el<HTMLTableCellElement>('td', 'import-here', c.here ? 'Already here' : c.cantRestore ? 'Can’t restore' : 'New');
+    status.title = c.here
+      ? `Here as “${c.here.name}”. Its scripts are listed as new or existing scripts.`
+      : c.cantRestore
+        ? 'This export is from an older version that doesn’t record where its scripts are in the collection. Its scripts are listed as new or existing scripts.'
+        : 'Not here. Restoring makes it again.';
+    tr.append(
+      boxCell,
+      el('td', 'import-name', bc.name),
+      el('td', undefined, kind),
+      locationCell(bc.location),
+      el('td', 'import-count', String(c.scripts.length)),
+      status,
+    );
+    if (fixed) tr.classList.add('import-skip');
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  return table;
+}
+
+// A collection's location, linked to it. Empty for a scripts collection.
+function locationCell(location: string | null): HTMLElement {
+  const td = el<HTMLTableCellElement>('td', 'import-location');
+  if (!location) return td;
+  const a = el<HTMLAnchorElement>('a', undefined, displayLocation(location));
+  a.href = locationHref(location);
+  a.target = '_blank';
+  a.rel = 'noopener';
+  td.appendChild(a);
+  return td;
+}
+
+// A location as a link: a GitHub raw URL as its page, a path as a
+// file:// URL.
+function locationHref(location: string): string {
+  return isHttpUrl(location) ? githubRawToBlobUrl(location) ?? location
+    : isFileUrl(location) ? location : pathToFileUrl(location);
+}
+
+// The Existing section's second choice, with how many scripts it covers.
+function newerLabel(count: number): string {
+  return `Replace the ones the backup has a newer version of (${count})`;
+}
+
+// The Type column: the scheme chip the collections page shows for
+// `location` (`http`, `file`, `imported`…), linked to it when it is a
+// URL or a file. Empty for a script with no location.
+function typeCell(location: string | undefined, what: string): HTMLElement {
+  const td = el<HTMLTableCellElement>('td', 'import-type');
+  if (!location) return td;
+  const chip = makeSchemeChip(location);
+  if (isStoredTextUrl(location)) {
+    td.appendChild(chip);
+    return td;
+  }
+  const a = el<HTMLAnchorElement>('a');
+  a.href = locationHref(location);
+  a.target = '_blank';
+  a.rel = 'noopener';
+  a.title = `${what}: ${displayLocation(location)}`;
+  a.appendChild(chip);
+  td.appendChild(a);
+  return td;
+}
+
+// An existing script's name, linked to the installed copy the import
+// would update, in the viewer.
+function installedNameCell(p: PlannedScript): HTMLElement {
+  const td = el<HTMLTableCellElement>('td', 'import-name');
+  if (!p.match) {
+    td.textContent = p.script.name;
+    return td;
+  }
+  const a = el<HTMLAnchorElement>('a', undefined, p.script.name);
+  a.href = viewerUrl(p.match.id);
+  a.target = '_blank';
+  a.rel = 'noopener';
+  a.title = `Open the installed copy, in ${p.match.collectionName}`;
+  td.appendChild(a);
+  return td;
+}
+
+// The Values column: a check for a script with stored values in the file.
+function valuesCell(hasValues: boolean): HTMLElement {
+  const td = el<HTMLTableCellElement>('td', 'import-values', hasValues ? '\u2713' : '');
+  if (hasValues) {
+    td.title = 'Has stored values in the backup';
+    td.setAttribute('aria-label', 'Has stored values');
+  }
+  return td;
+}
+
+// The scripts the file has that can't be imported: each one's file in
+// the zip (or name, in Tampermonkey's JSON) and why.
+function invalidTable(problems: readonly BackupProblem[]): HTMLElement {
+  const table = el<HTMLTableElement>('table', 'import-table');
+  table.id = 'import-invalid-table';
+  const head = el<HTMLTableRowElement>('tr');
+  head.append(el('th', undefined, 'File'), el('th', undefined, 'Reason'));
+  table.appendChild(el('thead')).appendChild(head);
+  const tbody = el<HTMLTableSectionElement>('tbody');
+  for (const p of problems) {
+    const tr = el<HTMLTableRowElement>('tr');
+    tr.append(el('td', 'import-name', p.file), el('td', undefined, p.reason));
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  return table;
 }
 
 // The scripts here an import can match: every collection's but sm-dev's.

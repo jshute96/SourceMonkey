@@ -6,11 +6,12 @@ import assert from 'node:assert/strict';
 
 import {
   actionFor,
-  actionText,
   buildImportRequest,
   DEFAULT_CHOICES,
   hereText,
+  planCollections,
   planImport,
+  restorePath,
 } from '../../dist/extension/import-plan.js';
 import { parseHeader } from '../../dist/userscript-header.js';
 
@@ -33,7 +34,7 @@ function copy(id, name, over = {}) {
   };
 }
 
-const backup = (scripts) => ({ source: 'tampermonkey', label: 'Tampermonkey backup', scripts, collections: [], problems: [] });
+const backup = (scripts) => ({ source: 'tampermonkey', scripts, collections: [], problems: [] });
 
 test('matches by id, then location, then namespace and name', () => {
   const scripts = [
@@ -90,25 +91,21 @@ test('the choices decide each script', () => {
   const act = (choices) => plan.map((p) => actionFor(p, { ...DEFAULT_CHOICES, ...choices }));
 
   const newer = act({});
-  assert.deepEqual(newer[0], { kind: 'install', followUrl: 'https://example.com/w.user.js' });
+  assert.deepEqual(newer[0], { kind: 'install', linkTo: 'https://example.com/w.user.js' });
   // Edited in the other manager: kept as its text.
   assert.deepEqual(newer[1], { kind: 'install' });
   // A copy that loads from its location keeps its text.
   assert.deepEqual(newer[2], { kind: 'update', text: false, values: true, enabled: false });
   assert.deepEqual(newer[3], { kind: 'update', text: true, values: false, enabled: true });
   assert.deepEqual(newer[4], { kind: 'skip' });
-  assert.equal(actionText(newer[3], plan[3]), 'Replace its text and on/off state');
-  assert.equal(actionText(newer[0], plan[0]), 'Install, updating from its web address');
 
-  assert.deepEqual(act({ followUrls: false })[0], { kind: 'install' });
+  assert.deepEqual(act({ linkLocations: false })[0], { kind: 'install' });
   assert.deepEqual(act({ existing: 'leave' }).slice(2).map((a) => a.kind), ['skip', 'skip', 'skip']);
   // Replace them all: the same text still takes the file's values.
   assert.deepEqual(act({ existing: 'always' })[4], { kind: 'update', text: false, values: true, enabled: false });
   assert.deepEqual(act({ existing: 'always', values: false })[4], { kind: 'skip' });
   // A newer version for a copy with a location, and nothing else to change.
-  const located = act({ values: false })[2];
-  assert.deepEqual(located, { kind: 'skip', located: true });
-  assert.equal(actionText(located, plan[2]), 'Leave as it is: it loads from its own location');
+  assert.deepEqual(act({ values: false })[2], { kind: 'skip' });
 });
 
 test('the request carries what each kept row needs', () => {
@@ -120,13 +117,94 @@ test('the request carries what each kept row needs', () => {
   const installed = [copy('u', 'Up', { stored: true })];
   const b = backup(scripts);
   const plan = planImport(b, installed, ['h0', 'h1', 'h2']);
+  // Without the file's enabled states, a new script loads enabled.
   const request = buildImportRequest(b, plan, new Set([0, 1]), { ...DEFAULT_CHOICES, enabledFromFile: false }, { newCollectionName: 'Imported' });
   assert.equal(request.source, 'tampermonkey');
   assert.deepEqual(request.into, { newCollectionName: 'Imported' });
   assert.equal(request.installs.length, 1);
   assert.deepEqual(
     { ...request.installs[0], text: undefined },
-    { name: 'New', text: undefined, enabled: false, foreignId: 'tm-1', values: { a: 1 }, files: scripts[0].files },
+    { name: 'New', text: undefined, enabled: true, foreignId: 'tm-1', values: { a: 1 }, files: scripts[0].files },
   );
   assert.deepEqual(request.updates, [{ scriptId: 'u', text: scripts[1].text, files: {} }]);
+});
+
+test('backup collections match by id, location, built-in scheme, or a scripts collection\'s name', () => {
+  const collections = [
+    { uuid: 'c-id', name: 'X', kind: 'scripts', location: null, enabled: true, localFiles: true },
+    { uuid: 'c-dir', name: 'Dir', kind: 'directory', location: '/home/me/s', enabled: true, localFiles: true },
+    { uuid: 'c-http', name: 'Web', kind: 'scripts', location: null, builtin: 'http', enabled: true, localFiles: true },
+    { uuid: 'c-mine', name: 'Mine', kind: 'scripts', location: null, enabled: true, localFiles: true },
+    { uuid: 'c-gone', name: 'Gone', kind: 'manifest', location: 'https://example.com/script_manifest.json', enabled: false, localFiles: true },
+    { uuid: 'c-empty', name: 'Empty', kind: 'scripts', location: null, enabled: true, localFiles: true },
+  ];
+  const scripts = collections.filter((c) => c.uuid !== 'c-empty').map((c, i) => backupScript(i, `S${i}`, {
+    collection: c.uuid, location: c.location ? `${c.location.replace(/script_manifest.json$/, '')}/s${i}.user.js` : undefined,
+    relativePath: c.kind === 'manifest' ? `s${i}.user.js` : undefined,
+  }));
+  const here = [
+    { id: 'c-id', name: 'Renamed', path: 'container:abc' },
+    { id: 'h-dir', name: 'Other name', path: 'file:///home/me/s' },
+    { id: 'h-http', name: 'Scripts from web', path: 'container:http' },
+    { id: 'h-mine', name: 'mine', path: 'container:def' },
+  ];
+  const plan = planCollections({ ...backup(scripts), collections }, here);
+  // A collection with no scripts in the backup has nothing to restore.
+  assert.deepEqual(plan.map((c) => [c.collection.uuid, c.here?.id, c.scripts, c.cantRestore]), [
+    ['c-id', 'c-id', [0], undefined], ['c-dir', 'h-dir', [1], undefined], ['c-http', 'h-http', [2], undefined],
+    ['c-mine', 'h-mine', [3], undefined], ['c-gone', undefined, [4], undefined],
+  ]);
+  // A manifest from an export without `relative_path` can't be restored.
+  const old = scripts.map((x) => ({ ...x, relativePath: undefined }));
+  const [gone] = planCollections({ ...backup(old), collections }, here).filter((c) => c.collection.uuid === 'c-gone');
+  assert.deepEqual([gone.scripts, gone.cantRestore], [[4], true]);
+  assert.equal(buildImportRequest({ ...backup(old), collections }, planImport(backup(old), [], old.map(() => 'h')), new Set([4]),
+    DEFAULT_CHOICES, { newCollectionName: 'I' }, [gone], new Set(['c-gone'])).installs.length, 1);
+});
+
+test('a script\'s path in its restored collection: given, or worked out for a directory', () => {
+  const dir = { uuid: 'd', name: 'D', kind: 'directory', location: '/home/me/s/', enabled: true, localFiles: true };
+  const manifest = { ...dir, uuid: 'm', kind: 'manifest', location: 'https://example.com/script_manifest.json' };
+  const scripts = { ...dir, uuid: 'c', kind: 'scripts', location: null };
+  assert.equal(restorePath(backupScript(0, 'A', { collection: 'd', location: '/home/me/s/sub/a.user.js' }), dir), 'sub/a.user.js');
+  assert.equal(restorePath(backupScript(0, 'A', { collection: 'd', location: '/elsewhere/a.user.js' }), dir), null);
+  assert.equal(restorePath(backupScript(0, 'A', { collection: 'd', relativePath: 'given.user.js' }), dir), 'given.user.js');
+  const gh = { ...dir, uuid: 'g', location: 'https://github.com/o/r/tree/main/tests/examples' };
+  assert.equal(restorePath(backupScript(0, 'A', {
+    collection: 'g', location: 'https://raw.githubusercontent.com/o/r/main/tests/examples/a/a.user.js',
+  }), gh), 'a/a.user.js');
+  assert.equal(restorePath(backupScript(0, 'A', { collection: 'g', location: 'https://raw.githubusercontent.com/o/r/dev/x.user.js' }), gh), null);
+  // From an export that didn't record it, a manifest's entry is unknown.
+  assert.equal(restorePath(backupScript(0, 'A', { collection: 'm', location: 'https://example.com/a.user.js' }), manifest), null);
+  assert.equal(restorePath(backupScript(0, 'A', { collection: 'c' }), scripts), '');
+  assert.equal(restorePath(backupScript(0, 'A', { collection: 'other' }), scripts), null);
+});
+
+test('a restore takes its collection\'s scripts whatever their match, and the rest import as usual', () => {
+  const collections = [
+    { uuid: 'd', name: 'Dir', kind: 'directory', location: '/home/me/s', enabled: false, localFiles: false },
+    { uuid: 'w', name: 'Web', kind: 'scripts', location: null, builtin: 'http', enabled: true, localFiles: true },
+  ];
+  const scripts = [
+    backupScript(0, 'InDir', { collection: 'd', location: '/home/me/s/a.user.js', relativePath: 'a.user.js', values: { a: 1 } }),
+    backupScript(1, 'OnWeb', { collection: 'w', location: 'https://example.com/w.user.js' }),
+    backupScript(2, 'Loose'),
+  ];
+  const b = { ...backup(scripts), collections };
+  // InDir is installed elsewhere too; the restore still takes it.
+  const plan = planImport(b, [copy('x', 'InDir')], ['h0', 'h1', 'h2']);
+  const planned = planCollections(b, []);
+  const request = buildImportRequest(b, plan, new Set(), DEFAULT_CHOICES, { newCollectionName: 'Imported' }, planned, new Set(['d', 'w']));
+  assert.deepEqual(request.restores.map((r) => ({ ...r, installs: r.installs.map((i) => [i.name, i.relativePath, i.linkTo, i.values]) })), [
+    { name: 'Dir', kind: 'directory', location: '/home/me/s', enabled: false, localFiles: false,
+      installs: [['InDir', 'a.user.js', undefined, { a: 1 }]] },
+    { name: 'Web', kind: 'scripts', location: null, builtin: 'http', enabled: true, localFiles: true,
+      installs: [['OnWeb', undefined, 'https://example.com/w.user.js', undefined]] },
+  ]);
+  // Loose was unchecked.
+  assert.deepEqual(request.installs, []);
+  // Not restoring: they import one by one.
+  const plain = buildImportRequest(b, plan, new Set([0, 1, 2]), DEFAULT_CHOICES, { newCollectionName: 'Imported' }, planned, new Set());
+  assert.equal(plain.restores, undefined);
+  assert.deepEqual(plain.installs.map((i) => i.name), ['OnWeb', 'Loose']);
 });

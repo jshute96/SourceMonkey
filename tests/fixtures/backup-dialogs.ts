@@ -37,7 +37,9 @@ export interface ImportChoicesInput {
   existing?: 'leave' | 'newer' | 'always';
   values?: boolean;
   enabled?: boolean;
-  follow?: boolean;
+  link?: boolean;
+  // Restore the backup's collections that aren't here (all of them).
+  restore?: boolean;
   // The `Into` option's label, or its start.
   into?: string;
 }
@@ -57,20 +59,59 @@ export async function chooseImport(page: Page, choices: ImportChoicesInput): Pro
   if (choices.existing) await page.locator(`${d} #import-existing-${choices.existing}`).check();
   if (choices.values !== undefined) await page.locator(`${d} #import-values`).setChecked(choices.values);
   if (choices.enabled !== undefined) await page.locator(`${d} #import-enabled`).setChecked(choices.enabled);
-  if (choices.follow !== undefined) await page.locator(`${d} #import-follow`).setChecked(choices.follow);
+  if (choices.link !== undefined) await page.locator(`${d} #import-link`).setChecked(choices.link);
+  if (choices.restore !== undefined) {
+    for (const box of await page.locator(`${d} #import-collections-table tbody input:enabled`).all()) await box.setChecked(choices.restore);
+  }
   if (choices.into) {
     const label = await page.locator(`${d} #import-into option`).filter({ hasText: choices.into }).first().innerText();
     await page.locator(`${d} #import-into`).selectOption({ label });
   }
 }
 
-// Each table row's Name, Here and Result.
-export async function importRows(page: Page): Promise<{ name: string; here: string; result: string }[]> {
-  await expect(page.locator(`${IMPORT_DIALOG} #import-table`)).toBeVisible();
-  return await page.locator(`${IMPORT_DIALOG} #import-table tbody tr`).evaluateAll((rows) => rows.map((r) => ({
+// Waits for the preview of a chosen file: its Include section shows
+// with it.
+export async function previewShown(page: Page): Promise<void> {
+  await expect(page.locator(`${IMPORT_DIALOG} #import-include`)).toBeVisible();
+}
+
+// The New scripts table's rows: Name, Version, and the Type chip with
+// the location it links to ('' for none).
+export async function newRows(page: Page): Promise<{ name: string; version: string; type: string; href: string }[]> {
+  await previewShown(page);
+  return await page.locator(`${IMPORT_DIALOG} #import-new-table tbody tr`).evaluateAll((rows) => rows.map((r) => ({
     name: r.querySelector('.import-name')?.textContent ?? '',
-    here: r.querySelector('.import-here')?.textContent ?? '',
-    result: r.querySelector('.import-result')?.textContent ?? '',
+    version: r.querySelector('.import-version')?.textContent ?? '',
+    type: r.querySelector('.import-type')?.textContent ?? '',
+    href: r.querySelector('.import-type a')?.getAttribute('href') ?? '',
+  })));
+}
+
+// The Collections table's rows: Name, Kind, Location (as shown),
+// Scripts, Status, and whether it is checked to be restored.
+export async function collectionRows(page: Page): Promise<{
+  name: string; kind: string; location: string; scripts: string; status: string; restore: boolean;
+}[]> {
+  await previewShown(page);
+  return await page.locator(`${IMPORT_DIALOG} #import-collections-table tbody tr`).evaluateAll((rows) => rows.map((r) => {
+    const cells = [...r.querySelectorAll('td')].map((td) => td.textContent ?? '');
+    return {
+      name: cells[1], kind: cells[2], location: cells[3], scripts: cells[4], status: cells[5],
+      restore: (r.querySelector('input') as HTMLInputElement).checked,
+    };
+  }));
+}
+
+// The Existing scripts table's rows: Name, Compared, the installed
+// copy's Type, and whether the current choice changes the script (its
+// row isn't greyed).
+export async function existingRows(page: Page): Promise<{ name: string; compared: string; type: string; affected: boolean }[]> {
+  await previewShown(page);
+  return await page.locator(`${IMPORT_DIALOG} #import-existing-table tbody tr`).evaluateAll((rows) => rows.map((r) => ({
+    name: r.querySelector('.import-name')?.textContent ?? '',
+    compared: r.querySelector('.import-here')?.textContent ?? '',
+    type: r.querySelector('.import-type')?.textContent ?? '',
+    affected: !r.classList.contains('import-skip'),
   })));
 }
 
@@ -91,7 +132,7 @@ export async function importVia(
   page: Page, menuButton: string, file: string, choices: ImportChoicesInput = {},
 ): Promise<string> {
   await openImport(page, menuButton, file);
-  await expect(page.locator(`${IMPORT_DIALOG} #import-table`)).toBeVisible();
+  await previewShown(page);
   await chooseImport(page, choices);
   const result = await confirmImport(page);
   await closeImport(page);

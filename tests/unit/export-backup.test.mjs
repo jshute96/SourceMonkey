@@ -98,7 +98,7 @@ test('the manifest comes first, with collections and per-script fields', () => {
     uuid: 'c-1', name: '/home/me/s', kind: 'directory', location: '/home/me/s', enabled: true, local_files: true,
   }]);
   assert.deepEqual(m.scripts, [{
-    path: 'A/A.user.js', uuid: 'id-1', collection: 'c-1', location: '/home/me/s/a.user.js', enabled: true,
+    path: 'A/A.user.js', uuid: 'id-1', collection: 'c-1', location: '/home/me/s/a.user.js', enabled: true, relative_path: 'a.user.js',
   }]);
 });
 

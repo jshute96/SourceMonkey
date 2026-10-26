@@ -406,6 +406,14 @@ sourcemonkey-backup-2026-10-17T12-34-56-789Z.zip
       "collection": "b2e4f6a8-1c3d-4e5f-8a9b-0c1d2e3f4a5b",
       "location": "https://greasyfork.org/scripts/1/code/My%20Script.user.js",
       "enabled": true
+    },
+    {
+      "path": "My scripts/Tools/Tools.user.js",
+      "uuid": "6a1b3c5d-7e9f-4a2b-8c4d-6e8f0a1b2c3d",
+      "collection": "5d1c2b9e-8f3a-4c6d-9e2b-1a7f0c4d8e6b",
+      "location": "/home/me/userscripts/tools/tools.user.js",
+      "relative_path": "tools/tools.user.js",
+      "enabled": true
     }
   ]
 }
@@ -437,6 +445,7 @@ Per script, in each collection's order:
 | `uuid` | Its SourceMonkey id; the same as `meta.uuid` in its `.options.json` |
 | `collection` | The `uuid` of its collection |
 | `location` | Where it loads from: a URL, or an absolute file path. `null` for an imported script with no location |
+| `relative_path` | In a directory, manifest or GitHub collection: its path there, as the collection's scan names it (so an import restoring the collection keeps the row its next refresh matches). Absent in a scripts collection |
 | `enabled` | Its own flag, whatever its collection's |
 
 ### `.options.json`

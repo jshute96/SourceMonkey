@@ -90,7 +90,7 @@ test('one unreadable script is a problem, and the rest still read', () => {
   const file = { scripts: [{ name: 'Good', source: b64(userscript('Good')) }, { name: 'Empty', source: b64('  ') }, 7] };
   const got = readBackup(enc.encode(JSON.stringify(file)));
   assert.deepEqual(got.scripts.map((s) => s.name), ['Good']);
-  assert.deepEqual(got.problems, ['Empty: The script is empty', 'Script 3 in the backup could not be read']);
+  assert.deepEqual(got.problems, [{ file: 'Empty', reason: 'The script is empty' }, { file: 'Script 3', reason: 'The entry is not a script' }]);
 });
 
 test('files that are not backups are refused with a reason', () => {
@@ -157,7 +157,7 @@ test('a plain zip of userscripts reads at any depth', () => {
   assert.equal(got.scripts[0].enabled, true);
 });
 
-test('SourceMonkey export reads back: ids, collections, own flag, values, dependency files', () => {
+test('SourceMonkey export reads back: ids, collections, paths in them, own flag, values, dependency files', () => {
   const headerText = '// ==UserScript==\n// @name A\n// @namespace ns\n// @version 2\n'
     + '// @require https://cdn.example.com/shared.js\n// @require lib/util.js\n// ==/UserScript==\n';
   const shared = { ref: 'https://cdn.example.com/shared.js', url: 'https://cdn.example.com/shared.js', source: 'shared();' };
@@ -185,10 +185,16 @@ test('SourceMonkey export reads back: ids, collections, own flag, values, depend
   });
   const got = readBackup(buildZip(plan.entries, 5000));
   assert.equal(got.source, 'sourcemonkey');
-  assert.deepEqual(got.collections.map((c) => [c.uuid, c.kind, c.enabled]), [['c-1', 'directory', true], ['c-2', 'scripts', false]]);
+  assert.deepEqual(got.collections.map((c) => [c.uuid, c.kind, c.location, c.builtin, c.enabled, c.localFiles]), [
+    ['c-1', 'directory', '/home/me/s', undefined, true, true], ['c-2', 'scripts', null, 'http', false, true],
+  ]);
   const [ga, gw] = got.scripts;
   assert.equal(ga.foreignId, 'id-a');
   assert.equal(ga.collection, 'c-1');
+  // Its path in a directory collection, for a restore; a scripts
+  // collection's script has only its location.
+  assert.equal(ga.relativePath, 'a.user.js');
+  assert.equal(gw.relativePath, undefined);
   assert.equal(ga.location, '/home/me/s/a.user.js');
   // The script's own flag, not the TM-facing one.
   assert.equal(ga.enabled, false);
