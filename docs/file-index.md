@@ -661,7 +661,7 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 | `tests/greasyfork-examples/validate-corpus.mjs` | CLI that runs the install-time checks over the corpus offline and groups failures, with JSON output |
 | `tests/greasyfork-examples/record-results.mjs` | CLI that records findings in `corpus.json`: imports offline validation, sets test results, tags and notes, defines hand-added tags |
 | `tests/greasyfork-examples/serve-results.mjs` | Serves `results.html`, `corpus.json`, `corpus-help.js` and the downloaded scripts on localhost, for the results page |
-| `tests/greasyfork-examples/show-on-GreasyFork.user.js` | Userscript that shows corpus validation and test status beside each script's stats on Greasy Fork |
+| `tests/greasyfork-examples/show-on-GreasyFork.user.js` | Userscript that shows corpus validation and test status beside each script's stats on Greasy Fork, from GitHub Pages or a local server |
 | `tests/greasyfork-examples/corpus-help.js` | One-sentence descriptions of corpus test statuses, reasons and built-in tags, the tooltips in `results.html` and the Greasy Fork userscript |
 | `tests/greasyfork-examples/results.html` | Static page that reads `corpus.json` into a sortable, filterable table of findings, a summary of counts, and a code viewer |
 | `tests/greasyfork-examples/download-scripts.mjs` | CLI that downloads the corpus's userscripts plus their `@require` / `@resource` dependencies into a URL-shaped tree |

@@ -5,6 +5,12 @@ Tools and data for testing SourceMonkey against real-world userscripts: the
 others added since, downloaded with their dependencies, and a record of what
 testing each one found.
 
+The most recent results are published on GitHub Pages:
+
+- [Test results](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/results.html): every script's validation and test status.
+- [Corpus analysis](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/analysis.html): statistics on the scripts and what they use.
+- [SourceMonkey test status on Greasy Fork](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/show-on-GreasyFork.user.js): a userscript that shows each script's results beside its stats on Greasy Fork's pages (see [On Greasy Fork pages](#on-greasy-fork-pages)).
+
 This README covers the tools and data. For how to test scripts on their
 live sites and record results (also for agents), see the `corpus-testing`
 skill in [`.claude/skills/corpus-testing/`](../../.claude/skills/corpus-testing/SKILL.md).
@@ -38,7 +44,7 @@ from it.
 | `validate-corpus.mjs` | `files/` | stdout, `--json` file | [Validates](#validating-the-corpus) every downloaded script offline; `record-results.mjs validate` runs it |
 | `render-analysis.mjs` | `corpus.db`, `analysis.sql` | `analysis.html` | Renders the statistics report |
 | `serve-results.mjs` | `results.html`, `corpus.json`, `corpus-help.js` | | [Serves the results page](#viewing-results) on localhost |
-| `show-on-GreasyFork.user.js` | `corpus.json`, `corpus-help.js`, from `serve-results.mjs` | | Userscript that shows each script's validation and test status on Greasy Fork's script pages and listings |
+| `show-on-GreasyFork.user.js` | `corpus.json`, `corpus-help.js`, from GitHub Pages or `serve-results.mjs` | | Userscript that shows each script's validation and test status on Greasy Fork's script pages and listings |
 | `corpus.mjs` | | | Shared helpers: locked `corpus.json` updates, URL to `files/` path mapping |
 
 Each script takes `--help`, which prints its usage.
@@ -414,9 +420,15 @@ Beside `listing`, a record can hold:
 `results.html` reads `corpus.json` when it loads, so it's always current and
 never needs regenerating.
 
-```sh
-node tests/greasyfork-examples/serve-results.mjs   # then open http://localhost:8765/
-```
+- [On GitHub Pages](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/results.html), it shows the results as last pushed.
+  - There, "Code" opens the script's code on Greasy Fork, since the
+    downloaded copies aren't in git, and there's no "Copy filename".
+- Served locally, it shows results not pushed yet, and its code viewer
+  shows the downloaded copies:
+
+  ```sh
+  node tests/greasyfork-examples/serve-results.mjs   # then open http://localhost:8765/
+  ```
 
 - Served, the page fetches `corpus.json` itself. Its Reload button re-reads it
   and keeps your filters.
@@ -459,6 +471,22 @@ node tests/greasyfork-examples/serve-results.mjs   # then open http://localhost:
     when anything is hidden.
   - Full lets the browser's find (Ctrl+F) search them.
   - Each row's Show / Hide button overrides the setting for that row.
+
+### On Greasy Fork pages
+
+[`show-on-GreasyFork.user.js`](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/show-on-GreasyFork.user.js) shows each
+script's validation and test status beside its stats, on Greasy Fork's script
+pages and listings. Open that link with a userscript manager installed to
+install it.
+
+- It reads the published results on GitHub Pages by default.
+- Its menu has an item for each source, with the one in use checked:
+  - "Published results (GitHub Pages)", as last pushed.
+  - "Local results (localhost:8765)", from `serve-results.mjs`, for
+    results not pushed yet.
+- Choosing the other item switches to it and reloads the page.
+- It keeps a copy of the results for each source in GM storage, and checks
+  the file's date before downloading it again.
 
 ### Derived tags
 

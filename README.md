@@ -595,12 +595,39 @@ npx sm-dev validate path/to/scripts/    # a directory, or single files
 ```
 
 It reports each script as `ok` or `invalid` with the same message the
-extension would show, plus any warnings. The GreasyFork corpus
-(`tests/greasyfork-examples/`) has its own bulk validator that serves
-dependencies from a downloaded tree; see
-[docs/corpus-validation.md](docs/corpus-validation.md). That corpus
-also tracks per-script test results; see its
-[README](tests/greasyfork-examples/README.md#test-results).
+extension would show, plus any warnings.
+
+### Greasy Fork test corpus
+
+The Greasy Fork corpus (`tests/greasyfork-examples/`) has test results from a
+sample of real-world userscripts: the 2000 most-installed scripts on Greasy
+Fork, plus others added since.
+
+- **Validation:** every script was checked with SourceMonkey's install-time
+  checks (the same ones `sm-dev validate` runs).
+- **Live testing:** where possible, Claude ran each valid script on its
+  target site with `sm-dev`, judged whether it does what it promises, and
+  recorded whether a failure is the script's or SourceMonkey's.
+
+Results:
+
+- [Test results](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/results.html):
+  a sortable, filterable table of every script's validation and test
+  status, with notes.
+- [Analysis](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/analysis.html):
+  statistics on which headers and `GM_*` APIs the scripts use most.
+- [SourceMonkey test status on Greasy Fork](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/show-on-GreasyFork.user.js):
+  a userscript that shows test results inline on Greasy Fork, next to the
+  stats on script pages and search pages. Open the link with a userscript
+  manager to install it.
+
+More detail:
+
+- [tests/greasyfork-examples/README.md](tests/greasyfork-examples/README.md):
+  the tools, the record format and what each test status means.
+- [docs/corpus-validation.md](docs/corpus-validation.md): the bulk validator,
+  and [docs/corpus-validation-results.md](docs/corpus-validation-results.md)
+  for its last run's findings.
 
 ## SourceMonkey Development
 
@@ -698,8 +725,9 @@ for known per-manager divergences.
     userscripts; double as a cross-manager compliance test. See
     [tests/examples/README.md](tests/examples/README.md).
   - `tests/bad-examples/`: example userscripts with errors.
-  - `tests/greasyfork-examples/`: results and analysis from testing
-    SourceMonkey on a selection of top scripts from Greasy Fork.
+  - `tests/greasyfork-examples/`: [results](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/results.html) and
+    [analysis](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/analysis.html) from testing SourceMonkey on a selection
+    of top scripts from Greasy Fork.
 - `docs/`: design docs. Start with
   [docs/architecture.md](docs/architecture.md) for the component map,
   and [docs/file-index.md](docs/file-index.md) for a one-line
