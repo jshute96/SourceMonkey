@@ -306,10 +306,16 @@ How one extension page opens another — the rules live in
   from the collection dialog's "this is a single script" action — the
   page the user was adding from stays put. The preview is *not* a named
   tab: it is per-file, and several at once is normal.
-- **Every one of these is a real anchor with a real `href`.** A
+- **The links are real anchors with a real `href`.** A
   Ctrl/Cmd/Shift/middle click is left to the browser, and the URL is
   copyable. Only a plain left click is reinterpreted as "the named tab".
   - The `href` is also the behaviour before the page's scripts have run.
+- **The header buttons take the same gestures** (`wireOpenButton`):
+  Options, Collections and Help.
+  - A middle or Ctrl/Cmd click opens a new background tab right of this
+    one, even where the named tab is open; Shift opens a new window.
+  - Help opens the repo's GitHub page at its README (`#readme`) in a new
+    tab beside this one.
 
 ## Extension-page styling
 
@@ -319,8 +325,8 @@ How one extension page opens another — the rules live in
   `src/styles.css`): the extension icon, the
   `SourceMonkey | <page>` heading, and that page's cross-page
   navigation pushed to the right edge.
-  - Collections carries Options and Refresh All; Options carries
-    Collections; the toolbar popup carries Open and a ⋯ menu; the
+  - Collections carries Help, Options and Refresh All; Options carries
+    Help and Collections; the toolbar popup carries Open and a ⋯ menu; the
     viewer carries none.
   - The icon and the product name are a link home to the collections
     page on every page but Collections itself — see "Cross-page

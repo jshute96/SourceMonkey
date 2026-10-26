@@ -47,7 +47,8 @@ import { SM_DEV_CONTROL_LABEL } from './tab-status.js';
 import { closeMenu, moreMenuButton, openMenu as openSharedMenu, type MenuItem as SharedMenuItem } from './more-menu.js';
 import { collectionAnchorId, EDIT_COLLECTION_HASH_PREFIX, makeCollectionTypeBubble } from './collection-display.js';
 import {
-  namedPageUrl, openBackgroundTab, openExtensionTab, openExtensionWindow, openNamedTab, type NamedPage,
+  namedPageUrl, openBackgroundTab, openExtensionTab, openExtensionWindow, openHow, openNamedTab, type NamedPage,
+  type OpenHow,
 } from './page-links.js';
 import { touchesStructuralRows } from './structural-keys.js';
 import { enableTitle, watchSoloModifier } from './solo-click.js';
@@ -663,27 +664,15 @@ function commandList(row: PopupRow): HTMLElement {
   return list;
 }
 
-// How a click on something that opens a page opens it, after the
-// browser's gestures for a link:
+// How a click on something that opens a page opens it (`openHow` in
+// src/extension/page-links.ts). In the popup:
 // - plain: `openPlain`, then the popup closes;
-// - middle or Ctrl/Cmd: a background tab, and the popup (and any menu)
-//   stays open, to open several pages in a row;
-// - Shift with either of those: a new tab in front;
-// - Shift alone: a new window.
-// The popup closes for the last two, since they leave it behind.
+// - background: the popup (and any menu) stays open, to open several
+//   pages in a row;
+// - tab, window: the popup closes, since they leave it behind.
 // Handled here even on links: Chrome closes a real popup when a link
-// opens a tab its own way. Alt is left to the browser.
-type OpenHow = 'plain' | 'background' | 'tab' | 'window';
-
-function openHow(ev: MouseEvent): OpenHow | null {
-  if (ev.altKey) return null;
-  if (ev.button === 1 || (ev.button === 0 && (ev.ctrlKey || ev.metaKey))) {
-    return ev.shiftKey ? 'tab' : 'background';
-  }
-  if (ev.button !== 0) return null;
-  return ev.shiftKey ? 'window' : 'plain';
-}
-
+// opens a tab its own way.
+//
 // Wire `target` to open `url` by the click's gesture. `openPlain`
 // defaults to a plain new tab. Each closes the popup only once the page
 // is open: closing it ends this page, and an open still in flight with

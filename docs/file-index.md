@@ -123,9 +123,9 @@ stay directly in `src/` so the extension's URLs have no folder in them.
 | `src/manifest.json` | MV3 extension manifest |
 | `src/parse-sandbox.html` | Sandboxed page (manifest `sandbox.pages`) — the only context allowed `'unsafe-eval'` / `'unsafe-inline'` |
 | `src/offscreen.html` | Offscreen document markup — hosts the sandboxed parse iframe |
-| `src/collections.html` | Collections page markup: header bar with Options / Refresh All, Add field, file-access banner slot, collection list |
+| `src/collections.html` | Collections page markup: header bar with Help / Options / Refresh All, Add field, file-access banner slot, collection list |
 | `src/popup.html` | Toolbar popup markup ("Active scripts"): header bar with Open and a ⋯ menu, banners (sm-dev, reload), script area |
-| `src/options.html` | Options page markup: header bar with the Collections link, settings list (link-capture toggle, debug-logging toggle), local search-roots box + file-access banner slot, Downloads-folder field, GitHub auth token, storage-usage table with links to the debug pages |
+| `src/options.html` | Options page markup: header bar with Help / Collections, settings list (link-capture toggle, debug-logging toggle), local search-roots box + file-access banner slot, Downloads-folder field, GitHub auth token, storage-usage table with links to the debug pages |
 | `src/userscript.html` | Userscript viewer markup: header bar, status box (banner + versions panel), controls row, install callout + preview actions, details panel, tab strip, code box, log pane |
 | `src/compare.html` | Compare page markup: header bar, the fields table slot, view controls, tab strip, diff box |
 | `src/connect-prompt.html` | Connection prompt window markup: the standard header bar, the script and site, and the one-time and kept choices |
@@ -167,7 +167,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/solo-click.ts` | Enable checkbox tooltip with its multi-enable hint, and the Ctrl/Cmd-click reader that opts out of the sweep |
 | `src/extension/options.ts` | Options page controller — boolean setting checkboxes, local search-roots box (parse + existence checks, refresh on save), Downloads-folder field, GitHub-token controls, storage-usage table |
 | `src/extension/page-heading.ts` | Import-free module holding the viewer heading's vocabulary and DOM, and the early paint that names the header bar before the page's first paint |
-| `src/extension/page-links.ts` | Cross-page links between extension pages: the named Collections / Options tabs and the header bar's home link |
+| `src/extension/page-links.ts` | Cross-page links between extension pages: the named Collections / Options tabs, the header bar's home link and buttons |
 | `src/extension/user-scripts-access.ts` | "Allow User Scripts" probe plus the shared heading and fix line for the collections page and popup |
 | `src/extension/userscript.ts` | Userscript viewer controller — installed mode (`?script=`), preview mode (`?preview=`), in-page switching between copies, the Collection row's Move button, the controls row's Local copy / delete-copy buttons, live `storage` watchers, log pane |
 | `src/extension/compare.ts` | Compare page controller — loads two copies (stored, or a preview's download), the fields table with its swap, per-file tabs, unified / side-by-side diff rendering, change-block arrows |

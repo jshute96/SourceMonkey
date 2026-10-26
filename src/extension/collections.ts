@@ -74,7 +74,9 @@ import { COLLECTION_PREFIX, SCRIPT_PREFIX, touchesStructuralRows } from './struc
 import { openCollectionDialog, type CollectionDialogRequest } from './collection-dialog.js';
 import { openExportDialog } from './export-dialog.js';
 import { closeDetachedMenu, closeMenu, moreMenuButton, openMenu } from './more-menu.js';
-import { onNamedTabFocus, openExtensionTab, openNamedTab } from './page-links.js';
+import {
+  HELP_URL, namedPageUrl, onNamedTabFocus, openExtensionTab, openNamedTab, openTabBeside, wireOpenButton,
+} from './page-links.js';
 import { getValue } from '../userscript-header.js';
 import { describeDiagnostic } from '../diagnostic-location.js';
 import { installDebugLoggingListener, isDebugLoggingEnabled, loadDebugLoggingFlag } from '../debug-log.js';
@@ -203,10 +205,10 @@ window.addEventListener('resize', closeMenu);
 
 // A new tab, not this one: the collections page is where the user was
 // working, and Options is a detour. `openNamedTab` reuses the one
-// Options tab if it is already open rather than stacking up copies.
-openOptionsBtn.addEventListener('click', () => {
-  void openNamedTab('options');
-});
+// Options tab if it is already open rather than stacking up copies. A
+// middle or Shift click opens another, as on a link.
+wireOpenButton(openOptionsBtn, namedPageUrl('options'), () => openNamedTab('options'));
+wireOpenButton(document.getElementById('open-help')!, HELP_URL, () => openTabBeside(HELP_URL));
 
 // Resolved once the first render has finished painting, which is what
 // repaints wait for. `render()` empties the container and refills it

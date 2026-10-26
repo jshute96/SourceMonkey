@@ -38,14 +38,16 @@ import {
   readDownloadsCopiesSetting,
   type DownloadsCopiesSetting,
 } from './local-copy.js';
-import { installHomeLinkHandler, onNamedTabFocus, openNamedTab } from './page-links.js';
+import {
+  HELP_URL, installHomeLinkHandler, namedPageUrl, onNamedTabFocus, openNamedTab, openTabBeside, wireOpenButton,
+} from './page-links.js';
 
 const openCollectionsBtn = document.getElementById('open-collections') as HTMLButtonElement;
 // The collections page is a named tab: focus the open one if there is
-// one, and otherwise open a new tab rather than replacing this one.
-openCollectionsBtn.addEventListener('click', () => {
-  void openNamedTab('collections');
-});
+// one, and otherwise open a new tab rather than replacing this one. A
+// middle or Shift click opens another, as on a link.
+wireOpenButton(openCollectionsBtn, namedPageUrl('collections'), () => openNamedTab('collections'));
+wireOpenButton(document.getElementById('open-help')!, HELP_URL, () => openTabBeside(HELP_URL));
 
 // The header bar's icon and product name are the same link.
 installHomeLinkHandler();
