@@ -1018,19 +1018,26 @@ export async function runConsoleCommand(
       return answerConnectCommand(ctx, args);
     case 'accept':
     case 'dismiss': {
-      const target = parsed.tab !== undefined ? pickTab(ctx, parsed.tab) : tab;
-      if (!target) return false;
-      const dialog = target.dialogs?.take();
+      // A tab still being set up, held up by the dialog it showed first.
+      const early = parsed.tab !== undefined ? settingUp.get(parsed.tab.toUpperCase()) : undefined;
+      const target = early ? null : parsed.tab !== undefined ? pickTab(ctx, parsed.tab) : tab;
+      if (!early && !target) return false;
+      const trackerOf = early ?? target!.dialogs;
+      const dialog = trackerOf?.take();
+      if (!dialog && !target) {
+        ctx.out('[sm-dev] No dialog is open');
+        return;
+      }
       if (!dialog) {
         const elsewhere = ctx.tabs().find((t) => t.dialogs?.current);
         ctx.out(elsewhere
-          ? `[sm-dev] No dialog is open on ${tabName(target)}. ${tabName(elsewhere)} has one; name its tab: ${quoted(`${command} ${tabName(elsewhere)}${text ? ' ...' : ''}`)}.`
+          ? `[sm-dev] No dialog is open on ${tabName(target!)}. ${tabName(elsewhere)} has one; name its tab: ${quoted(`${command} ${tabName(elsewhere)}${text ? ' ...' : ''}`)}.`
           : '[sm-dev] No dialog is open');
         return;
       }
       if (text && dialog.type() !== 'prompt') {
         ctx.out(`${MISTAKE_PREFIX}Only a prompt dialog takes text. This one is ${dialogKind(dialog)}.`);
-        target.dialogs!.putBack(dialog);
+        trackerOf!.putBack(dialog);
         return;
       }
       // A bare accept keeps the prompt's own default, as pressing OK
@@ -2897,7 +2904,56 @@ async function focusTab(page: Page): Promise<void> {
  *   Also for a Playwright client that isn't the run's own.
  */
 export function leaveDialogsOpen(context: BrowserContext): void {
-  context.on('dialog', () => undefined);
+  context.on('dialog', (dialog) => {
+    const page = dialog.page();
+    if (page && !trackedPages.has(page)) untracked.set(page, dialog);
+  });
+}
+
+// A dialog open in a page no DialogTracker has yet, recorded by the
+// listener above: a tab one of the run's tabs opens can show it before
+// the run takes the tab over. The tab's tracker then reports and
+// answers it as it does a dialog that opens later.
+const untracked = new WeakMap<Page, Dialog>();
+const trackedPages = new WeakSet<Page>();
+
+// The trackers of tabs still being set up, by tab name (`T2`), so that
+// `accept T2` can answer a dialog such a tab showed before the run took
+// it over: the tab joins the run's list only once that dialog is closed.
+const settingUp = new Map<string, DialogTracker>();
+
+/** Lists `tracker` under `name` while its tab is set up; null takes it off. */
+export function trackSettingUp(name: string, tracker: DialogTracker | null): void {
+  if (tracker) settingUp.set(name, tracker);
+  else settingUp.delete(name);
+}
+
+/** Dismisses the dialogs of tabs still being set up, as a run ends. */
+export async function dismissSettingUpDialogs(): Promise<void> {
+  await Promise.all([...settingUp.values()].map((t) => t.take()?.dismiss().catch(() => undefined)));
+}
+
+/**
+ * Whether `page` shows a dialog no DialogTracker has yet. Playwright
+ * says nothing when the person answers one in the browser, so the
+ * record is checked: a page that runs code has no dialog open, and its
+ * record is dropped.
+ */
+export async function hasUntrackedDialog(page: Page): Promise<boolean> {
+  if (!untracked.has(page)) return false;
+  if (await pageAnswers(page)) {
+    untracked.delete(page);
+    return false;
+  }
+  return true;
+}
+
+// Whether the page runs code within a moment: a page showing a dialog doesn't.
+function pageAnswers(page: Page): Promise<boolean> {
+  return Promise.race([
+    page.evaluate(() => 1).then(() => true, () => false),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 300)),
+  ]);
 }
 
 /**
@@ -2950,17 +3006,34 @@ export class DialogTracker {
     { visible, commandsComing = false, tabRef = () => undefined }: { visible: boolean; commandsComing?: boolean; tabRef?: () => string | undefined },
   ): Promise<DialogTracker> {
     const tracker = new DialogTracker(say, visible, commandsComing, tabRef);
+    trackedPages.add(page);
+    // One already open, from before the run had the tab: not one the
+    // person has answered since.
+    const waiting = await hasUntrackedDialog(page) ? untracked.get(page) : undefined;
+    untracked.delete(page);
     page.on('dialog', (dialog) => tracker.opened(dialog));
     // Answered in the browser, a dialog closes without Playwright
     // saying so; the protocol's own event does.
-    try {
-      const cdp = await page.context().newCDPSession(page);
-      await cdp.send('Page.enable');
-      cdp.on('Page.javascriptDialogClosed', () => tracker.closed());
-    } catch {
-      // Then `status` may name a dialog already answered, and
-      // `accept` says it was closed.
+    const listening = (async () => {
+      try {
+        const cdp = await page.context().newCDPSession(page);
+        await cdp.send('Page.enable');
+        cdp.on('Page.javascriptDialogClosed', () => tracker.closed());
+      } catch {
+        // Then `status` may name a dialog already answered, and
+        // `accept` says it was closed.
+      }
+    })();
+    if (!waiting) {
+      await listening;
+      return tracker;
     }
+    // Reported (or dismissed) before waiting on the session: while the
+    // dialog is open, `Page.enable` doesn't return, so the session is
+    // ready only once the dialog has closed, by whoever answered it.
+    // The session missed that close, so it's counted here.
+    tracker.opened(waiting);
+    void listening.then(() => tracker.closed());
     return tracker;
   }
 

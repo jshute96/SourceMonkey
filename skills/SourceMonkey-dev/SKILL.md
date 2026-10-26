@@ -84,9 +84,9 @@ Where to look:
 - **Name tabs by `T<n>` or `targetId`, never by URL.** Two tabs on the
   same page are common, and acting on the wrong one looks like the
   script didn't run.
-- **Read the run's output before theorizing.** It says whether the
-  script started, was skipped (and which header rule decided), or
-  threw, with file and line.
+- **Read the run's output before theorizing.** It shows whether the
+  script started or threw, with file and line. With no `started` line,
+  run `match` to find which header rule keeps it off the page.
 - **Write scripts as they ship.** No guards for missing `GM_*`, no
   test-only branches: they run in the real manager.
 - **Real sites have real data.** Only do reversible actions on
@@ -827,8 +827,8 @@ refused. How it works and what differs:
 
 ## Troubleshooting
 
-- **`skipped on <url>: ...`**: the header doesn't cover the page; the
-  extension would skip it too. `match` shows why.
+- **No `started` line for the script on a page**: the header may not
+  cover the page; the extension would skip it too. `match` shows why.
 - **`GM_x is not defined`**: missing `@grant GM_x`. Same in the
   extension.
 - **A page global is `undefined` in the script**: if it's read as

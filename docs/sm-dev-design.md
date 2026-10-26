@@ -954,14 +954,29 @@ and waits for them.
 
 - Playwright dismisses any dialog nobody listens for, in every tab it's
   attached to, the person's own included.
-  - So `run.ts` gives every page of a connected browser a dialog
-    listener that does nothing.
+  - So `run.ts` gives every page of the browser a dialog listener
+    that does nothing: a browser it connected to, and a temp browser
+    it launched, where its connection is the launch's second client.
   - Also, when that dialog is gone before the dismiss lands, the error
     is unhandled, and ends the run.
 - The run's own tabs get a `DialogTracker` (`console-commands.ts`),
   which keeps dialogs open for the person or an `accept` /
   `dismiss`. Otherwise a script's `prompt()` would be answered with
   Cancel.
+- A tab a run tab opens can show a dialog before the run takes it over
+  (a script's `confirm()` during the tab's first load).
+  - The browser-wide listener records it by page, and the tab's
+    tracker takes it when it attaches, and handles it as one shown
+    after: reported with `accept T2`, or dismissed in a hidden run
+    that takes no commands.
+  - The page runs no code while the dialog is open, so the takeover
+    matches the tab by its URL rather than reading its document, and
+    `Page.enable` on a new session doesn't return until the dialog
+    closes. The tracker uses that return as the dialog's close.
+  - The rest of the tab's setup waits for the dialog to close, so the
+    tab joins the run's list only then. Until it does, `accept T2`
+    reaches its tracker by name (`trackSettingUp`), and a run that
+    ends dismisses the dialog.
 - A page stopped on a dialog answers no CDP call until it is answered.
   - So `load` / `update` refuse while one is open.
   - `PageAttachment.dispose` gives up on the page after a second;

@@ -198,9 +198,9 @@ What a run prints as it goes:
 [event] GM_setValue lastItem = "42"
 ```
 
-- A page the header does not cover prints the rule that kept the
-  script off it (`skipped on <url>: No @match or @include covers this
-  URL`), and nothing runs.
+- On a page the header does not cover, nothing runs and no `started`
+  line is shown. `sm-dev match <script> <url>` shows which rule keeps
+  it off.
 - A header problem prints the same wording the extension's viewer
   would, and nothing is pushed.
 - A long stored value is cut after 100 characters in its `GM_setValue`
@@ -1533,8 +1533,12 @@ the stream, rather than being answered automatically.
     a dialog open.
 - A command that opens a dialog returns once the dialog is up, and says
   so.
-- A dialog in a tab the run doesn't use is left alone, for you to
+- A dialog in a tab the run doesn't use stays open, for you to
   answer.
+- A tab one of the run's tabs opens can show a dialog before the run
+  starts following it (a script's `confirm()` at load). The run reports
+  that dialog the same way, naming the tab (`accept T2`), but `tabs`
+  and `status` list the tab only once the dialog is answered.
 - A tab already showing a dialog when `sm-dev start` starts stops it
   connecting: nothing in that tab answers until the dialog closes. The
   run names the tab and waits; answer the dialog or close the tab to
@@ -2263,10 +2267,10 @@ that, since the answer is a function.
   off"**, or a message that "Allow User Scripts" is off: load it, or
   turn it on, as in [Setting it up](#setting-it-up), or drop
   `--existing-browser` or `--open-browser` to use a temp browser.
-- **"skipped on <url>: No @match or @include covers this URL"**, or
-  another rule named there: the script would not run there outside
-  sm-dev either. Broaden the pattern or change the URL; see
-  `sm-dev match`.
+- **No `started` line for a script on a page**: its header may not
+  cover the page, so it would not run there outside sm-dev either.
+  `sm-dev match <script> <url>` names the rule; broaden the pattern or
+  change the URL.
 - **`GM_getValue is not defined`**: the script uses an API it did not
   `@grant`.
 - **The script sees `undefined` for a page global**: it is in the

@@ -549,6 +549,27 @@ test('a tab stopped on a dialog is named, and waited for, before the run connect
   }
 });
 
+test('a dialog in a tab the run doesn\'t own is left open in a temp browser too', async ({ fixtureServer }) => {
+  test.setTimeout(60_000);
+  const setup = await setUp();
+  try {
+    expect((await setup.cli('--temp-browser', '--run', 'D2', 'start', '--notab', '--detach')).join('\n')).toMatch(/Started as run D2/);
+    const port = Number(/127\.0\.0\.1:(\d+)/.exec((await setup.cli('--run', 'D2', 'status'))[0])?.[1]);
+    // A confirm would read false if anything dismissed it: the run's own
+    // connection to the browser it launched did, before.
+    const id = await openTab(port, `${fixtureServer.baseUrl}/other.html`);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/devtools/page/${id}`);
+    await new Promise((resolve) => { ws.onopen = resolve; });
+    const answered = new Promise<boolean>((resolve) => { ws.onmessage = () => resolve(true); });
+    ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: 'confirm("keep?")' } }));
+    expect(await within(answered, 2000)).toBeUndefined();
+    ws.close();
+    await setup.cli('--run', 'D2', 'stop');
+  } finally {
+    await setup.cleanup();
+  }
+});
+
 test('several stuck tabs, a dialog and a busy page, are all named, over a ws:// endpoint too', async ({ fixtureServer, scriptsDir }) => {
   test.setTimeout(60_000);
   const setup = await setUp();

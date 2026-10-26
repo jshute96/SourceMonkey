@@ -94,6 +94,27 @@ test('scripts run in the tabs the run tab opens', async ({ fixtureServer, script
   expect(lines.filter((l) => /^\[T\d+\] \[event\] Tab opened at .*, from T1 \[targetId=[0-9A-F]{32}\]$/.test(l))).toHaveLength(2);
 });
 
+// The script in the opened tab shows a dialog during its first load,
+// before the run takes the tab over: the run still takes it over, and
+// its dialog tracker handles that dialog as one shown after.
+test('a dialog an opened tab shows before the run takes it over is handled like any other', async ({ fixtureServer, scriptsDir }) => {
+  const file = scriptsDir.write({
+    relativePath: 'opener.user.js',
+    meta: { name: 'Opener', match: ['*://*/target.html', '*://*/other.html*'] },
+    body: `
+      if (location.pathname.endsWith('target.html')) window.open('other.html?via=open');
+      else console.log('[opener] answered ' + confirm('keep?'));
+    `,
+  });
+  const lines = await driveCli([file, `${fixtureServer.baseUrl}/target.html`, '--root', scriptsDir.path], [
+    ['The page opened a confirm dialog: "keep?"', 'accept T2'],
+    ['[opener] answered true', 'exit'],
+  ]);
+  const text = lines.join('\n');
+  expect(text).toContain('Use `accept T2` or `dismiss T2`');
+  expect(text).not.toContain("couldn't follow");
+});
+
 test('--all opens a tab per script page, numbered in order, and lists the skipped ones last', async ({ fixtureServer, scriptsDir }) => {
   const base = fixtureServer.baseUrl;
   const write = (name: string, match: string) => scriptsDir.write({

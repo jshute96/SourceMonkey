@@ -37,8 +37,10 @@ shows the line, once, under its first source's prefix:
 
 - A script starting or being skipped: `event`, also `sm`, as
   SourceMonkey's Log has an entry for it.
-  - Not when the run found the script's `@match` rules miss the page:
-    SourceMonkey logs nothing for that.
+  - A script whose `@match` rules miss the page isn't shown at all.
+    Otherwise each page load would print a line for every one of the
+    run's scripts that doesn't match it. `match` shows why a script
+    doesn't run on a page.
 - A script's console line or uncaught error: `script`, also `page`,
   as the page's console shows it.
 - A script's throw: `event`, also `sm`, `script` and `page`, since

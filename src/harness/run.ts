@@ -14,7 +14,7 @@ import type { Browser, BrowserContext, ConsoleMessage, Frame, Page } from '@play
 
 import { shellWord } from './command-lines.js';
 import {
-  commandOutput, commandRunner, DialogTracker, gotoInTab, leaveDialogsOpen, onlyInspects, reloadTab, reloadable, serveSavedPage, setCommandsListening, skippedScriptLine, targetIdSuffix, withoutQuery,
+  commandOutput, commandRunner, DialogTracker, dismissSettingUpDialogs, gotoInTab, hasUntrackedDialog, leaveDialogsOpen, trackSettingUp, onlyInspects, reloadTab, reloadable, serveSavedPage, setCommandsListening, skippedScriptLine, targetIdSuffix, withoutQuery,
   type CommandRunner, type ConsoleContext, type ControlledTab,
 } from './console-commands.js';
 import { applyLang, langLaunchArgs } from './browser-lang.js';
@@ -364,7 +364,11 @@ async function openBrowser(
     }
   }
   const context = browser.contexts()[0] ?? await browser.newContext();
-  if (endpoint !== null) browser.contexts().forEach(leaveDialogsOpen);
+  // A browser the run launched too: this connection is a second
+  // Playwright client of it, besides the launch's own, and without the
+  // listener Playwright dismisses dialogs in the tabs the run doesn't
+  // own (a confirm on the collections page).
+  browser.contexts().forEach(leaveDialogsOpen);
   const notes: string[] = [];
   const page = !openTab ? null
     // The one blank tab a launch leaves for the run.
@@ -1438,6 +1442,9 @@ class FollowedTabs {
 
   async dispose(): Promise<void> {
     this.disposed = true;
+    // A tab being set up can be held up by a dialog it showed first,
+    // which nobody answers once the run ends.
+    await dismissSettingUpDialogs();
     // Settled, not all: one failed setup must not skip the others'
     // cleanup.
     await Promise.allSettled(this.adopting);
@@ -1454,6 +1461,7 @@ class FollowedTabs {
     // A tab without scripts opens more of its kind.
     const noScript = this.list().find((t) => t.n === opener)?.noScript === true;
     this.track(this.setUp(page, n, opener, true, noScript, tabId).catch((err) => {
+      trackSettingUp(`T${n}`, null);
       // Closed while being set up is the usual cause, and says nothing.
       if (page.isClosed()) return;
       this.opts.out(`[sm-dev] T${n} could not be set up: ${(err as Error).message}`);
@@ -1556,6 +1564,11 @@ class FollowedTabs {
       // T2 on is named even while it is set up, before list() has it.
       tabRef: () => (n > 1 || this.list().length > 1 ? `T${n}` : undefined),
     });
+    // Until the tab is listed, `accept T<n>` reaches its tracker here:
+    // a dialog it showed before the run took it over holds up the setup
+    // below until it's answered.
+    trackSettingUp(`T${n}`, dialogs);
+    page.on('close', () => trackSettingUp(`T${n}`, null));
     await applyLang(page, this.opts.lang, out);
     // An opened tab may have loaded already, with its events from that
     // document waiting.
@@ -1572,6 +1585,7 @@ class FollowedTabs {
     const entry = { tab: { n, page, link: attachment, dialogs, openedBy: opener, targetId, noScript }, attachment, ready: false };
     tabNow = entry.tab;
     this.tabs.set(page, entry);
+    trackSettingUp(`T${n}`, null);
     this.onTabsChanged();
     const url = page.url();
     const loaded = url !== '' && url !== 'about:blank';
@@ -1638,6 +1652,16 @@ class FollowedTabs {
     let opener: ControlledTab | undefined;
     while (Date.now() < deadline && !this.disposed) {
       opener = this.list().find((t) => this.host.tabIdOf(t.link) === event.sourceTabId);
+      // A page stopped on a dialog runs no code to read its document
+      // from, here or in the extension, so it's matched another way: the
+      // page whose opener is the opener tab's, else by its address, when
+      // only one page with a dialog has it. Its dialog tracker then
+      // reports the dialog.
+      const waiting = opener ? await this.pageWithDialog(opener, event.url) : undefined;
+      if (opener && waiting) {
+        this.adopt(waiting, opener.n, event.tabId);
+        return;
+      }
       const shown = opener ? await this.link.tabDocument(event.tabId).catch(() => null) : null;
       if (opener && shown) {
         const candidates = this.context.pages().filter((p) => !this.notOpenedByScripts.has(p) && !this.tabs.has(p) && !p.isClosed());
@@ -1659,6 +1683,21 @@ class FollowedTabs {
     if (!this.disposed && opener) {
       tabEvent(this.opts.emit!, opener.n, 'tab-opened')(`Opened a tab sm-dev couldn't follow (${event.url}). Only the run's scripts run in it, but their output there isn't shown.`);
     }
+  }
+
+  // The page opened from `opener`, at `url`, that shows a dialog no
+  // tracker has, if one does: see adoptOpened.
+  private async pageWithDialog(opener: ControlledTab, url: string): Promise<Page | undefined> {
+    const withDialog: Page[] = [];
+    for (const p of this.context.pages()) {
+      if (this.notOpenedByScripts.has(p) || this.tabs.has(p) || p.isClosed()) continue;
+      if (await hasUntrackedDialog(p)) withDialog.push(p);
+    }
+    for (const p of withDialog) {
+      if (await p.opener().catch(() => null) === opener.page) return p;
+    }
+    const atUrl = withDialog.filter((p) => comparableUrl(p.url()) === comparableUrl(url));
+    return atUrl.length === 1 ? atUrl[0] : undefined;
   }
 
   // `scripts` in place of what `attachment` has, from index `from` on.
@@ -1817,13 +1856,17 @@ function wireHostOutput(host: ExtensionHost, emit: (fields: LogFields) => void, 
     source: 'event', kind, tab: tabOf(record), ...(record.frameNumber !== undefined ? { frame: record.frameNumber } : {}), scriptId: record.scriptId, text, ...(also ? { also } : {}),
   });
   // SourceMonkey's Log has an entry for each of these, logged as the
-  // report rather than twice; not for a rule miss, which only the run
-  // finds. A throw is the script's own error too, and the page's console
-  // shows it.
+  // report rather than twice. A throw is the script's own error too, and
+  // the page's console shows it.
   // A report from an iframe says so: its URL is the frame's, not the page's.
   const on = (r: { url: string; frame?: true }): string => `${r.frame ? 'in an iframe ' : ''}on ${r.url}`;
   host.on('start', (r: StartReport) => event(r, 'started', `${r.name} started ${on(r)}`, ['sm']));
-  host.on('skip', (r: SkipReport) => event(r, 'skipped', `${r.name} skipped ${on(r)}: ${r.reason}`, r.ruleMiss ? undefined : ['sm']));
+  // Not a script whose rules miss the page: otherwise each page load
+  // would print a line for every run script that doesn't match it.
+  // `match` shows why one doesn't run.
+  host.on('skip', (r: SkipReport) => {
+    if (!r.ruleMiss) event(r, 'skipped', `${r.name} skipped ${on(r)}: ${r.reason}`, ['sm']);
+  });
   host.on('manual', (r: ManualReport) => event(r, 'manual', `${r.name} is waiting to be run on ${r.url}, since it has @run-at context-menu. Use menu to run it.`));
   host.on('script-error', (r: ErrorReport) => {
     const frames = r.stack ? r.stack.split('\n').slice(1, 4).map((line) => `\n    ${decodeOwnRefs(line.trim())}`).join('') : '';

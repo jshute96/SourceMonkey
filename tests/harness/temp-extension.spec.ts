@@ -283,8 +283,9 @@ test('a run keeps an installed page-world script out even where none of its own 
       body: '',
     });
     const { lines, left } = await driveCli(['--existing-browser', '--browser', launched.endpoint, 'start', file, `${fixtureServer.baseUrl}/target.html`], [
-      // Past the 10s it would have waited for an answer.
-      ['Mine skipped on', 'wait 12s\neval "other is " + (document.documentElement.dataset.other ?? "out")'],
+      // Once the page opens, past the 10s it would have waited for an answer.
+      // `Opening` prints before the page loads, so a second more.
+      ['target.html in T1', 'wait 13s\neval "other is " + (document.documentElement.dataset.other ?? "out")'],
       ['other is', 'stop'],
     ]);
     const text = lines.join('\n');
