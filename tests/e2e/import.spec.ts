@@ -11,7 +11,7 @@ import type { Page } from '@playwright/test';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 import {
   chooseImport, closeExport, closeImport, collectionRows, confirmImport, existingRows, exportVia, IMPORT_DIALOG, importVia, newRows,
-  openImport, previewShown, unchangedNames,
+  newCollections, openImport, previewShown, unchangedNames,
 } from '../fixtures/backup-dialogs';
 import { buildZip } from '../../dist/extension/zip-writer.js';
 import fs from 'node:fs';
@@ -93,7 +93,7 @@ test.describe('backup import', () => {
       { name: 'Beta', version: '', type: 'file', href: `file://${dir.path}/beta.user.js` },
     ]);
     // Only new scripts: no Existing or Invalid section.
-    await expect(page.locator(`${IMPORT_DIALOG} #import-collections .import-heading`)).toHaveText('Collections (1)');
+    await expect(page.locator(`${IMPORT_DIALOG} #import-collections .import-heading`)).toHaveText('Directory collections (1)');
     await expect(page.locator(`${IMPORT_DIALOG} #import-new .import-heading`)).toHaveText('New scripts (2)');
     await expect(page.locator(`${IMPORT_DIALOG} #import-existing`)).toBeHidden();
     await expect(page.locator(`${IMPORT_DIALOG} #import-invalid`)).toBeHidden();
@@ -191,7 +191,7 @@ test.describe('backup import', () => {
     await page.close();
   });
 
-  test('an export restores scripts collections: a built-in one under its own name, and a user\'s', async ({
+  test('an export\'s scripts collections: new scripts go into them by name, made again if they\'re gone', async ({
     extensionContext, extensionId, sm,
   }) => {
     dir.write({ relativePath: 'loose.user.js', meta: { name: 'Loose', match: ['https://example.com/*'] }, body: 'void 1;\n' });
@@ -208,36 +208,36 @@ test.describe('backup import', () => {
     await collectionsPage(page, extensionId);
     const saved = await exportVia(page, '#page-menu');
     await closeExport(page);
+    // The built-in collection is gone; Mine is still here, without its script.
     await sm.removeCollection(builtin!.id);
-    await sm.removeCollection(mine!.id);
+    await sm.removeScript(mine1.id);
+    await sm.syncNow();
 
     await openImport(page, '#page-menu', saved);
-    expect((await collectionRows(page)).map((r) => [r.name, r.kind, r.status, r.restore])).toEqual([
-      [builtinName, 'Scripts (built-in)', 'New', true], ['Mine', 'Scripts', 'New', true],
-    ]);
-    // Link only matters while a scripts collection is being restored.
-    const link = page.locator(`${IMPORT_DIALOG} #import-restore-link`);
-    await expect(link).toBeVisible();
-    // The heading's box clears and checks them all.
-    const all = page.locator(`${IMPORT_DIALOG} #import-collections-table thead input`);
-    await expect(all).toBeChecked();
-    await all.uncheck();
-    expect((await collectionRows(page)).map((r) => r.restore)).toEqual([false, false]);
-    await expect(link).toBeHidden();
-    await chooseImport(page, { restore: true });
-    await expect(all).toBeChecked();
-    await expect(link).toBeVisible();
-    expect(await confirmImport(page)).toBe('Restored 2 collections with 2 scripts.');
+    // Only directory, manifest and GitHub collections are restored.
+    await expect(page.locator(`${IMPORT_DIALOG} #import-collections`)).toBeHidden();
+    expect((await newRows(page)).map((r) => r.name)).toEqual(['Loose', 'Mine1']);
+    expect(await newCollections(page)).toEqual([{ name: `${builtinName} (New)`, off: false }, { name: 'Mine', off: false }]);
+    await expect(page.locator(`${IMPORT_DIALOG} #import-new-by-collection`)).toBeChecked();
+    // Picking a collection instead greys the column; picking theirs again.
+    await page.locator(`${IMPORT_DIALOG} #import-new-pick`).check();
+    expect((await newCollections(page)).map((c) => c.off)).toEqual([true, true]);
+    await page.locator(`${IMPORT_DIALOG} #import-new-by-collection`).check();
+    // Choosing in the picker, even the collection it shows, picks it.
+    await page.locator(`${IMPORT_DIALOG} #import-into`).selectOption({ index: 0 });
+    await expect(page.locator(`${IMPORT_DIALOG} #import-new-pick`)).toBeChecked();
+    await page.locator(`${IMPORT_DIALOG} #import-new-by-collection`).check();
+    expect(await confirmImport(page)).toBe('Imported 2 scripts.');
     await closeImport(page);
 
     const after = await sm.getCollections();
     const back = after.find((c) => c.path === builtin!.path)!;
     expect(back.displayName).toBe(builtinName);
-    const backMine = after.find((c) => c.displayName === 'Mine')!;
-    const [newMine1] = (await sm.getCollectionWithScripts(backMine.id))!.scripts;
+    expect((await sm.getCollectionWithScripts(back.id))!.scripts.map((s) => s.relativePath)).toEqual([path.join(dir.path, 'loose.user.js')]);
+    const [newMine1] = (await sm.getCollectionWithScripts(mine!.id))!.scripts;
     expect(newMine1.relativePath).toBe(path.join(dir.path, 'mine.user.js'));
     expect(await sm.getGmValues(newMine1.id)).toEqual({ k: 1 });
-    expect((await sm.getCollectionWithScripts(back.id))!.scripts.map((s) => s.relativePath)).toEqual([path.join(dir.path, 'loose.user.js')]);
+    expect(after.filter((c) => c.displayName === 'Mine').length).toBe(1);
     await page.close();
   });
 

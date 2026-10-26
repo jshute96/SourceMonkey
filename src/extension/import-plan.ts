@@ -10,7 +10,7 @@ import { identityKey, locationKey } from './script-keys.js';
 import { canonicalCollectionInput, containerKind, isContainerCollection, isFileUrl, isHttpUrl, locationFsPath } from '../file-locations.js';
 import { githubDirScriptFileUrl, parseGithubUrl } from './github-provider.js';
 import { isEmptyScript, type BackupCollection, type BackupScript, type ParsedBackup } from './import-backup.js';
-import type { ImportInstall, ImportRequest, ImportRestore, ImportUpdate } from './script-store.js';
+import type { ImportInstall, ImportNamed, ImportRequest, ImportRestore, ImportUpdate } from './script-store.js';
 
 // A script installed here, as the planner needs it.
 export interface InstalledCopy {
@@ -160,9 +160,16 @@ export function restorePath(script: BackupScript, collection: BackupCollection):
 // what it has now, so they start off.
 export interface ImportChoices {
   // Restored collections and their scripts.
-  restore: ArrivingChoices;
+  restore: {
+    values: boolean;
+    enabled: boolean;
+  };
   // New scripts.
-  new: ArrivingChoices;
+  new: ArrivingChoices & {
+    // Each goes into its scripts collection from the backup (one here by
+    // that name, or one made like it) rather than `into`.
+    byCollection: boolean;
+  };
   // Scripts already here.
   existing: {
     // Which stored texts the backup's replaces.
@@ -180,14 +187,13 @@ export interface ArrivingChoices {
   // Take the backup's enabled state; otherwise it comes in enabled.
   enabled: boolean;
   // Link a script with a location (a URL or a file) to it, so it can
-  // take updates from there; otherwise it is kept as its text. A
-  // restored directory or manifest collection's scripts always link.
+  // take updates from there; otherwise it is kept as its text.
   link: boolean;
 }
 
 export const DEFAULT_CHOICES: ImportChoices = {
-  restore: { values: true, enabled: true, link: true },
-  new: { values: true, enabled: true, link: true },
+  restore: { values: true, enabled: true },
+  new: { values: true, enabled: true, link: true, byCollection: true },
   existing: { text: 'newer', values: false, enabled: false },
 };
 
@@ -305,9 +311,21 @@ function stableJson(value: unknown): string {
 export function restoredScripts(collections: readonly PlannedCollection[], restoring: ReadonlySet<string>): Set<number> {
   const out = new Set<number>();
   for (const c of collections) {
-    if (!c.here && !c.cantRestore && restoring.has(c.collection.uuid)) for (const i of c.scripts) out.add(i);
+    if (restorable(c) && restoring.has(c.collection.uuid)) for (const i of c.scripts) out.add(i);
   }
   return out;
+}
+
+// A directory, manifest or GitHub collection that isn't here and can be
+// made again. A scripts collection's scripts import as new or existing
+// ones instead, by its name (`backupScriptsCollection`).
+export function restorable(c: PlannedCollection): boolean {
+  return c.collection.kind !== 'scripts' && !c.here && !c.cantRestore;
+}
+
+// The backup's scripts collection `s` was in, if any.
+export function backupScriptsCollection(s: BackupScript, collections: readonly PlannedCollection[]): PlannedCollection | undefined {
+  return collections.find((c) => c.collection.uuid === s.collection && c.collection.kind === 'scripts');
 }
 
 function installItem(s: BackupScript, choices: ArrivingChoices, linkTo: string | undefined): ImportInstall {
@@ -321,7 +339,9 @@ function installItem(s: BackupScript, choices: ArrivingChoices, linkTo: string |
 }
 
 // The request the worker applies: the collections in `restoring` with
-// all their scripts, then the rows the user kept checked.
+// all their scripts, then the rows the user kept checked. With
+// `byCollection`, a new script from one of the backup's scripts
+// collections goes into it by name; the rest go `into`.
 export function buildImportRequest(
   backup: ParsedBackup,
   plan: readonly PlannedScript[],
@@ -333,13 +353,11 @@ export function buildImportRequest(
 ): ImportRequest {
   const restores: ImportRestore[] = [];
   for (const c of collections) {
-    if (c.here || c.cantRestore || !restoring.has(c.collection.uuid)) continue;
+    if (!restorable(c) || !restoring.has(c.collection.uuid)) continue;
     const bc = c.collection;
-    const installs = c.scripts.map((i) => {
-      const p = plan[i];
-      if (bc.kind === 'scripts') return installItem(p.script, choices.restore, installAction(p.script, choices.restore).linkTo);
-      return { ...installItem(p.script, choices.restore, undefined), relativePath: restorePath(p.script, bc)! };
-    });
+    // Its scripts load from its location, so they aren't linked one by one.
+    const arriving = { ...choices.restore, link: false };
+    const installs = c.scripts.map((i) => ({ ...installItem(plan[i].script, arriving, undefined), relativePath: restorePath(plan[i].script, bc)! }));
     const restore: ImportRestore = {
       name: bc.name, kind: bc.kind, location: bc.location,
       enabled: choices.restore.enabled ? bc.enabled : true, localFiles: bc.localFiles, installs,
@@ -349,13 +367,32 @@ export function buildImportRequest(
   }
   const restored = restoredScripts(collections, restoring);
   const installs: ImportInstall[] = [];
+  const named = new Map<string, ImportNamed>();
   const updates: ImportUpdate[] = [];
   for (const p of plan) {
     if (!checked.has(p.script.index) || restored.has(p.script.index) || isEmptyScript(p.script.text)) continue;
     const action = actionFor(p, choices);
     const s = p.script;
     if (action.kind === 'install') {
-      installs.push(installItem(s, choices.new, action.linkTo));
+      const item = installItem(s, choices.new, action.linkTo);
+      const c = choices.new.byCollection ? backupScriptsCollection(s, collections) : undefined;
+      if (!c) {
+        installs.push(item);
+        continue;
+      }
+      let group = named.get(c.collection.uuid);
+      if (!group) {
+        const bc = c.collection;
+        group = c.here ? { collectionId: c.here.id, installs: [] } : {
+          create: {
+            name: bc.name, kind: 'scripts', location: null, ...(bc.builtin ? { builtin: bc.builtin } : {}),
+            enabled: choices.new.enabled ? bc.enabled : true, localFiles: bc.localFiles,
+          },
+          installs: [],
+        };
+        named.set(bc.uuid, group);
+      }
+      group.installs.push(item);
     } else if (action.kind === 'update' && p.match) {
       const update: ImportUpdate = { scriptId: p.match.id };
       if (action.text) {
@@ -369,5 +406,6 @@ export function buildImportRequest(
   }
   const request: ImportRequest = { source: backup.source, into, installs, updates };
   if (restores.length > 0) request.restores = restores;
+  if (named.size > 0) request.named = [...named.values()];
   return request;
 }

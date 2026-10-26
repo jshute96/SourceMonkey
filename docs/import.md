@@ -120,28 +120,29 @@ A new script that isn't linked to a location is kept as its text: an
 
 ## Restoring collections
 
-From an SM export, its collections can be made again with their
-scripts (`planCollections`, then `restores` in the request).
+From an SM export, its directory, manifest and GitHub collections can
+be made again with their scripts (`planCollections`, then `restores` in
+the request). Its scripts collections aren't restored as such: their
+scripts import as new or existing scripts, and new ones go back into
+their collections ([below](#scripts-collections)).
 
 - Each is matched to a collection here, in this order:
   1. The same id.
   2. A directory, manifest or GitHub collection at the same location.
   3. A built-in scripts collection for the same scheme.
   4. A user's scripts collection with the same name, ignoring case.
-- **Only one that isn't here is restored.** One that is shows as
-  Already here, and its scripts import one by one, as from any backup.
+- **Only one that isn't here is restored** (`restorable`). One that is
+  shows as Already here, and its scripts import one by one, as from
+  any backup.
 - A restored collection takes its name, kind, location and local-files
-  flag from the backup. Its enabled flag too, with the Collections
-  section's Enabled state on; otherwise it is on.
+  flag from the backup. Its enabled flag too, with the Directory
+  collections section's Enabled state on; otherwise it is on.
 - **All its scripts go into it,** whatever they match here, from the
-  backup's text:
-  - In a directory, manifest or GitHub collection, each at its
-    `relativePath`: the path the collection's scan names it by.
-  - In a scripts collection, placed as a new script would be: linked
-    to its location, or kept as an imported script.
-- Their values and enabled state are restored too, per the Collections
-  section's options. So even a local directory's scripts get their
-  values back.
+  backup's text, each at its `relativePath`: the path the collection's
+  scan names it by.
+- Their values and enabled state are restored too, per the Directory
+  collections section's options. So even a local directory's scripts
+  get their values back.
 - **The next refresh loads what the location has now.** It matches
   rows by path, so each script keeps its id and values, takes the
   file's current version, or is dropped when its file is gone.
@@ -152,6 +153,18 @@ scripts (`planCollections`, then `restores` in the request).
   - A manifest collection from such an export has no path for its
     scripts. It is listed as Can't restore, and its scripts import one
     by one.
+
+### Scripts collections
+
+- A new script from one of the backup's scripts collections goes into
+  that collection (`backupScriptsCollection`, then `named` in the
+  request):
+  - The one here it matches (rules 1, 3 and 4 above), or
+  - One made like the backup's: its name, built-in scheme, local-files
+    flag, and its enabled flag with the New section's Enabled state on.
+- This is offered only when every new script has such a collection.
+  Otherwise, as from TM or VM, they all go into one picked collection.
+- Existing scripts stay where they are installed.
 
 ## The dialog
 
@@ -168,10 +181,10 @@ Import.
 - **Values and enabled state are options per section.** Scripts that
   arrive fresh (restored or new) take the backup's by default. For an
   existing script they'd overwrite what it has now, so they start off.
-- **Collections**, first, for an SM export with collections to restore
-  ([above](#restoring-collections)): Name, Kind (Directory, GitHub,
-  Manifest, Scripts, or Scripts (built-in)), Location (linked), Scripts, and Status (New,
-  Already here, or Can't restore).
+- **Directory collections**, first, for an SM export with collections
+  to restore ([above](#restoring-collections)): Name, Kind (Directory,
+  GitHub or Manifest), Location (linked), Scripts, and Status (New,
+  Already here, or Can't restore). Scripts collections aren't listed.
   - A new one is checked to be restored. The others are unchecked and
     can't be checked; the Status tooltip says why.
   - The heading's checkbox checks or clears all that can be restored.
@@ -179,12 +192,8 @@ Import.
     Existing sections. Unchecking it moves them there.
   - Its options, all on:
     - **Use stored values from the backup.**
-    - **Use enabled state from the backup**, for the collections and their
-      scripts. Off, they load enabled.
-    - **Link scripts in Scripts collections to their location**, as
-      for new scripts below. Shown only with a scripts collection to
-      restore; a directory or manifest collection's scripts always
-      load from it.
+    - **Use enabled state from the backup**, for the collections and
+      their scripts. Off, they load enabled.
 - The New and Existing tables have a checkbox per script (and one for
   all), a **Type** column and a **Values** column:
   - Type is the scheme chip the collections page shows (`http`,
@@ -195,8 +204,17 @@ Import.
   - In New, Values has a check when the file has stored values for the
     script. Existing shows a comparison (below).
   - Each column heading's tooltip says what the column shows, in these
-    tables and the Collections and Invalid ones.
+    tables and the Directory collections and Invalid ones.
 - **New scripts:** Name, Version, Type, Values.
+  - When each has a scripts collection in the backup
+    ([above](#scripts-collections)), two choices:
+    - **Add to their collections from the backup** (the default). The
+      table gains a Collection column first: the collection here, or
+      the name one made for it will get (numbered if taken), with
+      "(New)".
+    - **Add to collection** and the picker below. The Collection
+      column is greyed. Clicking or changing the picker picks this.
+  - Otherwise only the picker shows.
   - **Add to collection:** a new scripts collection, "(New) Imported
     from Tampermonkey (date)", or an existing scripts collection.
     - When a collection already has that name, the choice shows the

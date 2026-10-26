@@ -10,7 +10,7 @@ import { testWithBrowserDownloads as test, expect } from '../fixtures/extension'
 import type { BrowserContext, Page } from '@playwright/test';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 import {
-  closeExport, closeImport, collectionRows, confirmImport, exportVia, IMPORT_DIALOG, importVia, openImport,
+  closeExport, closeImport, collectionRows, confirmImport, exportVia, IMPORT_DIALOG, importVia, newCollections, openImport,
 } from '../fixtures/backup-dialogs';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -194,28 +194,38 @@ test.describe('backup round trip', () => {
     expect(await sm.getCollections()).toEqual([]);
     await collectionsPage(page, extensionId);
     await openImport(page, '#page-menu', saved);
+    // Directory, manifest and GitHub collections restore; scripts
+    // collections' scripts are new scripts, which go back into them.
     expect((await collectionRows(page)).map((r) => [r.name, r.kind, r.status, r.restore])).toEqual([
       [dir.path, 'Directory', 'New', true],
       [expect.any(String), 'Manifest', 'New', true],
       [expect.any(String), 'GitHub', 'New', true],
-      [expect.any(String), 'Scripts (built-in)', 'New', true],
-      [expect.any(String), 'Scripts (built-in)', 'New', true],
-      ['Mine', 'Scripts', 'New', true],
     ]);
+    const fromScriptsCollections = await newCollections(page);
+    expect(fromScriptsCollections.map((c) => c.name.endsWith(' (New)'))).toEqual(fromScriptsCollections.map(() => true));
+    await expect(page.locator(`${IMPORT_DIALOG} #import-new-by-collection`)).toBeChecked();
+    // The heading's box clears and checks them all.
+    const all = page.locator(`${IMPORT_DIALOG} #import-collections-table thead input`);
+    await all.uncheck();
+    expect((await collectionRows(page)).map((r) => r.restore)).toEqual([false, false, false]);
+    await all.check();
+    expect((await collectionRows(page)).map((r) => r.restore)).toEqual([true, true, true]);
     // Not restoring the directory, its scripts import one by one, but
-    // the empty one can't: it's listed as invalid.
+    // the empty one can't: it's listed as invalid. They have no scripts
+    // collection, so all new scripts go into the one picked.
     const localBox = page.locator(`${IMPORT_DIALOG} #import-collections-table tbody tr`).first().locator('input');
     await localBox.uncheck();
-    await expect(page.locator(`${IMPORT_DIALOG} #import-new-table .import-name`)).toHaveText(['Alpha', 'broken', 'Beta']);
+    await expect(page.locator(`${IMPORT_DIALOG} #import-new-table .import-name`))
+      .toHaveText(['Alpha', 'broken', 'Beta', 'Web', 'Loose', 'MineFile', 'MineWeb', 'Kept']);
     await expect(page.locator(`${IMPORT_DIALOG} #import-invalid-table tbody tr`)).toHaveText(['emptyThe script is empty']);
+    await expect(page.locator(`${IMPORT_DIALOG} #import-new-by-collection`)).toBeHidden();
+    expect(await newCollections(page)).toEqual([]);
     await localBox.check();
-    await expect(page.locator(`${IMPORT_DIALOG} #import-new`)).toBeHidden();
     await expect(page.locator(`${IMPORT_DIALOG} #import-invalid`)).toBeHidden();
-    // Restoring scripts collections, so their Link option shows.
-    await expect(page.locator(`${IMPORT_DIALOG} #import-restore-link`)).toBeVisible();
+    expect(await newCollections(page)).toEqual(fromScriptsCollections);
     const result = await confirmImport(page);
     await closeImport(page);
-    expect(result).toBe('Restored 6 collections with 13 scripts.');
+    expect(result).toBe(`Restored 3 collections with 8 scripts.\n\nImported ${fromScriptsCollections.length} scripts.`);
     expect(await snapshot(sm, getServiceWorker)).toEqual(before);
 
     // The next refresh of each finds the same rows: same ids, values kept.

@@ -12,6 +12,7 @@ import {
   hereText,
   planCollections,
   planImport,
+  restorable,
   restorePath,
   valuesText,
   versionText,
@@ -217,37 +218,50 @@ test('a script\'s path in its restored collection: given, or worked out for a di
   assert.equal(restorePath(backupScript(0, 'A', { collection: 'other' }), scripts), null);
 });
 
-test('a restore takes its collection\'s scripts whatever their match, and the rest import as usual', () => {
+test('a restore takes its collection\'s scripts whatever their match; scripts collections go by name', () => {
   const collections = [
     { uuid: 'd', name: 'Dir', kind: 'directory', location: '/home/me/s', enabled: false, localFiles: false },
-    { uuid: 'w', name: 'Web', kind: 'scripts', location: null, builtin: 'http', enabled: true, localFiles: true },
+    { uuid: 'w', name: 'Web', kind: 'scripts', location: null, builtin: 'http', enabled: false, localFiles: true },
+    { uuid: 'm', name: 'Mine', kind: 'scripts', location: null, enabled: true, localFiles: true },
   ];
   const scripts = [
     backupScript(0, 'InDir', { collection: 'd', location: '/home/me/s/a.user.js', relativePath: 'a.user.js', values: { a: 1 } }),
     backupScript(1, 'OnWeb', { collection: 'w', location: 'https://example.com/w.user.js' }),
     backupScript(2, 'Loose'),
+    backupScript(3, 'Kept', { collection: 'm' }),
   ];
   const b = { ...backup(scripts), collections };
   // InDir is installed elsewhere too; the restore still takes it.
-  const plan = planImport(b, [copy('x', 'InDir')], ['h0', 'h1', 'h2']);
-  const planned = planCollections(b, []);
+  const plan = planImport(b, [copy('x', 'InDir')], ['h0', 'h1', 'h2', 'h3']);
+  // Mine is here already.
+  const planned = planCollections(b, [{ id: 'mine-here', name: 'mine', path: 'container:user-1' }]);
+  assert.deepEqual(planned.filter(restorable).map((c) => c.collection.uuid), ['d']);
+  // Only a directory, manifest or GitHub collection restores, even if asked.
   const request = buildImportRequest(b, plan, new Set(), DEFAULT_CHOICES, { newCollectionName: 'Imported' }, planned, new Set(['d', 'w']));
   assert.deepEqual(request.restores.map((r) => ({ ...r, installs: r.installs.map((i) => [i.name, i.relativePath, i.linkTo, i.values]) })), [
     { name: 'Dir', kind: 'directory', location: '/home/me/s', enabled: false, localFiles: false,
       installs: [['InDir', 'a.user.js', undefined, { a: 1 }]] },
-    { name: 'Web', kind: 'scripts', location: null, builtin: 'http', enabled: true, localFiles: true,
-      installs: [['OnWeb', undefined, 'https://example.com/w.user.js', undefined]] },
   ]);
-  // Loose was unchecked.
   assert.deepEqual(request.installs, []);
+  assert.equal(request.named, undefined);
   // A restore follows its own section's choices, not the New section's.
-  const own = buildImportRequest(b, plan, new Set(), { ...DEFAULT_CHOICES, restore: { values: false, enabled: false, link: false } },
-    { newCollectionName: 'Imported' }, planned, new Set(['d', 'w']));
-  assert.deepEqual(own.restores.map((r) => [r.enabled, r.installs.map((i) => [i.linkTo, i.values])]), [
-    [true, [[undefined, undefined]]], [true, [[undefined, undefined]]],
+  const own = buildImportRequest(b, plan, new Set(), { ...DEFAULT_CHOICES, restore: { values: false, enabled: false } },
+    { newCollectionName: 'Imported' }, planned, new Set(['d']));
+  assert.deepEqual(own.restores.map((r) => [r.enabled, r.installs.map((i) => [i.linkTo, i.values])]), [[true, [[undefined, undefined]]]]);
+
+  // New scripts from scripts collections go into them by name: the one
+  // here, or one made like the backup's. The rest go `into`.
+  const named = buildImportRequest(b, plan, new Set([1, 2, 3]), DEFAULT_CHOICES, { newCollectionName: 'Imported' }, planned, new Set(['d']));
+  assert.deepEqual(named.named.map((g) => ({ ...g, installs: g.installs.map((i) => [i.name, i.linkTo]) })), [
+    { create: { name: 'Web', kind: 'scripts', location: null, builtin: 'http', enabled: false, localFiles: true },
+      installs: [['OnWeb', 'https://example.com/w.user.js']] },
+    { collectionId: 'mine-here', installs: [['Kept', undefined]] },
   ]);
-  // Not restoring: they import one by one.
-  const plain = buildImportRequest(b, plan, new Set([0, 1, 2]), DEFAULT_CHOICES, { newCollectionName: 'Imported' }, planned, new Set());
-  assert.equal(plain.restores, undefined);
-  assert.deepEqual(plain.installs.map((i) => i.name), ['OnWeb', 'Loose']);
+  assert.deepEqual(named.installs.map((i) => i.name), ['Loose']);
+  // Picking a collection instead puts them all there.
+  const picked = buildImportRequest(b, plan, new Set([0, 1, 2, 3]),
+    { ...DEFAULT_CHOICES, new: { ...DEFAULT_CHOICES.new, byCollection: false } }, { newCollectionName: 'Imported' }, planned, new Set());
+  assert.equal(picked.restores, undefined);
+  assert.equal(picked.named, undefined);
+  assert.deepEqual(picked.installs.map((i) => i.name), ['OnWeb', 'Loose', 'Kept']);
 });

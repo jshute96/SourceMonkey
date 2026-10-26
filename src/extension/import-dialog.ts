@@ -14,7 +14,7 @@ import {
   IMPORT_SCRIPT_EMPTY, ImportFormatError, isEmptyScript, readBackup, SOURCE_NAMES, type BackupProblem, type ParsedBackup,
 } from './import-backup.js';
 import {
-  actionFor, ARROW, buildImportRequest, CHECK, contentText, DEFAULT_CHOICES, hereText, planCollections, planImport, restoredScripts,
+  actionFor, ARROW, backupScriptsCollection, buildImportRequest, CHECK, restorable, contentText, DEFAULT_CHOICES, hereText, planCollections, planImport, restoredScripts,
   valuesText, versionText,
   type ImportChoices, type InstalledCopy, type PlannedCollection, type PlannedScript,
 } from './import-plan.js';
@@ -45,10 +45,13 @@ interface DialogElements {
   newerLabel: HTMLElement;
   into: HTMLSelectElement;
   // Each section's own choices.
-  restoreOpts: ArrivingOptions;
-  // Only shown with a scripts collection to restore.
-  restoreLinkRow: HTMLElement;
+  restoreOpts: { values: HTMLInputElement; enabled: HTMLInputElement };
   newOpts: ArrivingOptions;
+  // Where new scripts go: their collections from the backup, or the
+  // one picked in `into`. Only offered when each has a collection.
+  byCollection: HTMLInputElement;
+  byCollectionRow: HTMLElement;
+  pickInto: HTMLInputElement;
   existingText: HTMLInputElement[];
   existingValues: HTMLInputElement;
   existingEnabled: HTMLInputElement;
@@ -134,23 +137,30 @@ function buildDialog(): DialogElements {
   const restoreValues = option('checkbox', 'import-restore-values', 'Use stored values from the backup');
   const restoreEnabled = option('checkbox', 'import-restore-enabled', 'Use enabled state from the backup',
     'For the collections and their scripts. Otherwise, they load enabled.');
-  const restoreLink = option('checkbox', 'import-restore-link', 'Link scripts in Scripts collections to their location',
-    'If the script has a URL or file location, it can get updates from that location.');
   const collectionsSection = section('import-collections', [el('div', 'dlg-hint',
     'Restore these collections with their scripts from the backup. Each collection’s next refresh loads what its location has then.'),
-  restoreValues.wrap, restoreEnabled.wrap, restoreLink.wrap]);
+  restoreValues.wrap, restoreEnabled.wrap]);
 
   // Scripts not installed here.
-  const intoRow = el<HTMLElement>('label', 'dlg-into');
+  const byCollection = option('radio', 'import-new-by-collection', 'Add to their collections from the backup', undefined, 'import-new-target');
+  // The label names the picker, so it stays usable without the radio.
+  const intoRow = el<HTMLElement>('div', 'dlg-into');
+  const pickInto = el<HTMLInputElement>('input');
+  pickInto.type = 'radio';
+  pickInto.name = 'import-new-target';
+  pickInto.id = 'import-new-pick';
+  pickInto.setAttribute('aria-label', 'Add to collection');
   const into = el<HTMLSelectElement>('select');
   into.id = 'import-into';
-  intoRow.append(el('span', undefined, 'Add to collection '), into);
+  const intoLabel = el<HTMLLabelElement>('label', undefined, 'Add to collection');
+  intoLabel.htmlFor = 'import-into';
+  intoRow.append(pickInto, intoLabel, into);
   const newValues = option('checkbox', 'import-new-values', 'Use stored values from the backup');
   const newEnabled = option('checkbox', 'import-new-enabled', 'Use enabled state from the backup',
     'Otherwise, they load enabled.');
   const newLink = option('checkbox', 'import-new-link', 'Link scripts to their location from the import',
     'If the script has a URL or file location, it can get updates from that location.');
-  const newSection = section('import-new', [intoRow, newValues.wrap, newEnabled.wrap, newLink.wrap]);
+  const newSection = section('import-new', [byCollection.wrap, intoRow, newValues.wrap, newEnabled.wrap, newLink.wrap]);
 
   // Scripts installed here.
   const leave = option('radio', 'import-existing-leave', 'Keep existing version', undefined, 'import-existing');
@@ -208,9 +218,9 @@ function buildDialog(): DialogElements {
     dialog, title, fileInput, chooseBtn, fileName, startRows: [intro, fileRow],
     sectionsWrap, collectionsSection, newSection, existingSection, unchangedSection, unchangedNote, unchangedToggle, invalidSection,
     newerLabel: newer.wrap.querySelector<HTMLElement>('.dlg-check')!, into,
-    restoreOpts: { values: restoreValues.input, enabled: restoreEnabled.input, link: restoreLink.input },
-    restoreLinkRow: restoreLink.wrap,
+    restoreOpts: { values: restoreValues.input, enabled: restoreEnabled.input },
     newOpts: { values: newValues.input, enabled: newEnabled.input, link: newLink.input },
+    byCollection: byCollection.input, byCollectionRow: byCollection.wrap, pickInto,
     existingText: [leave.input, newer.input, always.input],
     existingValues: existingValues.input, existingEnabled: existingEnabled.input, result, error, cancel, ok,
   };
@@ -248,7 +258,7 @@ export function openImportDialog(): Promise<string | null> {
       ui.sectionsWrap, ui.collectionsSection.root, ui.newSection.root, ui.existingSection.root, ui.unchangedSection.root, ui.invalidSection.root,
     ];
     const checkboxes = [
-      ...Object.values(ui.restoreOpts), ...Object.values(ui.newOpts), ui.existingValues, ui.existingEnabled,
+      ...Object.values(ui.restoreOpts), ...Object.values(ui.newOpts), ui.byCollection, ui.pickInto, ui.existingValues, ui.existingEnabled,
     ];
     const abort = new AbortController();
     const on = <K extends keyof HTMLElementEventMap>(target: HTMLElement, type: K, fn: (ev: HTMLElementEventMap[K]) => void): void => {
@@ -285,8 +295,10 @@ export function openImportDialog(): Promise<string | null> {
     for (const [opts, start] of [[ui.restoreOpts, DEFAULT_CHOICES.restore], [ui.newOpts, DEFAULT_CHOICES.new]] as const) {
       opts.values.checked = start.values;
       opts.enabled.checked = start.enabled;
-      opts.link.checked = start.link;
     }
+    ui.newOpts.link.checked = DEFAULT_CHOICES.new.link;
+    ui.byCollection.checked = DEFAULT_CHOICES.new.byCollection;
+    ui.pickInto.checked = !DEFAULT_CHOICES.new.byCollection;
     for (const r of ui.existingText) r.checked = r.value === DEFAULT_CHOICES.existing.text;
     ui.existingValues.checked = DEFAULT_CHOICES.existing.values;
     ui.existingEnabled.checked = DEFAULT_CHOICES.existing.enabled;
@@ -303,8 +315,11 @@ export function openImportDialog(): Promise<string | null> {
     for (const c of controls()) c.disabled = false;
 
     const choices = (): ImportChoices => ({
-      restore: { values: ui.restoreOpts.values.checked, enabled: ui.restoreOpts.enabled.checked, link: ui.restoreOpts.link.checked },
-      new: { values: ui.newOpts.values.checked, enabled: ui.newOpts.enabled.checked, link: ui.newOpts.link.checked },
+      restore: { values: ui.restoreOpts.values.checked, enabled: ui.restoreOpts.enabled.checked },
+      new: {
+        values: ui.newOpts.values.checked, enabled: ui.newOpts.enabled.checked, link: ui.newOpts.link.checked,
+        byCollection: byCollectionOffered && ui.byCollection.checked,
+      },
       existing: {
         text: (ui.existingText.find((r) => r.checked)?.value ?? DEFAULT_CHOICES.existing.text) as ImportChoices['existing']['text'],
         values: ui.existingValues.checked,
@@ -327,6 +342,8 @@ export function openImportDialog(): Promise<string | null> {
       ui.existingText[1].disabled = newerOff;
       ui.newerLabel.classList.toggle('off', newerOff);
       const now = choices();
+      // The backup's collections column, while new scripts go elsewhere.
+      for (const td of ui.newSection.tableWrap.querySelectorAll('td[data-col="collection"]')) td.classList.toggle('import-off', !now.new.byCollection);
       let count = restored.size;
       for (const p of plan) {
         // An empty script only a restore brings in.
@@ -431,12 +448,15 @@ export function openImportDialog(): Promise<string | null> {
       checked.clear();
       for (const p of plan) checked.add(p.script.index);
       restoring.clear();
-      for (const c of planned) if (!c.here && !c.cantRestore) restoring.add(c.collection.uuid);
-      ui.collectionsSection.heading.textContent = `Collections (${planned.length})`;
-      ui.collectionsSection.tableWrap.replaceChildren(collectionsTable(planned, restoring, () => {
+      for (const c of planned) if (restorable(c)) restoring.add(c.collection.uuid);
+      // Directory, manifest and GitHub collections: a scripts
+      // collection's scripts are listed as new or existing scripts.
+      const located = planned.filter((c) => c.collection.kind !== 'scripts');
+      ui.collectionsSection.heading.textContent = `Directory collections (${located.length})`;
+      ui.collectionsSection.tableWrap.replaceChildren(collectionsTable(located, restoring, () => {
         showScripts();
       }, on));
-      ui.collectionsSection.root.hidden = planned.length === 0;
+      ui.collectionsSection.root.hidden = located.length === 0;
       ui.sectionsWrap.hidden = false;
 
       // New scripts go into a new collection by default. `showScripts`
@@ -457,6 +477,9 @@ export function openImportDialog(): Promise<string | null> {
 
     // The new collection's name before numbering.
     let newBase = '';
+    // Whether every new script has a scripts collection in the backup,
+    // so they can go into those by name.
+    let byCollectionOffered = false;
     // Existing scripts with no changes, which never import; and whether
     // their table is shown.
     let unchanged = new Set<number>();
@@ -504,15 +527,13 @@ export function openImportDialog(): Promise<string | null> {
       if (!backup) return;
       // The new collection, numbered as the import will number it if the
       // name is taken, here or by a collection restored before it.
-      const restoredNames = planned.filter((c) => restoring.has(c.collection.uuid) && !c.here && !c.cantRestore)
+      const restoredNames = planned.filter((c) => restorable(c) && restoring.has(c.collection.uuid))
         .map((c): StoredCollection => ({ id: '', path: '', displayName: c.collection.name, scriptIds: [], enabled: true, lastRefreshedAt: 0 }));
       const newName = freeCollectionName(newBase, [...allHere, ...restoredNames], null);
       const newOption = ui.into.options[0];
       newOption.textContent = `(New) ${newName}`;
       newOption.value = '';
       newOption.dataset.newName = newName;
-      // Its Link option only matters with a scripts collection to restore.
-      ui.restoreLinkRow.hidden = !planned.some((c) => c.collection.kind === 'scripts' && restoring.has(c.collection.uuid) && !c.here && !c.cantRestore);
       restored = restoredScripts(planned, restoring);
       existingRows.clear();
       const outside = plan.filter((p) => !restored.has(p.script.index));
@@ -538,7 +559,13 @@ export function openImportDialog(): Promise<string | null> {
       const newer = here.filter((p) => p.here === 'older-here').length;
 
       ui.newSection.heading.textContent = `New scripts (${added.length})`;
-      ui.newSection.tableWrap.replaceChildren(scriptTable('import-new-table', added, NEW_HEADINGS, (p) => [
+      byCollectionOffered = added.length > 0 && added.every((p) => backupScriptsCollection(p.script, planned));
+      // Names a collection made for new scripts can't take, so it's numbered.
+      const takenNames = [...allHere, ...restoredNames];
+      ui.byCollectionRow.hidden = !byCollectionOffered;
+      ui.pickInto.hidden = !byCollectionOffered;
+      ui.newSection.tableWrap.replaceChildren(scriptTable('import-new-table', added, byCollectionOffered ? [COLLECTION_HEADING, ...NEW_HEADINGS] : NEW_HEADINGS, (p) => [
+        ...(byCollectionOffered ? [backupCollectionCell(backupScriptsCollection(p.script, planned)!, takenNames)] : []),
         el('td', 'import-name', p.script.name),
         el('td', 'import-version', p.script.version),
         typeCell(p.script.location, 'Where the backup says it loaded from'),
@@ -690,6 +717,15 @@ export function openImportDialog(): Promise<string | null> {
         refresh();
       });
     }
+    // Choosing a collection there means adding to it, even the one
+    // already shown.
+    for (const type of ['change', 'click'] as const) {
+      on(ui.into, type, () => {
+        if (ui.pickInto.checked) return;
+        ui.pickInto.checked = true;
+        refresh();
+      });
+    }
     on(ui.unchangedToggle, 'click', () => {
       unchangedOpen = !unchangedOpen;
       showUnchanged();
@@ -762,8 +798,7 @@ function collectionsTable(
     });
     const boxCell = el<HTMLTableCellElement>('td');
     boxCell.appendChild(box);
-    const kind = bc.builtin ? `${KIND_NAMES[bc.kind]} (built-in)`
-      : bc.location && isGithubDirCollection(bc.location) ? 'GitHub' : KIND_NAMES[bc.kind];
+    const kind = bc.location && isGithubDirCollection(bc.location) ? 'GitHub' : KIND_NAMES[bc.kind];
     const status = el<HTMLTableCellElement>('td', 'import-here', c.here ? 'Already here' : c.cantRestore ? 'Can’t restore' : 'New');
     status.title = c.here
       ? `Here as “${c.here.name}”. Its scripts are listed as new or existing scripts.`
@@ -843,6 +878,19 @@ const COLLECTION_HEADINGS: readonly Heading[] = [
   ['Scripts', 'How many of the backup’s scripts are in it'],
   ['Status', 'Whether the collection can be restored here'],
 ];
+
+const COLLECTION_HEADING: Heading = ['Collection', 'The collection the script goes into, as it was in the backup. (New) when it isn’t here yet.'];
+
+// A new script's collection: the one here, or the name one made for it
+// will have (numbered as the import numbers it, unless it's built in),
+// marked new.
+function backupCollectionCell(c: PlannedCollection, taken: readonly StoredCollection[]): HTMLElement {
+  const bc = c.collection;
+  const made = bc.builtin ? bc.name : freeCollectionName(bc.name, taken, null);
+  const td = el<HTMLTableCellElement>('td', 'import-collection', c.here ? c.here.name : `${made} (New)`);
+  td.dataset.col = 'collection';
+  return td;
+}
 
 const NEW_HEADINGS: readonly Heading[] = [
   ['Name', 'The script’s @name'],

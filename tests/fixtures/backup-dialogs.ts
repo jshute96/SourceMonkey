@@ -38,7 +38,6 @@ export async function closeExport(page: Page): Promise<void> {
 export interface ImportChoicesInput {
   restoreValues?: boolean;
   restoreEnabled?: boolean;
-  restoreLink?: boolean;
   newValues?: boolean;
   newEnabled?: boolean;
   newLink?: boolean;
@@ -66,7 +65,7 @@ export async function chooseImport(page: Page, choices: ImportChoicesInput): Pro
   const d = IMPORT_DIALOG;
   if (choices.existing) await page.locator(`${d} #import-existing-${choices.existing}`).check();
   const boxes: [boolean | undefined, string][] = [
-    [choices.restoreValues, 'restore-values'], [choices.restoreEnabled, 'restore-enabled'], [choices.restoreLink, 'restore-link'],
+    [choices.restoreValues, 'restore-values'], [choices.restoreEnabled, 'restore-enabled'],
     [choices.newValues, 'new-values'], [choices.newEnabled, 'new-enabled'], [choices.newLink, 'new-link'],
     [choices.existingValues, 'existing-values'], [choices.existingEnabled, 'existing-enabled'],
   ];
@@ -94,6 +93,16 @@ export async function newRows(page: Page): Promise<{ name: string; version: stri
     version: r.querySelector('.import-version')?.textContent ?? '',
     type: r.querySelector('.import-type')?.textContent ?? '',
     href: r.querySelector('.import-type a')?.getAttribute('href') ?? '',
+  })));
+}
+
+// The New scripts table's Collection column, when the backup gives
+// each one's collection: its name, "(New)" when it isn't here, and
+// whether it's greyed (new scripts go to a picked collection instead).
+export async function newCollections(page: Page): Promise<{ name: string; off: boolean }[]> {
+  await previewShown(page);
+  return await page.locator(`${IMPORT_DIALOG} #import-new-table tbody td[data-col="collection"]`).evaluateAll((cells) => cells.map((c) => ({
+    name: c.textContent ?? '', off: c.classList.contains('import-off'),
   })));
 }
 

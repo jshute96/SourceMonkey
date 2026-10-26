@@ -1832,6 +1832,12 @@ export interface ImportRestore {
   installs: ImportInstall[];
 }
 
+// New scripts going into the backup's own scripts collection: the one
+// here by that name, or one made like the backup's.
+export type ImportNamed =
+  | { collectionId: string; installs: ImportInstall[] }
+  | { create: Omit<ImportRestore, 'installs'>; installs: ImportInstall[] };
+
 // A change to a script already here. Each field is applied when present.
 export interface ImportUpdate {
   scriptId: string;
@@ -1850,6 +1856,8 @@ export interface ImportRequest {
   installs: ImportInstall[];
   updates: ImportUpdate[];
   restores?: ImportRestore[];
+  // New scripts placed by their collection in the backup, not `into`.
+  named?: ImportNamed[];
 }
 
 export interface ImportOutcome {
@@ -1886,10 +1894,21 @@ export async function importScripts(request: ImportRequest): Promise<ImportOutco
       for (const item of restore.installs) failed.push({ name: item.name, message: describeError(err) });
     }
   }
+  for (const group of request.named ?? []) {
+    try {
+      const target: ImportTarget = 'collectionId' in group ? { existing: await checkedImportCollection(group.collectionId) }
+        : { create: await restoreTarget(group.create, now) };
+      const out = await installImported(target, group.installs, request.source, now, failed, keptAsText);
+      collectionId = out.collectionId ?? collectionId;
+      installed += out.installed;
+    } catch (err) {
+      for (const item of group.installs) failed.push({ name: item.name, message: describeError(err) });
+    }
+  }
   if (request.installs.length > 0) {
     const out = await installImported(await importTarget(request.into), request.installs, request.source, now, failed, keptAsText);
     collectionId = out.collectionId ?? collectionId;
-    installed = out.installed;
+    installed += out.installed;
   }
   let updated = 0;
   for (const update of request.updates) {
@@ -1923,7 +1942,7 @@ async function importTarget(into: ImportRequest['into']): Promise<ImportTarget> 
 }
 
 // The row for a restored collection, written once its scripts are.
-async function restoreTarget(restore: ImportRestore, now: number): Promise<StoredCollection> {
+async function restoreTarget(restore: Omit<ImportRestore, 'installs'>, now: number): Promise<StoredCollection> {
   let path: string;
   if (restore.kind === 'scripts') path = restore.builtin ? containerPath(restore.builtin) : newContainerPath();
   else if (restore.location) path = await canonicalLocation(restore.location);
