@@ -15,12 +15,12 @@ test('shows storage usage by kind and follows changes', async ({
   const total = table.locator('tr.total td:last-child');
   await expect(total).toHaveText(/^\d+\.\d MB of 10 MB \(\d+%\)$/);
   // Rows that round to nothing are left out.
-  await expect(table.locator('tr', { hasText: 'Script values' })).toHaveCount(0);
+  await expect(table.locator('tr', { hasText: 'Stored values' })).toHaveCount(0);
 
   // A ~2 MB GM value lands in its own row and moves the total.
   const sw = await getServiceWorker();
   await sw.evaluate(() => chrome.storage.local.set({ 'gmval:s1:big': 'x'.repeat(2 * 1024 * 1024) }));
-  const values = table.locator('tr', { hasText: 'Script values' });
+  const values = table.locator('tr', { hasText: 'Stored values' });
   await expect(values.locator('td').nth(1)).toHaveText('1 value in 1 script');
   await expect(values.locator('td').nth(2)).toHaveText('2,048 KB');
   await expect(total).toHaveText(/^2\.0 MB of 10 MB \(20%\)$/);

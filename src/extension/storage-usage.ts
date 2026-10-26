@@ -168,7 +168,7 @@ export function summarizeLocalStorage(rows: Record<string, unknown>): UsageRow[]
     { label: '@require files', count: withUnique(plural(requires, 'file'), 'require'), bytes: requireBytes },
     { label: '@resource files', count: withUnique(plural(resources, 'file'), 'resource'), bytes: resourceBytes },
     {
-      label: 'Script values (GM_setValue)',
+      label: 'Stored values',
       count: `${plural(values, 'value')} in ${plural(valueScripts.size, 'script')}`,
       bytes: valueBytes,
     },

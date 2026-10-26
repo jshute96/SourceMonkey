@@ -24,12 +24,8 @@ manager's, or SourceMonkey's own export. The file formats are in
 
 ## Entry points
 
-The collections page's ⋯ menus (`more-menu.ts`), beside the Export
-items:
-
-- In the header: **Import scripts…**
-- In a scripts collection's button bar: **Import scripts into this
-  collection…**, which presets where new scripts go.
+The collections page's header ⋯ menu (`more-menu.ts`): **Import
+scripts…**, beside the Export item.
 
 ## Reading the file
 
@@ -111,10 +107,11 @@ A new script that isn't linked to a location is kept as its text: an
   linked to its web address is found again by that address, not its
   uuid.
 - An active copy comes first, as the one an update applies to.
-- How the backup's copy compares with that one (the Existing scripts
-  table's **Compared** column):
+- How the backup's copy compares with that one (`HereState`). The
+  "newer" choice and the Existing table's Version and Content columns
+  go by it:
 
-| Compared | Means |
+| State | Means |
 |---|---|
 | Same | The same text (content hash) |
 | Backup is newer | The backup's `@version` is newer |
@@ -161,8 +158,8 @@ scripts (`planCollections`, then `restores` in the request).
 Choosing a file reads it and shows the preview. Nothing is written until
 Import.
 
-- A section per kind of script: Collections, New, Existing and
-  Invalid.
+- A section per kind of script: Collections, New, Existing with
+  changes, Existing with no changes, and Invalid.
   - Each is headed with its count ("New scripts (3)") and shows only
     when the file has such scripts.
   - Each has its own options, then a table of just the scripts they
@@ -177,6 +174,7 @@ Import.
   Already here, or Can't restore).
   - A new one is checked to be restored. The others are unchecked and
     can't be checked; the Status tooltip says why.
+  - The heading's checkbox checks or clears all that can be restored.
   - The scripts a checked collection takes aren't listed in the New or
     Existing sections. Unchecking it moves them there.
   - Its options, all on:
@@ -194,7 +192,8 @@ Import.
     when it is a URL or a file. For a new script it is where the backup
     says it loaded from (`imported` when it gives none); for an
     existing one, the installed copy's.
-  - Values has a check when the file has stored values for the script.
+  - In New, Values has a check when the file has stored values for the
+    script. Existing shows a comparison (below).
   - Each column heading's tooltip says what the column shows, in these
     tables and the Collections and Invalid ones.
 - **New scripts:** Name, Version, Type, Values.
@@ -216,11 +215,26 @@ Import.
       refresh drops a scripts-collection row whose file is gone. One
       that can't be read uses the backup's copy instead, and the result
       lists those scripts.
-- **Existing scripts:** Collection (the installed copy's), Name (a link
-  to the installed copy an update goes to, in the viewer), Backup
-  version, Installed version, Compared (the copies here in its
-  tooltip), Type, Values.
+- **Existing scripts with changes:** Collection (the installed
+  copy's), Name (a link to the installed copy an update goes to, in the
+  viewer), Version, Content, Enabled, Type, Values.
   - Rows are grouped by collection, in the page's order.
+  - Each attribute column shows the installed copy's value, or
+    `installed → backup` where the backup's differs: all the import
+    could change, whatever the choices. `∅` means nothing.
+    - **Version:** `1.0`, or `1.0 → 2.0 (Newer)` / `(Older)`.
+    - **Content:** Same or Different; its tooltip lists the copies here.
+    - **Enabled:** `✓` or `☐`, marks rather than checkboxes so they
+      don't look clickable, or two with an arrow.
+    - **Values:** blank for none, `✓` when only the installed copy has
+      them (the backup has none, so they stay), `∅ → ✓` added,
+      `✓ → ∅` removed (the backup's are empty), `✓ (Same)`, or
+      `✓ → ✓ (Different)`. The installed values come from the worker
+      (`readScriptValues`).
+  - The Enabled and Values columns are greyed while their Replace
+    option is off. A difference the current choices will apply has a
+    light yellow cell: Version and Content when the text is replaced,
+    Enabled and Values when their option is on.
   - A row the current choices do nothing to is greyed, with its
     checkbox disabled; it keeps its check for when the choices change.
     Its tooltip says why.
@@ -232,7 +246,9 @@ Import.
       instead; the default comes back if restoring fewer
       collections raises the count, unless a choice was made.
     - **Replace with imported version always**, even when the text is
-      the same, which also brings the backup's dependency files.
+      the same, which also brings the backup's dependency files. (A
+      script with no changes at all is in the next section and never
+      imports.)
     - These change only a copy kept as text (imported or scratch). A
       script that loads from a URL or file keeps loading from there,
       and the hint under them says so.
@@ -241,12 +257,19 @@ Import.
   - **Replace enabled state with the state from the backup** (off).
   - Values and enabled state apply to each checked row, whatever the
     text choice.
+- **Existing scripts with no changes:** those the same in every column
+  (text, enabled state, values), which never import.
+  - A line, "N existing scripts are exactly the same and will not be
+    imported.", and a Show button for their table, hidden by default.
+  - The table has the Existing columns, without checkboxes.
 - **Invalid scripts:** "These scripts cannot be imported", and a table
   of each one's file in the zip and the reason.
 - The button counts what will happen: "Import 3 scripts", restored
-  collections' scripts included.
-- Afterwards the dialog shows only the results: what was restored,
-  imported and updated, and what failed.
+  collections' scripts included. With nothing to do it's greyed, and
+  its tooltip says "This import would update zero scripts."
+- Afterwards the dialog shows only the results: a line each for what
+  was restored, imported and updated ("Imported 1 script.", "Updated 4
+  scripts."), and what failed.
   - The choices are gone, since there's nothing left to do there. To
     import more, or retry after a failure, open the dialog again.
   - Close or Esc closes it, landing the page on the collection new

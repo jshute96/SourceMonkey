@@ -207,8 +207,9 @@ function isLinkable(location: string): boolean {
 export function actionFor(p: PlannedScript, choices: ImportChoices): RowAction {
   if (!p.match) return installAction(p.script, choices.new);
   const { existing } = choices;
-  // Always replaces even the same text, as it says: the backup's
-  // dependency files come with it.
+  // Always replaces even the same text, as it says, when something else
+  // about the script changes: the backup's dependency files come with
+  // it. A script with no changes at all the dialog never imports.
   const text = p.match.stored
     && (existing.text === 'always' || (existing.text === 'newer' && p.here === 'older-here'));
   const values = existing.values && p.script.values !== undefined;
@@ -225,8 +226,8 @@ function installAction(s: BackupScript, choices: ArrivingChoices): RowAction & {
   return link ? { kind: 'install', linkTo: url } : { kind: 'install' };
 }
 
-// How an existing script compares with the backup's, for its table's
-// Compared column, and its tooltip naming the copies here.
+// How an existing script compares with the backup's, and the copies
+// here, for the Content cell's tooltip.
 export function hereText(p: PlannedScript): { text: string; title: string } {
   const texts: Record<HereState, string> = {
     'new': 'New',
@@ -246,6 +247,57 @@ export function hereText(p: PlannedScript): { text: string; title: string } {
   const title = p.copies.length === 0 ? titles[p.here]
     : `${titles[p.here]}.\n${p.copies.length > 1 ? 'Copies in' : 'In'}: ${where.join(', ')}`;
   return { text: texts[p.here], title };
+}
+
+// ---------- The Existing table's columns ----------
+//
+// Each column shows the installed copy's value, or, where the backup's
+// differs, `installed → backup`: what the import could change, whatever
+// the choices. `∅` stands for nothing.
+
+export const ARROW = ' \u2192 ';
+export const NOTHING = '\u2205';
+export const CHECK = '\u2713';
+
+// `1.0`, or `1.0 → 2.0 (Newer)`: the backup's version against the
+// installed one, newer or older by @version order.
+export function versionText(p: PlannedScript): string {
+  const ours = p.match?.header ? getValue(p.match.header, 'version') ?? '' : '';
+  const theirs = p.script.version;
+  if (ours === theirs) return ours;
+  const order = p.here === 'older-here' ? ' (Newer)' : p.here === 'newer-here' ? ' (Older)' : '';
+  return `${ours || NOTHING}${ARROW}${theirs || NOTHING}${order}`;
+}
+
+export function contentText(p: PlannedScript): string {
+  return p.here === 'same' ? 'Same' : 'Different';
+}
+
+// The Values column. A backup without values for the script leaves the
+// installed ones, so that shows only whether it has any; one with
+// values (even none) replaces them whole.
+export function valuesText(installed: Record<string, unknown> | undefined, backup: Record<string, unknown> | undefined): string {
+  const here = installed !== undefined && Object.keys(installed).length > 0;
+  if (backup === undefined) return here ? CHECK : '';
+  const there = Object.keys(backup).length > 0;
+  if (!here && !there) return '';
+  if (!here) return `${NOTHING}${ARROW}${CHECK}`;
+  if (!there) return `${CHECK}${ARROW}${NOTHING}`;
+  return sameValues(installed, backup) ? `${CHECK} (Same)` : `${CHECK}${ARROW}${CHECK} (Different)`;
+}
+
+function sameValues(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  return stableJson(a) === stableJson(b);
+}
+
+// JSON with object keys sorted, so key order doesn't count.
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    return `{${Object.keys(obj).sort().map((k) => `${JSON.stringify(k)}:${stableJson(obj[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
 }
 
 // The scripts `restoring` (collections, by the backup's uuid) puts in

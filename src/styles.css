@@ -203,8 +203,8 @@ dialog.sm-dialog.import-dialog { width: 920px; }
    table of the scripts they apply to. Tall enough for a handful of
    rows; a big backup scrolls inside it. A line above each section and
    below the last sets them apart. */
-.import-dialog .import-sections { grid-column: 1 / -1; min-width: 0; border-bottom: 1px solid #d1d5db; }
-.import-dialog .import-section { min-width: 0; border-top: 1px solid #d1d5db; padding: 10px 0 12px; }
+.import-dialog .import-sections { grid-column: 1 / -1; min-width: 0; border-bottom: 2px solid #9ca3af; }
+.import-dialog .import-section { min-width: 0; border-top: 2px solid #9ca3af; padding: 10px 0 12px; }
 .import-dialog .import-heading { font-size: 1em; font-weight: 600; margin: 0 0 2px; }
 .import-dialog .import-section .import-table-wrap:not(:empty) { margin-top: 8px; max-height: 220px; overflow: auto; border: 1px solid #e5e7eb; border-radius: 4px; }
 .import-table { width: 100%; border-collapse: collapse; font-size: 0.93em; }
@@ -213,9 +213,15 @@ dialog.sm-dialog.import-dialog { width: 920px; }
 .import-table.with-checks td:first-child, .import-table.with-checks th:first-child { width: 1.5em; padding-right: 0; }
 .import-table :is(.import-name, .import-location, .import-collection) { overflow-wrap: anywhere; }
 .import-table .import-type a { text-decoration: none; }
-.import-table .import-version, .import-table .import-here, .import-table .import-values { white-space: nowrap; }
+.import-table .import-version, .import-table .import-here, .import-table .import-values, .import-table .import-enabled { white-space: nowrap; }
 .import-table .import-values { text-align: center; }
 .import-table .import-skip { color: #888; }
+/* Existing scripts: a column whose option is off, and a difference the
+   import will apply. */
+.import-table td.import-off { color: #888; }
+.import-table td.import-change { background: #fff6bf; }
+.import-dialog .dlg-unchanged { display: flex; gap: 8px; align-items: baseline; }
+.import-dialog .dlg-toggle { font: inherit; padding: 1px 8px; }
 .import-dialog .dlg-into select { font: inherit; padding: 2px 6px; max-width: 100%; }
 .sm-dialog .dlg-title {
   font-size: 1em;

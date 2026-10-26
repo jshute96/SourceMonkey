@@ -11,7 +11,7 @@ import { testWithBrowserDownloads as test, expect } from '../fixtures/extension'
 import type { BrowserContext, Page } from '@playwright/test';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 import {
-  chooseImport, closeExport, closeImport, confirmImport, existingRows, exportVia, newRows, openImport,
+  chooseImport, closeExport, closeImport, confirmImport, existingRows, exportVia, newRows, openImport, unchangedNames,
 } from '../fixtures/backup-dialogs';
 import { readZip } from '../fixtures/zip-read.mjs';
 import type { StoredScriptLike } from '../fixtures/sw-api';
@@ -251,8 +251,9 @@ test.describe('backups across managers', () => {
 
       await sm.writeGmValues(byName.get('Alpha')!.id, [{ key: 'theme', value: 'light' }]);
       await openImport(page, '#page-menu', back);
-      expect((await existingRows(page)).map((r) => [r.name, r.compared]).sort())
-        .toEqual([['Alpha', 'Same'], ['Beta', 'Same'], ['Gamma', 'Same']]);
+      // Only Alpha's values changed since.
+      expect((await existingRows(page)).map((r) => [r.name, r.content])).toEqual([['Alpha', 'Same']]);
+      expect((await unchangedNames(page)).sort()).toEqual(['Beta', 'Gamma']);
       expect((await newRows(page)).map((r) => r.name)).toEqual(['Only in TM']);
       await chooseImport(page, { existing: 'always', existingValues: true, existingEnabled: true });
       await confirmImport(page);
@@ -309,8 +310,8 @@ test.describe('backups across managers', () => {
 
     // The zip has the same scripts, known by TM's uuids.
     await openImport(page, '#page-menu', zip);
-    expect((await existingRows(page)).map((r) => [r.name, r.compared, r.type]).sort())
-      .toEqual([['Off', 'Same', 'imported'], ['Stores', 'Same', 'imported'], ['Uses lib', 'Same', 'imported']]);
+    expect(await existingRows(page)).toEqual([]);
+    expect((await unchangedNames(page)).sort()).toEqual(['Off', 'Stores', 'Uses lib']);
     await page.close();
   });
 
@@ -355,7 +356,8 @@ test.describe('backups across managers', () => {
     await sm.writeGmValues(byName.get('Alpha')!.id, [{ key: 'theme', value: 'light' }]);
     await openImport(page, '#page-menu', back);
     // VM keeps no ids: what's here is found by namespace and name.
-    expect((await existingRows(page)).map((r) => [r.name, r.compared]).sort()).toEqual([['Alpha', 'Same'], ['Beta', 'Same']]);
+    expect((await existingRows(page)).map((r) => [r.name, r.content])).toEqual([['Alpha', 'Same']]);
+    expect(await unchangedNames(page)).toEqual(['Beta']);
     expect((await newRows(page)).map((r) => r.name)).toEqual(['VM own']);
     await chooseImport(page, { existing: 'always', existingValues: true, existingEnabled: true });
     await confirmImport(page);

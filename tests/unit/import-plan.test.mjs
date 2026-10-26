@@ -7,11 +7,14 @@ import assert from 'node:assert/strict';
 import {
   actionFor,
   buildImportRequest,
+  contentText,
   DEFAULT_CHOICES,
   hereText,
   planCollections,
   planImport,
   restorePath,
+  valuesText,
+  versionText,
 } from '../../dist/extension/import-plan.js';
 import { parseHeader } from '../../dist/userscript-header.js';
 
@@ -64,6 +67,26 @@ test('an active copy is the one an update goes to', () => {
   assert.equal(p.match.id, 'on');
   assert.equal(p.copies.length, 2);
   assert.match(hereText(p).title, /Copies in: \* New, Old$/);
+});
+
+test('the Existing table shows installed values, and installed \u2192 backup where they differ', () => {
+  const installed = [copy('a', 'A', { contentHash: 'h0' }), copy('b', 'B'), copy('c', 'C')];
+  const plan = planImport(backup([
+    backupScript(0, 'A'), backupScript(1, 'B', { version: '2.0' }), backupScript(2, 'C', { version: '0.9' }),
+  ]), installed, ['h0', 'h1', 'h2']);
+  assert.deepEqual(plan.map(versionText), ['1.0', '1.0 \u2192 2.0 (Newer)', '1.0 \u2192 0.9 (Older)']);
+  assert.deepEqual(plan.map(contentText), ['Same', 'Different', 'Different']);
+
+  const v = { a: 1 };
+  assert.equal(valuesText({}, undefined), '');
+  assert.equal(valuesText(v, undefined), '\u2713');
+  assert.equal(valuesText({}, {}), '');
+  assert.equal(valuesText({}, v), '\u2205 \u2192 \u2713');
+  assert.equal(valuesText(v, {}), '\u2713 \u2192 \u2205');
+  assert.equal(valuesText(v, { a: 1 }), '\u2713 (Same)');
+  assert.equal(valuesText(v, { a: 2 }), '\u2713 \u2192 \u2713 (Different)');
+  // Key order doesn't count.
+  assert.equal(valuesText({ a: { x: 1, y: 2 } }, { a: { y: 2, x: 1 } }), '\u2713 (Same)');
 });
 
 test('compares by text, then @version', () => {

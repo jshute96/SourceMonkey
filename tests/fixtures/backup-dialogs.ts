@@ -112,17 +112,29 @@ export async function collectionRows(page: Page): Promise<{
   }));
 }
 
-// The Existing scripts table's rows: Name, Compared, the installed
-// copy's Type, and whether the current choice changes the script (its
-// row isn't greyed).
-export async function existingRows(page: Page): Promise<{ name: string; compared: string; type: string; affected: boolean }[]> {
+// The Existing scripts table's rows: Name, Version, Content, Enabled,
+// the installed copy's Type, Values, and whether the current choices
+// change the script (its row isn't greyed).
+export async function existingRows(page: Page): Promise<{
+  name: string; version: string; content: string; enabled: string; type: string; values: string; affected: boolean;
+}[]> {
   await previewShown(page);
   return await page.locator(`${IMPORT_DIALOG} #import-existing-table tbody tr`).evaluateAll((rows) => rows.map((r) => ({
     name: r.querySelector('.import-name')?.textContent ?? '',
-    compared: r.querySelector('.import-here')?.textContent ?? '',
+    version: r.querySelector('.import-version')?.textContent ?? '',
+    content: r.querySelector('.import-here')?.textContent ?? '',
+    enabled: r.querySelector('.import-enabled')?.textContent ?? '',
+    values: r.querySelector('.import-values')?.textContent ?? '',
     type: r.querySelector('.import-type')?.textContent ?? '',
     affected: !r.classList.contains('import-skip'),
   })));
+}
+
+// The names in the Existing scripts with no changes table, shown or not.
+export async function unchangedNames(page: Page): Promise<string[]> {
+  await previewShown(page);
+  return await page.locator(`${IMPORT_DIALOG} #import-unchanged-table tbody .import-name`)
+    .evaluateAll((cells) => cells.map((c) => c.textContent ?? ''));
 }
 
 // Import with the choices given, and return the result line.

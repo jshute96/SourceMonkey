@@ -199,8 +199,8 @@ pageMenuBtn.addEventListener('click', () => openMenu(pageMenuBtn, [
 ]));
 
 // The import dialog, then the collection its new scripts went into.
-async function runImport(collectionId?: string): Promise<void> {
-  const landed = await openImportDialog({ collectionId });
+async function runImport(): Promise<void> {
+  const landed = await openImportDialog();
   if (!landed) return;
   await repaintPage();
   jumpToCollection(landed);
@@ -1572,9 +1572,6 @@ async function renderCollectionSection(collection: StoredCollection): Promise<HT
     menuBtn.classList.add('collection-menu');
     menuBtn.title = 'More actions for this collection';
     menuBtn.addEventListener('click', () => openMenu(menuBtn, [
-      ...(isContainerCollection(collection.path)
-        ? [{ label: 'Import scripts into this collection\u2026', run: () => void runImport(collection.id) }]
-        : []),
       {
         label: 'Export this collection\u2026',
         run: () => openExportDialog({ scope: { collectionId: collection.id }, collectionName: effectiveDisplayName(collection) }),

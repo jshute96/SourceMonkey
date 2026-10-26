@@ -176,7 +176,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/move-dialog.ts` | The move-script dialog opened from the viewer's Collection row: destination dropdown, live refusals, runs the move itself |
 | `src/extension/copy-dialog.ts` | The local-copy dialog opened from the viewer's controls row: filename, header fields, dependency checkbox, existing-file checks, runs the copy |
 | `src/extension/export-dialog.ts` | The export dialog opened from the collections page's ⋯ menus: what to include, Save As, the result |
-| `src/extension/import-dialog.ts` | The import dialog opened from the collections page's ⋯ menus: choose a file, preview against what's installed, choices, result |
+| `src/extension/import-dialog.ts` | The import dialog opened from the collections page's ⋯ menu: choose a file, preview against what's installed, choices, result |
 | `src/extension/delete-icon.ts` | Paints the two removal glyphs: plain trash can for a record, trash can + disk badge for a file delete |
 | `src/extension/delete-dialog.ts` | The delete-local-script-file confirmation: the file and its path, the dependency lists, an on-disk watch, runs the deletion |
 | `src/extension/file-changes.ts` | Paint-time "deleted" / "modified" chips and the per-collection "refresh pending" chip: listing-based probe, new-file scan, pending counts, tagging, tooltips |

@@ -11,7 +11,7 @@ import type { Page } from '@playwright/test';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 import {
   chooseImport, closeExport, closeImport, collectionRows, confirmImport, existingRows, exportVia, IMPORT_DIALOG, importVia, newRows,
-  openImport, previewShown,
+  openImport, previewShown, unchangedNames,
 } from '../fixtures/backup-dialogs';
 import { buildZip } from '../../dist/extension/zip-writer.js';
 import fs from 'node:fs';
@@ -178,7 +178,15 @@ test.describe('backup import', () => {
     expect(await collectionRows(page)).toEqual([
       { name: 'My scripts', kind: 'Directory', location: dir.path, scripts: '2', status: 'Already here', restore: false },
     ]);
-    expect((await existingRows(page)).map((r) => r.name)).toEqual(['Alpha']);
+    // Alpha is just as the backup has it.
+    expect(await existingRows(page)).toEqual([]);
+    expect(await unchangedNames(page)).toEqual(['Alpha']);
+    await expect(page.locator(`${IMPORT_DIALOG} #import-unchanged .dlg-unchanged`))
+      .toHaveText('1 existing script is exactly the same and will not be imported.Show');
+    await expect(page.locator(`${IMPORT_DIALOG} #import-unchanged-table`)).toBeHidden();
+    await page.locator(`${IMPORT_DIALOG} #import-unchanged-toggle`).click();
+    await expect(page.locator(`${IMPORT_DIALOG} #import-unchanged-table`)).toBeVisible();
+    await expect(page.locator(`${IMPORT_DIALOG} #import-unchanged-table input`)).toHaveCount(0);
     expect((await newRows(page)).map((r) => r.name)).toEqual(['Beta']);
     await page.close();
   });
@@ -210,9 +218,14 @@ test.describe('backup import', () => {
     // Link only matters while a scripts collection is being restored.
     const link = page.locator(`${IMPORT_DIALOG} #import-restore-link`);
     await expect(link).toBeVisible();
-    await chooseImport(page, { restore: false });
+    // The heading's box clears and checks them all.
+    const all = page.locator(`${IMPORT_DIALOG} #import-collections-table thead input`);
+    await expect(all).toBeChecked();
+    await all.uncheck();
+    expect((await collectionRows(page)).map((r) => r.restore)).toEqual([false, false]);
     await expect(link).toBeHidden();
     await chooseImport(page, { restore: true });
+    await expect(all).toBeChecked();
     await expect(link).toBeVisible();
     expect(await confirmImport(page)).toBe('Restored 2 collections with 2 scripts.');
     await closeImport(page);
@@ -247,24 +260,28 @@ test.describe('backup import', () => {
 
     await openImport(page, '#page-menu', saved);
     // The same text: the default, newer versions only, leaves it.
-    expect(await existingRows(page)).toEqual([{ name: 'Alpha', compared: 'Same', type: 'file', affected: false }]);
+    // Disabled here, enabled in the backup; its values changed since.
+    expect(await existingRows(page)).toEqual([{
+      name: 'Alpha', version: '', content: 'Same', enabled: '\u2610 \u2192 \u2713', type: 'file', values: '\u2713 \u2192 \u2713 (Different)', affected: false,
+    }]);
     // It shows the collection it's in, and each heading says what its
     // column shows.
     await expect(page.locator(`${IMPORT_DIALOG} #import-existing-table .import-collection`)).toHaveText([dir.path]);
-    await expect(page.locator(`${IMPORT_DIALOG} #import-existing-table th`, { hasText: 'Compared' }))
-      .toHaveAttribute('title', /^How the backup’s copy compares/);
+    await expect(page.locator(`${IMPORT_DIALOG} #import-existing-table th`, { hasText: 'Content' }))
+      .toHaveAttribute('title', /^Whether the script’s text \(current and imported\) is the same/);
     // Its name opens the installed copy.
     await expect(page.locator(`${IMPORT_DIALOG} #import-existing-table .import-name a`)).toHaveAttribute('href', `userscript.html?script=${alpha.id}`);
     await expect(page.locator(`${IMPORT_DIALOG} #import-confirm-btn`)).toBeDisabled();
+    await expect(page.locator(`${IMPORT_DIALOG} #import-confirm-btn`)).toHaveAttribute('title', 'This import would update zero scripts.');
     // Only an existing script, and nothing newer: replacing newer ones
     // is greyed out, and leaving them is the choice.
     await expect(page.locator(`${IMPORT_DIALOG} #import-new`)).toBeHidden();
-    await expect(page.locator(`${IMPORT_DIALOG} #import-existing .import-heading`)).toHaveText('Existing scripts (1)');
+    await expect(page.locator(`${IMPORT_DIALOG} #import-existing .import-heading`)).toHaveText('Existing scripts with changes (1)');
     await expect(page.locator(`${IMPORT_DIALOG} #import-existing-newer`)).toBeDisabled();
     await expect(page.locator(`${IMPORT_DIALOG} label`, { has: page.locator('#import-existing-newer') }))
       .toHaveText('Replace when the imported version is newer (0)');
     await expect(page.locator(`${IMPORT_DIALOG} #import-existing-leave`)).toBeChecked();
-    const alphaBox = page.locator(`${IMPORT_DIALOG} #import-existing-table tbody input`);
+    const alphaBox = page.locator(`${IMPORT_DIALOG} #import-existing-table tbody td:first-child input`);
     const allBox = page.locator(`${IMPORT_DIALOG} #import-existing-table thead input`);
     // Nothing to do to it: its box is off limits, and so is the all box.
     await expect(alphaBox).toBeDisabled();
@@ -274,12 +291,20 @@ test.describe('backup import', () => {
     // values or state can change, and those start off.
     expect((await existingRows(page))[0].affected).toBe(false);
     await expect(alphaBox).toBeDisabled();
+    const cell = (col: string) => page.locator(`${IMPORT_DIALOG} #import-existing-table td[data-col="${col}"]`);
+    await expect(cell('values')).toHaveClass(/import-off/);
     await chooseImport(page, { existingValues: true });
     expect((await existingRows(page))[0].affected).toBe(true);
+    // Values will change: no longer greyed, and highlighted. Enabled
+    // differs too, but its option is off.
+    await expect(cell('values')).toHaveClass(/import-change/);
+    await expect(cell('values')).not.toHaveClass(/import-off/);
+    await expect(cell('enabled')).toHaveClass(/import-off/);
+    await expect(cell('enabled')).not.toHaveClass(/import-change/);
     await expect(alphaBox).toBeEnabled();
     await expect(alphaBox).toBeChecked();
     await expect(allBox).toBeEnabled();
-    expect(await confirmImport(page)).toBe('Updated 1.');
+    expect(await confirmImport(page)).toBe('Updated 1 script.');
     await closeImport(page);
 
     expect(await sm.getGmValues(alpha.id)).toEqual({ theme: 'dark' });
@@ -319,17 +344,21 @@ test.describe('backup import', () => {
       { name: 'Kept', uuid: 'tm-kept', text: v2, values: { n: 'n8' }, requires: [lib] },
       { name: 'Fresh', uuid: 'tm-fresh', text: userscript('Fresh', '1.0', `// @match       ${pageUrl}\n`), enabled: false },
     ]));
-    const section = `.collection[data-collection-id="${into.id}"]`;
-    await openImport(page, `${section} button.collection-menu`, path.join(dir.path, 'tm-v2.txt'));
-    // Opened from the collection, new scripts go into it.
+    await openImport(page, '#page-menu', path.join(dir.path, 'tm-v2.txt'));
+    // New scripts go into a new collection unless one is picked.
+    await expect(page.locator(`${IMPORT_DIALOG} #import-into`)).toHaveValue('');
+    // Its name is also in the new collection's numbered one, so by id.
+    await page.locator(`${IMPORT_DIALOG} #import-into`).selectOption(into.id);
     await expect(page.locator(`${IMPORT_DIALOG} #import-into`)).toHaveValue(into.id);
-    expect(await existingRows(page)).toEqual([{ name: 'Kept', compared: 'Backup is newer', type: 'imported', affected: true }]);
+    expect(await existingRows(page)).toEqual([{
+      name: 'Kept', version: '1.0 \u2192 2.0 (Newer)', content: 'Different', enabled: '\u2713', type: 'imported', values: '\u2713 \u2192 \u2713 (Different)', affected: true,
+    }]);
     // No location: it comes in as an imported script.
     expect(await newRows(page)).toEqual([{ name: 'Fresh', version: '1.0', type: 'imported', href: '' }]);
     // An existing script's values are only replaced when asked.
     await expect(page.locator(`${IMPORT_DIALOG} #import-existing-values`)).not.toBeChecked();
     await chooseImport(page, { existingValues: true });
-    expect(await confirmImport(page)).toBe('Imported 1 script and updated 1.');
+    expect(await confirmImport(page)).toBe('Imported 1 script.\n\nUpdated 1 script.');
     await closeImport(page);
 
     const after = (await sm.getCollectionWithScripts(into.id))!.scripts;
