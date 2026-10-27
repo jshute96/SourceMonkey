@@ -211,6 +211,31 @@ test.describe('backup import', () => {
     await page.close();
   });
 
+  test('a restored script doesn\'t take over from a copy that\'s on', async ({ extensionContext, extensionId, sm }) => {
+    dir.write({ relativePath: 'alpha.user.js', meta: { name: 'Alpha', match: ['https://example.com/*'] }, body: 'void 1;\n' });
+    const added = await sm.addCollection(dir.path);
+    await sm.syncNow();
+    const page = await extensionContext.newPage();
+    await collectionsPage(page, extensionId);
+    const saved = await exportVia(page, '#page-menu');
+    await closeExport(page);
+    await sm.removeCollection(added!.id);
+    // Alpha is on in a scripts collection now.
+    const mine = await sm.createCollection({ kind: 'scripts', name: 'Mine' });
+    await sm.installScript(path.join(dir.path, 'alpha.user.js'), { collectionId: mine!.id });
+    await sm.syncNow();
+
+    await openImport(page, '#page-menu', saved);
+    await previewShown(page);
+    expect(await confirmImport(page))
+      .toBe('Added 1 collection with 1 script.\n\nThese scripts were imported turned off, since another copy of each is already on:\n\nAlpha');
+    await closeImport(page);
+    const restored = (await sm.getCollections()).find((c) => c.path === dir.path)!;
+    expect((await sm.getCollectionWithScripts(restored.id))!.scripts.map((s) => s.enabled)).toEqual([false]);
+    expect((await sm.getCollectionWithScripts(mine!.id))!.scripts.map((s) => s.enabled)).toEqual([true]);
+    await page.close();
+  });
+
   test('an export\'s scripts collections: new scripts go into them by name, made again if they\'re gone', async ({
     extensionContext, extensionId, sm,
   }) => {
@@ -544,10 +569,10 @@ test.describe('backup import', () => {
       for (let i = 0; i < 6; i++) await page.mouse.wheel(0, 800);
     }
     for (const key of ['ArrowDown', 'PageDown', 'End']) await page.keyboard.press(key);
-    // The wheel landed: the dialog scrolled. Then give a smooth scroll
-    // of the page time to start.
+    // The wheel landed: the dialog scrolled. Then a couple of frames,
+    // in which a smooth scroll of the page would have started.
     await expect.poll(() => page.locator(IMPORT_DIALOG).evaluate((d) => d.scrollTop)).toBeGreaterThan(0);
-    await page.waitForTimeout(500);
+    await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
     expect(await page.evaluate(() => window.scrollY)).toBe(0);
     await page.locator(`${IMPORT_DIALOG} button`, { hasText: 'Cancel' }).click();
     await page.mouse.wheel(0, 800);

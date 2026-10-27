@@ -1885,6 +1885,9 @@ export interface ImportOutcome {
   updated: number;
   // Scripts to be linked to a file that couldn't be read, kept as text.
   keptAsText: string[];
+  // New scripts the backup had on that came in turned off, since
+  // another copy of the script is already on.
+  leftOff: string[];
   failed: { name: string; message: string }[];
 }
 
@@ -1892,6 +1895,7 @@ export async function importScripts(request: ImportRequest): Promise<ImportOutco
   const now = Date.now();
   const failed: ImportOutcome['failed'] = [];
   const keptAsText: string[] = [];
+  const leftOff: string[] = [];
   let installed = 0;
   let restored = 0;
   let restoredScripts = 0;
@@ -1899,7 +1903,7 @@ export async function importScripts(request: ImportRequest): Promise<ImportOutco
   let addedTo = 0;
   for (const restore of request.restores ?? []) {
     try {
-      const out = await installImported({ create: await restoreTarget(restore, now) }, restore.installs, request.source, now, failed, keptAsText);
+      const out = await installImported({ create: await restoreTarget(restore, now) }, restore.installs, request.source, now, failed, keptAsText, leftOff);
       if (out.collectionId) {
         restored++;
         restoredScripts += out.installed;
@@ -1911,7 +1915,7 @@ export async function importScripts(request: ImportRequest): Promise<ImportOutco
   for (const addition of request.additions ?? []) {
     try {
       const target = await checkedImportCollection(addition.collectionId, true);
-      const out = await installImported({ existing: target, anyKind: true }, addition.installs, request.source, now, failed, keptAsText);
+      const out = await installImported({ existing: target, anyKind: true }, addition.installs, request.source, now, failed, keptAsText, leftOff);
       added += out.installed;
       if (out.installed > 0) addedTo++;
     } catch (err) {
@@ -1922,14 +1926,14 @@ export async function importScripts(request: ImportRequest): Promise<ImportOutco
     try {
       const target: ImportTarget = 'collectionId' in group ? { existing: await checkedImportCollection(group.collectionId) }
         : { create: await restoreTarget(group.create, now) };
-      const out = await installImported(target, group.installs, request.source, now, failed, keptAsText);
+      const out = await installImported(target, group.installs, request.source, now, failed, keptAsText, leftOff);
       installed += out.installed;
     } catch (err) {
       for (const item of group.installs) failed.push({ name: item.name, message: describeError(err) });
     }
   }
   if (request.installs.length > 0) {
-    const out = await installImported(await importTarget(request.into), request.installs, request.source, now, failed, keptAsText);
+    const out = await installImported(await importTarget(request.into), request.installs, request.source, now, failed, keptAsText, leftOff);
     installed += out.installed;
   }
   let updated = 0;
@@ -1943,7 +1947,7 @@ export async function importScripts(request: ImportRequest): Promise<ImportOutco
   }
   await valueWritesSaved();
   return {
-    installed, restored, restoredScripts, added, addedTo, updated, keptAsText, failed,
+    installed, restored, restoredScripts, added, addedTo, updated, keptAsText, leftOff, failed,
   };
 }
 
@@ -2024,6 +2028,7 @@ async function installImported(
   now: number,
   failed: ImportOutcome['failed'],
   keptAsText: string[],
+  leftOff: string[],
 ): Promise<{ collectionId: string | null; installed: number }> {
   const container = 'existing' in target ? target.existing : target.create;
   const fetchCache: FileFetchCache = new Map();
@@ -2038,23 +2043,25 @@ async function installImported(
       }
       relativePath ??= importedUrl(item.name);
       const stored = isStoredTextUrl(relativePath);
+      const files = item.files && Object.keys(item.files).length > 0 ? item.files : undefined;
+      // The text rows a script kept as text loads from, written with its
+      // row in one step, so a failure leaves neither.
+      let textItems: Record<string, unknown> = {};
       if (stored) {
         const info: ImportInfo = { source, importedAt: now };
         if (item.foreignId) info.foreignId = item.foreignId;
         if (item.location) info.location = item.location;
-        await writeLocal({
+        textItems = {
           [scratchTextKey(relativePath)]: item.text,
           [importInfoKey(relativePath)]: info,
-          ...(item.files && Object.keys(item.files).length > 0 ? { [scratchFilesKey(relativePath)]: item.files } : {}),
-        });
+          ...(files ? { [scratchFilesKey(relativePath)]: files } : {}),
+        };
       }
       const fileUrl = scriptFileUrl(container.path, relativePath);
       const row = await buildScriptFromText({ id, collectionId: container.id, relativePath, fileUrl, text: item.text, now });
       row.enabled = item.enabled;
-      const files = item.files && Object.keys(item.files).length > 0 ? item.files : undefined;
-      return { item, stored, script: await applyFiles(row, undefined, 'all', fetchCache, now, localFiles, 'await', files) };
+      return { item, stored, textItems, script: await applyFiles(row, undefined, 'all', fetchCache, now, localFiles, 'await', files) };
     } catch (err) {
-      if (relativePath && isStoredTextUrl(relativePath)) await removeLocal(storedTextKeys(relativePath));
       failed.push({ name: item.name, message: describeError(err) });
       return null;
     }
@@ -2062,64 +2069,56 @@ async function installImported(
 
   const ready = built.filter((b) => b !== null);
   const rivalIds = await possibleRivals(container.id, ready.map((b) => b.script));
-  let written: typeof ready;
-  try {
-    written = await mutate(async () => {
-      const collections = await getCollections();
-      let current: StoredCollection;
-      if ('existing' in target) {
-        current = await checkedImportCollection(container.id, target.anyKind);
-      } else {
-        // A restored collection whose location or built-in collection
-        // is here already: that one holds these scripts.
-        if (!isContainerCollection(target.create.path) || containerKind(target.create.path)) {
-          const path = canonicalCollectionInput(target.create.path);
-          if (collections.some((c) => canonicalCollectionInput(c.path) === path)) throw new Error(COLLECTION_ALREADY_REGISTERED);
-        }
-        // A name already taken gets a number, as a second import the
-        // same day would. A name inferred from the path may repeat, as
-        // when a collection is added (`createLocationCollection`), and a
-        // built-in collection may use its own reserved name.
-        const base = target.create.displayName ?? 'Imported scripts';
-        const name = base === inferDisplayName(target.create.path) ? base : freeCollectionName(base, collections, target.create.path);
-        current = { ...target.create, displayName: name };
+  const written = await mutate(async () => {
+    const collections = await getCollections();
+    let current: StoredCollection;
+    if ('existing' in target) {
+      current = await checkedImportCollection(container.id, target.anyKind);
+    } else {
+      // A restored collection whose location or built-in collection
+      // is here already: that one holds these scripts.
+      if (!isContainerCollection(target.create.path) || containerKind(target.create.path)) {
+        const path = canonicalCollectionInput(target.create.path);
+        if (collections.some((c) => canonicalCollectionInput(c.path) === path)) throw new Error(COLLECTION_ALREADY_REGISTERED);
       }
-      const held = new Set<string>();
-      const rows = await getRows(current.scriptIds.map(scriptKey));
-      for (const value of Object.values(rows)) held.add(canonicalCollectionInput((value as ScriptMeta).relativePath));
-      // A URL the collection already holds, or one an earlier script in
-      // this import took, is a copy it has, not a new one.
-      const fresh = ready.filter((b) => {
-        if (b.stored) return true;
-        const key = canonicalCollectionInput(b.script.relativePath);
-        if (!held.has(key)) {
-          held.add(key);
-          return true;
-        }
-        failed.push({ name: b.item.name, message: ALREADY_INSTALLED_IN_TARGET });
-        return false;
-      });
-      if (fresh.length === 0) return fresh;
-      const scripts = fresh.map((b) => b.script);
-      const nextCollection: StoredCollection = { ...current, scriptIds: [...current.scriptIds, ...scripts.map((s) => s.id)] };
-      const toSet: Record<string, unknown> = { [collectionKey(current.id)]: nextCollection };
-      if ('create' in target) toSet[COLLECTIONS_INDEX_KEY] = [...collections.map((c) => c.id), current.id];
-      Object.assign(toSet, await settleNewCopies(nextCollection, scripts, new Set(scripts.map((s) => s.id)), [], rivalIds, false));
-      Object.assign(toSet, (await changedScriptRows(scripts, {}, () => undefined)).items);
-      await writeLocal(toSet);
-      return fresh;
+      // A name already taken gets a number, as a second import the
+      // same day would. A name inferred from the path may repeat, as
+      // when a collection is added (`createLocationCollection`), and a
+      // built-in collection may use its own reserved name.
+      const base = target.create.displayName ?? 'Imported scripts';
+      const name = base === inferDisplayName(target.create.path) ? base : freeCollectionName(base, collections, target.create.path);
+      current = { ...target.create, displayName: name };
+    }
+    const held = new Set<string>();
+    const rows = await getRows(current.scriptIds.map(scriptKey));
+    for (const value of Object.values(rows)) held.add(canonicalCollectionInput((value as ScriptMeta).relativePath));
+    // A URL the collection already holds, or one an earlier script in
+    // this import took, is a copy it has, not a new one.
+    const fresh = ready.filter((b) => {
+      if (b.stored) return true;
+      const key = canonicalCollectionInput(b.script.relativePath);
+      if (!held.has(key)) {
+        held.add(key);
+        return true;
+      }
+      failed.push({ name: b.item.name, message: ALREADY_INSTALLED_IN_TARGET });
+      return false;
     });
-  } catch (err) {
-    // Nothing was written, so neither are the text rows wanted.
-    const urls = ready.filter((b) => b.stored).map((b) => b.script.relativePath);
-    if (urls.length > 0) await removeLocal(urls.flatMap(storedTextKeys));
-    throw err;
-  }
-  // The text rows of scripts that weren't written after all.
-  const unused = ready.filter((b) => b.stored && !written.includes(b)).map((b) => b.script.relativePath);
-  if (unused.length > 0) await removeLocal(unused.flatMap(storedTextKeys));
-
+    if (fresh.length === 0) return fresh;
+    const scripts = fresh.map((b) => b.script);
+    const nextCollection: StoredCollection = { ...current, scriptIds: [...current.scriptIds, ...scripts.map((s) => s.id)] };
+    const toSet: Record<string, unknown> = { [collectionKey(current.id)]: nextCollection };
+    if ('create' in target) toSet[COLLECTIONS_INDEX_KEY] = [...collections.map((c) => c.id), current.id];
+    for (const b of fresh) Object.assign(toSet, b.textItems);
+    // Not `adding`: an imported copy of a script that already has an
+    // active copy comes in turned off, rather than taking over from it.
+    Object.assign(toSet, await settleNewCopies(nextCollection, scripts, new Set(scripts.map((s) => s.id)), [], rivalIds, false));
+    Object.assign(toSet, (await changedScriptRows(scripts, {}, () => undefined)).items);
+    await writeLocal(toSet);
+    return fresh;
+  });
   for (const b of written) {
+    if (b.item.enabled && !isScriptEnabled(b.script)) leftOff.push(b.item.name);
     if (b.item.values && Object.keys(b.item.values).length > 0) await replaceValues(b.script.id, b.item.values);
     await emitInitialLoadLog(b.script, true);
   }
@@ -3249,7 +3248,17 @@ export async function refreshCollection(
           nextCollection, finalScripts, newIds, droppedIds, rivalIds, opts.adding === true,
         ));
       }
-      const changed = await changedScriptRows(finalScripts, curScripts, (sid) => priorById.get(sid));
+      // MOVED during the fetch (an import relinked it): what we built is
+      // for where it was, and writing it would undo the move and point
+      // it at text rows that are gone. It stays listed, unwritten, and
+      // the next refresh loads it from where it is now, as
+      // `refreshScript` does.
+      const writable = finalScripts.filter((s) => {
+        const cur = curScripts[scriptKey(s.id)] as ScriptMeta | undefined;
+        const prior = priorById.get(s.id);
+        return !cur || !prior || cur.relativePath === prior.relativePath;
+      });
+      const changed = await changedScriptRows(writable, curScripts, (sid) => priorById.get(sid));
       Object.assign(toSet, changed.items);
       timer.note(`rows written: ${changed.count}`);
       // Placed where a real quota rejection lands — after everything was

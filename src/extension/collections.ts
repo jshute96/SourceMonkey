@@ -199,7 +199,6 @@ pageMenuBtn.addEventListener('click', () => openMenu(pageMenuBtn, [
   { label: 'Import scripts\u2026', run: () => void openImportDialog() },
   { label: 'Export all collections\u2026', run: () => openExportDialog({ scope: { all: true } }) },
 ]));
-
 refreshAllBtn.after(pageMenuBtn);
 // The menu is fixed in place, so it would stay put while its button
 // scrolls or the layout moves it.

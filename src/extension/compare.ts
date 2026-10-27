@@ -192,10 +192,14 @@ async function load(): Promise<void> {
     // The preview side reads local stand-ins for its `@require`s the
     // way the preview page does, and that needs the configured roots.
     await localRootsReady();
-    const [loadedBase, other] = await Promise.all([
-      baseScriptId ? loadInstalled(baseScriptId, 'The script') : previewInput ? loadPreview(previewInput) : loadImport(importToken!),
-      loadInstalled(otherScriptId, 'The other copy'),
-    ]);
+    // An import side is built for the installed copy's collection, so
+    // that one loads first.
+    const [loadedBase, other] = importToken && !baseScriptId && !previewInput
+      ? await loadInstalled(otherScriptId, 'The other copy').then(async (o) => [await loadImport(importToken, o.collection), o] as const)
+      : await Promise.all([
+        baseScriptId ? loadInstalled(baseScriptId, 'The script') : loadPreview(previewInput!),
+        loadInstalled(otherScriptId, 'The other copy'),
+      ]);
     // An import side would be stored where the installed copy is, so it
     // shows that location, written the same way.
     if (loadedBase.kind === 'import') loadedBase.location = other.location;
@@ -299,8 +303,9 @@ async function loadPreview(input: string): Promise<Side> {
 
 // A backup's copy from the import dialog that opened this page, built
 // as the import would store it: its text, at the installed copy's URL,
-// with the backup's bundled files.
-async function loadImport(token: string): Promise<Side> {
+// with the backup's bundled files, and local stand-ins as `collection`
+// allows them.
+async function loadImport(token: string, collection: StoredCollection | null): Promise<Side> {
   const offered = await requestImportSide(token);
   if (!offered) throw new Error('The import dialog this came from didn’t answer. If it’s closed, open the comparison again from the import dialog.');
   const { fileName, text, fileUrl, files: pushedFiles } = offered;
@@ -311,6 +316,7 @@ async function loadImport(token: string): Promise<Side> {
   if (script.status !== 'ok') {
     throw new Error(`The backup's copy cannot be compared: ${script.errorMessage ?? 'It is not a valid userscript'}`);
   }
+  const localRoots = localSearchRoots(fileUrl, collection ? localFileScope(collection) : { enabled: true });
   const attached = await attachFiles({
     scriptFileUrl: fileUrl,
     header: script.header,
@@ -319,7 +325,7 @@ async function loadImport(token: string): Promise<Side> {
     recheck: 'all',
     fetchCache: new Map(),
     now,
-    localRoots: [],
+    localRoots,
     pushedFiles,
   });
   if (attached.errorMessage) throw new Error(`The backup's copy cannot be compared: ${attached.errorMessage}`);
@@ -332,7 +338,7 @@ async function loadImport(token: string): Promise<Side> {
     location: '',
     pageUrl: '',
     header: script.header,
-    icons: { matching: script.matching, fileUrl, localRoots: [] },
+    icons: { matching: script.matching, fileUrl, localRoots },
     text,
     requires: attached.requires,
     size: formatScriptSize(script),

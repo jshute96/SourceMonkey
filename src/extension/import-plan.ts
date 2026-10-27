@@ -21,7 +21,10 @@ export interface InstalledCopy {
   fileUrl: string;
   header: ParsedHeader | null;
   contentHash?: string;
+  // Its own on/off state, which an import can set.
   enabled: boolean;
+  // On, in a collection that's on: the copy that runs.
+  active: boolean;
   // Kept only as its text (imported or scratch).
   stored: boolean;
   // In a scripts collection, where replacing its text can also change
@@ -50,7 +53,7 @@ export interface PlannedScript {
   here: HereState;
 }
 
-// `hash` gives each script's content hash, as stored rows have it.
+// `hashes` gives each script's content hash, as stored rows have it.
 export function planImport(
   backup: ParsedBackup,
   installed: readonly InstalledCopy[],
@@ -71,7 +74,7 @@ function planOne(script: BackupScript, hash: string, installed: readonly Install
   const copies: InstalledCopy[] = [];
   for (const list of [byId, byLocation, byName]) {
     // An active copy first, as the one an update goes to.
-    for (const c of [...list].sort((a, b) => Number(b.enabled) - Number(a.enabled))) {
+    for (const c of [...list].sort((a, b) => Number(b.active) - Number(a.active))) {
       if (!copies.includes(c)) copies.push(c);
     }
   }
@@ -299,18 +302,16 @@ export function contentText(p: PlannedScript): string {
 
 // The Values column. A backup without values for the script leaves the
 // installed ones, so that shows only whether it has any; one with
-// values (even none) replaces them whole. `markSame` off, the same
-// values show as just a check, for a table that says its rows are the
-// same.
+// values replaces them whole. (The reader drops an empty store, so a
+// backup never has none to replace them with.) `markSame` off, the
+// same values show as just a check, for a table that says its rows are
+// the same.
 export function valuesText(
   installed: Record<string, unknown> | undefined, backup: Record<string, unknown> | undefined, markSame = true,
 ): string {
   const here = installed !== undefined && Object.keys(installed).length > 0;
-  if (backup === undefined) return here ? CHECK : '';
-  const there = Object.keys(backup).length > 0;
-  if (!here && !there) return '';
+  if (backup === undefined || Object.keys(backup).length === 0) return here ? CHECK : '';
   if (!here) return `${NOTHING}${ARROW}${CHECK}`;
-  if (!there) return `${CHECK}${ARROW}${NOTHING}`;
   if (sameValues(installed, backup)) return markSame ? `${CHECK} (Same)` : CHECK;
   return `${CHECK}${ARROW}${CHECK} (Different)`;
 }
@@ -351,10 +352,12 @@ export function collectionScripts(collections: readonly PlannedCollection[], pla
 
 // The backup's scripts a directory, manifest or GitHub collection here
 // doesn't have, which an import adds to it at their paths, as a restore
-// would: those with no copy here.
+// would: those with no copy in it. One with a copy in another
+// collection comes in turned off if that copy is on.
 export function addingScripts(c: PlannedCollection, plan: readonly PlannedScript[]): number[] {
-  if (!c.here || c.cantRestore || c.collection.kind === 'scripts') return [];
-  return c.scripts.filter((i) => !plan[i].match);
+  const here = c.here;
+  if (!here || c.cantRestore || c.collection.kind === 'scripts') return [];
+  return c.scripts.filter((i) => !plan[i].copies.some((copy) => copy.collectionId === here.id));
 }
 
 // A directory, manifest or GitHub collection here that an import can

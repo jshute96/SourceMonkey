@@ -3,7 +3,9 @@
 // happens, then import. Then it shows only what was done. See
 // docs/import.md.
 
-import { describeError, getAllScriptMetas, getCollections, type StoredCollection } from './script-store.js';
+import {
+  describeError, getAllScriptMetas, getCollections, isCollectionEnabled, isScriptEnabled, type StoredCollection,
+} from './script-store.js';
 import { importScripts, readScriptValues } from './worker-client.js';
 import { effectiveDisplayName, freeCollectionName, makeCollectionTypeBubble, makeSchemeChip } from './collection-display.js';
 import {
@@ -747,12 +749,15 @@ export function openImportDialog(): Promise<void> {
           ...(out.updated > 0 ? [`Updated ${scripts(out.updated)}.`] : []),
         ];
         ui.result.replaceChildren(...(lines.length > 0 ? lines : ['Nothing changed.']).map((line) => el('p', 'dlg-done', line)));
-        if (out.keptAsText.length > 0) {
-          ui.result.appendChild(el('p', 'dlg-gap', 'These scripts’ files couldn’t be read, so they were imported as text and won’t update from those files:'));
+        const nameList = (lead: string, names: readonly string[]): void => {
+          if (names.length === 0) return;
+          ui.result.appendChild(el('p', 'dlg-gap', lead));
           const list = el<HTMLUListElement>('ul');
-          for (const name of out.keptAsText) list.appendChild(el('li', undefined, name));
+          for (const name of names) list.appendChild(el('li', undefined, name));
           ui.result.appendChild(list);
-        }
+        };
+        nameList('These scripts’ files couldn’t be read, so they were imported as text and won’t update from those files:', out.keptAsText);
+        nameList('These scripts were imported turned off, since another copy of each is already on:', out.leftOff);
         if (out.failed.length > 0) {
           ui.result.appendChild(el('p', 'dlg-gap', 'These failed:'));
           const list = el<HTMLUListElement>('ul');
@@ -1053,7 +1058,7 @@ function enabledMark(on: boolean): string {
 // The New table's Values column: a check for a script with stored
 // values in the file.
 function valuesCell(hasValues: boolean): HTMLElement {
-  const td = el<HTMLTableCellElement>('td', 'import-values', hasValues ? '\u2713' : '');
+  const td = el<HTMLTableCellElement>('td', 'import-values', hasValues ? CHECK : '');
   if (hasValues) {
     td.title = 'Has stored values in the backup';
     td.setAttribute('aria-label', 'Has stored values');
@@ -1113,6 +1118,7 @@ async function readInstalled(): Promise<InstalledCopy[]> {
       fileUrl: m.fileUrl,
       header: m.header ?? null,
       enabled: m.enabled,
+      active: isScriptEnabled(m) && isCollectionEnabled(byId.get(m.collectionId)!),
       stored: isStoredTextUrl(m.relativePath),
       inScripts: isContainerCollection(byId.get(m.collectionId)!.path),
     };

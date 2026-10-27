@@ -38,7 +38,7 @@ function backupScript(index, name, over = {}) {
 function copy(id, name, over = {}) {
   return {
     id, collectionId: 'c', collectionName: 'Mine', fileUrl: `https://example.com/${id}.user.js`,
-    header: parseHeader(text(name, over.version)), contentHash: `hash-${id}`, enabled: true, stored: false, inScripts: true, ...over,
+    header: parseHeader(text(name, over.version)), contentHash: `hash-${id}`, enabled: true, active: true, stored: false, inScripts: true, ...over,
   };
 }
 
@@ -67,7 +67,7 @@ test('matches by id, then location, then namespace and name', () => {
 
 test('an active copy is the one an update goes to', () => {
   const scripts = [backupScript(0, 'Dup')];
-  const installed = [copy('off', 'Dup', { enabled: false, collectionName: 'Old' }), copy('on', 'Dup', { collectionName: 'New' })];
+  const installed = [copy('off', 'Dup', { active: false, collectionName: 'Old' }), copy('on', 'Dup', { collectionName: 'New' })];
   const [p] = planImport(backup(scripts), installed, ['h']);
   assert.equal(p.match.id, 'on');
   assert.equal(p.copies.length, 2);
@@ -87,7 +87,7 @@ test('the Existing table shows installed values, and installed \u2192 backup whe
   assert.equal(valuesText(v, undefined), '\u2713');
   assert.equal(valuesText({}, {}), '');
   assert.equal(valuesText({}, v), '\u2205 \u2192 \u2713');
-  assert.equal(valuesText(v, {}), '\u2713 \u2192 \u2205');
+  assert.equal(valuesText(v, {}), '\u2713');
   assert.equal(valuesText(v, { a: 1 }), '\u2713 (Same)');
   assert.equal(valuesText(v, { a: 1 }, false), '\u2713');
   assert.equal(valuesText(v, { a: 2 }), '\u2713 \u2192 \u2713 (Different)');
@@ -198,7 +198,11 @@ test('a directory collection here gets the scripts it doesn\'t have', () => {
     backupScript(1, 'Missing', { collection: 'd', location: '/home/me/s/sub/missing.user.js', values: { v: 1 } }),
   ];
   const b = { ...backup(scripts), collections: [dir] };
-  const plan = planImport(b, [copy('h', 'Have', { fileUrl: 'file:///home/me/s/have.user.js', inScripts: false })], ['h0', 'h1']);
+  const plan = planImport(b, [
+    copy('h', 'Have', { collectionId: 'here', fileUrl: 'file:///home/me/s/have.user.js', inScripts: false }),
+    // A copy in another collection doesn't count.
+    copy('m', 'Missing', { collectionId: 'other' }),
+  ], ['h0', 'h1']);
   const collections = planCollections(b, [{ id: 'here', name: 'Dir', path: 'file:///home/me/s', enabled: true, scriptCount: 1 }]);
   assert.deepEqual(addingScripts(collections[0], plan), [1]);
   assert.equal(updatable(collections[0], plan), true);

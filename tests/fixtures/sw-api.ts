@@ -304,8 +304,6 @@ export interface StoredScriptLike {
   // The parsed header (`ParsedHeader`, src/userscript-header.ts).
   header: { tags: { tag: string; locale?: string; value: string }[] } | null;
   bodyText: string;
-  // The parsed header; null when it didn't parse.
-  header?: { tags: { tag: string; value: string }[] } | null;
   startupLogs?: readonly {
     level: 'info' | 'warning' | 'error';
     message: string;

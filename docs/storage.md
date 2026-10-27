@@ -1186,9 +1186,14 @@ content, no header) before the refresh that loads it — see
   return shape as `addCollection`; null when that container already
   holds the location; throws `COLLECTION_GONE` when the id no longer
   exists.
-- `importScripts(request)` — apply an import the page planned: install
-  new scripts into one scripts collection (made when asked for), and
-  update scripts already here. See [import.md](import.md#applying-it).
+- `importScripts(request)` — apply an import the page planned:
+  - restore the backup's collections that aren't here;
+  - add scripts to directory, manifest and GitHub collections here;
+  - install new scripts into the scripts collections the backup names,
+    or into one chosen (made when asked for);
+  - update scripts already here.
+
+  See [import.md](import.md#applying-it).
 - `moveScript(scriptId, target)` — move one already-installed script
   from its container collection into `{collectionId}` or the
   `{schemeDefault: true}` container. Same target shape as

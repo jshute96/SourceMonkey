@@ -142,6 +142,9 @@ their collections ([below](#scripts-collections)).
 - Their values and enabled state are restored too, per the Directory
   collections section's options. So even a local directory's scripts
   get their values back.
+- **A restored script doesn't take over from a copy that's on.** One
+  whose script already has an active copy here comes in turned off,
+  and the results list it ([Applying it](#applying-it)).
 - **The next refresh loads what the location has now.** It matches
   rows by path, so each script keeps its id and values, takes the
   file's current version, or is dropped when its file is gone.
@@ -159,8 +162,9 @@ A directory, manifest or GitHub collection that is already here isn't
 made again (`updatable`, then `additions` in the request).
 
 - **The scripts it doesn't have are added to it** (`addingScripts`):
-  those with no copy here, each at its path, from the backup's text, as
-  a restore adds them. Its next refresh then loads what the location
+  those with no copy in it, each at its path, from the backup's text,
+  as a restore adds them. One with a copy in another collection is
+  added too, turned off if that copy is on. Its next refresh then loads what the location
   has, or drops one whose file is gone.
 - The ones it has are listed as existing scripts.
 - It keeps its own enabled state, whatever the backup's.
@@ -282,7 +286,7 @@ Import.
       the collection says where, so it doesn't change.
     - **Values:** blank for none, `✓` when only the installed copy has
       them (the backup has none, so they stay), `∅ → ✓` added,
-      `✓ → ∅` removed (the backup's are empty), `✓ (Same)`, or
+      `✓ (Same)`, or
       `✓ → ✓ (Different)`. The installed values come from the worker
       (`readScriptValues`).
   - The Enabled and Values columns are greyed while their Replace
@@ -339,7 +343,10 @@ Import.
   `buildScriptFromText` + `applyFiles`, as a refresh builds them, and
   written in one step under the store's lock with their collection.
   - A URL the collection already holds is refused for that script.
-  - New copies settle as a refresh's do (`settleNewCopies`).
+  - New copies settle as a refresh's do (`settleNewCopies`), but
+    without taking over: one whose script already has an active copy
+    comes in turned off. The results list those the backup had on.
+  - Its text rows (for one kept as text) are in the same write.
   - Values go through the value store; each script's Log starts with
     its install.
 - **Restores** go first, each as a new collection through the same
@@ -368,8 +375,9 @@ Import.
     leaves it where it loads from (kept as text, for one kept as
     text). A location the collection already holds is refused. Once
     the row is written, the old location's text rows are removed.
-  - A check of the script that was fetching while the import moved it
-    doesn't write its result, which is for the old location.
+  - A check of the script, or a refresh of its collection, that was
+    fetching while the import moved it doesn't write its row, which is
+    for the old location.
   - Enabled state goes through `setScriptsEnabled`; values are
     replaced whole.
 - What failed is reported per script; the rest still apply.
