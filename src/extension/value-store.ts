@@ -173,7 +173,10 @@ export async function writeValues(
       st.unsaved.set(w.key, w.value);
     }
   }
-  if (!st.saving) st.saving = saveLoop(scriptId, st);
+  // Only with something to save. With nothing, the loop would finish
+  // before this assignment, so `saving` would keep its settled promise
+  // and `valueWritesSaved` (and `wipeValues`) would wait on it forever.
+  if (!st.saving && st.unsaved.size > 0) st.saving = saveLoop(scriptId, st);
   return seq;
 }
 
