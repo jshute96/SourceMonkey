@@ -219,6 +219,8 @@ dialog.sm-dialog.import-dialog { width: 920px; }
    import will apply. */
 .import-table td.import-off { color: #888; }
 .import-table td.import-change { background: #fff6bf; }
+/* DIFF: opens the compare page, like the versions panel's button. */
+.import-table button.import-diff { padding: 0 0.6em; font-size: 12px; font-weight: 600; color: #1d4ed8; }
 .import-dialog .dlg-unchanged { display: flex; gap: 8px; align-items: baseline; }
 .import-dialog .dlg-toggle { font: inherit; padding: 1px 8px; }
 .import-dialog .dlg-into { display: flex; align-items: baseline; gap: 6px; min-width: 0; }

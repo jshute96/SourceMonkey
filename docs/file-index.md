@@ -167,7 +167,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/page-links.ts` | Cross-page links between extension pages: the named Collections / Options tabs and the header bar's home link |
 | `src/extension/user-scripts-access.ts` | "Allow User Scripts" probe plus the shared heading and fix line for the collections page and popup |
 | `src/extension/userscript.ts` | Userscript viewer controller — installed mode (`?script=`), preview mode (`?preview=`), in-page switching between copies, the Collection row's Move button, the controls row's Local copy / delete-copy buttons, live `storage` watchers, log pane |
-| `src/extension/compare.ts` | Compare page controller — loads two copies (stored, or a preview's download), the fields table with its swap, per-file tabs, unified / side-by-side diff rendering, change-block arrows |
+| `src/extension/compare.ts` | Compare page controller — loads two copies (stored, a preview's download, or an import's backup copy), the fields table with its swap, per-file tabs, unified / side-by-side diff rendering, change-block arrows |
 | `src/extension/debug/icons.ts` | Debug icons controller — lists all cached icons with scope, expiry, per-row refresh/delete, and Delete All |
 | `src/extension/debug/storage.ts` | Debug storage controller: renders the By script, By file and Stored values views, sortable headings, live repaint |
 | `src/extension/resize-observer-loop.ts` | Keeps Chrome's harmless ResizeObserver loop error out of the extension Errors panel |
@@ -185,6 +185,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/export-backup.ts` | The backup export: plans the zip's entries (manifest, TM metadata, values, dependency files), gathers inputs, saves |
 | `src/extension/zip-writer.ts` | Builds the export's zip through the vendored fflate library |
 | `src/extension/import-backup.ts` | Reads a backup (SourceMonkey, Tampermonkey zip or JSON, Violentmonkey, plain zip) into one list of scripts with values and files |
+| `src/extension/import-compare.ts` | Hands a backup's copy of a script from the import dialog to the compare page, over a BroadcastChannel |
 | `src/extension/import-plan.ts` | Matches a backup's scripts and collections to what's here, compares them, and turns the import dialog's choices into a request |
 | `src/vendor/fflate.d.ts` | Types for fflate, which the build copies to `dist/vendor/fflate.js` |
 | `src/extension/script-details.ts` | Builds the viewer's curated details `<dl>` — chosen header fields, the resolved provenance rows, and the Collection row's trailing slot — for both modes; lends the compare page its Collection cell |

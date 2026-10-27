@@ -12,8 +12,11 @@ table, then a diff of each file they run. `src/compare.html` +
   - `compare.html?script=<id>&other=<id>` — two installed copies.
   - `compare.html?preview=<location>&other=<id>` — the download an
     install preview is showing, against an installed copy.
-- No other page links here yet; the URL is stable enough to bookmark
-  while both copies exist.
+  - `compare.html?import=<token>&other=<id>` — a backup's copy from
+    the import dialog's Existing scripts table (its `DIFF` button,
+    [import.md](import.md)), against the installed copy it matched.
+- The first two are stable enough to bookmark while both copies exist.
+  An import link works only while that import dialog is open.
 
 ## Sides and direction
 
@@ -29,6 +32,11 @@ table, then a diff of each file they run. `src/compare.html` +
   - From a preview, the download (the panel's `NEW`) is on the right
     and the installed copy on the left: the diff says what installing
     it would change.
+  - From the import dialog, the backup's copy is on the right, the
+    same way: the diff says how it differs from the installed copy.
+    The import replaces the text only of an imported or scratch copy,
+    and only per the dialog's choice; a copy that loads from a URL or
+    file keeps its own.
 - The **swap** button between the two column headings turns the
   comparison around. Everything that depends on direction repaints —
   the table's columns, the `+`/`−` signs, the ADDED / REMOVED chips.
@@ -36,8 +44,10 @@ table, then a diff of each file they run. `src/compare.html` +
   collection's type bubble and name (linked to the collections page),
   and the location linked to that copy's own page — the viewer, or the
   install preview. A preview side reads "Not installed" in place of a
-  collection. Both rows tint like the fields below when the two sides
-  differ — two collections, or two locations.
+  collection, and an import side "Import from *file*"; an import
+  side's location is where it would be stored (the installed copy's),
+  with no link. Both rows tint like the fields below when the
+  two sides differ — two collections, or two locations.
 
 ## The fields table
 
@@ -145,6 +155,17 @@ table, then a diff of each file they run. `src/compare.html` +
   that page takes (`fetchSingleFileText`, `buildScriptFromText`,
   `attachFiles` with the local search roots), so the `@require`s it
   resolves are the ones an install would store.
+- An import side is asked of the import dialog's page over a
+  BroadcastChannel (`import-compare.ts`): the backup is held only
+  there, and pages don't write storage.
+  - It is built as the import would store it: its text at the
+    installed copy's URL, and `attachFiles` with the backup's bundled
+    files as pushed files, fetching any it lacks.
+  - Once the dialog closes, or picks another file, nothing answers, and
+    the page says to open the comparison again from the import dialog.
+  - Its `@require`s that the backup didn't bundle are fetched fresh,
+    where an import replacing a stored copy's text may reuse that
+    copy's cached bodies.
 - A copy that is gone, a preview that is not a valid userscript, or a
   preview whose `@require` will not load, fails the page with one
   message naming which side, rather than a half diff.

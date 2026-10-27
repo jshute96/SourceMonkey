@@ -324,15 +324,16 @@ export function viewerUrl(scriptId: string, tab?: 'log'): string {
   return `userscript.html?${params.toString()}${tab === 'log' ? '#Log' : ''}`;
 }
 
-// The compare page for two copies of a script (src/extension/compare.ts). The
-// right-hand side is the base: the copy on screen, or the download a
-// preview is showing; `other` is the copy to hold up against it.
+// The compare page for two copies of a script (src/extension/compare.ts).
+// `base` is the copy it was opened for: the copy on screen, the
+// download a preview is showing, or a backup's copy the import dialog
+// offers (by its token); `other` is the copy to hold up against it.
 export function compareUrl(
-  base: { script: string } | { preview: string },
+  base: { script: string } | { preview: string } | { import: string },
   other: string,
 ): string {
   const params = new URLSearchParams(
-    'script' in base ? { script: base.script } : { preview: base.preview },
+    'script' in base ? { script: base.script } : 'preview' in base ? { preview: base.preview } : { import: base.import },
   );
   params.set('other', other);
   return `compare.html?${params.toString()}`;

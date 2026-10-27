@@ -351,8 +351,22 @@ test.describe('backup import', () => {
     await page.locator(`${IMPORT_DIALOG} #import-into`).selectOption(into.id);
     await expect(page.locator(`${IMPORT_DIALOG} #import-into`)).toHaveValue(into.id);
     expect(await existingRows(page)).toEqual([{
-      name: 'Kept', version: '1.0 \u2192 2.0 (Newer)', content: 'Different', enabled: '\u2713', type: 'imported', values: '\u2713 \u2192 \u2713 (Different)', affected: true,
+      name: 'Kept', version: '1.0 \u2192 2.0 (Newer)', content: 'DIFF', enabled: '\u2713', type: 'imported', values: '\u2713 \u2192 \u2713 (Different)', affected: true,
     }]);
+    // DIFF compares the installed copy with the backup's, @require
+    // files as the import would store them.
+    const [compare] = await Promise.all([
+      extensionContext.waitForEvent('page'),
+      page.locator(`${IMPORT_DIALOG} #import-existing-table button.import-diff`).click(),
+    ]);
+    const field = (label: string) => compare.locator('#fields tr', { has: compare.locator('th', { hasText: label }) });
+    await expect(compare.locator('#fields thead tr.side-collection td.value').nth(1)).toHaveText('Import from tm-v2.txt');
+    // It would be stored where the installed copy is.
+    const locations = compare.locator('#fields thead tr.side-location td.value');
+    await expect(locations.nth(1)).toHaveText(await locations.nth(0).innerText());
+    await expect(field('Version').locator('td.value.left')).toHaveText('1.0');
+    await expect(field('Version').locator('td.value.right')).toHaveText('2.0');
+    await expect(compare.locator('#tabs .tab .chip')).toHaveText(['different', 'same']);
     // No location: it comes in as an imported script.
     expect(await newRows(page)).toEqual([{ name: 'Fresh', version: '1.0', type: 'imported', href: '' }]);
     // An existing script's values are only replaced when asked.
@@ -360,6 +374,10 @@ test.describe('backup import', () => {
     await chooseImport(page, { existingValues: true });
     expect(await confirmImport(page)).toBe('Imported 1 script.\n\nUpdated 1 script.');
     await closeImport(page);
+    // With the dialog closed, the backup's copy is gone.
+    await compare.reload();
+    await expect(compare.locator('#message')).toHaveText('The import dialog this came from didn’t answer. If it’s closed, open the comparison again from the import dialog.');
+    await compare.close();
 
     const after = (await sm.getCollectionWithScripts(into.id))!.scripts;
     expect(after.length).toBe(2);

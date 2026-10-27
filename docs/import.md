@@ -241,7 +241,10 @@ Import.
     `installed → backup` where the backup's differs: all the import
     could change, whatever the choices. `∅` means nothing.
     - **Version:** `1.0`, or `1.0 → 2.0 (Newer)` / `(Older)`.
-    - **Content:** Same or Different; its tooltip lists the copies here.
+    - **Content:** Same, or a `DIFF` button that opens the compare
+      page ([compare.md](compare.md)): the installed copy on the left,
+      the backup's on the right ("Import from *file*"), with its bundled `@require` files.
+      Their tooltips list the copies here. Disabled while importing.
     - **Enabled:** `✓` or `☐`, marks rather than checkboxes so they
       don't look clickable, or two with an arrow.
     - **Values:** blank for none, `✓` when only the installed copy has

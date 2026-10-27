@@ -22,6 +22,11 @@
 // download in memory, and nothing is stored until Install — through the
 // same pipeline that page uses, so the `@require`s it resolves are the
 // ones an install would store.
+//
+// From the import dialog (`?import=<token>`), the backup's copy is the
+// new one and goes on the right, asked of the dialog's page
+// (import-compare.ts). Its `@require`s are the backup's bundled files,
+// and fetched where it has none, as the import would store them.
 
 import {
   buildScriptFromText,
@@ -68,6 +73,7 @@ import { installLocalRootsListener, localRootsReady, localSearchRoots } from '..
 import { setGlyphButton } from './glyph.js';
 import { HEADING_SITE_ICONS, renderSiteIconInto } from './site-icon.js';
 import { installSelectAll } from './select-all.js';
+import { requestImportSide } from './import-compare.js';
 import { ignoreResizeObserverLoopErrors } from './resize-observer-loop.js';
 import { countChanges, diffLines, splitLines, toHunks, type DiffOp } from './line-diff.js';
 
@@ -77,8 +83,9 @@ import { countChanges, diffLines, splitLines, toHunks, type DiffOp } from './lin
 // once per side; the swap reorders the pair rather than rebuilding
 // either.
 interface Side {
-  // A stored copy, or the download a preview is showing.
-  kind: 'installed' | 'preview';
+  // A stored copy, the download a preview is showing, or a backup's
+  // copy from the import dialog.
+  kind: 'installed' | 'preview' | 'import';
   // What the heading and the page title call the script.
   label: string;
   collection: StoredCollection | null;
@@ -96,6 +103,9 @@ interface Side {
   requires: readonly StoredRequire[];
   // As the Size row reads it: an em dash for a copy that never loaded.
   size: string;
+  // An import side's "Import from <file>", shown where the collection
+  // goes.
+  importFrom?: string;
 }
 
 // The heading's page name, between the product's and the script's.
@@ -104,6 +114,7 @@ const COMPARE_HEADING = `${INSTALLED_HEADING}Compare${HEADING_SEPARATOR}`;
 const params = new URLSearchParams(location.search);
 const baseScriptId = params.get('script');
 const previewInput = params.get('preview');
+const importToken = params.get('import');
 const otherScriptId = params.get('other');
 
 const headingEl = document.getElementById('heading')!;
@@ -172,7 +183,7 @@ const githubTokenReady = loadGithubAuthToken();
 void load();
 
 async function load(): Promise<void> {
-  if (!otherScriptId || (!baseScriptId && !previewInput)) {
+  if (!otherScriptId || (!baseScriptId && !previewInput && !importToken)) {
     fail('This page needs two copies to compare: a script and another copy of it');
     return;
   }
@@ -182,9 +193,12 @@ async function load(): Promise<void> {
     // way the preview page does, and that needs the configured roots.
     await localRootsReady();
     const [loadedBase, other] = await Promise.all([
-      baseScriptId ? loadInstalled(baseScriptId, 'The script') : loadPreview(previewInput!),
+      baseScriptId ? loadInstalled(baseScriptId, 'The script') : previewInput ? loadPreview(previewInput) : loadImport(importToken!),
       loadInstalled(otherScriptId, 'The other copy'),
     ]);
+    // An import side would be stored where the installed copy is, so it
+    // shows that location, written the same way.
+    if (loadedBase.kind === 'import') loadedBase.location = other.location;
     base = loadedBase;
     [left, right] = baseScriptId ? [loadedBase, other] : [other, loadedBase];
   } catch (err) {
@@ -280,6 +294,49 @@ async function loadPreview(input: string): Promise<Side> {
     text,
     requires: files.requires,
     size: formatScriptSize(script),
+  };
+}
+
+// A backup's copy from the import dialog that opened this page, built
+// as the import would store it: its text, at the installed copy's URL,
+// with the backup's bundled files.
+async function loadImport(token: string): Promise<Side> {
+  const offered = await requestImportSide(token);
+  if (!offered) throw new Error('The import dialog this came from didn’t answer. If it’s closed, open the comparison again from the import dialog.');
+  const { fileName, text, fileUrl, files: pushedFiles } = offered;
+  // A dependency the backup didn't bundle is fetched, maybe from GitHub.
+  await githubTokenReady;
+  const now = Date.now();
+  const script = await buildScriptFromText({ id: 'import', collectionId: 'import', relativePath: fileUrl, fileUrl, text, now });
+  if (script.status !== 'ok') {
+    throw new Error(`The backup's copy cannot be compared: ${script.errorMessage ?? 'It is not a valid userscript'}`);
+  }
+  const attached = await attachFiles({
+    scriptFileUrl: fileUrl,
+    header: script.header,
+    priorRequires: new Map(),
+    priorResources: new Map(),
+    recheck: 'all',
+    fetchCache: new Map(),
+    now,
+    localRoots: [],
+    pushedFiles,
+  });
+  if (attached.errorMessage) throw new Error(`The backup's copy cannot be compared: ${attached.errorMessage}`);
+  return {
+    kind: 'import',
+    label: scriptLabel(script.header, fileUrl),
+    collection: null,
+    // Where it would be stored: the installed copy's location, which
+    // `load` sets from that side.
+    location: '',
+    pageUrl: '',
+    header: script.header,
+    icons: { matching: script.matching, fileUrl, localRoots: [] },
+    text,
+    requires: attached.requires,
+    size: formatScriptSize(script),
+    importFrom: `Import from ${fileName}`,
   };
 }
 
@@ -402,14 +459,21 @@ function sideCell(content: Node, side: 'left' | 'right'): HTMLTableCellElement {
 function collectionValue(side: Side): Node {
   if (side.collection) return collectionCell(side.collection);
   const span = document.createElement('span');
-  span.className = side.kind === 'preview' ? 'side-preview' : 'none';
-  span.textContent = side.kind === 'preview' ? 'Not installed' : 'Collection removed';
+  span.className = side.kind === 'installed' ? 'none' : 'side-preview';
+  span.textContent = side.importFrom ?? (side.kind === 'installed' ? 'Collection removed' : 'Not installed');
   return span;
 }
 
 // A side's location, linked to that copy's own page: the viewer, or
 // the install preview.
 function locationValue(side: Side): Node {
+  // A backup's copy has no page of its own.
+  if (side.kind === 'import') {
+    const span = document.createElement('span');
+    span.className = 'side-preview';
+    appendWithSlashBreaks(span, side.location);
+    return span;
+  }
   const a = document.createElement('a');
   a.href = side.pageUrl;
   a.target = '_blank';

@@ -19,7 +19,9 @@ import {
   type ImportChoices, type InstalledCopy, type PlannedCollection, type PlannedScript,
 } from './import-plan.js';
 import { sha256Hex } from '../bytes.js';
-import { displayLocation, viewerUrl } from '../script-display.js';
+import { compareUrl, displayLocation, viewerUrl } from '../script-display.js';
+import { offerImportSide, withdrawImportSides } from './import-compare.js';
+import { openExtensionTab } from './page-links.js';
 
 interface DialogElements {
   dialog: HTMLDialogElement;
@@ -266,6 +268,7 @@ export function openImportDialog(): Promise<string | null> {
     };
     const finish = (): void => {
       abort.abort();
+      withdrawImportSides();
       dialogInFlight = false;
       if (ui.dialog.open) ui.dialog.close();
       resolve(landed);
@@ -311,6 +314,7 @@ export function openImportDialog(): Promise<string | null> {
       ui.chooseBtn, ui.into, ...ui.existingText, ...checkboxes,
       // Not a collection that's here already, which stays off.
       ...ui.dialog.querySelectorAll<HTMLInputElement>('.import-table input:not([data-fixed])'),
+      ...ui.dialog.querySelectorAll<HTMLButtonElement>('.import-table button.import-diff'),
     ];
     for (const c of controls()) c.disabled = false;
 
@@ -401,6 +405,9 @@ export function openImportDialog(): Promise<string | null> {
       const gen = ++fileGen;
       ui.error.textContent = '';
       ui.fileName.textContent = file.name;
+      backupFileName = file.name;
+      // An earlier file's copies are no longer what this dialog imports.
+      withdrawImportSides();
       backup = null;
       plan = [];
       planned = [];
@@ -477,6 +484,8 @@ export function openImportDialog(): Promise<string | null> {
 
     // The new collection's name before numbering.
     let newBase = '';
+    // The chosen file's name, for the compare page's "Import from".
+    let backupFileName = '';
     // Whether every new script has a scripts collection in the backup,
     // so they can go into those by name.
     let byCollectionOffered = false;
@@ -492,8 +501,21 @@ export function openImportDialog(): Promise<string | null> {
 
     // An existing script's row, after its checkbox.
     const existingCells = (p: PlannedScript): HTMLElement[] => {
-      const content = el<HTMLTableCellElement>('td', 'import-here', contentText(p));
-      content.title = hereText(p).title;
+      const content = el<HTMLTableCellElement>('td', 'import-here');
+      if (p.here === 'same') {
+        content.textContent = contentText(p);
+        content.title = hereText(p).title;
+      } else {
+        // Opens the compare page: the installed copy, then the backup's.
+        const diff = el<HTMLButtonElement>('button', 'import-diff', 'DIFF');
+        diff.type = 'button';
+        diff.title = `${hereText(p).title}\nClick to compare the installed copy with the backup\u2019s.`;
+        diff.addEventListener('click', () => {
+          const token = offerImportSide({ fileName: backupFileName, text: p.script.text, fileUrl: p.match!.fileUrl, files: p.script.files });
+          void openExtensionTab(compareUrl({ import: token }, p.match!.id));
+        });
+        content.appendChild(diff);
+      }
       const version = el<HTMLTableCellElement>('td', 'import-version', versionText(p));
       const enabled = el<HTMLTableCellElement>('td', 'import-enabled',
         p.match!.enabled === p.script.enabled ? enabledMark(p.match!.enabled)
