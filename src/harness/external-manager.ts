@@ -401,7 +401,8 @@ export class ExternalRunScripts {
    * the manager's id for it, or throws saying why it can't be.
    */
   async push(prepared: PreparedScript, text: string): Promise<{ id: number; replaced: boolean }> {
-    const file = fileURLToPath(prepared.script.fileUrl);
+    // A web script is kept by its URL.
+    const file = prepared.script.fileUrl.startsWith('file:') ? fileURLToPath(prepared.script.fileUrl) : prepared.script.fileUrl;
     const identity = identityOf(text);
     const all = await listAll(this.manager);
     const before = this.ids.get(file);

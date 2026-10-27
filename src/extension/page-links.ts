@@ -13,12 +13,18 @@
 //     it and tell it where to scroll, instead of opening a second.
 //   - A modified click (Ctrl/Cmd/Shift/middle) is the user overriding
 //     us, and is left to the browser — which is why every one of these
-//     links is a real anchor with a real `href`, not a button.
+//     links is a real anchor with a real `href`. The header bar's
+//     buttons can't leave it to the browser, so `wireOpenButton` does
+//     what the browser would.
 //
 // Usable from an extension page and from the service worker: both can
 // call `chrome.tabs` and `chrome.runtime.getContexts`, and the worker
 // passes the window it wants explicitly (see `openCollectionsPage` in
 // src/extension/background.ts).
+
+// What the header bar's Help button opens: the README, on the repo's
+// GitHub page, which scrolls to it with no file tree beside it.
+export const HELP_URL = 'https://github.com/jshute96/SourceMonkey#readme';
 
 // The pages that get at most one tab.
 export type NamedPage = 'collections' | 'options';
@@ -241,4 +247,55 @@ export function openBackgroundTab(url: string): Promise<void> {
 // does.
 export function openExtensionWindow(url: string): Promise<void> {
   return chrome.windows.create({ url }).then(() => undefined);
+}
+
+// How a click asks for a page to open, after the browser's gestures for
+// a link:
+// - plain: a left click with no modifier;
+// - background: a middle or Ctrl/Cmd click, for a background tab;
+// - tab: Shift with either of those, for a new tab in front;
+// - window: Shift alone, for a new window.
+// Alt, and any other button, are left to the browser (null).
+export type OpenHow = 'plain' | 'background' | 'tab' | 'window';
+
+export function openHow(ev: MouseEvent): OpenHow | null {
+  if (ev.altKey) return null;
+  if (ev.button === 1 || (ev.button === 0 && (ev.ctrlKey || ev.metaKey))) {
+    return ev.shiftKey ? 'tab' : 'background';
+  }
+  if (ev.button !== 0) return null;
+  return ev.shiftKey ? 'window' : 'plain';
+}
+
+// Wire a header button that opens a page to the link gestures above: a
+// plain click runs `openPlain`, a new tab opens right of this page's
+// tab, as a link's would, and Shift opens a new window. The middle
+// button fires `auxclick`, not `click`. For extension pages only:
+// `chrome.tabs.getCurrent` has no tab to give the worker.
+export function wireOpenButton(btn: HTMLElement, url: string, openPlain: () => Promise<unknown>): void {
+  const handle = (ev: MouseEvent): void => {
+    const how = openHow(ev);
+    if (!how) return;
+    ev.preventDefault();
+    const opening = how === 'plain' ? openPlain()
+      : how === 'window' ? openExtensionWindow(url)
+      : openTabBeside(url, how === 'tab');
+    // Caught: see `openExtensionTab`.
+    opening.catch((err) => console.info('[SourceMonkey] could not open', url, err));
+  };
+  btn.addEventListener('click', handle);
+  btn.addEventListener('auxclick', handle);
+  // Where middle-click autoscroll is on (Windows), it starts on the
+  // press, too early for the `auxclick` above to stop it.
+  btn.addEventListener('mousedown', (ev) => { if (ev.button === 1) ev.preventDefault(); });
+}
+
+// Open `url` in a new tab right after this page's tab, where Chrome
+// puts a tab opened from a link. `chrome.tabs.create` alone would put
+// it at the end of the window.
+export async function openTabBeside(url: string, active = true): Promise<void> {
+  const here = await chrome.tabs.getCurrent();
+  await chrome.tabs.create(here
+    ? { url, active, windowId: here.windowId, index: here.index + 1, openerTabId: here.id }
+    : { url, active });
 }

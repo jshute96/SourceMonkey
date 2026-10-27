@@ -10,8 +10,10 @@
 //   `~/.config/sm-dev/browser-profile-<port>`, one for each port, since
 //   only one Chrome at a time can use a profile. `--profile` picks
 //   another.
-// - Idempotent: a browser already answering on the port is used as is,
-//   whatever its profile.
+// - Idempotent: a browser already answering on the port is used as is.
+//   With `--profile`, it must be the browser using that profile.
+//   Otherwise sm-dev stops with an error, without running any commands,
+//   rather than use the wrong browser.
 // - Google Chrome when it's installed (better at Google sign-in than
 //   other builds), else Playwright's Chromium. $SM_DEV_BROWSER_BINARY
 //   names another binary, and $SM_DEV_BROWSER_ARGS adds arguments (the
@@ -23,6 +25,7 @@ import { mkdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import { loadPlaywright, missingChromium } from './playwright-chromium.js';
 import { processAlive } from './runs.js';
 import { quoted } from './output-style.js';
 
@@ -47,9 +50,10 @@ async function browserBinary(): Promise<{ file: string; name: string }> {
   if (chosen) return { file: chosen, name: path.basename(chosen) };
   const chrome = chromeCandidates().find((f) => existsSync(f));
   if (chrome) return { file: chrome, name: 'Google Chrome' };
-  const { chromium } = await import('@playwright/test');
+  const { chromium, install } = await loadPlaywright();
   const file = chromium.executablePath();
-  if (!existsSync(file)) throw new Error('No browser to launch: Google Chrome isn\'t installed, and neither is Playwright\'s Chromium (pnpm exec playwright install chromium)');
+  const missing = missingChromium(file, install);
+  if (missing) throw new Error(`No browser to launch: Google Chrome isn't installed. ${missing}`);
   return { file, name: 'Chromium' };
 }
 
@@ -83,6 +87,17 @@ async function answers(endpoint: string): Promise<boolean> {
  * (a shared home directory): the start then fails, or Chrome asks.
  */
 function profileInUse(dir: string): string | null {
+  const holder = profileHolder(dir);
+  if (!holder) return null;
+  return holder.port
+    ? `The profile ${withTilde(dir)} is in use by the browser on port ${holder.port}. Use ${quoted(`--browser ${holder.port}`)}, or another ${quoted('--profile')}`
+    : `The profile ${withTilde(dir)} is in use by a browser without a debugging port (pid ${holder.pid}). Close it, or use another ${quoted('--profile')}`;
+}
+
+// The browser on this machine holding the profile, by its lock, and the
+// port it listens on, if any. Null when it's free, or when the lock
+// can't be read or is another machine's (see profileInUse).
+function profileHolder(dir: string): { pid: number; port?: string } | null {
   let owner: string;
   try {
     owner = readlinkSync(path.join(dir, 'SingletonLock'));
@@ -91,10 +106,31 @@ function profileInUse(dir: string): string | null {
   }
   const match = /^(.*)-(\d+)$/.exec(owner);
   if (!match || match[1] !== os.hostname() || !processAlive(Number(match[2]))) return null;
-  const port = debuggingPort(dir, Number(match[2]));
-  return port
-    ? `The profile ${withTilde(dir)} is in use by the browser on port ${port}. Use ${quoted(`--browser ${port}`)}, or another ${quoted('--profile')}`
-    : `The profile ${withTilde(dir)} is in use by a browser without a debugging port (pid ${match[2]}). Close it, or use another ${quoted('--profile')}`;
+  return { pid: Number(match[2]), port: debuggingPort(dir, Number(match[2])) };
+}
+
+// Why the browser already at `endpoint` can't be used as `--profile`
+// asks: it isn't the one holding that profile. Null when it is, and
+// when that can't be told: on Windows, which locks a profile another
+// way, or with a lock that is another machine's (a shared home
+// directory) or can't be read. A lock left by a browser that has since
+// ended holds nothing.
+function otherProfile(endpoint: URL, dir: string): string | null {
+  if (process.platform === 'win32') return null;
+  let owner: string | null = null;
+  try {
+    owner = readlinkSync(path.join(dir, 'SingletonLock'));
+  } catch { /* free */ }
+  // A lock that isn't `host-pid`, or is another machine's, can't be traced.
+  const host = owner ? /^(.*)-\d+$/.exec(owner)?.[1] : undefined;
+  if (owner && host !== os.hostname()) return null;
+  const holder = profileHolder(dir);
+  if (holder?.port === endpoint.port) return null;
+  const wrong = `The browser at ${endpoint.host} isn't using the profile ${withTilde(dir)}`;
+  if (!holder) return `${wrong}. Use another ${quoted('--browser')} port to start one with it`;
+  return holder.port
+    ? `${wrong}. The browser on port ${holder.port} is. Use ${quoted(`--browser ${holder.port}`)}`
+    : `${wrong}. A browser without a debugging port is (pid ${holder.pid}). Close it to use the profile`;
 }
 
 // Where the browser with this pid listens, if it does: the port in its
@@ -136,6 +172,9 @@ export async function launchBrowser(endpoint: string, profile: string | undefine
   const url = new URL(endpoint);
   const where = `${url.hostname}:${url.port}`;
   if (await answers(endpoint)) {
+    // A profile asked for outright has to be the running browser's.
+    const other = profile !== undefined ? otherProfile(url, path.resolve(profile)) : null;
+    if (other) throw new Error(other);
     out(`[sm-dev] A browser is already running at ${where}`);
     return;
   }

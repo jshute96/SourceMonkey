@@ -9,17 +9,11 @@ import { test, expect } from '../../fixtures/manager';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// The example userscript uses relative `@resource` refs (`./*.css`).
-// SourceMonkey resolves those against the host script's URL, and VM
-// against the URL the script was installed from — which the harness
-// makes a real fixture-server URL, so VM fetches them for real. TM
-// takes absolute URLs only and can't install the example cleanly, so
-// it stays skipped. See docs/cross-manager-test-results.md.
+// The example's `@resource` refs are the files' GitHub Pages URLs, so
+// TM and VM fetch them from there. SourceMonkey, which loads the
+// example from this directory, reads the copies beside the script
+// instead (a local file override).
 test.describe('examples / gm-resource', () => {
-  test.beforeEach(({ setup }) => {
-    test.skip(setup.manager === 'tampermonkey', 'TM requires absolute @resource URLs; this example uses relative refs');
-  });
-
   test('GM_getResourceText returns the prefetched CSS bytes and GM_addStyle applies it', async ({
     extensionContext, fixtureServer, setup,
   }) => {
@@ -60,7 +54,7 @@ test.describe('examples / gm-resource', () => {
     await page.close();
   });
 
-  test('GM_getResourceURL produces a blob: URL the page can render', async ({
+  test('GM_getResourceURL produces a URL the page can render', async ({
     extensionContext, fixtureServer, setup,
   }) => {
     await setup.installScriptsFrom(__dirname);
@@ -73,9 +67,9 @@ test.describe('examples / gm-resource', () => {
     const img = page.locator('#imgSlot img');
     await expect(img).toHaveCount(1);
     const src = await img.getAttribute('src');
-    expect(src).toMatch(/^blob:/);
-    // The blob URL should be fetchable from the page; the SVG bytes
-    // we stored start with `<?xml version`.
+    // SM and VM mint a blob: URL; TM returns a base64 data: URL.
+    expect(src).toMatch(setup.manager === 'tampermonkey' ? /^data:image\/svg\+xml;base64,/ : /^blob:/);
+    // Either way the page can fetch it and gets the SVG back.
     const body = await page.evaluate(async (url) => {
       const res = await fetch(url);
       return res.text();
@@ -85,7 +79,7 @@ test.describe('examples / gm-resource', () => {
     await page.close();
   });
 
-  test('Unknown resource name returns undefined from both APIs', async ({
+  test('Unknown resource name returns nothing from both APIs', async ({
     extensionContext, fixtureServer, setup,
   }) => {
     await setup.installScriptsFrom(__dirname);
@@ -95,8 +89,9 @@ test.describe('examples / gm-resource', () => {
     await expect(page.locator('#runStatus')).toHaveText(/Userscript ran/);
 
     await page.locator('#btn-missing').click();
+    // SM and VM return undefined; TM returns null.
     await expect(page.locator('#log')).toContainText(
-      /text=undefined, url=undefined/,
+      setup.manager === 'tampermonkey' ? /text=null, url=null/ : /text=undefined, url=undefined/,
     );
 
     await page.close();

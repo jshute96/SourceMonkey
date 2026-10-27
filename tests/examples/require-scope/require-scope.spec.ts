@@ -26,16 +26,9 @@ test.describe('examples / require-scope', () => {
   test('a @require\'d class/const/function reaches both the page and content worlds', async ({
     extensionContext, fixtureServer, setup,
   }) => {
-    // Relative `@require` paths resolve against the script's own URL
-    // under SM, and against the install URL under VM — the harness
-    // installs into VM from the fixture server, so VM fetches the
-    // library for real. TM takes absolute URLs only, and installs
-    // these examples from a local file, so it has no base URL to
-    // resolve against even in principle; the fixture server's port is
-    // random, so an absolute URL can't be baked into the file either.
-    // Same reason gm-resource skips under TM.
-    test.skip(setup.manager === 'tampermonkey', 'TM requires absolute @require URLs; this example uses a relative ref');
-
+    // The `@require` is lib.js's GitHub Pages URL, so TM and VM fetch
+    // it from there. SourceMonkey reads the lib.js beside the scripts
+    // instead (a local file override).
     await setup.installScriptsFrom(__dirname);
 
     const page = await extensionContext.newPage();
@@ -76,6 +69,28 @@ test.describe('examples / require-scope', () => {
     await expect(contentRow).toContainText('@require in the content (USER_SCRIPT) world');
     // Isolated world — the page's global is not visible from here.
     await expect(contentRow).toContainText('"seesPageGlobal":"(not visible)"');
+
+    await page.close();
+  });
+
+  // `relative/` holds a script that loads its libraries by relative
+  // path. It's a subdirectory so this test can install it on its own,
+  // and skip it under TM, which takes absolute URLs only. VM resolves
+  // the paths against the fixture-server URL it installs from.
+  test('relative @require paths load, in the order listed', async ({
+    extensionContext, fixtureServer, setup,
+  }) => {
+    test.skip(setup.manager === 'tampermonkey', 'TM requires absolute @require URLs; this script uses relative paths');
+    await setup.installScriptsFrom(path.join(__dirname, 'relative'));
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/require-scope/require-scope.html`);
+
+    // second.js builds its const from first.js's, so this text also
+    // shows the two loaded in order.
+    await expect(page.locator('#relativeStatus'))
+      .toHaveText('Relative @require ran: first.js loaded, then second.js');
+    await expect(page.locator('#relativeStatus')).toHaveClass(/\bran\b/);
 
     await page.close();
   });

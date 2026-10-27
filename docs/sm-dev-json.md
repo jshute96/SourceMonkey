@@ -268,7 +268,7 @@ run:` or `Selected run:`.
 
 ```text
 Selected run: D1 (pid 4171043), connected to owned headless browser 127.0.0.1:38583 (has SourceMonkey)
-Managers: SourceMonkey 0.0.1 (in use)
+Managers: SourceMonkey 0.5.0 (in use)
 Backend: SourceMonkey extension, test collection D1-f691
 Log: /tmp/sm-dev-logs-me/sm-dev-20261003-085822-497.log (D1.log)
 Downloads: /tmp/sm-dev-logs-me/sm-dev-20261003-085822-497-downloads
@@ -290,7 +290,7 @@ With no run picked, the browser the line names (with
 ```text
 No current run. (Use start or attach to connect to one.)
 Browser: 127.0.0.1:9233 (Chrome 154.0.8037.57)
-Managers: SourceMonkey 0.0.1 (chosen), Tampermonkey 5.5.1 (disabled)
+Managers: SourceMonkey 0.5.0 (chosen), Tampermonkey 5.5.1 (disabled)
 
 Other active runs:
 
@@ -322,8 +322,8 @@ JSON, with `--run D1` (without it: `{"command": "status", "browser":
       {
         "manager": "sourcemonkey",
         "name": "SourceMonkey",
-        "version": "0.0.1",
-        "id": "bkgahdlbeddjginplgbipcefkefaflfa",
+        "version": "0.5.0",
+        "id": "cgeoigcimmclmhiamjicgccmojfdgkkd",
         "enabled": true,
         "userScripts": true
       }

@@ -21,7 +21,8 @@
         <code>blob:</code> URL the page can fetch / embed (e.g. as
         an <code>&lt;img src&gt;</code>). The blob carries the
         <em>Content-Type</em> the resource was fetched with so the
-        browser dispatches correctly.</li>
+        browser dispatches correctly. Tampermonkey returns a
+        <code>data:</code> URL instead.</li>
     </ul>
 
     <h2>Details</h2>
@@ -38,7 +39,8 @@
         value &mdash; a blob URL is minted once per name and cached
         for the document&rsquo;s lifetime.</li>
       <li>An unknown name returns <code>undefined</code> from both
-        APIs; the &ldquo;missing&rdquo; button demonstrates that.</li>
+        APIs (<code>null</code> in Tampermonkey); the
+        &ldquo;missing&rdquo; button demonstrates that.</li>
     </ul>
 
     <p id="runStatus" class="status">Waiting for userscript&hellip;</p>

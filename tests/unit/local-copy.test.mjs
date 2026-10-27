@@ -8,6 +8,7 @@ import {
   findDownloadsCollection,
   isCopyOfItself,
   mirrorPath,
+  relativeRefPath,
   parseDownloadsCopiesSetting,
   planFiles,
   rewriteHeaderTags,
@@ -133,16 +134,15 @@ test('mirrorPath: host then path, decoded, unwritable names skipped, directories
   assert.equal(mirrorPath('not a url'), null);
 });
 
-test('dependencyFiles: requires and resources, deduped, web URLs only', () => {
+test('dependencyFiles: requires and resources, deduped, data: skipped', () => {
   const s = script({
     requires: [
-      { ref: 'a', url: 'https://cdn.example.com/lib/a.js', source: 'A', size: 1, contentHash: '', loadedAt: 0 },
-      { ref: 'a', url: 'https://cdn.example.com/lib/a.js', source: 'A', size: 1, contentHash: '', loadedAt: 0 },
-      { ref: 'l', url: 'file:///home/me/lib/local.js', source: 'L', size: 1, contentHash: '', loadedAt: 0 },
-      { ref: 'd', url: 'data:text/javascript,1', source: '1', size: 1, contentHash: '', loadedAt: 0 },
+      { ref: 'https://cdn.example.com/lib/a.js', url: 'https://cdn.example.com/lib/a.js', source: 'A', size: 1, contentHash: '', loadedAt: 0 },
+      { ref: 'https://cdn.example.com/lib/a.js', url: 'https://cdn.example.com/lib/a.js', source: 'A', size: 1, contentHash: '', loadedAt: 0 },
+      { ref: 'data:text/javascript,1', url: 'data:text/javascript,1', source: '1', size: 1, contentHash: '', loadedAt: 0 },
     ],
     resources: [
-      { ref: 'r', url: 'https://cdn.example.com/img.png', name: 'img', bytesBase64: 'AQID', contentType: 'image/png', size: 3, contentHash: '', loadedAt: 0 },
+      { ref: 'https://cdn.example.com/img.png', url: 'https://cdn.example.com/img.png', name: 'img', bytesBase64: 'AQID', contentType: 'image/png', size: 3, contentHash: '', loadedAt: 0 },
     ],
   });
   const files = dependencyFiles(s);
@@ -152,9 +152,40 @@ test('dependencyFiles: requires and resources, deduped, web URLs only', () => {
   assert.equal(files[1].body.type, 'image/png');
 });
 
+test('relativeRefPath: under the script folder, decoded, never climbing out', () => {
+  assert.equal(relativeRefPath('lib/util.js'), 'lib/util.js');
+  assert.equal(relativeRefPath('./lib/a%20b.js'), 'lib/a b.js');
+  assert.equal(relativeRefPath('lib/util.js?v=2'), 'lib/util.js');
+  assert.equal(relativeRefPath('lib/../x.js'), 'x.js');
+  assert.equal(relativeRefPath('../x.js'), null);
+  assert.equal(relativeRefPath('lib/'), null);
+  assert.equal(relativeRefPath('..%2F..%2Fx.js'), null);
+});
+
+test('dependencyFiles: a relative ref goes at its own path, local or remote', () => {
+  const req = (ref, url) => ({ ref, url, source: 'X', size: 1, contentHash: '', loadedAt: 0 });
+  const local = script({
+    fileUrl: 'file:///home/me/scripts/hello.user.js',
+    requires: [
+      req('lib/util.js', 'file:///home/me/scripts/lib/util.js'),
+      req('a%3Ab.js', 'file:///home/me/scripts/a:b.js'),
+      req('https://cdn.example.com/a.js', 'https://cdn.example.com/a.js'),
+    ],
+    resources: [
+      { ref: 'img/x.png', url: 'file:///home/me/scripts/img/x.png', name: 'x', bytesBase64: 'AQID', contentType: 'image/png', size: 3, contentHash: '', loadedAt: 0 },
+    ],
+  });
+  assert.deepEqual(dependencyFiles(local).map((f) => f.relativePath), ['lib/util.js', 'cdn.example.com/a.js', 'img/x.png']);
+  const remote = script({
+    fileUrl: 'https://example.com/scripts/hello.user.js',
+    requires: [req('lib/util.js', 'https://example.com/scripts/lib/util.js'), req('../up.js', 'https://example.com/up.js')],
+  });
+  assert.deepEqual(dependencyFiles(remote).map((f) => f.relativePath), ['lib/util.js']);
+});
+
 test('planFiles: the script first, dependencies under its own folder', () => {
   const s = script({
-    requires: [{ ref: 'a', url: 'https://cdn.example.com/a.js', source: 'A', size: 1, contentHash: '', loadedAt: 0 }],
+    requires: [{ ref: 'https://cdn.example.com/a.js', url: 'https://cdn.example.com/a.js', source: 'A', size: 1, contentHash: '', loadedAt: 0 }],
   });
   const plan = { fileName: 'sub/hello.user.js', version: '9', description: 'D', includeDependencies: true };
   const files = planFiles(s, plan);

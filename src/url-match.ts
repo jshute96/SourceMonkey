@@ -164,7 +164,7 @@ export function hostEndsInTld(pattern: string): boolean {
 // coarse first pass: the `.tld` becomes `.*`, so `*://www.google.tld/*`
 // registers as `*://www.google.*/*`. It reaches more than `.tld` means
 // (`www.google.evil.com`, and a glob `*` also crosses `/`), so the
-// wrapper's in-page matcher, which reads `.tld` exactly, must still
+// wrapper's in-page matcher and the worker's `.tld` check must still
 // narrow it. A `@match` host's leading `*.` also covers the bare name
 // (`*.imdb.tld` runs on `imdb.com`), which as a glob needs `*imdb.*`.
 // Only for patterns where `hostEndsInTld` is true.
@@ -223,7 +223,7 @@ const CONCRETE_SCHEMES = ['http', 'https', 'file', 'ftp'];
 //
 // This runs ahead of BOTH the matcher and the validator, so what we
 // register with Chrome and what our own matcher says stay the same
-// thing. Keep it in lockstep with the copy in `userscript-prelude.js`.
+// thing, and `pageMatcher` builds the wrapper's regexes from it too.
 export function canonicalMatchPatterns(pattern: string): string[] {
   if (pattern === '<all_urls>') return [pattern];
 
@@ -364,7 +364,10 @@ function matchCanonical(pattern: string, url: string): boolean {
   // ?id=... etc. Not the fragment: Chrome's matcher ignores it, so a
   // `#` in the pattern matches nothing and a URL's `#hash` never stops
   // a match.
-  const tail = parsed.pathname + parsed.search;
+  // A bare `?` (an empty query) counts, as Chrome reads it, though
+  // `search` drops it.
+  const bareQuery = !parsed.search && parsed.href.split('#')[0].endsWith('?');
+  const tail = parsed.pathname + (bareQuery ? '?' : parsed.search);
   try {
     return globToRegExp(path).test(tail);
   } catch {
@@ -619,6 +622,118 @@ export function chromeIncludeGlob(glob: string): string {
   const isHost = host.includes('.') || (start > 0 && !host.includes('*'));
   const end = isHost ? hostEnd : start;
   return glob.slice(0, end).toLowerCase() + glob.slice(end).replace(/[a-z]/gi, '?');
+}
+
+// ---------- the wrapper's in-page matcher ----------
+//
+// The wrapper rechecks the page's URL for scripts Chrome can't match
+// exactly (regex and `.tld` rules, glob `@include`s, any `@exclude`).
+// We build its regexes here, at registration, so the page only tests
+// them: `pageMatcher` gives each rule as a `[source, flags]` pair that
+// the prelude tests against `location.href`. The prelude's
+// `matchScript` is the other half.
+//   - A `@match` becomes one regex per canonical form, over the whole
+//     URL: what `matchCanonical` checks part by part.
+//   - A `.tld` host is read LOOSELY, as any one or more labels: the
+//     exact reading needs the public suffix list, which stays out of
+//     the page. The service worker applies it in its `sm:check-pending`
+//     reply (see `tld`), so the page side must only ever be wider. A
+//     `.tld` `@exclude` is left out, since a loose one would exclude
+//     pages the script should run on.
+//   - A rule that can never match (a malformed `@match`, a regex that
+//     doesn't compile) is left out.
+//   - `tld` is whether any rule has a `.tld` host, so the wrapper must
+//     wait for the service worker's exact answer.
+export type PageRegex = [source: string, flags: string];
+export interface PageMatcher {
+  include: PageRegex[];
+  exclude: PageRegex[];
+  tld?: true;
+}
+
+export function pageMatcher(matching: UrlMatching): PageMatcher {
+  const include: PageRegex[] = [];
+  const exclude: PageRegex[] = [];
+  for (const m of matching.matches) {
+    for (const p of canonicalMatchPatterns(m)) {
+      const rx = matchRegex(p);
+      if (rx) include.push(rx);
+    }
+  }
+  for (const inc of matching.includes) {
+    const rx = includeRegex(inc);
+    if (rx) include.push(rx);
+  }
+  for (const ex of matching.excludes) {
+    if (hostEndsInTld(ex)) continue;
+    const rx = includeRegex(ex);
+    if (rx) exclude.push(rx);
+  }
+  const tld = matching.includes.some(hostEndsInTld) || matching.excludes.some(hostEndsInTld)
+    || matching.matches.some((m) => canonicalMatchPatterns(m).some(hostEndsInTld));
+  return tld ? { include, exclude, tld } : { include, exclude };
+}
+
+// Any run of labels, standing in for a `.tld` in the page's loose reading.
+const LOOSE_TLD = '(?:\\.[a-z0-9-]+)+';
+// The host part of a URL: up to the port, path, query or fragment, past
+// any `user:pass@`. A bracketed IPv6 literal holds colons of its own.
+const URL_HOST = '(?:\\[[^\\]]*\\]|[^/?#:@\\[]*)';
+
+// An `@include` / `@exclude` as a page regex, ignoring case as
+// `includePattern` does.
+function includeRegex(pattern: string): PageRegex | null {
+  if (isRegexPattern(pattern)) {
+    const source = pattern.slice(1, -1);
+    try {
+      new RegExp(source, 'i');
+    } catch {
+      return null;
+    }
+    return [source, 'i'];
+  }
+  const glob = (g: string) => escapeForRegexExceptStar(g).replace(/\*/g, '.*');
+  const at = tldIndex(pattern, true);
+  if (at < 0) return ['^' + glob(pattern) + '$', 'i'];
+  return ['^' + glob(pattern.slice(0, at)) + LOOSE_TLD + glob(pattern.slice(at + 4)) + '$', 'i'];
+}
+
+// A canonical `@match` as a regex over the whole URL, testing what
+// `matchCanonical` does: scheme, host, port, then the path glob against
+// the path and query (a bare `?` included, as in Chrome). Case matters
+// in the path, so no `i` flag: the URL's scheme and host are already
+// lowercase, so the pattern's are lowercased to meet them.
+function matchRegex(pattern: string): PageRegex | null {
+  if (pattern === '<all_urls>') return ['^(?:https?|file|ftp):', 'i'];
+  const parts = /^(\*|https?|file|ftp):\/\/([^/]*)(\/.*)$/i.exec(pattern);
+  if (!parts) return null;
+  const [, scheme, host, path] = parts;
+  // The path glob never sees the fragment, so a `#` in it matches nothing.
+  if (path.includes('#')) return null;
+  const colon = host.lastIndexOf(':');
+  const hasPort = colon > 0 && /^(\d+|\*)$/.test(host.slice(colon + 1));
+  const patternHost = (hasPort ? host.slice(0, colon) : host).toLowerCase();
+  const patternPort = hasPort ? host.slice(colon + 1) : '';
+  // A `user@` in the pattern's host never matches a URL's host.
+  if (patternHost.includes('@')) return null;
+  const esc = (s: string) => escapeForRegexExceptStar(s).replace(/\*/g, '\\*');
+  const anySub = '(?:' + URL_HOST + '\\.)?';
+  let hostRx: string;
+  if (patternHost === '*') {
+    hostRx = URL_HOST;
+  } else if (tldIndex(patternHost) >= 0) {
+    const base = patternHost.slice(0, -4);
+    hostRx = base.startsWith('*.') ? anySub + esc(base.slice(2)) + LOOSE_TLD : esc(base) + LOOSE_TLD;
+  } else if (patternHost.startsWith('*.')) {
+    hostRx = anySub + esc(patternHost.slice(2));
+  } else {
+    hostRx = esc(patternHost);
+  }
+  const portRx = patternPort === '' || patternPort === '*' ? '(?::\\d+)?' : ':' + patternPort;
+  const schemeRx = scheme === '*' ? 'https?' : scheme.toLowerCase();
+  // The path glob covers the path and query, never the fragment.
+  const pathRx = escapeForRegexExceptStar(path).replace(/\*/g, '[^#]*');
+  return ['^' + schemeRx + '://(?:[^/?#@]*@)?' + hostRx + portRx + pathRx + '(?:#.*)?$', ''];
 }
 
 // Combined script-level test: a script matches a URL iff

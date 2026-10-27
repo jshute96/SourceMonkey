@@ -4,6 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import { WRAPPER_GM_RUNTIME, WRAPPER_PRELUDE } from '../../dist/generated-wrappers.js';
 import { buildConfigBlob } from '../../dist/extension/injector.js';
@@ -119,15 +120,17 @@ test('a manual run\'s key is its document and script\'s own, the same in every r
 
 test('the static wrappers carry the same registry code as generated entries', () => {
   // Three copies of one piece of code: kept in step by this. Compared
-  // with whitespace and semicolons left out, from `(function(k){` to
-  // the call.
+  // in the wrappers' source, since minifying renames the locals, with
+  // comments, whitespace and semicolons left out, from `(function(k){`
+  // to the call.
   const body = (code) => {
-    const flat = code.replace(/[\s;]+/g, '');
+    const flat = code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/[\s;]+/g, '');
     const start = flat.indexOf('(function(k){varg=document.__smGate');
     assert.ok(start >= 0, 'found the registry code');
     return flat.slice(start, flat.indexOf('})(', start));
   };
   const generated = body(registryExpr());
-  assert.equal(body(WRAPPER_PRELUDE), generated);
-  assert.equal(body(WRAPPER_GM_RUNTIME), generated);
+  for (const file of ['userscript-prelude.js', 'wrapper-gm-runtime.js']) {
+    assert.equal(body(readFileSync(new URL(`../../src/${file}`, import.meta.url), 'utf8')), generated, file);
+  }
 });

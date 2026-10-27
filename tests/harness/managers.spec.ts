@@ -19,6 +19,8 @@ import { chromium, test, expect, type BrowserContext } from '@playwright/test';
 import { installedManagers, managerState, managersIn } from '../../lib/harness/browser-extensions.js';
 
 const CLI = fileURLToPath(new URL('../../lib/harness/cli.js', import.meta.url));
+// The built extension's version, which sm-dev names it by.
+const SM_VERSION = (JSON.parse(readFileSync(new URL('../../dist/manifest.json', import.meta.url), 'utf8')) as { version: string }).version;
 
 // A browser with no extensions, as a person's own would start, which
 // `manager install` loads them into.
@@ -84,7 +86,7 @@ test('manager install, enable and disable, with a warning for the other one enab
   expect(await installedManagers(endpoint)).toEqual([]);
   expect(await managersIn('http://127.0.0.1:1')).toBeNull();
   const sm = await cli('manager', 'install');
-  expect(sm.stdout).toMatch(/^Installed SourceMonkey 0\.0\.1 from .*dist, with Allow User Scripts on\n$/);
+  expect(sm.stdout).toMatch(/^Installed SourceMonkey \d+\.\d+\.\d+ from .*dist, with Allow User Scripts on\n$/);
   const managers = await installedManagers(endpoint);
   expect(managers.map((m) => [m.manager, m.name, m.enabled, m.userScripts])).toEqual([['sourcemonkey', 'SourceMonkey', true, true]]);
   expect(managerState(managers, 'sourcemonkey')).toBe('installed');
@@ -110,9 +112,8 @@ test('manager install, enable and disable, with a warning for the other one enab
   expect(before[0]).toBe('No current run. (Use `start` or `attach` to connect to one.)');
   expect(before[1]).toMatch(/^Browser: 127\.0\.0\.1:\d+ \(Chrome [\d.]+, headless\)$/);
   expect(before.slice(2)).toEqual([
-    'Managers: SourceMonkey 0.0.1 (chosen), Violentmonkey 9.9.9',
+    `Managers: SourceMonkey ${SM_VERSION} (chosen), Violentmonkey 9.9.9`,
     'Warning: Violentmonkey is also enabled in this browser, so its scripts run too. To turn it off, use `sm-dev --existing-browser --manager vm manager disable`.',
-    '',
     'No other active runs',
     '',
   ]);
@@ -126,7 +127,7 @@ test('manager install, enable and disable, with a warning for the other one enab
   expect((await cli('--stdin', { input: 'attach D1\nstatus\n' })).stdout).toMatch(/^Attached run: D1 \(pid /m);
   const status = await cli('status');
   expect(status.stdout).toMatch(/^Other run: D1 \(pid /m);
-  expect(status.stdout).toContain('Managers: SourceMonkey 0.0.1 (in use), Violentmonkey 9.9.9\n');
+  expect(status.stdout).toContain(`Managers: SourceMonkey ${SM_VERSION} (in use), Violentmonkey 9.9.9\n`);
   expect(status.stdout).toContain('Warning: Violentmonkey is also enabled');
   const off = await cli('manager', 'disable');
   expect(off.code).toBe(1);
@@ -139,7 +140,7 @@ test('manager install, enable and disable, with a warning for the other one enab
   // beside the run.
   expect((await cli('--manager', 'vm', 'manager', 'disable')).stdout).toBe('Disabled Violentmonkey 9.9.9\n');
   await cli('stop');
-  expect((await cli('manager', 'disable')).stdout).toBe('Disabled SourceMonkey 0.0.1\n');
+  expect((await cli('manager', 'disable')).stdout).toBe(`Disabled SourceMonkey ${SM_VERSION}\n`);
 });
 
 test('a run under another manager drives its pages, and refuses what needs SourceMonkey', async () => {

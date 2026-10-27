@@ -22,6 +22,8 @@ import {
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 const CLI = path.join(REPO_ROOT, 'lib', 'harness', 'cli.js');
+// The output is read as plain text, whatever this environment asks for.
+delete process.env.FORCE_COLOR;
 
 /**
  * Run `sm-dev validate` and read its output back per script:

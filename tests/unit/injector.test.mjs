@@ -101,7 +101,7 @@ import { MISSING_BLOB_MESSAGE } from '../../dist/extension/script-blobs.js';
 import { remapStackText } from '../../dist/stack-link.js';
 import { buildRequireSourceUrl, buildSourceUrl } from '../../dist/script-source-url.js';
 import { WRAPPER_BRIDGE, WRAPPER_PRELUDE } from '../../dist/generated-wrappers.js';
-import { matchPattern, urlMatchesScript } from '../../dist/url-match.js';
+import { matchPattern, pageMatcher, urlMatchesScript } from '../../dist/url-match.js';
 
 // ---------- normalizeDeclaredRunAt ----------
 
@@ -1634,12 +1634,12 @@ test('resolveWorld: @inject-into value is case-insensitive', () => {
 
 // ---------- prelude matcher round-trip ----------
 
-// The prelude's __smMatchScript must agree with urlMatchesScript()
-// from url-match.ts — including the lenient readings, since the SW
-// registers a pattern's canonical spelling and a wrapper that didn't
-// know the rewrite would reject a page Chrome injected it on. The
-// prelude file's matcher is the same algorithm (it lives inside
-// src/userscript-prelude.js); we evaluate that block directly.
+// The prelude's matchScript, given the regexes `pageMatcher` builds,
+// must agree with urlMatchesScript() from url-match.ts — including the
+// lenient readings, since the SW registers a pattern's canonical
+// spelling and a wrapper that didn't know the rewrite would reject a
+// page Chrome injected it on. We evaluate the prelude's matcher block
+// directly, on the URL as `location.href` gives it.
 
 const MATCHER_BLOCK_START = '/* ---------- matcher (regex-aware URL recheck) ---------- */';
 const MATCHER_BLOCK_END = '/* ---------- startup logs (page-console diagnostics) ---------- */';
@@ -1659,7 +1659,8 @@ async function loadPreludeMatcher() {
   assert.ok(start >= 0 && end > start, 'matcher block markers moved in userscript-prelude.js');
   const harness = source.slice(start, end) + '\n    return matchScript;';
   // eslint-disable-next-line no-new-func
-  return new Function('URL', harness)(URL);
+  const matchScript = new Function(harness)();
+  return (url, rules) => matchScript(new URL(url).href, pageMatcher(rules));
 }
 
 test('prelude matcher: @match passes', async () => {
@@ -1839,7 +1840,7 @@ test('buildBridgeSpec: a child frame asks about a sandboxed page only if a MAIN-
   // MAIN-world script is @noframes, none would run, so the bridge
   // doesn't send it.
   const main = (id, allFrames) => ({ id, world: 'MAIN', matches: ['https://y/*'], js: [{ code: '' }], runAt: 'document_idle', allFrames });
-  const flag = (specs) => /var SM_MAIN_IN_FRAMES = (true|false);/.exec(buildBridgeSpec(specs).js[0].code)[1];
+  const flag = (specs) => /var SM_MAIN_IN_FRAMES ?= ?(true|false);/.exec(buildBridgeSpec(specs).js[0].code)[1];
   assert.equal(flag([main('a', false)]), 'false');
   assert.equal(flag([main('a', false), main('b', true)]), 'true');
   // The isolated world's own scripts don't count.

@@ -14,7 +14,7 @@ import type { Browser, BrowserContext, ConsoleMessage, Frame, Page } from '@play
 
 import { shellWord } from './command-lines.js';
 import {
-  commandOutput, commandRunner, DialogTracker, gotoInTab, leaveDialogsOpen, onlyInspects, reloadTab, reloadable, serveSavedPage, setCommandsListening, skippedScriptLine, targetIdSuffix, withoutQuery,
+  commandOutput, commandRunner, DialogTracker, dismissSettingUpDialogs, gotoInTab, hasUntrackedDialog, leaveDialogsOpen, trackSettingUp, onlyInspects, reloadTab, reloadable, serveSavedPage, setCommandsListening, skippedScriptLine, targetIdSuffix, withoutQuery,
   type CommandRunner, type ConsoleContext, type ControlledTab,
 } from './console-commands.js';
 import { applyLang, langLaunchArgs } from './browser-lang.js';
@@ -31,6 +31,7 @@ import type { ErrorReport, ManualReport, PageLink, SkipReport, StartReport } fro
 import { attachPage, targetIdOf, type AttachOptions, type PageAttachment } from './page-watch.js';
 import { pageSays } from './page-commands.js';
 import { consoleSource, consoleText, decodeOwnRefs, formatConsoleArgs, isPreludeLine, pageErrorSource } from './page-output.js';
+import { loadPlaywright } from './playwright-chromium.js';
 import { FrameSessions, type FrameSession } from './frame-sessions.js';
 import {
   defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, preparedNoframes, preparedScriptPath, prepareScript, pushedFiles, shownPath, warningLines, type PreparedScript,
@@ -39,6 +40,7 @@ import { DEFAULT_LOG_SOURCES, inSources, RunLog, streamLine, type LogFields, typ
 import { runDownloadsDir } from './run-log.js';
 import { comparableUrl, openingSavedLine, type SavedPageStart } from './saved-pages.js';
 import { echoLine, INVALID_PREFIX, plainLine, quoted } from './output-style.js';
+import { REMOTE_SCRIPT, scriptSources, validateLines, validateSummary } from './checks.js';
 // The roles for marked-up output, as S.id(...): their names are common locals here.
 import * as S from './output-style.js';
 import { browserSentence, checkRunsDir, ownRunsDir, processAlive, RunControl, runTabsPath, type RunRecord, type SentCommand, type SentLineHandler } from './runs.js';
@@ -56,6 +58,12 @@ export interface RunOptions extends ConnectOptions {
    * that won't prepare is named as the person named it.
    */
   typed?: Map<string, string>;
+  /**
+   * The `files` found by searching a directory or by a glob, rather than
+   * named. One that won't prepare at the start is reported and left out,
+   * where a named one stops the run.
+   */
+  found?: Set<string>;
   /**
    * The pages to open, one tab each. Defaults to the first URL the first
    * script's `@match` implies.
@@ -293,7 +301,7 @@ async function openBrowser(
   out: (line: string) => void,
   { runTab, openTab }: { runTab: boolean; openTab: boolean },
 ): Promise<RunSession | null> {
-  const { chromium } = await import('@playwright/test');
+  const { chromium } = await loadPlaywright();
   let browser: Browser;
   // Set for a connected browser only.
   let endpoint: string | null = null;
@@ -356,7 +364,11 @@ async function openBrowser(
     }
   }
   const context = browser.contexts()[0] ?? await browser.newContext();
-  if (endpoint !== null) browser.contexts().forEach(leaveDialogsOpen);
+  // A browser the run launched too: this connection is a second
+  // Playwright client of it, besides the launch's own, and without the
+  // listener Playwright dismisses dialogs in the tabs the run doesn't
+  // own (a confirm on the collections page).
+  browser.contexts().forEach(leaveDialogsOpen);
   const notes: string[] = [];
   const page = !openTab ? null
     // The one blank tab a launch leaves for the run.
@@ -531,12 +543,15 @@ function isSelected(page: Page): Promise<boolean> {
   return pageSays(page, () => document.visibilityState === 'visible');
 }
 
-const NO_URL = 'No URL was given, and the first script\'s @match names no page to open. Give a URL.';
+// No URL given, and the first script names no page: the tab stays blank,
+// for the person to open one in.
+const NO_URL = `[sm-dev] No URL was given, and the first script's @match names no page to open, so T1 is a blank tab. Use ${quoted('open <url>')} to load a page.`;
 const NO_URL_ALL = 'None of the scripts\' @match names a page to open. Give a URL instead of --all.';
 
-// The pages a run opens: the URLs given, or the first script's default page,
-// or with `--all` each script's, once per distinct page. Null, with
-// the reason printed, when there is none.
+// The pages a run opens: the URLs given, or the first script's default page
+// (none, leaving the first tab blank, when it names none), or with
+// `--all` each script's, once per distinct page. Null, with the reason
+// printed, when `--all` finds none.
 interface StartPages {
   urls: string[];
   /** For each of `urls`, the saved page served there, or null. */
@@ -561,8 +576,11 @@ function startPages(opts: RunOptions, prepared: PreparedScript[]): StartPages | 
   if (!opts.all) {
     if (given.urls.length > 0) return given;
     const url = defaultPageUrl(prepared[0]);
-    if (!url) opts.out(S.err(NO_URL));
-    return url ? { urls: [url], saved: [null], skipped: [] } : null;
+    if (!url) {
+      opts.out(NO_URL);
+      return given;
+    }
+    return { urls: [url], saved: [null], skipped: [] };
   }
   const urls = new Set<string>();
   const skipped: StartPages['skipped'] = [];
@@ -974,7 +992,9 @@ async function runInBrowser(
     held.attachment = attachment;
     await tabs.start(page, attachment, dialogs);
   }
-  const prepared = await prepareAll(opts);
+  // The text of each web script, by its URL, fetched once at the start.
+  const remoteTexts = new Map<string, string>();
+  const prepared = await prepareAtStart(opts, remoteTexts);
   if (!prepared) return 1;
   const start = startPages(opts, prepared);
   if (!start) return 2;
@@ -983,7 +1003,9 @@ async function runInBrowser(
   // The loaded scripts, and the files they came from, in step: `load`
   // adds to both, `update` and `--watch` replace scripts in place.
   let scripts = prepared;
-  const files = [...opts.files];
+  // The files the scripts came from: those left out are no longer listed.
+  const files = prepared.map((p) => scriptFileOf(p));
+  if (files.length < opts.files.length) remote.setScripts(files);
   // When each script's files were last modified, as it was read.
   const stamps = new Map<PreparedScript, string>();
   for (const script of prepared) stamps.set(script, await filesStamp(script));
@@ -1008,11 +1030,12 @@ async function runInBrowser(
   let pushedAny = false;
   const push = async (list: PreparedScript[], seed = false): Promise<boolean> => {
     for (const script of list) {
-      const file = fileURLToPath(script.script.fileUrl);
+      const file = scriptFileOf(script);
       // The extension keeps the run's scripts by this: the path as
       // typed to start or load, so files of the same name stay apart.
       const name = typedName(opts, file);
-      const text = await readFile(file, 'utf8');
+      const fetchedText = remoteTexts.get(script.script.fileUrl);
+      const text = fetchedText ?? await readFile(file, 'utf8');
       if (manager !== 'sourcemonkey' && !external) {
         opts.out(`[sm-dev] ${label} was not on in this browser when the run started, so the run can't load scripts into it. Start a new run once it's on.`);
         return false;
@@ -1030,7 +1053,9 @@ async function runInBrowser(
         opts.out(`[sm-dev] ${S.ui`Installed in ${label} as ${S.id(`E${installed.id}`)}: ${S.url(preparedScriptPath(script))}${installed.replaced ? ' (replaced)' : ''}`}`);
         continue;
       }
-      const result = await link.push(text, name, pushedFiles(script), script.script.fileUrl);
+      // A web script's files all go with it: the extension keeps it at a
+      // URL of its own, where its relative @requires would resolve to nothing.
+      const result = await link.push(text, name, pushedFiles(script, fetchedText !== undefined), script.script.fileUrl);
       pushedAny = true;
       if (result.status !== 'ok') {
         opts.out(`${INVALID_PREFIX}${typedName(opts, file)}`);
@@ -1092,6 +1117,10 @@ async function runInBrowser(
     await apply(next, changed, 'No open tab runs or matches the updated scripts, so none was reloaded', false, timeoutMs);
   });
   const load = (input: string, timeoutMs?: number): Promise<void> => serial(async () => {
+    if (REMOTE_SCRIPT.test(input)) {
+      opts.out(`[sm-dev] The load command takes files, and ${input} is a URL. Give it to start instead.`);
+      return;
+    }
     const file = path.resolve(input);
     const info = await stat(file).catch(() => null);
     if (!info) {
@@ -1413,6 +1442,9 @@ class FollowedTabs {
 
   async dispose(): Promise<void> {
     this.disposed = true;
+    // A tab being set up can be held up by a dialog it showed first,
+    // which nobody answers once the run ends.
+    await dismissSettingUpDialogs();
     // Settled, not all: one failed setup must not skip the others'
     // cleanup.
     await Promise.allSettled(this.adopting);
@@ -1429,6 +1461,7 @@ class FollowedTabs {
     // A tab without scripts opens more of its kind.
     const noScript = this.list().find((t) => t.n === opener)?.noScript === true;
     this.track(this.setUp(page, n, opener, true, noScript, tabId).catch((err) => {
+      trackSettingUp(`T${n}`, null);
       // Closed while being set up is the usual cause, and says nothing.
       if (page.isClosed()) return;
       this.opts.out(`[sm-dev] T${n} could not be set up: ${(err as Error).message}`);
@@ -1531,6 +1564,11 @@ class FollowedTabs {
       // T2 on is named even while it is set up, before list() has it.
       tabRef: () => (n > 1 || this.list().length > 1 ? `T${n}` : undefined),
     });
+    // Until the tab is listed, `accept T<n>` reaches its tracker here:
+    // a dialog it showed before the run took it over holds up the setup
+    // below until it's answered.
+    trackSettingUp(`T${n}`, dialogs);
+    page.on('close', () => trackSettingUp(`T${n}`, null));
     await applyLang(page, this.opts.lang, out);
     // An opened tab may have loaded already, with its events from that
     // document waiting.
@@ -1547,6 +1585,7 @@ class FollowedTabs {
     const entry = { tab: { n, page, link: attachment, dialogs, openedBy: opener, targetId, noScript }, attachment, ready: false };
     tabNow = entry.tab;
     this.tabs.set(page, entry);
+    trackSettingUp(`T${n}`, null);
     this.onTabsChanged();
     const url = page.url();
     const loaded = url !== '' && url !== 'about:blank';
@@ -1613,6 +1652,16 @@ class FollowedTabs {
     let opener: ControlledTab | undefined;
     while (Date.now() < deadline && !this.disposed) {
       opener = this.list().find((t) => this.host.tabIdOf(t.link) === event.sourceTabId);
+      // A page stopped on a dialog runs no code to read its document
+      // from, here or in the extension, so it's matched another way: the
+      // page whose opener is the opener tab's, else by its address, when
+      // only one page with a dialog has it. Its dialog tracker then
+      // reports the dialog.
+      const waiting = opener ? await this.pageWithDialog(opener, event.url) : undefined;
+      if (opener && waiting) {
+        this.adopt(waiting, opener.n, event.tabId);
+        return;
+      }
       const shown = opener ? await this.link.tabDocument(event.tabId).catch(() => null) : null;
       if (opener && shown) {
         const candidates = this.context.pages().filter((p) => !this.notOpenedByScripts.has(p) && !this.tabs.has(p) && !p.isClosed());
@@ -1634,6 +1683,21 @@ class FollowedTabs {
     if (!this.disposed && opener) {
       tabEvent(this.opts.emit!, opener.n, 'tab-opened')(`Opened a tab sm-dev couldn't follow (${event.url}). Only the run's scripts run in it, but their output there isn't shown.`);
     }
+  }
+
+  // The page opened from `opener`, at `url`, that shows a dialog no
+  // tracker has, if one does: see adoptOpened.
+  private async pageWithDialog(opener: ControlledTab, url: string): Promise<Page | undefined> {
+    const withDialog: Page[] = [];
+    for (const p of this.context.pages()) {
+      if (this.notOpenedByScripts.has(p) || this.tabs.has(p) || p.isClosed()) continue;
+      if (await hasUntrackedDialog(p)) withDialog.push(p);
+    }
+    for (const p of withDialog) {
+      if (await p.opener().catch(() => null) === opener.page) return p;
+    }
+    const atUrl = withDialog.filter((p) => comparableUrl(p.url()) === comparableUrl(url));
+    return atUrl.length === 1 ? atUrl[0] : undefined;
   }
 
   // `scripts` in place of what `attachment` has, from index `from` on.
@@ -1685,6 +1749,9 @@ function browserVisible(opts: ConnectOptions): boolean {
 // When a script's files (its own and local @requires) were last
 // modified, as one comparable string; a missing file counts too.
 async function filesStamp(script: PreparedScript): Promise<string> {
+  // A web script was fetched once, with no file to change: `update` and
+  // `--watch` leave it as it was, its local stand-ins too.
+  if (!script.script.fileUrl.startsWith('file:')) return '';
   const paths = [script.script.fileUrl, ...script.requires.map((r) => r.localUrl ?? '')]
     .filter((u) => u.startsWith('file:')).map((u) => fileURLToPath(u));
   const times = await Promise.all(paths.map((p) => stat(p).then((st) => st.mtimeMs, () => -1)));
@@ -1695,7 +1762,74 @@ async function filesStamp(script: PreparedScript): Promise<string> {
 // they did; else as paths are shown.
 
 function typedName(opts: RunOptions, file: string): string {
-  return opts.typed?.get(file) ?? shownPath(file);
+  return opts.typed?.get(file) ?? (REMOTE_SCRIPT.test(file) ? file : shownPath(file));
+}
+
+/** The file a loaded script came from, or its URL for a web script. */
+function scriptFileOf(script: PreparedScript): string {
+  return script.script.fileUrl.startsWith('file:') ? fileURLToPath(script.script.fileUrl) : script.script.fileUrl;
+}
+
+/**
+ * The run's scripts at the start, checked as `validate` checks them.
+ * Those with something to report (invalid, or a warning or note) are
+ * listed as `validate` lists them, under a heading, so each line says
+ * which script it's for; the rest are only counted. An invalid script found in a
+ * directory or by a glob (`opts.found`) is left out; one named stops
+ * the run, as does finding no valid script. Null when it stops.
+ */
+async function prepareAtStart(opts: RunOptions, texts: Map<string, string>): Promise<PreparedScript[] | null> {
+  type Report = ReturnType<typeof validateLines> & { file: string; p?: PreparedScript };
+  const reports = await Promise.all(opts.files.map(async (file): Promise<Report> => {
+    const label = typedName(opts, file);
+    const roots = { collectionRoot: opts.collectionRoot, localRoots: opts.localRoots };
+    if (!REMOTE_SCRIPT.test(file)) {
+      // A manifest can list a file that isn't there.
+      if (!await stat(file).catch(() => null)) {
+        const error = noSuchFileMessage(label);
+        return { file, lines: [`${INVALID_PREFIX}${label}`, S.asError(`    ${error}`)], verdict: 'invalid', error, warnings: [] };
+      }
+      const p = await prepareScript({ file, ...roots });
+      return { file, p, ...validateLines(label, p) };
+    }
+    // A web script, fetched now: one that can't be is invalid too.
+    let fetched: { url: string; text: string };
+    try {
+      fetched = (await scriptSources([file]))[0] as { url: string; text: string };
+    } catch (err) {
+      const error = (err as Error).message;
+      return { file, lines: [`${INVALID_PREFIX}${label}`, S.asError(`    ${error}`)], verdict: 'invalid', error, warnings: [] };
+    }
+    texts.set(fetched.url, fetched.text);
+    const p = await prepareScript({ text: fetched.text, sourceUrl: fetched.url, ...roots });
+    return { file, p, ...validateLines(label, p) };
+  }));
+  const counts = { ok: 0, invalid: 0, unchecked: 0 };
+  for (const r of reports) counts[r.verdict]++;
+  const shown = reports.filter((r) => r.verdict !== 'ok' || r.warnings.length > 0);
+  if (shown.length > 0) {
+    opts.out('[sm-dev] ' + S.ui`${S.heading('Script validation results')}:`);
+    for (const r of shown) r.lines.forEach((line) => opts.out(line));
+  }
+  const invalid = reports.filter((r) => r.verdict === 'invalid');
+  const named = invalid.filter((r) => !opts.found?.has(r.file));
+  const kept = reports.filter((r) => r.verdict !== 'invalid').map((r) => r.p!);
+  // After a list, its counts, so it always ends the same way.
+  const summary = `Validation: ${validateSummary(counts)}`;
+  if (invalid.length === 0) {
+    if (shown.length > 0) opts.out(`[sm-dev] ${summary}`);
+    return kept;
+  }
+  if (named.length > 0) {
+    opts.out(`[sm-dev] ${summary}. ${named.length === 1 ? 'A script given by name is invalid' : 'Scripts given by name are invalid'}, so the run stopped.`);
+    return null;
+  }
+  if (kept.length === 0) {
+    opts.out(`[sm-dev] ${summary}. All the scripts found are invalid, so the run stopped.`);
+    return null;
+  }
+  opts.out(`[sm-dev] ${summary}. Starting without the invalid ${invalid.length === 1 ? 'script' : 'scripts'}.`);
+  return kept;
 }
 
 async function prepareAll(opts: RunOptions, files = opts.files): Promise<PreparedScript[] | null> {
@@ -1722,13 +1856,17 @@ function wireHostOutput(host: ExtensionHost, emit: (fields: LogFields) => void, 
     source: 'event', kind, tab: tabOf(record), ...(record.frameNumber !== undefined ? { frame: record.frameNumber } : {}), scriptId: record.scriptId, text, ...(also ? { also } : {}),
   });
   // SourceMonkey's Log has an entry for each of these, logged as the
-  // report rather than twice; not for a rule miss, which only the run
-  // finds. A throw is the script's own error too, and the page's console
-  // shows it.
+  // report rather than twice. A throw is the script's own error too, and
+  // the page's console shows it.
   // A report from an iframe says so: its URL is the frame's, not the page's.
   const on = (r: { url: string; frame?: true }): string => `${r.frame ? 'in an iframe ' : ''}on ${r.url}`;
   host.on('start', (r: StartReport) => event(r, 'started', `${r.name} started ${on(r)}`, ['sm']));
-  host.on('skip', (r: SkipReport) => event(r, 'skipped', `${r.name} skipped ${on(r)}: ${r.reason}`, r.ruleMiss ? undefined : ['sm']));
+  // Not a script whose rules miss the page: otherwise each page load
+  // would print a line for every run script that doesn't match it.
+  // `match` shows why one doesn't run.
+  host.on('skip', (r: SkipReport) => {
+    if (!r.ruleMiss) event(r, 'skipped', `${r.name} skipped ${on(r)}: ${r.reason}`, ['sm']);
+  });
   host.on('manual', (r: ManualReport) => event(r, 'manual', `${r.name} is waiting to be run on ${r.url}, since it has @run-at context-menu. Use menu to run it.`));
   host.on('script-error', (r: ErrorReport) => {
     const frames = r.stack ? r.stack.split('\n').slice(1, 4).map((line) => `\n    ${decodeOwnRefs(line.trim())}`).join('') : '';

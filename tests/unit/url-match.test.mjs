@@ -21,6 +21,7 @@ import {
   hostEndsInTld,
   tldCoarseGlob,
   isPublicSuffix,
+  pageMatcher,
 } from '../../dist/url-match.js';
 
 // ---------- matchPattern ----------
@@ -679,4 +680,94 @@ test('.tld: any ICANN public suffix, multi-level ones included, never a private 
   // Under a wildcard rule, the name sits one label further out.
   assert.equal(includePattern('*://shop.tld/*', 'https://shop.anything.ck/'), true);
   assert.equal(includePattern('*://shop.tld/*', 'https://shop.www.ck/'), false);
+});
+
+// The wrapper's matcher (`pageMatcher`'s regexes, as the prelude tests
+// them) answers as `urlMatchesScript` does, except that a `.tld` rule
+// reads loosely there, so the page may only say yes where the exact
+// answer is no.
+function pageMatches(m, url) {
+  const test = ([source, flags]) => new RegExp(source, flags).test(url);
+  if (m.exclude.some(test)) return false;
+  return m.include.some(test);
+}
+
+const PAGE_URLS = [
+  'https://example.com/',
+  'https://example.com/path/page?q=1#frag',
+  'http://example.com:8080/x',
+  'https://EXAMPLE.com/Path',
+  'https://www.example.com/a',
+  'https://sub.deep.example.com/a',
+  'https://notexample.com/a',
+  'https://user:pw@example.com/secret',
+  'file:///home/me/page.html',
+  'ftp://example.com/file',
+  'https://www.google.com/search?q=x',
+  'https://www.google.co.uk/maps',
+  'https://www.google.evil.com/',
+  'http://[::1]:3000/app',
+  'https://example.com/a#/route/b',
+  'https://example.com/a?',
+  'https://example.com/a?#x',
+// As `location.href` gives them: scheme and host lowercase.
+].map((u) => new URL(u).href);
+
+const PAGE_RULES = [
+  { matches: ['*://*/*'], includes: [], excludes: [] },
+  { matches: ['https://example.com/*'], includes: [], excludes: [] },
+  { matches: ['https://example.com/path/*'], includes: [], excludes: [] },
+  { matches: ['https://example.com/Path'], includes: [], excludes: [] },
+  { matches: ['*://*.example.com/*'], includes: [], excludes: [] },
+  { matches: ['http://example.com:8080/*'], includes: [], excludes: [] },
+  { matches: ['http://example.com:*/*'], includes: [], excludes: [] },
+  { matches: ['https://example.com/*?q=*'], includes: [], excludes: [] },
+  { matches: ['https://example.com/a#*'], includes: [], excludes: [] },
+  { matches: ['https://example.com/a'], includes: [], excludes: [] },
+  { matches: ['https://example.com/a?*'], includes: [], excludes: [] },
+  { matches: ['https://user@example.com/*'], includes: [], excludes: [] },
+  { matches: ['file:///*'], includes: [], excludes: [] },
+  { matches: ['<all_urls>'], includes: [], excludes: [] },
+  { matches: ['example.com'], includes: [], excludes: [] },
+  { matches: ['*example.com/*'], includes: [], excludes: [] },
+  { matches: ['ht*://example.com/*'], includes: [], excludes: [] },
+  { matches: ['*://localhost:3000/*', 'http://*/app'], includes: [], excludes: [] },
+  { matches: ['not a pattern'], includes: [], excludes: [] },
+  { matches: [], includes: ['*example.com*'], excludes: [] },
+  { matches: [], includes: ['https://example.com/path*'], excludes: [] },
+  { matches: [], includes: ['/^https://(www\\.)?example\\.com\\//'], excludes: [] },
+  { matches: [], includes: ['/(unclosed/'], excludes: [] },
+  { matches: ['*://*/*'], includes: [], excludes: ['*secret*'] },
+  { matches: ['*://*/*'], includes: [], excludes: ['/google/'] },
+  { matches: ['https://example.com/*'], includes: ['*google*'], excludes: ['*maps*'] },
+];
+
+const TLD_RULES = [
+  { matches: ['*://www.google.tld/*'], includes: [], excludes: [] },
+  { matches: ['*://*.google.tld/*'], includes: [], excludes: [] },
+  { matches: [], includes: ['http*://www.google.tld*'], excludes: [] },
+  { matches: ['*://*/*'], includes: [], excludes: ['*://www.google.tld/*'] },
+];
+
+test('pageMatcher: the regexes answer as urlMatchesScript does', () => {
+  for (const rules of PAGE_RULES) {
+    const m = pageMatcher(rules);
+    assert.equal(m.tld, undefined, JSON.stringify(rules));
+    for (const url of PAGE_URLS) {
+      assert.equal(pageMatches(m, url), urlMatchesScript(url, rules), `${JSON.stringify(rules)} on ${url}`);
+    }
+  }
+});
+
+test('pageMatcher: a .tld rule reads loosely, and says to wait for the exact answer', () => {
+  for (const rules of TLD_RULES) {
+    const m = pageMatcher(rules);
+    assert.equal(m.tld, true, JSON.stringify(rules));
+    for (const url of PAGE_URLS) {
+      if (urlMatchesScript(url, rules)) assert.ok(pageMatches(m, url), `${JSON.stringify(rules)} on ${url}`);
+    }
+  }
+  const loose = pageMatcher(TLD_RULES[0]);
+  assert.ok(pageMatches(loose, 'https://www.google.evil.com/'));
+  assert.ok(!pageMatches(loose, 'https://www.googlex.com/'));
 });

@@ -183,11 +183,14 @@ need this?* from one collection's rows.
 
 ## Dependency files
 
-The files listed are the ones the script is **loading now** — each
-`@require` / `@resource` entry's `localUrl`, which is what the load
-pipeline actually read, filtered to paths under the copies directory.
-Not a re-derivation of what the copy once wrote, so a file the user
-renamed or removed by hand isn't offered.
+The files listed are the ones the script is **loading now**: what the
+load pipeline actually read for each `@require` / `@resource` entry,
+filtered to paths under the copies directory.
+
+- For a web URL, the entry's `localUrl` (the local stand-in).
+- For a relative ref, the entry's own `file://` URL.
+- Not a re-derivation of what the copy once wrote, so a file the user
+  renamed or removed by hand isn't offered.
 
 ### Headings, not a checkbox
 

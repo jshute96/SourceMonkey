@@ -1,8 +1,44 @@
 # Userscript examples
 
 Interactive examples for SourceMonkey's `GM_*` APIs, other granted
-APIs, and metadata headers. Each example lives in its own subdirectory
-and pairs:
+APIs, and metadata headers.
+
+These examples also work as a compliance test suite: their specs run against
+SourceMonkey, Tampermonkey and Violentmonkey. See the
+[cross-manager test results](../../docs/cross-manager-test-results.md)
+for what passes under each, and where the managers behave differently.
+
+## Trying the examples
+
+1. Add the example scripts to SourceMonkey: on the collections page,
+   add `https://github.com/jshute96/SourceMonkey/tree/main/tests/examples`.
+   - A new install of SourceMonkey adds this collection on its first
+     run, so it may be there already.
+   - In another manager, install the `*.user.js` files you want one by
+     one, from their GitHub Pages URLs
+     (`https://jshute96.github.io/SourceMonkey/tests/examples/<dir>/<file>.user.js`).
+2. Open the [examples index page](https://jshute96.github.io/SourceMonkey/tests/examples/index.html)
+   and pick an example. Each example's page runs its scripts and
+   shows what they did.
+
+Or try them in a fresh browser with `sm-dev`, under any manager, with
+no checkout needed. The scripts come from the directory's
+`script_manifest.json`:
+
+```sh
+npx sm-dev start https://jshute96.github.io/SourceMonkey/tests/examples/script_manifest.json \
+  https://jshute96.github.io/SourceMonkey/tests/examples/index.html
+npx sm-dev --manager tm start https://jshute96.github.io/SourceMonkey/tests/examples/script_manifest.json \
+  https://jshute96.github.io/SourceMonkey/tests/examples/index.html
+```
+
+Two examples need parts GitHub Pages can't serve: the slow route in
+`headers-run-at/`, and a second host for `frames/`. For those, serve
+the examples locally ([Running locally](#running-locally)).
+
+## How an example is built
+
+Each example lives in its own subdirectory and pairs:
 
 - `<api>.html` — a mostly-empty page with a heading, an APIs list,
   optional details, and placeholder outputs. The userscript fills in
@@ -64,8 +100,9 @@ of the layout above:
   `end.user.js`, `connect-none.user.js`, …), not by the directory
   stem.
 - Variants a manager can't install go in a subdirectory the spec
-  installs separately, so it can skip them there: `use-strict/with-require/`
-  holds the relative-`@require` pair TM can't take.
+  installs separately, so it can skip them there:
+  `require-scope/relative/` holds a script whose relative `@require`s
+  TM can't take.
 
 The aim is double-purpose:
 
@@ -148,7 +185,7 @@ events.
 | `headers-inject-into/`     | `@inject-into` (`page` MAIN-world vs `content` USER_SCRIPT-world)  | multi-script  |
 | `headers-match-hash/`      | `#hash` in `@match` / `@include` / `@exclude`, per manager        | multi-script  |
 | `headers-include-regex/`   | Regex `@include` / `@exclude`: slashes, flags, case                | multi-script  |
-| `require-scope/`           | `@require` scope in both worlds (SM-only: relative ref)            | multi-script  |
+| `require-scope/`           | `@require` scope in both worlds                                    | multi-script  |
 | `use-strict/`              | Top-level `'use strict'`, in both worlds and with a `@require`     | multi-script  |
 | `xmlhttp-connect/`         | `GM_xmlhttpRequest` + `@connect`: declared, undeclared, prompt     | multi-script  |
 
@@ -195,6 +232,9 @@ prose paragraphs. Mirrors the project-wide doc convention.
 5. Name each userscript `SourceMonkey example: <dir>: <what it shows>`,
    so a directory's scripts sort together in a manager's list.
 6. Add a row to the table above and a link in `index.html`.
+   Regenerate `script_manifest.json` here, which lists every example
+   script: `sh ../../scripts/make_manifest.sh > script_manifest.json`.
+   Do the same in `tests/bad-examples/` when adding a script there.
 7. In `<api>.spec.ts`, import the fixture from
    `../../fixtures/manager` and call
    `await setup.installScriptsFrom(__dirname)` — that registers the
@@ -202,21 +242,26 @@ prose paragraphs. Mirrors the project-wide doc convention.
    See the existing specs for the template.
 
 An example may also carry **auxiliary files** the userscript pulls in
-by relative ref — `gm-resource/` has `resource.css` / `resource.json` /
-`logo.svg` for `@resource`, `require-scope/` has `lib.js` for
-`@require`. Two things follow:
+with `@require`, `@resource` or `@icon`: `gm-resource/` has
+`resource.css` / `resource.json` / `logo.svg`, `require-scope/` has
+`lib.js`. Refer to them by their GitHub Pages URL
+(`https://jshute96.github.io/SourceMonkey/tests/examples/<dir>/<file>`),
+not a relative path:
 
+- TM takes absolute URLs only, and installs these examples from a
+  local file, so it has nothing to resolve a relative path against.
+- SourceMonkey loads the examples from this directory, so it reads the
+  file beside the script instead of fetching the URL (a
+  [local file override](../../docs/local-file-overrides.md)). The SM
+  tests need no network.
+- TM and VM fetch the URL, so they get the copy on `main` as GitHub
+  Pages serves it. Push a change to an auxiliary file before running
+  the TM or VM suites against it.
 - The TM sync only walks `*.user.js`, so these files are never
-  installed on their own. They're fetched by the manager when it
-  resolves the ref.
-- Relative refs don't survive the trip to TM: TM and GM take absolute
-  URLs only, and TM installs these examples from a local file, so it
-  has no base URL to resolve against. VM does resolve them — the
-  harness installs into VM from the fixture server's URL — so a spec
-  relying on one needs
-  `test.skip(setup.manager === 'tampermonkey', ...)` with the reason
-  stated, not a blanket non-SM skip. The `*.user.js` still syncs to TM
-  harmlessly.
+  installed on their own.
+- The exception is `require-scope/relative/`, whose script shows
+  relative `@require` paths on purpose. It's a subdirectory so its
+  test can install it on its own and skip it under TM.
 
 For a **multi-script directory** (see above): replace step 1 with
 a single `<dir>.html` + single `<dir>.spec.ts` + one
@@ -230,11 +275,11 @@ the spec targets each row through that attribute.
 When you change the body or metadata of an existing `*.user.js`,
 **bump its `@version`**. Version-sensitive managers (Tampermonkey,
 Violentmonkey, …) install by `@namespace`+`@name` and only update
-when the installed version is older than the file. Without a bump,
-the cross-manager sync (`scripts/sync-manager-scripts.mjs`) classifies
-your edit as `SKIP` and TM keeps running the stale copy. SourceMonkey
-re-reads source files directly so it doesn't care, but the cross-
-manager workflow does.
+when the installed version is older than the file. Without a bump, a
+browser that already has the script installed keeps running the stale
+copy. SourceMonkey re-reads source files directly so it doesn't care,
+and the TM and VM test runs start from an empty manager, but a
+person's own TM or VM does.
 
 Pick the smallest bump that conveys the change (patch for tweaks,
 minor for new behaviour). The values are not user-facing — they only

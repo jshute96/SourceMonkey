@@ -38,10 +38,7 @@
 //
 // Compile-in shape contract: the set of bindings emitted and the
 // call-site shape (`__smReg.gm.<method>(...)` sync, `sendAsync` async)
-// is stable across phases. Bodies for unimplemented APIs throw "not
-// implemented yet" via `__smReg.gm.notImplemented(...)`; phases swap
-// in real handlers without changing the call-site shape, so e2e
-// tests written against earlier phases keep passing.
+// is stable, so landing a new API changes only its handler.
 
 import type { GmApiSpec } from '../gm-api-catalog.js';
 import { findApi, GM_APIS } from '../gm-api-catalog.js';
@@ -225,7 +222,6 @@ function emitGmInfo(info: GmInfoInput): string {
 // Build a single GM_x binding statement.
 //
 // SYNC bodies delegate to __smReg.gm.<subsystem>.<verb>(scriptId, ...args).
-// Unimplemented sync APIs delegate to __smReg.gm.notImplemented(name).
 //
 // ASYNC bodies build a message envelope and route it through
 // __smReg.gm.sendAsync. The call-site shape is stable across phases —
@@ -407,10 +403,9 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
     }
   }
   if (spec.kind === 'sync') {
-    // Fall-through for sync APIs whose body hasn't been wired up yet.
-    // Closure captures the literal API name so error messages
-    // identify it.
-    return `const ${spec.name} = function () { return __smReg.gm.notImplemented(${jsLit(spec.name)}); };`;
+    // A catalog entry with no case above. Caught by the bindings unit
+    // test, which emits every catalog API.
+    throw new Error(`Internal error: No binding for ${spec.name}`);
   }
   // ASYNC body. Build the message envelope at call time so the args
   // travel as a structured array; the SW handler in later phases

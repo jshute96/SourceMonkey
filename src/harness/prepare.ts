@@ -422,7 +422,8 @@ export function shownPath(file: string, cwd = process.cwd(), outside = file): st
  */
 export function preparedScriptPath(script: PreparedScript): string {
   const url = script.script.fileUrl;
-  return url.startsWith('file:') ? shownPath(fileURLToPath(url)) : script.script.relativePath;
+  if (url.startsWith('file:')) return shownPath(fileURLToPath(url));
+  return /^https?:/i.test(url) ? url : script.script.relativePath;
 }
 
 /** The script's `@name`, else the path it was loaded from. */
@@ -452,12 +453,14 @@ export function preparedScriptMatches(script: PreparedScript, name: string): boo
  * The `@require` / `@resource` bodies a run pushes into SourceMonkey with
  * the script's text, by the ref its header declares: those read from
  * disk, a relative ref's file or a local stand-in for a remote URL,
- * which the extension couldn't read itself. Remote ones it fetches.
+ * which the extension couldn't read itself. Remote ones it fetches,
+ * except with `all`: every one, for a web script, whose relative refs
+ * the extension can't resolve from where it keeps the script.
  */
-export function pushedFiles(prepared: PreparedScript): Record<string, PushedFile> {
+export function pushedFiles(prepared: PreparedScript, all = false): Record<string, PushedFile> {
   const out: Record<string, PushedFile> = {};
   const add = (ref: string, file: { url: string; localUrl?: string; contentType?: string }, bytesBase64: string): void => {
-    if (!file.localUrl && !file.url.startsWith('file:')) return;
+    if (!all && !file.localUrl && !file.url.startsWith('file:')) return;
     out[ref] = { url: file.url, ...(file.localUrl ? { localUrl: file.localUrl } : {}), bytesBase64, contentType: file.contentType ?? '' };
   };
   for (const r of prepared.script.requires ?? []) add(r.ref, r, bytesToBase64(new TextEncoder().encode(r.source)));

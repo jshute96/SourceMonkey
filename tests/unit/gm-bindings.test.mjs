@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 
 import { emitGmBindings } from '../../dist/extension/gm-bindings.js';
+import { GM_APIS } from '../../dist/gm-api-catalog.js';
 
 function makeInfo(over = {}) {
   return {
@@ -78,7 +79,6 @@ test('emitGmBindings: emits a const for each granted GM_x', () => {
 });
 
 test('emitGmBindings: storage bodies route to reg.gm.storage helpers', () => {
-  // Phase 3+ — storage is wired up, no longer notImplemented.
   const out = emitGmBindings(
     ['GM_setValue', 'GM_getValue', 'GM_deleteValue', 'GM_listValues'],
     makeInfo({ grants: ['GM_setValue', 'GM_getValue', 'GM_deleteValue', 'GM_listValues'] }),
@@ -87,8 +87,6 @@ test('emitGmBindings: storage bodies route to reg.gm.storage helpers', () => {
   assert.match(out.js, /__smReg\.gm\.storage\.set\("script-1"/);
   assert.match(out.js, /__smReg\.gm\.storage\.del\("script-1"/);
   assert.match(out.js, /__smReg\.gm\.storage\.list\("script-1"/);
-  // Storage APIs should NOT throw not-implemented anymore.
-  assert.doesNotMatch(out.js, /notImplemented\("GM_setValue"\)/);
 });
 
 test('emitGmBindings: storage prelude reads the SW-attached snapshot, no baked literal', () => {
@@ -127,9 +125,6 @@ test('emitGmBindings: DOM bodies route to reg.gm.dom helpers', () => {
   assert.match(out.js, /__smReg\.gm\.dom\.addStyle/);
   assert.match(out.js, /const GM_addElement = function/);
   assert.match(out.js, /__smReg\.gm\.dom\.addElement/);
-  // Should NOT route through notImplemented.
-  assert.doesNotMatch(out.js, /notImplemented\("GM_addStyle"\)/);
-  assert.doesNotMatch(out.js, /notImplemented\("GM_addElement"\)/);
 });
 
 test('emitGmBindings: GM_getResourceText routes to reg.gm.resource.getText', () => {
@@ -138,7 +133,6 @@ test('emitGmBindings: GM_getResourceText routes to reg.gm.resource.getText', () 
   }));
   assert.match(out.js, /const GM_getResourceText = function/);
   assert.match(out.js, /__smReg\.gm\.resource\.getText\("script-1"/);
-  assert.doesNotMatch(out.js, /notImplemented\("GM_getResourceText"\)/);
 });
 
 test('emitGmBindings: GM_getResourceURL routes to reg.gm.resource.getUrl', () => {
@@ -147,7 +141,6 @@ test('emitGmBindings: GM_getResourceURL routes to reg.gm.resource.getUrl', () =>
   }));
   assert.match(out.js, /const GM_getResourceURL = function/);
   assert.match(out.js, /__smReg\.gm\.resource\.getUrl\("script-1"/);
-  assert.doesNotMatch(out.js, /notImplemented\("GM_getResourceURL"\)/);
 });
 
 test('emitGmBindings: resource.init emitted in js when resources are declared', () => {
@@ -180,7 +173,6 @@ test('emitGmBindings: GM_registerMenuCommand routes to reg.gm.menu.register with
   }));
   assert.match(out.js, /const GM_registerMenuCommand = function/);
   assert.match(out.js, /__smReg\.gm\.menu\.register\("script-1"/);
-  assert.doesNotMatch(out.js, /notImplemented\("GM_registerMenuCommand"\)/);
 });
 
 test('emitGmBindings: GM_unregisterMenuCommand routes to reg.gm.menu.unregister with the scriptId', () => {
@@ -195,7 +187,6 @@ test('emitGmBindings: GM_log routes to reg.gm.log.write with the scriptId', () =
   const out = emitGmBindings(['GM_log'], makeInfo({ grants: ['GM_log'] }));
   assert.match(out.js, /const GM_log = function/);
   assert.match(out.js, /__smReg\.gm\.log\.write\("script-1"/);
-  assert.doesNotMatch(out.js, /notImplemented\("GM_log"\)/);
 });
 
 test('emitGmBindings: GM_openInTab routes to reg.gm.tab.open with the scriptId', () => {
@@ -254,7 +245,6 @@ test('emitGmBindings: GM_xmlhttpRequest routes to reg.gm.xhr.start', () => {
   }));
   assert.match(out.js, /const GM_xmlhttpRequest = function/);
   assert.match(out.js, /__smReg\.gm\.xhr\.start\("script-1"/);
-  assert.doesNotMatch(out.js, /notImplemented\("GM_xmlhttpRequest"\)/);
 });
 
 test('emitGmBindings: emits a GM object with the GM4 aliases for granted APIs', () => {
@@ -477,4 +467,10 @@ test('emitGmBindings: the top level calls nothing the page could have replaced',
     assert.doesNotMatch(code, /Object\.freeze|console\.|Promise\.|(?<!__smReg)\.apply\(|\.call\(/);
   }
   assert.match(out.prelude, /__smReg\.info\(/);
+});
+
+test('emitGmBindings: every catalog API has a binding', () => {
+  // A sync API with no binding case throws an internal error here.
+  const names = GM_APIS.map((a) => a.name);
+  assert.doesNotThrow(() => emitGmBindings(names, makeInfo({ grants: names })));
 });

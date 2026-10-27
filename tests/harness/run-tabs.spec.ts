@@ -94,6 +94,27 @@ test('scripts run in the tabs the run tab opens', async ({ fixtureServer, script
   expect(lines.filter((l) => /^\[T\d+\] \[event\] Tab opened at .*, from T1 \[targetId=[0-9A-F]{32}\]$/.test(l))).toHaveLength(2);
 });
 
+// The script in the opened tab shows a dialog during its first load,
+// before the run takes the tab over: the run still takes it over, and
+// its dialog tracker handles that dialog as one shown after.
+test('a dialog an opened tab shows before the run takes it over is handled like any other', async ({ fixtureServer, scriptsDir }) => {
+  const file = scriptsDir.write({
+    relativePath: 'opener.user.js',
+    meta: { name: 'Opener', match: ['*://*/target.html', '*://*/other.html*'] },
+    body: `
+      if (location.pathname.endsWith('target.html')) window.open('other.html?via=open');
+      else console.log('[opener] answered ' + confirm('keep?'));
+    `,
+  });
+  const lines = await driveCli([file, `${fixtureServer.baseUrl}/target.html`, '--root', scriptsDir.path], [
+    ['The page opened a confirm dialog: "keep?"', 'accept T2'],
+    ['[opener] answered true', 'exit'],
+  ]);
+  const text = lines.join('\n');
+  expect(text).toContain('Use `accept T2` or `dismiss T2`');
+  expect(text).not.toContain("couldn't follow");
+});
+
 test('--all opens a tab per script page, numbered in order, and lists the skipped ones last', async ({ fixtureServer, scriptsDir }) => {
   const base = fixtureServer.baseUrl;
   const write = (name: string, match: string) => scriptsDir.write({
@@ -130,6 +151,61 @@ test('run takes URLs among its scripts and flags, in any order, one tab each', a
   expect(lines.some((l) => l.startsWith(`[sm-dev] Opening ${base}/target.html in T1 `))).toBe(true);
   expect(lines.some((l) => l.startsWith(`[sm-dev] Opening ${base}/other.html in T2 `))).toBe(true);
   expect(lines).toContain('[script log] [both] on /target.html');
+});
+
+test('start skips an invalid script it found in a directory, and stops on one named outright', async ({ fixtureServer, scriptsDir }) => {
+  const base = fixtureServer.baseUrl;
+  scriptsDir.write({
+    relativePath: 'good.user.js',
+    meta: { name: 'Good', match: ['*://*/target.html'] },
+    body: `console.log('[good] on ' + location.pathname);`,
+  });
+  // A #hash in @match makes it invalid: @match can't see the hash.
+  const bad = scriptsDir.write({
+    relativePath: 'sub/bad.user.js',
+    meta: { name: 'Bad', match: ['*://*/target.html#part'] },
+    body: `console.log('[bad] ran');`,
+  });
+  const found = await driveCli([scriptsDir.path, `${base}/target.html`, '--root', scriptsDir.path], [
+    ['[script log] [good] on /target.html', 'exit'],
+  ]);
+  // Listed as validate lists them, each script's line naming it, and
+  // only those with something to say: good.user.js is just counted.
+  expect(found).toContain('[sm-dev] Script validation results:');
+  expect(found.some((l) => l.startsWith('ok ') && l.endsWith('good.user.js'))).toBe(false);
+  expect(found.some((l) => l.startsWith('INVALID ') && l.endsWith('bad.user.js'))).toBe(true);
+  expect(found).toContain('[sm-dev] Validation: 1 ok, 1 invalid. Starting without the invalid script.');
+  expect(found.some((l) => l.includes('[bad] ran'))).toBe(false);
+
+  const named = await driveCli([bad, `${base}/target.html`, '--root', scriptsDir.path], []);
+  expect(named.some((l) => l.startsWith('INVALID ') && l.endsWith('bad.user.js'))).toBe(true);
+  expect(named).toContain('[sm-dev] Validation: 0 ok, 1 invalid. A script given by name is invalid, so the run stopped.');
+
+  // A manifest's scripts are found too: its invalid one is left out.
+  const manifest = path.join(scriptsDir.path, 'script_manifest.json');
+  writeFileSync(manifest, JSON.stringify(['good.user.js', 'sub/bad.user.js']));
+  const listed = await driveCli([manifest, `${base}/target.html`, '--root', scriptsDir.path], [
+    ['[script log] [good] on /target.html', 'exit'],
+  ]);
+  expect(listed.some((l) => l.startsWith('INVALID ') && l.endsWith('bad.user.js'))).toBe(true);
+  expect(listed).toContain('[sm-dev] Validation: 1 ok, 1 invalid. Starting without the invalid script.');
+
+  // A directory whose scripts are all invalid leaves the run none, so it stops.
+  const none = await driveCli([path.dirname(bad), `${base}/target.html`, '--root', scriptsDir.path], []);
+  expect(none).toContain('[sm-dev] Validation: 0 ok, 1 invalid. All the scripts found are invalid, so the run stopped.');
+});
+
+test('start with no URL, whose first script names no page, opens a blank tab and says how to load one', async ({ scriptsDir }) => {
+  const file = scriptsDir.write({
+    relativePath: 'wild.user.js',
+    meta: { name: 'Wild', match: ['*://*/*wild.html'] },
+    body: `console.log('[wild] ran');`,
+  });
+  const lines = await driveCli([file, '--root', scriptsDir.path], [
+    ['so T1 is a blank tab', 'tabs'],
+    ['T1: about:blank', 'exit'],
+  ]);
+  expect(lines).toContain("[sm-dev] No URL was given, and the first script's @match names no page to open, so T1 is a blank tab. Use `open <url>` to load a page.");
 });
 
 test('start with no scripts opens each URL given once, however often it is given', async ({ fixtureServer }) => {

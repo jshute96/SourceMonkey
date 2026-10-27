@@ -97,7 +97,8 @@ import { scanStorageRows } from './storage-scan.js';
 import { cachedRows, sharedRows } from './row-cache.js';
 import { isScratchUrl, scratchRunOf } from './directories.js';
 import { evalHookKey, withEvalHook } from '../eval-hook.js';
-import { canonicalMatchPatterns, chromeIncludeGlob, hostEndsInTld, matchPatternProblem, tldCoarseGlob } from '../url-match.js';
+import { canonicalMatchPatterns, chromeIncludeGlob, hostEndsInTld, matchPatternProblem, pageMatcher, tldCoarseGlob } from '../url-match.js';
+import type { PageMatcher } from '../url-match.js';
 import { dlog } from '../debug-log.js';
 import { startPhaseTimer, type PhaseTimer } from '../phase-timing.js';
 import {
@@ -269,7 +270,8 @@ interface ScriptCfgLiteral {
   // wrapper waits for the SW's check-pending answer unless the tab
   // vouches for that run (`smDevVouches` in userscript-prelude.js).
   run?: string;
-  matching: { matches: string[]; includes: string[]; excludes: string[] } | null;
+  // The wrapper's URL recheck, as regexes (`pageMatcher`).
+  matching: PageMatcher | null;
   startupLogs: ReadonlyArray<StartupLog>;
   // See `RegistrationSpecOptions.manualRun`.
   manualRun?: { gmValues?: Record<string, unknown>; gmSeq?: number };
@@ -325,7 +327,7 @@ export function buildConfigBlob(cfg: ScriptCfgLiteral): string {
 // separate registrations DON'T. A separate-prelude design races —
 // the per-script main body's `reg.run(...)` call beats the
 // prelude's helper installation. Inlining eliminates the race at
-// the cost of shipping ~12KB × N times in the registration
+// the cost of shipping ~26KB × N times in the registration
 // payload (negligible at our script counts).
 export function wrapPreludeEntry(): string {
   return withChannelKey(WRAPPER_PRELUDE) + `\n//# sourceURL=${PRELUDE_SOURCE_URL}\n`;
@@ -600,7 +602,7 @@ export function wrapCombinedEntry(args: {
 // race.
 //
 // Cost: the WRAPPER_PRELUDE bytes ship N times in the registration
-// payload (~12KB × N). Devtools tree-dedups by sourceURL though, so
+// payload (~26KB × N). Devtools tree-dedups by sourceURL though, so
 // the user only sees one `__prelude.js` entry in the Sources tree
 // — see wrapPreludeEntry's URL choice.
 //
@@ -899,7 +901,8 @@ export async function buildSwapEvalBody(
 // one script. Returns null only if validateHeader would have caught
 // the script upstream (no matchable patterns at all).
 //
-// Strategy for regex patterns: see the matcher block in the prelude.
+// Strategy for regex patterns: see docs/injection.md, "Regex pattern
+// forms", and `pageMatcher` in url-match.ts.
 // `scriptHandlerVersion` default is for unit tests; production
 // callers pass `chrome.runtime.getManifest().version`.
 // `logLabel` defaults to the script's bare basename (no `#N` dedup);
@@ -1075,7 +1078,7 @@ export async function buildRegistrationSpec(
     needsGmValues: gmEmit.needsValues,
     needsGmRuntime: needsGmRuntime(script.header),
     ...(isScratchUrl(script.fileUrl) ? { run: scratchRunOf(script.fileUrl) ?? '' } : {}),
-    matching: needsWrapperFilter ? script.matching : null,
+    matching: needsWrapperFilter ? pageMatcher(script.matching) : null,
     startupLogs: script.startupLogs ?? [],
     ...(options.manualRun ? { manualRun: options.manualRun } : {}),
   });
@@ -1285,8 +1288,9 @@ function bridgeSpec(scope: BridgeScope): RegistrationSpec {
 // all `@noframes`: in a child frame it then doesn't ask the SW about a
 // sandboxed page (`sm:main-blocked`), since no MAIN-world script would
 // run there anyway, and the ask would wake the worker for each frame.
-const MAIN_IN_FRAMES = 'var SM_MAIN_IN_FRAMES = true;';
-const NO_MAIN_IN_FRAMES = 'var SM_MAIN_IN_FRAMES = false;';
+// As the minified bridge has it (scripts/build.mjs keeps the name).
+const MAIN_IN_FRAMES = 'var SM_MAIN_IN_FRAMES=true;';
+const NO_MAIN_IN_FRAMES = 'var SM_MAIN_IN_FRAMES=false;';
 function noMainInFrames(bridgeCode: string): string {
   if (!bridgeCode.includes(MAIN_IN_FRAMES)) throw new Error('Internal error: The bridge has no frames flag');
   return bridgeCode.replace(MAIN_IN_FRAMES, NO_MAIN_IN_FRAMES);

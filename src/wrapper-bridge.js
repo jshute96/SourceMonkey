@@ -48,9 +48,8 @@
        can't listen on, so we re-send them into the page as a
        PUSH_EVENT for the MAIN runtime to dispatch.
 
-   Build rules match userscript-prelude.js — only /* block * /
-   comments, strings must not start a line with //, the build minifies
-   to one physical line.
+   The build minifies this file like userscript-prelude.js (see
+   scripts/build.mjs's minifyForInjection).
 
    Timing vs. MAIN-world preludes. The bridge is a separate
    chrome.userScripts registration from the per-script wrappers and
@@ -361,7 +360,8 @@
        each. */
   /* False when every MAIN-world script is `@noframes` (swapped in at
      registration, `noMainInFrames` in src/extension/injector.ts): in a
-     child frame none would run, so there is nothing to ask about. */
+     child frame none would run, so there is nothing to ask about. The
+     build keeps this name unminified for that. */
   var SM_MAIN_IN_FRAMES = true;
   var mainCanRun = SM_MAIN_IN_FRAMES || window === window.top;
   if (!mainSeen && mainCanRun) {

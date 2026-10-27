@@ -3,8 +3,7 @@
 // Tampermonkey and Violentmonkey. With a `@require`, the first file's
 // directive is the one that counts, as if the files were concatenated:
 // a library that starts with one makes the script strict, and the
-// script's own after a library does nothing (checked against VM; TM
-// can't take this example's relative `@require`).
+// script's own after a library does nothing (as in TM and VM).
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,7 +22,7 @@ async function strictness(page: import('@playwright/test').Page, scripts: string
 }
 
 // The `@require` pair lives in `with-require/` so it can be installed
-// (and skipped under TM) on its own. SM's directory scan recurses, so
+// on its own. SM's directory scan recurses, so
 // under SM the first test installs it too; each test only reads its
 // own rows.
 test.describe('examples / use-strict', () => {
@@ -36,7 +35,6 @@ test.describe('examples / use-strict', () => {
   });
 
   test('with a @require, the first file\'s \'use strict\' applies', async ({ extensionContext, fixtureServer, setup }) => {
-    test.skip(setup.manager === 'tampermonkey', 'TM requires absolute @require URLs; this example uses a relative ref');
     await setup.installScriptsFrom(path.join(__dirname, 'with-require'));
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/use-strict/use-strict.html`);

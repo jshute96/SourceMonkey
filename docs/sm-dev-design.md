@@ -609,8 +609,13 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
     but it isn't reported as `ok` either.
 - Under each script it prints every warning, valid or not, with the
   line it is about: the load-time notes the viewer's Log tab shows
-  (`warningLines` in `prepare.ts`). `start` and `load` print the same
-  lines, with an undecided syntax check as a `warn:` line.
+  (`warningLines` in `prepare.ts`). `load` prints the same lines, with
+  an undecided syntax check as a `warn:` line.
+- `start` checks its scripts the same way, and lists the ones with
+  something to report (an error, a warning or a note) as `validate`
+  does, under `Script validation results:`, then the counts and what
+  the run does next (`prepareAtStart` in `run.ts`). The others are only
+  counted, and with nothing to report it prints nothing.
 - File arguments go through `expandPathArg`, for `start`, `match`,
   `validate`, `load`, `open` and `newtab`.
 - Globs are expanded by `path-args.ts` rather than the shell, since
@@ -625,6 +630,33 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
   a link up the tree can't loop.
 - A directory stands for its scripts. Expanding to nothing is a usage
   error.
+- An invalid script in a directory doesn't stop `start`: the run
+  reports it as `INVALID`, with the reason, and starts without it.
+  - `scriptsAndUrls` notes which scripts came from a directory or a
+    glob (`found`). `prepareAtStart` leaves out one of those that fails
+    its checks, and the run's script list is the ones that passed.
+  - A script named on the command line still stops the start: naming
+    it says it's wanted.
+  - When every script is skipped, the run stops rather than run with
+    none.
+  - Only at the start: `load`, `update` and `--watch` still refuse an
+    invalid script.
+- `start` also takes web scripts (`http(s)` `.user.js` URLs) and
+  manifests (`isManifestArg` and `manifestScripts` in `checks.ts`).
+  A manifest is parsed and its
+  entries resolved by the extension's own code
+  (`parseManifest`, `resolveManifestEntryUrl` in `src/collection-scan.ts`).
+  - A web script is fetched once, at the start (`prepareAtStart`), and
+    its text kept for the push. One that can't be fetched is reported
+    as `INVALID`.
+  - The run sends the extension the text of every `@require` and
+    `@resource` file the script names, as sm-dev fetched them
+    (`pushedFiles(…, true)`). The extension stores a run's scripts at
+    URLs of its own, so it can't resolve a relative ref itself.
+  - `--watch` and `update` only re-read scripts from disk, so they
+    never re-fetch a web script.
+  - GitHub folder URLs aren't taken: a bare `github.com` URL stays a
+    page to open, since a script under test may target GitHub's pages.
 
 #### `match` output
 
@@ -798,6 +830,12 @@ for commands without a run, the browser they act on.
     soon as its worker starts, which is before it checks.
 - The same launch serves the repo's own e2e suites, which drive its
   persistent context directly.
+- Before launching, it checks that Playwright's Chromium is installed
+  (`playwright-chromium.ts`). Each Playwright version wants its own
+  build, so updating the repo's Playwright leaves it missing.
+  - The error names the Playwright version, the build it wants, the
+    builds installed, and the install command.
+  - Playwright's own error names only the missing path.
   - Downloads are left to Chrome, into a folder of the caller's, for a
     run (see Downloads above) and for a suite that asks.
   - Hidden runs use `--headless=new`, the only headless mode that loads
@@ -876,6 +914,13 @@ A browser that outlives sm-dev, started before the line's commands.
 - Spawned on its own (detached), not with Playwright's `launch`, which
   ties the browser to the Node process.
 - Idempotent: a browser answering on the port is used as is.
+  - With `--profile`, it must be the browser holding that profile: the
+    lock's process, listening on that port (`otherProfile`). Otherwise
+    sm-dev stops with an error, without running any commands, rather
+    than use a browser with another profile.
+  - Not checked on Windows, which locks a profile another way, nor for
+    another machine's lock. A lock whose process has ended holds
+    nothing.
 - A profile per port, since Chrome locks a profile.
   - The lock is `SingletonLock`, a link to `host-pid`. A second browser
     on the same profile hands its window to the first and drops its
@@ -909,14 +954,29 @@ and waits for them.
 
 - Playwright dismisses any dialog nobody listens for, in every tab it's
   attached to, the person's own included.
-  - So `run.ts` gives every page of a connected browser a dialog
-    listener that does nothing.
+  - So `run.ts` gives every page of the browser a dialog listener
+    that does nothing: a browser it connected to, and a temp browser
+    it launched, where its connection is the launch's second client.
   - Also, when that dialog is gone before the dismiss lands, the error
     is unhandled, and ends the run.
 - The run's own tabs get a `DialogTracker` (`console-commands.ts`),
   which keeps dialogs open for the person or an `accept` /
   `dismiss`. Otherwise a script's `prompt()` would be answered with
   Cancel.
+- A tab a run tab opens can show a dialog before the run takes it over
+  (a script's `confirm()` during the tab's first load).
+  - The browser-wide listener records it by page, and the tab's
+    tracker takes it when it attaches, and handles it as one shown
+    after: reported with `accept T2`, or dismissed in a hidden run
+    that takes no commands.
+  - The page runs no code while the dialog is open, so the takeover
+    matches the tab by its URL rather than reading its document, and
+    `Page.enable` on a new session doesn't return until the dialog
+    closes. The tracker uses that return as the dialog's close.
+  - The rest of the tab's setup waits for the dialog to close, so the
+    tab joins the run's list only then. Until it does, `accept T2`
+    reaches its tracker by name (`trackSettingUp`), and a run that
+    ends dismisses the dialog.
 - A page stopped on a dialog answers no CDP call until it is answered.
   - So `load` / `update` refuse while one is open.
   - `PageAttachment.dispose` gives up on the page after a second;
@@ -1100,6 +1160,8 @@ response, so it says so directly.
 - A script's default page (`defaultPageUrl` in `prepare.ts`) is the one
   `start` opens when given no URL; `open`, `newtab` and `--all` use the
   same one.
+  - When the first script has none, `start` leaves its tab blank and
+    says so, rather than fail after the browser and scripts are ready.
 
 ## Running scripts in SourceMonkey
 

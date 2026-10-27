@@ -70,25 +70,28 @@ has them log where the tools got in the way.
 - Node 22+ and pnpm.
 - A browser to work in. By default each run launches its own, with
   SourceMonkey loaded. See [A browser to work in](#a-browser-to-work-in).
+- `@playwright/test` in the repo (`pnpm add -D @playwright/test`), for
+  the fixture and the `playwright` command below.
+- Playwright's Chromium, for that browser. `pnpm install` doesn't fetch
+  it: run `pnpm exec playwright install chromium`, and again after
+  each Playwright update, since each version wants its own build.
+  - Where `@playwright/test` isn't installed beside it, as under
+    `npx sm-dev`, sm-dev uses its own copy of Playwright, and gives the
+    command to run when that copy's Chromium is missing.
 - For a lasting browser of your own: SourceMonkey loaded in it, with
   "Allow User Scripts" on. See [Setting it up](#setting-it-up).
 
 ### Install
 
+In a repo of userscripts, install the `sourcemonkey` package from npm:
+
 ```sh
-pnpm add -D github:jshute96/SourceMonkey#v0.x
+pnpm add -D sourcemonkey
 ```
 
-SourceMonkey builds itself on install, and pnpm runs a dependency's
-build only for packages the project allows. So allow it in
-`pnpm-workspace.yaml`:
-
-```yaml
-# The key is the dependency spec as the lockfile records it; pnpm
-# prints the one it wants if this is wrong.
-allowBuilds:
-  "sourcemonkey@git+https://github.com/jshute96/SourceMonkey.git#<sha>": true
-```
+To run `sm-dev` without installing anything, use `npx sm-dev`
+(`npx sm-dev --help`). The `sm-dev` package only runs the command
+from `sourcemonkey`.
 
 When you install from a checkout on disk (`file:../SourceMonkey`, while
 working on both), also add this to `package.json`:
@@ -112,6 +115,7 @@ working on both), also add this to `package.json`:
 - Installing the package puts `sm-dev` on your project's path (pnpm
   links it into `node_modules/.bin`). Run it as `pnpm sm-dev …` or
   `pnpm exec sm-dev …`.
+- Without installing it, run `npx sm-dev …`.
 - In a SourceMonkey checkout it is `scripts/sm-dev`. It runs what
   `lib/` has and never builds it; `pnpm run build` does.
 - The examples below write it as plain `sm-dev`.
@@ -194,9 +198,9 @@ What a run prints as it goes:
 [event] GM_setValue lastItem = "42"
 ```
 
-- A page the header does not cover prints the rule that kept the
-  script off it (`skipped on <url>: No @match or @include covers this
-  URL`), and nothing runs.
+- On a page the header does not cover, nothing runs and no `started`
+  line is shown. `sm-dev match <script> <url>` shows which rule keeps
+  it off.
 - A header problem prints the same wording the extension's viewer
   would, and nothing is pushed.
 - A long stored value is cut after 100 characters in its `GM_setValue`
@@ -361,8 +365,11 @@ sm-dev --open-browser --browser 9300            # another one, on port 9300
   `~/.config/sm-dev/browser-profile-<port>`, or `--profile DIR`.
   - One per port, since only one browser at a time can use a profile.
     One already in use is refused, naming the port its browser is on.
-- A browser already answering on the port is used as it is, whatever
-  its profile, so `--open-browser` can go on any command line.
+- A browser already answering on the port is used as it is, so
+  `--open-browser` can go on any command line.
+  - With `--profile`, that browser must be the one using that profile.
+    Another is refused, naming the port of the browser that has the
+    profile, if any.
 - It only starts one on this machine: `--browser` has to be a port alone
   (`9300`), or one on `127.0.0.1` or `localhost`.
 - A browser that can't start, or whose port doesn't open within 10
@@ -412,8 +419,8 @@ too, given that port.
   - `status` and the run's first line say which: `has SourceMonkey`,
     `SourceMonkey disabled` or `no SourceMonkey` (see
     [Managing runs](#managing-runs)). `status` also lists the browser's
-    managers: `Managers: SourceMonkey 0.0.1 (in use), Tampermonkey
-    5.5.1 (disabled)`.
+    managers, for example `Managers: SourceMonkey 0.5.0 (in use),
+    Tampermonkey 5.5.1 (disabled)`.
   - Another manager enabled there runs its scripts in the run's tabs
     too, so the run's first lines and `status` warn of it, with how to
     turn it off.
@@ -609,6 +616,9 @@ sm-dev start [script.user.js]... [url]... [options]
   error reports.
 - With no URL, it opens the first script's **default page**: the first
   URL its `@match` implies.
+  - When its `@match` names no page (a wildcard such as
+    `*://*/*page.html`), the tab stays blank, with a note to `open` a
+    page in it.
 - Several scripts go into the same page, for interaction tests.
 - Without `--detach`, the run stops when sm-dev ends.
 
@@ -648,8 +658,24 @@ Details on each are in [`start` options in detail](#start-options-in-detail).
 - Where scripts are expected (`start`, `match`, `validate`, `load`), a
   directory stands for all `*.user.js` files under it, skipping
   `node_modules` and hidden directories.
-- `validate` and `match` also take a script by its `http(s)` URL, and
-  fetch it. `start` needs a file.
+- `start` checks its scripts as `validate` does. The ones that are
+  invalid, or have a warning or note, it lists as `validate` would,
+  under `Script validation results:`, then the counts of all of them.
+  - An invalid script found in a directory or by a glob is left out,
+    and the run starts without it.
+  - An invalid script named outright stops the start, as does finding
+    no valid script.
+- `start`, `validate` and `match` also take:
+  - a script by its `http(s)` URL, fetched once;
+  - a `script_manifest.json`, as a path or URL, which stands for the
+    scripts it lists, resolved against it as the extension resolves a
+    manifest collection's (see
+    [http-collections.md](http-collections.md)).
+- When a manifest lists an invalid script, `start` skips it, as it
+  does an invalid script in a directory.
+- `--watch` and `update` only re-read scripts from disk, so they never
+  re-fetch a web script: it stays as it was when the run started.
+- `load` takes files only.
 
 Globs:
 
@@ -1507,8 +1533,12 @@ the stream, rather than being answered automatically.
     a dialog open.
 - A command that opens a dialog returns once the dialog is up, and says
   so.
-- A dialog in a tab the run doesn't use is left alone, for you to
+- A dialog in a tab the run doesn't use stays open, for you to
   answer.
+- A tab one of the run's tabs opens can show a dialog before the run
+  starts following it (a script's `confirm()` at load). The run reports
+  that dialog the same way, naming the tab (`accept T2`), but `tabs`
+  and `status` list the tab only once the dialog is answered.
 - A tab already showing a dialog when `sm-dev start` starts stops it
   connecting: nothing in that tab answers until the dialog closes. The
   run names the tab and waits; answer the dialog or close the tab to
@@ -2237,10 +2267,10 @@ that, since the answer is a function.
   off"**, or a message that "Allow User Scripts" is off: load it, or
   turn it on, as in [Setting it up](#setting-it-up), or drop
   `--existing-browser` or `--open-browser` to use a temp browser.
-- **"skipped on <url>: No @match or @include covers this URL"**, or
-  another rule named there: the script would not run there outside
-  sm-dev either. Broaden the pattern or change the URL; see
-  `sm-dev match`.
+- **No `started` line for a script on a page**: its header may not
+  cover the page, so it would not run there outside sm-dev either.
+  `sm-dev match <script> <url>` names the rule; broaden the pattern or
+  change the URL.
 - **`GM_getValue is not defined`**: the script uses an API it did not
   `@grant`.
 - **The script sees `undefined` for a page global**: it is in the

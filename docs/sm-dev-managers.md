@@ -383,7 +383,7 @@ runs now.
 - **`--out` replaces** an existing file, as `eval --out` does: the
   name was given.
 - **`save` lays files out as the viewer's local copy does**
-  ([local-copy.md](local-copy.md#layout-mirror-the-url-beside-the-script)):
+  ([local-copy.md](local-copy.md#layout-beside-the-script)):
   - The script by its own file name (else its `@name`), and each
     http(s) file at its URL's `<host>/<path>`, so a copy run from that
     directory picks them up as local files.

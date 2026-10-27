@@ -1,36 +1,67 @@
 // ==UserScript==
 // @name         SourceMonkey test status on Greasy Fork
 // @namespace    https://github.com/jshute96/SourceMonkey
-// @version      0.7.1
+// @version      0.8.0
 // @description  Shows SourceMonkey's corpus test results next to each script's stats on Greasy Fork
 // @match        https://greasyfork.org/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_deleteValue
+// @grant        GM_registerMenuCommand
+// @connect      jshute96.github.io
 // @connect      localhost
 // @noframes
 // ==/UserScript==
 
-// This reads corpus.json and corpus-help.js from a server on localhost:8765,
-// and then shows test results on Greasy Fork pages.
+// This reads corpus.json and corpus-help.js, and then shows test results on
+// Greasy Fork pages. It reads them from one of two locations:
 //
-// Run this to start the server, from the SourceMonkey repo:
+// - Published: the copies on GitHub Pages, as last pushed (the default).
+// - Local: a server on localhost:8765, for results not pushed yet. Run this
+//   from the SourceMonkey repo to start it:
 //
-//   tests/greasyfork-examples/serve-results.mjs
+//     tests/greasyfork-examples/serve-results.mjs
 //
-// If the results have never been loaded, Greasy Fork pages show an error
-// message asking to start that server.
+// The script's menu has an item for each, and shows the selected one checked. Choosing
+// the other switches to it and reloads the page.
 //
-// After loading, the data is cached in GM storage. The cached copy is used if
-// the server isn't running, and when the data file hasn't changed.
+// After loading, the data is cached in GM storage, with a copy for each source.
+// The cached copy is used if the server can't be reached, and when the data
+// file hasn't changed.
 
 (function () {
   'use strict';
 
-  const BASE = 'http://localhost:8765/';
+  // Where the results are read from, chosen with the menu command.
+  const SOURCES = {
+    published: 'https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/',
+    local: 'http://localhost:8765/',
+  };
+  const sourceKey = GM_getValue('source', 'published') === 'local' ? 'local' : 'published';
+  const BASE = SOURCES[sourceKey];
   const CORPUS_URL = BASE + 'corpus.json';
   const HELP_URL = BASE + 'corpus-help.js';
+  // Copies stored before there was a choice of source. Read first, so
+  // most page loads write nothing.
+  for (const old of ['corpus', 'help']) {
+    if (GM_getValue(old, null) != null) GM_deleteValue(old);
+  }
+
+  // One item per source, the one in use checked. On every Greasy Fork page,
+  // not only those with scripts to mark.
+  const SOURCE_LABELS = {
+    published: 'Published results (GitHub Pages)',
+    local: 'Local results (localhost:8765)',
+  };
+  for (const [key, label] of Object.entries(SOURCE_LABELS)) {
+    GM_registerMenuCommand((key === sourceKey ? '☑ ' : '☐ ') + label, () => {
+      if (key === sourceKey) return;
+      GM_setValue('source', key);
+      location.reload();
+    });
+  }
   // Bump to rebuild the stored copies, after changing what they hold.
   const CACHE_FORMAT = 6;
 
@@ -156,7 +187,8 @@
   // with the file's Last-Modified date. A HEAD request checks the date; only
   // a changed file (or a changed CACHE_FORMAT) is downloaded and built again.
   // If the server can't be reached, an earlier copy is used.
-  async function cachedLoad(key, url, responseType, build) {
+  async function cachedLoad(name, url, responseType, build) {
+    const key = `${name}:${sourceKey}`;
     const cached = GM_getValue(key, null);
     const usable = cached?.format === CACHE_FORMAT && cached.lastModified;
     let date;
@@ -275,7 +307,8 @@
     const icon = el('div', 'smts-icon');
     const body = el('div', 'smts-body');
     panel.append(icon, body);
-    const title = el('a', 'smts-title', 'SourceMonkey test status');
+    // Named when it isn't the default, so local results aren't taken for published ones.
+    const title = el('a', 'smts-title', 'SourceMonkey test status' + (sourceKey === 'local' ? ' (local)' : ''));
     title.href = BASE + 'results.html?' + new URLSearchParams({ q: id });
     title.target = '_blank';
     body.append(title);
@@ -285,7 +318,7 @@
       setIcon('smts-fail', '!');
       line(body, 'Could not load test results.');
       line(body, result.error.message);
-      if (result.error.unreachable) {
+      if (result.error.unreachable && sourceKey === 'local') {
         line(body, 'Run ').append(el('code', 'smts-code', 'tests/greasyfork-examples/serve-results.mjs'));
       }
       return panel;

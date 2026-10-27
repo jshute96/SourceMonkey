@@ -1,7 +1,7 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
+node_modules/
 
 /tmp/
 
@@ -33,11 +33,6 @@ lib/
 /playwright-report/
 /blob-report/
 /.playwright/
-
-# cross-manager test profiles (see docs/cross-manager-testing.md)
-/.chrome-sourcemonkey-profile/
-/.chrome-tampermonkey-profile/
-/.chrome-violentmonkey-profile/
 
 # GreasyFork corpus: bulky or machine-specific inputs and derived data.
 # The checked-in corpus.json is the artifact these reproduce from.

@@ -196,9 +196,7 @@ details live in the topic-specific docs linked below.
   Emits real bodies for every catalog entry; `unsafeWindow` is a
   `window` alias rather than a call (what makes it the page's window
   is the execution world — see
-  [injection.md](injection.md#unsafewindow-is-the-pages-window)). The
-  `notImplemented` stub remains only as a fall-through for future
-  catalog additions whose bodies haven't landed yet.
+  [injection.md](injection.md#unsafewindow-is-the-pages-window)).
 - **GM_* page-side runtime** (`src/wrapper-gm-runtime.js`) —
   helper registered once per page **per execution world** that needs
   it. Puts itself in the world's registry (`reg.gm`, reached with the
@@ -308,10 +306,16 @@ How one extension page opens another — the rules live in
   from the collection dialog's "this is a single script" action — the
   page the user was adding from stays put. The preview is *not* a named
   tab: it is per-file, and several at once is normal.
-- **Every one of these is a real anchor with a real `href`.** A
+- **The links are real anchors with a real `href`.** A
   Ctrl/Cmd/Shift/middle click is left to the browser, and the URL is
   copyable. Only a plain left click is reinterpreted as "the named tab".
   - The `href` is also the behaviour before the page's scripts have run.
+- **The header buttons take the same gestures** (`wireOpenButton`):
+  Options, Collections and Help.
+  - A middle or Ctrl/Cmd click opens a new background tab right of this
+    one, even where the named tab is open; Shift opens a new window.
+  - Help opens the repo's GitHub page at its README (`#readme`) in a new
+    tab beside this one.
 
 ## Extension-page styling
 
@@ -321,8 +325,8 @@ How one extension page opens another — the rules live in
   `src/styles.css`): the extension icon, the
   `SourceMonkey | <page>` heading, and that page's cross-page
   navigation pushed to the right edge.
-  - Collections carries Options and Refresh All; Options carries
-    Collections; the toolbar popup carries Open and a ⋯ menu; the
+  - Collections carries Help, Options and Refresh All; Options carries
+    Help and Collections; the toolbar popup carries Open and a ⋯ menu; the
     viewer carries none.
   - The icon and the product name are a link home to the collections
     page on every page but Collections itself — see "Cross-page
@@ -520,7 +524,7 @@ takes effect:
 
 ## Build pipeline
 
-`scripts/build.mjs` is dependency-free:
+`scripts/build.mjs`:
 
 - Builds into a temporary `.build-<pid>/` (named by the build's
   process id), then renames each finished output over `dist/` and `lib/`.
@@ -535,6 +539,9 @@ takes effect:
   `src/*.html`, `node_modules/prismjs/*` and fflate's browser build
   (`dist/vendor/fflate.js`) into `dist/`, and the
   manifest into `lib/` too (the harness reads the extension key from it).
+- Minifies the injected wrapper sources with terser into
+  `generated-wrappers.js` (see
+  [injection.md](injection.md#the-activation--error-wrapper)).
 - Inlines `src/glyph-sprite.svg` into each page as it is copied, at the
   page's `#include glyph-sprite` marker comment (see below).
 - Invokes `tsc` to compile `src/**/*.ts` → `dist/**/*.js`, keeping

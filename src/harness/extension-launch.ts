@@ -29,6 +29,7 @@ import { leaveDialogsOpen } from './console-commands.js';
 import { ExtensionMissingError, extensionIdFromKey, findExtensionWorker, sourceMonkeyExtensionId } from './extension-backend.js';
 import { fetchedDir } from './manager-fetch.js';
 import { MANAGERS, managerFlag, type ManagerName } from './managers.js';
+import { loadPlaywright, missingChromium } from './playwright-chromium.js';
 import { rebuildAdvice } from './rebuild-advice.js';
 import { quoted } from './output-style.js';
 
@@ -59,17 +60,19 @@ export interface ExtensionLaunchOptions {
   connectedElsewhere?: boolean;
   /** The manager to load in place of SourceMonkey, already fetched. */
   manager?: ManagerName;
+  /** With `manager`: turn on its "Allow access to file URLs". */
+  fileAccess?: boolean;
+  /**
+   * With `manager`: optional API permissions of its manifest to grant
+   * ahead, such as Tampermonkey's `downloads`, which it otherwise asks
+   * for through a bubble a hidden browser can't show.
+   */
+  permissions?: string[];
   /**
    * Keep Chrome's back/forward cache, which Playwright turns off by
    * default. Tests of pages restored from it ask for it.
    */
   backForwardCache?: boolean;
-  /**
-   * Optional permissions to grant the extension up front, as if allowed
-   * when it asked: a headless browser can't show the prompt. Tests
-   * exporting from Tampermonkey grant it `downloads`.
-   */
-  grantPermissions?: string[];
 }
 
 export interface LaunchedExtensionBrowser {
@@ -103,8 +106,8 @@ export async function launchExtensionBrowser(options: ExtensionLaunchOptions = {
     try { rmSync(profile, { recursive: true, force: true }); } catch { /* Chrome may hold a file briefly */ }
   };
   try {
-    if (manager === 'sourcemonkey') await prepareProfile(profile, options.downloadsDir, options.grantPermissions);
-    else writePreferences(profile, fetchedId(dir, manager), options.downloadsDir, options.grantPermissions);
+    if (manager === 'sourcemonkey') await prepareProfile(profile, options.downloadsDir);
+    else writePreferences(profile, fetchedId(dir, manager), options.downloadsDir, { fileAccess: options.fileAccess, permissions: options.permissions });
     // Port 0 has Chrome pick a free port and write it to the profile.
     // A port picked here could be taken before Chrome binds it, and the
     // run would connect to whatever took it. A port given is checked
@@ -182,8 +185,8 @@ async function quietTampermonkey(context: BrowserContext, id: string): Promise<v
   });
 }
 
-// The id of a fetched manager, from the key its manifest was given.
-function fetchedId(dir: string, manager: ManagerName): string {
+/** The id of a fetched manager, from the key its manifest was given. */
+export function fetchedId(dir: string, manager: ManagerName): string {
   const { key } = JSON.parse(readFileSync(path.join(dir, 'manifest.json'), 'utf8')) as { key?: unknown };
   if (typeof key !== 'string') throw new Error(`The extension in ${dir} has no key in its manifest. Fetch it again with ${quoted(`sm-dev --manager ${MANAGERS[manager].short} manager fetch`)}`);
   return extensionIdFromKey(key);
@@ -192,7 +195,10 @@ function fetchedId(dir: string, manager: ManagerName): string {
 async function launch(
   profile: string, headed: boolean, args: string[] = [], dir = EXTENSION_DIR, backForwardCache = false,
 ): Promise<BrowserContext> {
-  const { chromium } = await import('@playwright/test');
+  const { chromium, install } = await loadPlaywright();
+  // Playwright's own message names only the missing path.
+  const missing = missingChromium(chromium.executablePath(), install);
+  if (missing) throw new Error(missing);
   const userAgent = headed ? null : await windowedUserAgent(chromium.executablePath()).catch(() => null);
   try {
     return await chromium.launchPersistentContext(profile, {
@@ -260,8 +266,8 @@ interface WarmUpApi {
  * for a browser started with `extensionArgs`. Also for a test's own
  * browser, launched outside Playwright.
  */
-export async function prepareProfile(profile: string, downloadsDir?: string, grantPermissions?: string[]): Promise<void> {
-  writePreferences(profile, await sourceMonkeyExtensionId(), downloadsDir, grantPermissions);
+export async function prepareProfile(profile: string, downloadsDir?: string): Promise<void> {
+  writePreferences(profile, await sourceMonkeyExtensionId(), downloadsDir);
   await primeFirstRun(profile);
 }
 
@@ -271,21 +277,25 @@ export function extensionArgs(dir = EXTENSION_DIR): string[] {
 }
 
 // Grants the extension "Allow User Scripts" and pins it to the toolbar,
-// with the keys Chrome writes when those are clicked. With
-// `downloadsDir`, also the keys Chrome writes when the download
-// location is changed in its settings: `directory_upgrade` marks it
-// user-chosen, so Chrome doesn't fall back to its platform default.
-// With `grantPermissions`, the keys Chrome writes when an optional
-// permission is allowed: granted, and active.
-function writePreferences(profile: string, extensionId: string, downloadsDir?: string, grantPermissions?: string[]): void {
+// with the keys Chrome writes when those are clicked, and the `grants`
+// asked for ("Allow access to file URLs", optional permissions) the
+// same way. With `downloadsDir`, also the keys Chrome writes when the
+// download location is changed in its settings: `directory_upgrade`
+// marks it user-chosen, so Chrome doesn't fall back to its platform
+// default.
+function writePreferences(
+  profile: string, extensionId: string, downloadsDir?: string,
+  grants: { fileAccess?: boolean; permissions?: string[] } = {},
+): void {
   const dir = path.join(profile, 'Default');
   mkdirSync(dir, { recursive: true });
-  const granted = grantPermissions?.length
-    ? { api: grantPermissions, explicit_host: [], manifest_permissions: [], scriptable_host: [] }
-    : undefined;
+  // `granted_permissions` is what the person approved, `active_permissions`
+  // what the extension holds now: both, as Chrome writes them.
+  const granted = grants.permissions?.length ? { api: grants.permissions } : undefined;
   const settings = {
     user_scripts_enabled: true,
-    ...(granted ? { granted_permissions: granted, runtime_granted_permissions: granted, active_permissions: granted } : {}),
+    ...(grants.fileAccess ? { newAllowFileAccess: true } : {}),
+    ...(granted ? { granted_permissions: granted, active_permissions: granted } : {}),
   };
   const prefs = {
     extensions: { settings: { [extensionId]: settings }, pinned_extensions: [extensionId] },

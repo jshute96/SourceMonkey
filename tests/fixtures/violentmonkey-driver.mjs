@@ -3,9 +3,8 @@
 // getInstalledMap / installFromFile — so tests/fixtures/manager.ts can
 // treat the two interchangeably.
 //
-// VM is installed from the Chrome Web Store into a persistent profile
-// (one-time manual step, see docs/cross-manager-testing.md) and the
-// suite attaches to that browser over CDP, exactly as for TM.
+// Callers pass the BrowserContext VM runs in, as for TM: the tests' own
+// browser.
 //
 // Where this differs from the TM driver: we don't drive VM's UI.
 //
@@ -27,18 +26,7 @@
 // the command.
 
 import fs from 'node:fs';
-import { managerExtensionId } from './managers.mjs';
-import { compareVersions, listUserscripts } from './userscript-files.mjs';
-
-/**
- * Violentmonkey's extension ID in this profile. Defaults to VM
- * Stable's Chrome Web Store ID; `VM_EXTENSION_ID` overrides it (e.g. a
- * beta channel or a self-hosted build).
- * @returns {string}
- */
-export function getViolentmonkeyExtensionId() {
-  return managerExtensionId('violentmonkey');
-}
+import { listUserscripts } from './userscript-files.mjs';
 
 /**
  * @typedef {Object} InstalledScript
@@ -222,24 +210,6 @@ export class ViolentmonkeyDriver {
   }
 
   /**
-   * Close the command page.
-   *
-   * The Playwright fixture reaps it on its own (every page a test opens
-   * is closed at test end), but the standalone sync CLI drives the
-   * developer's *interactive* browser — without this it would leave a
-   * VM dashboard tab behind on every run. The TM driver has no cached
-   * page to close, so its `close()` is a no-op that exists to keep
-   * callers from branching.
-   */
-  async close() {
-    const page = this._cmdPage;
-    this._cmdPage = null;
-    if (page && !page.isClosed()) {
-      try { await page.close(); } catch { /* already gone */ }
-    }
-  }
-
-  /**
    * Install (or update) one userscript from a local file, telling VM it
    * came from `installUrl`.
    *
@@ -278,34 +248,21 @@ export class ViolentmonkeyDriver {
 }
 
 /**
- * Install every `*.user.js` directly under `dir` into Violentmonkey,
- * skipping any already installed at the same-or-newer version.
+ * Install every `*.user.js` directly under `dir` into Violentmonkey
+ * that isn't installed yet, by `@name` (see syncTampermonkeyScripts).
  *
  * @param {ViolentmonkeyDriver} driver
  * @param {string} dir
  * @param {(filepath: string) => string} installUrlFor  Maps a local
  *   file to the URL VM should treat as its install source — see
  *   `installFromFile`.
- * @returns {Promise<{installed: string[]; updated: string[]; skipped: string[]}>}
+ * @returns {Promise<void>}
  */
 export async function syncViolentmonkeyScripts(driver, dir, installUrlFor) {
-  const local = listUserscripts(dir);
   const byName = await driver.getInstalledMap();
-
-  const result = { installed: [], updated: [], skipped: [] };
-  for (const script of local) {
-    const current = byName.get(script.name);
-    if (current === undefined) {
-      await driver.installFromFile(script.filepath, installUrlFor(script.filepath));
-      driver.recordInstalled(script.name, script.version);
-      result.installed.push(script.name);
-    } else if (compareVersions(script.version, current) > 0) {
-      await driver.installFromFile(script.filepath, installUrlFor(script.filepath));
-      driver.recordInstalled(script.name, script.version);
-      result.updated.push(script.name);
-    } else {
-      result.skipped.push(script.name);
-    }
+  for (const script of listUserscripts(dir)) {
+    if (byName.has(script.name)) continue;
+    await driver.installFromFile(script.filepath, installUrlFor(script.filepath));
+    driver.recordInstalled(script.name, script.version);
   }
-  return result;
 }

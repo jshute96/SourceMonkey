@@ -16,9 +16,8 @@
        reaches the SW directly in USER_SCRIPT world and via
        wrapper-bridge.js in MAIN.
 
-   Build rules match userscript-prelude.js — block comments only, no
-   `//` sequences in strings, the build minifies to one physical line.
-   See scripts/build.mjs's minifyForInjection for the exact rules.
+   The build minifies this file like userscript-prelude.js (see
+   scripts/build.mjs's minifyForInjection).
 
    Shim cache. See docs/GM-API-strategy.md "Recommendation: a tiny
    'shim cache', not a full vault". We capture a small set of native
@@ -3735,10 +3734,6 @@
   });
 
   var api = {
-    /* Placeholder for sync APIs still not wired. */
-    notImplemented: function (name) {
-      throw new _Error("[SourceMonkey] " + name + " is not implemented yet");
-    },
     /* Exposed for compile-in async bindings to route through. Returns
        a Promise that resolves with the SW's reply (or rejects if the
        transport is unavailable). Picks chrome.runtime.sendMessage or

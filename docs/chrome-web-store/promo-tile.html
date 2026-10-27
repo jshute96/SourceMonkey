@@ -1,0 +1,42 @@
+<!doctype html>
+<!-- The Chrome Web Store's small promo tile, 440x280.
+     Render it to promo-tile.png with render-promo-tile.mjs.
+     The store rounds the tile's corners by about 15px, so the frame's
+     inner corners are rounded by 8px to match: about 15px less the 8px
+     frame. -->
+<meta charset="utf-8">
+<style>
+  :root { --bg: #f2e9dc; --brand: #6b4423; --ink: #222; }
+  body { margin: 0; }
+  .tile {
+    position: relative; width: 440px; height: 280px; overflow: hidden;
+    background: var(--brand);
+    font-family: "DejaVu Sans", "Helvetica Neue", Arial, sans-serif;
+  }
+  .in { position: absolute; inset: 8px; background: var(--bg); border-radius: 8px; }
+  h1 {
+    position: absolute; left: 15.8px; top: 20px; margin: 0;
+    font-size: 44px; font-weight: 800; letter-spacing: -.5px; color: var(--brand);
+  }
+  /* The side margins and the gap between text and monkey are equal:
+     space-between spreads what the text and the icon leave over. */
+  .row {
+    position: absolute; left: 15.8px; right: 15.8px; top: 86px; bottom: 10px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  p {
+    flex: none; margin: 0; padding: 10px 0; white-space: nowrap;
+    font-size: 25px; line-height: 1.35; color: var(--ink);
+    border-top: 2px solid var(--brand); border-bottom: 2px solid var(--brand);
+  }
+  img { flex: none; width: 107px; height: 107px; }
+</style>
+<div class="tile">
+  <div class="in">
+    <h1>SourceMonkey</h1>
+    <div class="row">
+      <p>A userscript manager<br>built for local and<br>agentic development</p>
+      <img src="../../src/icons/icon-128.png" alt="">
+    </div>
+  </div>
+</div>

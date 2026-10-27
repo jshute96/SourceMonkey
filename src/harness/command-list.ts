@@ -228,7 +228,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         syntax: WORDS,
         about: ['Start a server process and connect to a browser.', 'Load the listed userscripts.', 'Open a tab for each listed URL.', 'Starts with the ID from `--run`. Stops existing runs with that ID.'],
         args: [
-          { term: '[script]...', about: 'Files ending in `.user.js`, directories, or globs.' },
+          { term: '[script]...', about: 'Files ending in `.user.js`, their web URLs, directories, globs, or a `script_manifest.json`. See `help files`.' },
           { term: '[url]...', about: ['URLs to open.', 'Default: the first script\'s default page (from `@match`), or a blank tab.'] },
         ],
         optionGroups: [
@@ -912,6 +912,7 @@ export const HELP_SECTIONS: HelpSection[] = [
                 ],
                 commands: ['start'],
               },
+              { term: '--profile DIR', about: ['With `--open-browser`: the browser profile, kept between launches. When given, a browser already on the port must be using it.', '(Default: `~/.config/sm-dev/browser-profile-<port>`)'] },
               {
                 term: '--manager NAME',
                 about: [
@@ -922,7 +923,6 @@ export const HELP_SECTIONS: HelpSection[] = [
               },
               { term: '--headed, --headless', about: ['When launching a browser: show its window or not.', '(Default: headed for `--open-browser`, and for a temp browser in `--interactive` mode; headless otherwise)'] },
               { term: '--mute, --nomute', about: ['When launching a browser: turn its sound off or on.', '(Default: muted for a temp browser, sound on for `--open-browser`)'] },
-              { term: '--profile DIR', about: ['With `--open-browser`: the browser profile, kept between launches.', '(Default: `~/.config/sm-dev/browser-profile-<port>`)'] },
             ],
           },
           {
@@ -1090,6 +1090,8 @@ export const HELP_SECTIONS: HelpSection[] = [
     items: [
       { term: '<filename>', about: 'A file name, optionally with a path.' },
       { term: '<directory>', about: 'Matches all `.user.js` files under it.' },
+      { term: '<script URL>', about: 'An `http(s)` URL of a `.user.js` file, fetched. For `start`, `validate` and `match`.' },
+      { term: '<manifest>', about: 'A `script_manifest.json`, as a path or URL: the scripts it lists. For `start`, `validate` and `match`.' },
       {
         term: '<glob>',
         about: [

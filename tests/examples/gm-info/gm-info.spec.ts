@@ -51,9 +51,9 @@ test.describe('examples / gm-info', () => {
       (await page.locator('#dumps script.gm-info-dump').textContent())!,
     );
     // Refs as written in the header, not resolved URLs.
-    expect(info.script.require).toEqual(['./lib.js']);
-    expect(info.script.resources).toEqual([{ name: 'note', url: './resource.txt' }]);
-    expect(info.script.icon).toBe('./icon.svg');
+    expect(info.script.require).toEqual(['https://jshute96.github.io/SourceMonkey/tests/examples/gm-info/lib.js']);
+    expect(info.script.resources).toEqual([{ name: 'note', url: 'https://jshute96.github.io/SourceMonkey/tests/examples/gm-info/resource.txt' }]);
+    expect(info.script.icon).toBe('https://jshute96.github.io/SourceMonkey/tests/examples/gm-info/icon.svg');
     // Header-tag spelling for keys TM and VM disagree on.
     expect(info.script['run-at']).toBe('document-end');
     expect(info.script.connect).toEqual(['example.com']);
@@ -119,9 +119,8 @@ test.describe('examples / gm-info', () => {
     // The example userscript ships a `file:///*/<api>/<api>.html`
     // match alongside the http one, so loading the page from disk
     // works without a local server. Under TM, this requires "Allow
-    // access to file URLs" enabled on the TM card in chrome://extensions
-    // — a step covered by the one-time setup in
-    // docs/cross-manager-testing.md.
+    // access to file URLs", which the test browser's profile grants
+    // (tests/fixtures/manager-launch.ts).
     //
     // VM doesn't inject into file:// pages here at all. Checked, not
     // assumed: the grant is live (`isAllowedFileSchemeAccess` returns

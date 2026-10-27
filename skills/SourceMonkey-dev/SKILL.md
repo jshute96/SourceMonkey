@@ -84,9 +84,9 @@ Where to look:
 - **Name tabs by `T<n>` or `targetId`, never by URL.** Two tabs on the
   same page are common, and acting on the wrong one looks like the
   script didn't run.
-- **Read the run's output before theorizing.** It says whether the
-  script started, was skipped (and which header rule decided), or
-  threw, with file and line.
+- **Read the run's output before theorizing.** It shows whether the
+  script started or threw, with file and line. With no `started` line,
+  run `match` to find which header rule keeps it off the page.
 - **Write scripts as they ship.** No guards for missing `GM_*`, no
   test-only branches: they run in the real manager.
 - **Real sites have real data.** Only do reversible actions on
@@ -248,7 +248,9 @@ ok       sites/x/y.user.js
   nesting). The script still loads and the exit code is 0, but its
   syntax wasn't verified.
 - An invalid script is refused by `start` and `loadUserscript` with the
-  same message, so fixing it here saves a failed run.
+  same message, so fixing it here saves a failed run. (`start` skips one
+  it found in a directory or by a glob. You will see validation error lines
+  with `INVALID` and a message with the count of skipped scripts.)
 - It doesn't check that `@grant` covers every `GM_*` the code calls; a
   missing one shows up at runtime as `GM_x is not defined`.
 - In a run, `validate` re-reads the selected script from disk, and
@@ -825,8 +827,8 @@ refused. How it works and what differs:
 
 ## Troubleshooting
 
-- **`skipped on <url>: ...`**: the header doesn't cover the page; the
-  extension would skip it too. `match` shows why.
+- **No `started` line for the script on a page**: the header may not
+  cover the page; the extension would skip it too. `match` shows why.
 - **`GM_x is not defined`**: missing `@grant GM_x`. Same in the
   extension.
 - **A page global is `undefined` in the script**: if it's read as
@@ -838,6 +840,9 @@ refused. How it works and what differs:
   under sm-dev only**: in a tab a run tab opened, the script may run
   after the page's first inline scripts (see
   [How a run uses the extension](#how-a-run-uses-the-extension)).
+- **`start` reports that Playwright needs a Chromium build that isn't
+  installed**: Playwright was updated. Run the install command the
+  error gives (`pnpm exec playwright install chromium` in a repo).
 - **The run refuses to start, or says `no SourceMonkey` / `SourceMonkey
   disabled`**: see [Getting a browser](#getting-a-browser).
 - **A command these docs name is unknown**: sm-dev is older than the

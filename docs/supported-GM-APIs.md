@@ -17,7 +17,6 @@ strategy/phasing that produced this surface, see
 | Symbol | Meaning |
 |:------:|---------|
 | ✅ | **Implemented** — granting the API exposes a real working binding. |
-| 🟡 | **Stubbed** — binding exists, throws "not implemented yet" on call (so the script at least sees a clear error and `typeof` reports `function`). |
 | ⚪ | **Not in catalog** — not exposed; granting it logs an "unknown @grant" warning to the page console + Log tab. |
 
 ## Granting
@@ -804,8 +803,8 @@ baked into the per-script wrapper. See
 
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
-| `GM_getResourceText` / `GM.getResourceText` | ✅ | ✓ | ✓ | ✓ | UTF-8 decode on demand. Returns `undefined` for an unknown name. Binary resources still decode (mojibake-tolerant); use `GM_getResourceURL` instead. |
-| `GM_getResourceURL` / `GM.getResourceUrl` | ✅ | ✓ | ✓ | ✓ | Mints (and caches) a `blob:` URL with the fetched Content-Type. Same URL on repeat calls for one name. GM4 form spells it lowercase-`u` (`getResourceUrl`) — deliberate casing mismatch with the legacy form. |
+| `GM_getResourceText` / `GM.getResourceText` | ✅ | ✓ | ✓ | ✓ | UTF-8 decode on demand. Returns `undefined` for an unknown name, as VM does (TM returns `null`). Binary resources still decode (mojibake-tolerant); use `GM_getResourceURL` instead. |
+| `GM_getResourceURL` / `GM.getResourceUrl` | ✅ | ✓ | ✓ | ✓ | Mints (and caches) a `blob:` URL with the fetched Content-Type, as VM does (TM returns a base64 `data:` URL). Same URL on repeat calls for one name; `undefined` for an unknown one (TM: `null`). GM4 form spells it lowercase-`u` (`getResourceUrl`) — deliberate casing mismatch with the legacy form. |
 
 ---
 

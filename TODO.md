@@ -467,21 +467,6 @@ scripts, checked against Tampermonkey 5.5.1 with `sm-dev --manager tm`
 
 ## Cross-manager coverage
 
-- **No `tests/examples/` script exercises `@require` under
-  Tampermonkey.** `require-scope/` covers both injection worlds, but
-  skips under `--project=tampermonkey`: it uses a relative `@require`,
-  which TM doesn't resolve, and TM installs these examples from a
-  local file so there's no base URL to resolve against. Baking in an
-  absolute URL doesn't work either — the fixture server's port is
-  assigned per run.
-  - Closing it needs either a fixed-port fixture server for the TM
-    project, or a rewrite step that stamps the server URL into a
-    generated copy of the script before TM installs it. Until then
-    the TM-compatibility claim for `@require` — the whole premise of
-    the concatenated arrangement — rests on unit and SM-only e2e
-    coverage, plus the VM project below.
-  - The `violentmonkey` project does exercise it: VM installs from
-    the fixture server's URL and resolves the relative ref against it.
 - **VM doesn't inject into `file://` pages in the test profile**, so
   `gm-info`'s file:// case is skipped there. Verified it isn't the
   file-access toggle: the grant is live, the script is installed with
@@ -492,13 +477,6 @@ scripts, checked against Tampermonkey 5.5.1 with `sm-dev --manager tm`
   Worth pinning down before we claim anything about VM and local
   files. See
   [docs/cross-manager-test-results.md](docs/cross-manager-test-results.md).
-- **`gm-info`'s stub `@require` / `@resource` / `@icon` refs are
-  relative**, so when the script is installed by hand into TM/VM
-  (rather than through the sync script's local server) TM reports a
-  "forbidden URL" error in `GM_info.script.resources` and VM fails to
-  fetch them. Once the repo is public, point them at raw GitHub URLs
-  for `tests/examples/gm-info/{lib.js,resource.txt,icon.svg}` so the
-  comparison shows a clean fetch under every manager.
 - The known divergences to expect across managers are catalogued in
   [docs/supported-GM-APIs.md](docs/supported-GM-APIs.md) and
   [docs/supported-headers.md](docs/supported-headers.md).
@@ -991,11 +969,6 @@ See [docs/harness-design.md](docs/harness-design.md).
   `running` in its JSON: that's its fallback for a status it doesn't
   know. Fall back to a neutral state instead (`not-started`, or a new
   `unknown-status`), so a later new status reads as unknown too.
-- Publishing: the package is installed from a checkout or a git tag.
-  `package.json` keeps `"private": true` until then; drop it to
-  publish.
-  Once it is on npm, the guide's install step and the consumer's
-  `dependenciesMeta.injected` workaround both get simpler.
 - A command sent to a run from another shell (or from stdin) exits 0
   when it fails in the run, unless it is a `match` or `validate` miss
   or it threw: the others only print why. Have each return its exit
@@ -1191,16 +1164,6 @@ Set aside while moving every write into the service worker
   - Options: per-origin patterns, so a second script on a covered site
     changes nothing; or `<all_urls>`, which `buildGmRuntimeSpecs`
     argues against (the runtime's load on every site).
-- **Minify the injected helpers properly.** The build only strips
-  comments and whitespace (`minifyForInjection`): the GM runtime goes
-  from 131 KB to 55 KB. A real minifier (esbuild or terser) might reach
-  25–30 KB.
-  - Measure first: Chrome's `register` time against helper size, and
-    page parse time where it's injected.
-  - Renamed identifiers make the runtime's own stack traces harder to
-    read; a source map would cover that.
-- **Audit what's in `wrapper-gm-runtime.js`** for code no current API
-  needs.
 
 ## Storage-key migration — remove after 2026-09-01
 

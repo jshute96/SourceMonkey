@@ -95,22 +95,39 @@ up-front check before a push:
       are importable.
   - `files` for the built outputs and `skills` (the agent skill ships
     beside the code), and `bin: { "sm-dev": ... }`.
-  - A `prepare` script that runs the build, so a git install produces
+  - A `prepack` script that runs the build, so `pnpm pack` packs fresh
     `lib/` and `dist/`.
-  - `@playwright/test` as an optional peer dependency, used only by the
-    harness entry.
-  - `private: true`. It only blocks `npm publish`; a git install works
-    without publishing.
-- Consumers pin a git tag. Publishing to npm later would not change the
-  import paths.
+  - A `prepublishOnly` script, which refuses a manual `pnpm publish`:
+    that would skip the npm README and the release's checks.
+    - `scripts/release.sh` publishes packed `.tgz` files instead, which
+      runs no scripts, so it isn't blocked.
+  - `@playwright/test` as an optional peer dependency, used by the
+    harness entry and, when the repo has it, by `sm-dev`.
+  - `playwright-core` as a dependency, which `sm-dev` falls back to
+    with no `@playwright/test` (as under `npx`). See
+    `loadPlaywright` in `src/harness/playwright-chromium.ts`.
+- It is published to npm with `lib/` and `dist/` built, so an install
+  builds nothing.
+  - It ships without `scripts`, which only build and test the checkout.
+    The `beforePacking` hook in `.pnpmfile.cjs` drops them when packing.
+    - This matters for `preinstall`, which keeps contributors on pnpm:
+      shipped, it would run on each install in the user's repo.
+  - Its npm page describes the tools, not the extension:
+    - The same hook sets its `description`.
+    - `scripts/pack-npm.sh` packs it with
+      `packages/sourcemonkey/README.md` as its README, since pnpm only
+      packs the repo's own.
+- `packages/sm-dev/` is a second package, `sm-dev`, that only depends
+  on `sourcemonkey` and runs its CLI.
+  - It exists because `npx sm-dev` looks up a package named `sm-dev`.
+  - The two are a pnpm workspace and are published together, at one
+    version (`scripts/release.sh`).
 
 ### How a userscript repo uses it
 
 Details are in the guide; the shape is:
 
-- It installs `github:jshute96/SourceMonkey#<tag>` as a dev dependency.
-  - `sourcemonkey` is allowlisted under `allowBuilds` in
-    `pnpm-workspace.yaml`, so the `prepare` build runs.
+- It installs `sourcemonkey` from npm as a dev dependency.
   - While developing both, it uses `file:../SourceMonkey` with
     `dependenciesMeta.injected`.
 - Its own fixture file keeps any browser-connection logic (a repo
@@ -294,22 +311,9 @@ for the rows):
 
 ## Platform behavior the design relies on
 
-- **pnpm builds a git dependency's `prepare` script**, but only when
-  the consumer allowlists it under `allowBuilds` in
-  `pnpm-workspace.yaml`.
-  - The key is matched against `<name>@git+https://…#<sha>`, so a bare
-    name does not match. The full key does, and so does the glob
-    `sourcemonkey@git+https*`.
-  - The build runs in pnpm's clone, with the package's dev dependencies
-    installed there.
 - **Playwright lists an extension's service worker on a
   `connectOverCDP` connection** (`context.serviceWorkers()`), so the
   same `worker.evaluate` works for a launched and a connected browser.
 - **Google Chrome (137+) ignores `--load-extension`**, so a launched
   browser with SourceMonkey is Playwright's Chromium, and a Chrome the
   person uses needs the unpacked extension loaded by hand once.
-
-## Open questions
-
-- Whether the package should be published to npm, which would remove
-  the consumer's `injected` workaround and the build allowlist.

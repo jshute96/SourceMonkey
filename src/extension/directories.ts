@@ -30,7 +30,11 @@
 // System Access API there is no per-session re-grant.
 
 export type { FoundScript } from '../collection-scan.js';
-import { type FoundScript, MAX_SCAN_DEPTH, MANIFEST_FILENAME } from '../collection-scan.js';
+import { type FoundScript, MAX_SCAN_DEPTH, MANIFEST_FILENAME, ALLOWED_ENTRY_SCHEMES, parseManifest, resolveManifestEntryUrl } from '../collection-scan.js';
+
+// The manifest helpers live in the shared collection-scan.ts, so sm-dev
+// reads manifests the same way; re-exported for this module's callers.
+export { parseManifest, resolveManifestEntryUrl };
 import { mapWithConcurrency, SCAN_DIRS_CONCURRENCY } from './concurrency.js';
 // Page-only API under the hood, but the wrapper answers "allowed" from
 // any context that can't ask — and only `classifyLocation`, which only
@@ -463,53 +467,6 @@ function interpretHttpText(
 
 // ---------- Scanning ----------
 
-// Parse a manifest body. Accepts either a bare JSON array or
-// `{scripts: [...]}`. Anything else is rejected with a message that
-// points at the supported shapes. Empty strings inside the list are
-// dropped so a trailing newline / typo doesn't fail the whole source.
-//
-// List elements are either a URL string or an object with a `path`
-// holding that string. The object form lets a manifest carry extra
-// per-script bookkeeping (author's notes, tags, …) alongside the URL;
-// every field other than `path` is ignored here, so unknown keys are
-// forward-compatible rather than an error.
-export function parseManifest(body: string): string[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(body);
-  } catch (err) {
-    throw new Error(`Manifest is not valid JSON: ${err instanceof Error ? err.message : String(err)}`);
-  }
-  let arr: unknown;
-  if (Array.isArray(parsed)) {
-    arr = parsed;
-  } else if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { scripts?: unknown }).scripts)) {
-    arr = (parsed as { scripts: unknown[] }).scripts;
-  } else {
-    throw new Error('Manifest must be a JSON array of entries, or `{"scripts": [...]}`');
-  }
-  const entries: string[] = [];
-  for (const item of arr as unknown[]) {
-    let value: string;
-    if (typeof item === 'string') {
-      value = item;
-    } else if (item && typeof item === 'object' && !Array.isArray(item)) {
-      // An array is also `typeof 'object'`, hence the isArray guard —
-      // otherwise `[["a.user.js"]]` would look for a `path` field on it.
-      const entryPath = (item as { path?: unknown }).path;
-      if (typeof entryPath !== 'string') {
-        throw new Error('Manifest entry objects must have a "path" string');
-      }
-      value = entryPath;
-    } else {
-      throw new Error('Manifest entries must all be URL strings or objects with a "path"');
-    }
-    const trimmed = value.trim();
-    if (trimmed) entries.push(trimmed);
-  }
-  return entries;
-}
-
 export async function scanForUserScripts(
   absolutePath: string,
   depth = 0,
@@ -641,42 +598,7 @@ async function fetchManifestText(canonicalUrl: string): Promise<string> {
 // The manifest body itself is re-downloaded every refresh (no
 // If-None-Match round-trip on the manifest URL). The per-script fetches
 // still 304 individually, so the bandwidth cost is bounded. See TODO.md
-// "HTTP collections — follow-ups" for the planned fix. Schemes a
-// manifest entry's *resolved* URL is allowed to use. We mirror the
-// suffix-test policy on the collection URL itself (which only accepts
-// http(s) / file: / raw path): a manifest the user added shouldn't be
-// able to escalate the SW's `<all_urls>` reach into things like `data:`
-// (arbitrary inline content), `chrome-extension:` (cross-extension
-// probing), or `blob:` (off-origin smuggling). The user can always add
-// such collections directly if they want them.
-const ALLOWED_ENTRY_SCHEMES = new Set(['http:', 'https:', 'file:']);
-
-// Resolve a manifest entry against the manifest's canonical URL.
-//
-// On top of plain RFC 3986 resolution, if the entry doesn't bring its
-// own query string and lands in the same origin as the manifest, the
-// manifest's query string is propagated onto the resolved URL. This
-// lets a single auth-bearing manifest URL (e.g. GitHub's
-// `…/script_manifest.json?token=…`) reach its companion scripts
-// without each manifest entry having to repeat the token. Cross-origin
-// or self-querying entries are left alone — the propagation rule only
-// fires when the entry is clearly "another file alongside the
-// manifest". Throws on a malformed entry; the caller layers
-// scheme-gating on top.
-export function resolveManifestEntryUrl(entry: string, canonicalUrl: string): URL {
-  const base = new URL(canonicalUrl);
-  let resolved: URL;
-  try {
-    resolved = new URL(entry, canonicalUrl);
-  } catch {
-    throw new Error(`Manifest entry is not a valid URL: ${entry}`);
-  }
-  if (!resolved.search && base.search && resolved.origin === base.origin) {
-    resolved.search = base.search;
-  }
-  return resolved;
-}
-
+// "HTTP collections — follow-ups" for the planned fix.
 async function scanManifest(
   canonicalUrl: string,
   // One listing per folder the entries sit in, for the stat below.

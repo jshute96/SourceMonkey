@@ -9,7 +9,7 @@
 //
 // See docs/local-delete.md.
 
-import { locationFsPath } from '../file-locations.js';
+import { isFileUrl, locationFsPath } from '../file-locations.js';
 import {
   describeError,
   type StoredCollection,
@@ -146,14 +146,17 @@ export function copyDeletePlan(
 // The files under `copiesDir` a script is currently loading its
 // `@require` / `@resource` entries from, as path → declared URL.
 //
-// `localUrl` is the authority: it is what the load pipeline actually
-// read, so this lists files in use rather than paths a copy might once
-// have written. Deduped by path — one file can serve two declarations.
+// What the load pipeline actually read is the authority, so this lists
+// files in use rather than paths a copy might once have written: the
+// `localUrl` of a stand-in for a web URL, or the `file://` URL itself
+// of a relative ref. Deduped by path — one file can serve two
+// declarations.
 function localDependencyPaths(script: ScriptMeta, copiesDir: string): Map<string, string> {
   const out = new Map<string, string>();
   for (const file of [...(script.requires ?? []), ...(script.resources ?? [])]) {
-    if (!file.localUrl) continue;
-    const path = locationFsPath(file.localUrl);
+    const readFrom = file.localUrl ?? (isFileUrl(file.url) ? file.url : null);
+    if (!readFrom) continue;
+    const path = locationFsPath(readFrom);
     if (!path.startsWith(`${copiesDir}/`) || out.has(path)) continue;
     out.set(path, file.url);
   }

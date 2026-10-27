@@ -107800,6 +107800,299 @@
           "text": "Not run: game cheat. A Moomoo.io hacked client built to evade the game's anticheat."
         }
       ]
+    },
+    "601159": {
+      "listing": {
+        "name": "Chrome Image Viewer: Simple zoom and pan",
+        "info_page": "https://greasyfork.org/en/scripts/601159-chrome-image-viewer-simple-zoom-and-pan",
+        "script_url": "https://update.greasyfork.org/scripts/601159/Chrome%20Image%20Viewer%3A%20Simple%20zoom%20and%20pan.user.js",
+        "total_installs": 5,
+        "daily_installs": 0,
+        "ratings_good": 0,
+        "ratings_ok": 0,
+        "ratings_bad": 0,
+        "created_date": "2026-10-20",
+        "updated_date": "2026-10-20"
+      },
+      "labels": [
+        {
+          "label": "jshute"
+        }
+      ],
+      "version": "0.1.3",
+      "file": "update.greasyfork.org/scripts/601159/Chrome%20Image%20Viewer%3A%20Simple%20zoom%20and%20pan.user.js",
+      "sites": [
+        "*",
+        "/^(https?|file):\\/\\/[^?#]*\\.(png|jpe?g|webp|gif|avif|bmp|ico)([?#].*)?$/",
+        "/^https:\\/\\/(lh\\d+|play-lh|yt3|blogger)\\.googleusercontent\\.com\\//",
+        "/^https:\\/\\/encrypted-tbn\\d+\\.gstatic\\.com\\/images\\?/",
+        "pbs.twimg.com"
+      ],
+      "valid": {
+        "status": "ok",
+        "date": "2026-10-25",
+        "version": "0.1.3"
+      },
+      "test": {
+        "status": "pass",
+        "date": "2026-10-25",
+        "version": "0.1.3"
+      },
+      "notes": [
+        {
+          "date": "2026-10-25",
+          "version": "0.1.3",
+          "text": "On a Wikimedia JPG (1280x853, Chrome's standalone image viewer, fitted at 1080x720), the `@require`d library loaded and the script set its standalone attribute on `<html>`:\n- Wheel up at the center zoomed to `scale(2.117)` (image 2287x1524).\n- `x` toggled back to fit (1080x720) and again to the last zoom; `=` zoomed to `scale(2)`.\n- Two ArrowRight presses panned from -50% to -90% x; a mouse drag (+150, +50 px) panned to -76%, -43%.\n- A `--noscript` tab ignored the wheel and `=` (image stayed 1080 wide, no transform)."
+        }
+      ]
+    },
+    "601161": {
+      "listing": {
+        "name": "Instagram: Fullscreen images and video, video seek bar, keyboard shortcuts",
+        "info_page": "https://greasyfork.org/en/scripts/601161-instagram-fullscreen-images-and-video-video-seek-bar-keyboard-shortcuts",
+        "script_url": "https://update.greasyfork.org/scripts/601161/Instagram%3A%20Fullscreen%20images%20and%20video%2C%20video%20seek%20bar%2C%20keyboard%20shortcuts.user.js",
+        "total_installs": 16,
+        "daily_installs": 2,
+        "ratings_good": 1,
+        "ratings_ok": 0,
+        "ratings_bad": 0,
+        "created_date": "2026-10-20",
+        "updated_date": "2026-10-20"
+      },
+      "labels": [
+        {
+          "label": "jshute"
+        }
+      ],
+      "version": "0.1.1",
+      "file": "update.greasyfork.org/scripts/601161/Instagram%3A%20Fullscreen%20images%20and%20video%2C%20video%20seek%20bar%2C%20keyboard%20shortcuts.user.js",
+      "sites": [
+        "www.instagram.com"
+      ],
+      "valid": {
+        "status": "ok",
+        "date": "2026-10-25",
+        "version": "0.1.1"
+      },
+      "test": {
+        "status": "pass",
+        "date": "2026-10-25",
+        "version": "0.1.1"
+      },
+      "notes": [
+        {
+          "date": "2026-10-25",
+          "version": "0.1.1",
+          "text": "Signed out, headless temp browser, on public `natgeo` posts (the sign-up popup closes with its X; it comes back after scrolling):\n\n- The `@require` (keyboard-shortcuts.js) loaded; the script logged its key list and `init`.\n- Photo post `/natgeo/p/DeuOR-CjKE9/`: a fullscreen button on the photo; `f` puts `<html>` fullscreen with the photo filling the height of the 1280x720 screen.\n- `j` there (a single-photo post) moved on to the next post, reel `DehZj9wggt0`, still fullscreen, with a seek bar and sound and fullscreen buttons.\n- On that video: Space paused it, `s` unmuted it, `f` left fullscreen.\n- Clicking the seek bar at 300 of its 337 px seeked to 26.74 s of 30 s.\n- No errors in the run's logs."
+        }
+      ]
+    },
+    "601162": {
+      "listing": {
+        "name": "Chrome: Better JSON viewer",
+        "info_page": "https://greasyfork.org/en/scripts/601162-chrome-better-json-viewer",
+        "script_url": "https://update.greasyfork.org/scripts/601162/Chrome%3A%20Better%20JSON%20viewer.user.js",
+        "total_installs": 2,
+        "daily_installs": 0,
+        "ratings_good": 0,
+        "ratings_ok": 0,
+        "ratings_bad": 0,
+        "created_date": "2026-10-20",
+        "updated_date": "2026-10-20"
+      },
+      "labels": [
+        {
+          "label": "jshute"
+        }
+      ],
+      "version": "0.1.1",
+      "file": "update.greasyfork.org/scripts/601162/Chrome%3A%20Better%20JSON%20viewer.user.js",
+      "sites": [
+        "/^(https?|file):\\/\\/[^?#]*\\.json([?#].*)?$/"
+      ],
+      "valid": {
+        "status": "ok",
+        "date": "2026-10-25",
+        "version": "0.1.1"
+      },
+      "test": {
+        "status": "pass",
+        "date": "2026-10-25",
+        "version": "0.1.1"
+      },
+      "notes": [
+        {
+          "date": "2026-10-25",
+          "version": "0.1.1",
+          "text": "On a compact Hacker News API item (`hacker-news.firebaseio.com/v0/item/8863.json`, 375 chars on one line), the script hid Chrome's viewer toolbar, added its \"Pretty-print\" bar (checked) and showed the JSON on 45 lines, highlighted (9 keys, 4 strings, 37 numbers; keys in rgb(4, 81, 165)).\n- Unchecking the box restored the original single line; checking it again re-formatted it.\n- On an already-formatted file (`jshute96.github.io/.../script_manifest.json`) the bar showed \"Already formatted\".\n- A `--noscript` tab showed the item as one line, with no bar or highlighting."
+        }
+      ]
+    },
+    "601163": {
+      "listing": {
+        "name": "Google APIs Explorer: Save / copy / fullscreen buttons for JSON response",
+        "info_page": "https://greasyfork.org/en/scripts/601163-google-apis-explorer-save-copy-fullscreen-buttons-for-json-response",
+        "script_url": "https://update.greasyfork.org/scripts/601163/Google%20APIs%20Explorer%3A%20Save%20%20copy%20%20fullscreen%20buttons%20for%20JSON%20response.user.js",
+        "total_installs": 1,
+        "daily_installs": 0,
+        "ratings_good": 0,
+        "ratings_ok": 0,
+        "ratings_bad": 0,
+        "created_date": "2026-10-20",
+        "updated_date": "2026-10-20"
+      },
+      "labels": [
+        {
+          "label": "jshute"
+        }
+      ],
+      "version": "0.1.1",
+      "file": "update.greasyfork.org/scripts/601163/Google%20APIs%20Explorer%3A%20Save%20%20copy%20%20fullscreen%20buttons%20for%20JSON%20response.user.js",
+      "sites": [
+        "developers.google.com",
+        "explorer.apis.google.com"
+      ],
+      "valid": {
+        "status": "ok",
+        "date": "2026-10-25",
+        "version": "0.1.1"
+      },
+      "test": {
+        "status": "pass",
+        "date": "2026-10-25",
+        "version": "0.1.1"
+      },
+      "notes": [
+        {
+          "date": "2026-10-25",
+          "version": "0.1.1",
+          "text": "On the Books API `volumes.list` reference page, \"Try It!\" opened the explorer iframe and the script started in both the page and the iframe. With `q=tolkien` and only the API key credential (OAuth unchecked, since that opens a Google sign-in), Execute gave a 200 response (38478 chars) without signing in.\n- The response status bar gained Save, Copy and Fullscreen buttons.\n- Fullscreen grew the explorer iframe from 332x606 at (933,114) to 1280x720 at (0,0), via the iframe-to-page message; pressing it again restored 332x606.\n- Copy logged \"copied response to clipboard (38478 chars)\".\n- Save: the page answered the iframe's save message (no \"did not answer\" log), then waited on Chrome's save-file picker, which a headless browser doesn't show, so the written file wasn't checked."
+        }
+      ]
+    },
+    "601164": {
+      "listing": {
+        "name": "GitHub: Show line counts for each commit",
+        "info_page": "https://greasyfork.org/en/scripts/601164-github-show-line-counts-for-each-commit",
+        "script_url": "https://update.greasyfork.org/scripts/601164/GitHub%3A%20Show%20line%20counts%20for%20each%20commit.user.js",
+        "total_installs": 1,
+        "daily_installs": 0,
+        "ratings_good": 0,
+        "ratings_ok": 0,
+        "ratings_bad": 0,
+        "created_date": "2026-10-20",
+        "updated_date": "2026-10-20"
+      },
+      "labels": [
+        {
+          "label": "jshute"
+        }
+      ],
+      "version": "0.1.1",
+      "file": "update.greasyfork.org/scripts/601164/GitHub%3A%20Show%20line%20counts%20for%20each%20commit.user.js",
+      "sites": [
+        "github.com"
+      ],
+      "valid": {
+        "status": "ok",
+        "date": "2026-10-25",
+        "version": "0.1.1"
+      },
+      "test": {
+        "status": "pass",
+        "date": "2026-10-25",
+        "version": "0.1.1"
+      },
+      "notes": [
+        {
+          "date": "2026-10-25",
+          "version": "0.1.1",
+          "text": "Signed out, headless temp browser:\n\n- `jshute96/SourceMonkey/commits/main`: 35 rows found, counts shown beside the short sha for the rows near the screen (`8e891cd` +159 -38, matching `git show --shortstat`). The rest fill in as they scroll near.\n- `git/git/commits/master`: merge commits get counts and the merge class, drawn gray (rgb(89, 99, 110)) against green (rgb(26, 127, 55)) for normal ones.\n- PR #44 commits tab and conversation timeline: `0245b1e` shows +1,743 -224.\n- Counts are stored per sha with GM_setValue; after a reload the rows fill with no new fetches or writes.\n- No errors in the run's logs. Not checked: the issue-page timeline."
+        }
+      ]
+    },
+    "601165": {
+      "listing": {
+        "name": "GitHub: View HTML files inline",
+        "info_page": "https://greasyfork.org/en/scripts/601165-github-view-html-files-inline",
+        "script_url": "https://update.greasyfork.org/scripts/601165/GitHub%3A%20View%20HTML%20files%20inline.user.js",
+        "total_installs": 1,
+        "daily_installs": 0,
+        "ratings_good": 0,
+        "ratings_ok": 0,
+        "ratings_bad": 0,
+        "created_date": "2026-10-20",
+        "updated_date": "2026-10-20"
+      },
+      "labels": [
+        {
+          "label": "jshute"
+        }
+      ],
+      "version": "2.0.1",
+      "file": "update.greasyfork.org/scripts/601165/GitHub%3A%20View%20HTML%20files%20inline.user.js",
+      "sites": [
+        "github.com"
+      ],
+      "valid": {
+        "status": "ok",
+        "date": "2026-10-25",
+        "version": "2.0.1"
+      },
+      "test": {
+        "status": "pass",
+        "date": "2026-10-25",
+        "version": "2.0.1"
+      },
+      "notes": [
+        {
+          "date": "2026-10-25",
+          "version": "2.0.1",
+          "text": "Signed out, headless temp browser:\n\n- Direct load of `tests/examples/index.html`: a Preview item comes first in the Preview / Code / Blame switch, selected by default. The code section is hidden and a sandboxed iframe shows the page with the repo's stylesheet inlined.\n- Code and Preview switch the view back and forth.\n- In-app navigation (no reload): the file tree to `tests/greasyfork-examples/`, then `results.html` gets the Preview tab and preview. That page's body is drawn by its own script, so only its static heading shows, as the script intends.\n- Navigating in-app on to `corpus.mjs` removes the tab and pane and shows the code.\n- No errors in the run's logs."
+        }
+      ]
+    },
+    "601166": {
+      "listing": {
+        "name": "Xfinity Stream: Allow watching on Linux",
+        "info_page": "https://greasyfork.org/en/scripts/601166-xfinity-stream-allow-watching-on-linux",
+        "script_url": "https://update.greasyfork.org/scripts/601166/Xfinity%20Stream%3A%20Allow%20watching%20on%20Linux.user.js",
+        "total_installs": 1,
+        "daily_installs": 0,
+        "ratings_good": 0,
+        "ratings_ok": 0,
+        "ratings_bad": 0,
+        "created_date": "2026-10-20",
+        "updated_date": "2026-10-20"
+      },
+      "labels": [
+        {
+          "label": "jshute"
+        }
+      ],
+      "version": "0.1.0",
+      "file": "update.greasyfork.org/scripts/601166/Xfinity%20Stream%3A%20Allow%20watching%20on%20Linux.user.js",
+      "sites": [
+        "www.xfinity.com"
+      ],
+      "valid": {
+        "status": "ok",
+        "date": "2026-10-25",
+        "version": "0.1.0"
+      },
+      "test": {
+        "status": "n/a",
+        "reason": "requires-login",
+        "date": "2026-10-25",
+        "version": "0.1.0"
+      },
+      "notes": [
+        {
+          "date": "2026-10-25",
+          "version": "0.1.0",
+          "text": "Not run: Xfinity Stream plays video only for a signed-in Xfinity customer, so the OS-check bypass can't be judged without an account."
+        }
+      ]
     }
   }
 }

@@ -499,7 +499,7 @@ script holds, so an import works offline and survives a dead URL.
 
 - Each body is written to `<host>/<path>` of its declared URL: the
   layout local copies use
-  ([local-copy.md](local-copy.md#layout-mirror-the-url-beside-the-script)).
+  ([local-copy.md](local-copy.md#layout-beside-the-script)).
   - In the script's folder when only it uses that file.
   - At the top when scripts share it with the same bytes. When they
     don't all have the same bytes, the version the most scripts use goes

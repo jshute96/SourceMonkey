@@ -4,8 +4,8 @@
   validation verdict, test status, tags and notes. Static; it reads corpus.json
   when it loads, so it never needs regenerating.
 
-  - Served (node tests/greasyfork-examples/serve-results.mjs), it fetches
-    corpus.json from beside itself.
+  - Served (node tests/greasyfork-examples/serve-results.mjs, or GitHub
+    Pages), it fetches corpus.json from beside itself.
   - Opened as a file:// page, Chrome won't let it fetch, so it asks you to pick
     corpus.json once and remembers the choice (see pickCorpus below).
   - Every link opens in a new tab, except the links between the table and
@@ -14,9 +14,12 @@
   - Each script's "Code" button opens this page as a viewer (?view=<id>), which
     reads the downloaded copy (corpus.json's `file`) and shows it as text. A
     link straight to a .user.js file would be taken by a userscript manager as
-    an install; a fetch isn't. Served (by any server), it fetches the file;
-    from disk, it asks once for access to files/ (see viewFile below).
+    an install; a fetch isn't. Served locally (by any server), it fetches the
+    file; from disk, it asks once for access to files/ (see viewFile below).
   - The "Copy filename" button copies the downloaded copy's full path, for an editor.
+  - On GitHub Pages there are no downloaded copies (files/ isn't in git), so
+    "Code" links to the script's code on Greasy Fork, and "Copy filename"
+    isn't shown.
 -->
 <html lang="en">
 <head>
@@ -296,8 +299,15 @@ let filesDir = location.protocol === 'file:'
 
 const fullPath = (file) => filesDir + '/' + file;
 
+// On GitHub Pages: no files/, since the downloaded copies aren't in git.
+const PUBLISHED = location.hostname.endsWith('.github.io');
+
 /** The "Code" button, to this page's viewer, and the "Copy filename" button. */
 function codeLinks(d) {
+  if (PUBLISHED) {
+    return '<div class="code-links"><button class="small view-code" data-view="' + esc(d.url + '/code') +
+      '" title="View the code on Greasy Fork">Code</button></div>';
+  }
   if (!d.file) return '';
   // `name` last: a URL ending in .user.js, even in its query, may look like an
   // install to a userscript manager.
@@ -687,6 +697,7 @@ async function fetchCorpus() {
 }
 
 async function fetchFilesDir() {
+  if (PUBLISHED) return;
   try {
     const response = await fetch('files/_location.json', { cache: 'no-store' });
     if (response.ok) filesDir = (await response.json()).dir ?? filesDir;

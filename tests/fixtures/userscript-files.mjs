@@ -1,21 +1,12 @@
 // Reading `*.user.js` files off disk for the cross-manager harness:
-// locating them, and pulling the `@name` / `@version` that every
-// manager's install-or-skip decision turns on.
+// locating them, and pulling the `@name` each manager's install-or-skip
+// decision turns on, and the `@version` the drivers record.
 //
-// Shared by the Tampermonkey and Violentmonkey drivers and by the
-// standalone sync CLI, so all three classify the same file the same
-// way.
+// Shared by the Tampermonkey and Violentmonkey drivers, so both
+// classify the same file the same way.
 
 import fs from 'node:fs';
 import path from 'node:path';
-
-// `@version` ordering comes from the extension's own comparator so the
-// sync tooling and the shipped update-probe agree on which of two
-// versions is newer. Re-exported so a driver importing this module
-// gets the comparator too.
-import { compareVersions } from '../../dist/version-compare.js';
-
-export { compareVersions };
 
 /**
  * @typedef {Object} UserscriptHeader
@@ -57,23 +48,4 @@ export function listUserscripts(dir) {
   return fs.readdirSync(dir)
     .filter((f) => f.endsWith('.user.js'))
     .map((f) => parseUserscriptHeader(path.join(dir, f)));
-}
-
-/**
- * List every `*.user.js` under `dir` recursively. Used by the
- * standalone sync CLI to walk all of `tests/examples/` in one pass.
- * @param {string} dir
- * @returns {UserscriptHeader[]}
- */
-export function listUserscriptsRecursive(dir) {
-  const out = [];
-  const walk = (d) => {
-    for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
-      const p = path.join(d, entry.name);
-      if (entry.isDirectory()) walk(p);
-      else if (entry.isFile() && entry.name.endsWith('.user.js')) out.push(p);
-    }
-  };
-  walk(dir);
-  return out.map(parseUserscriptHeader);
 }

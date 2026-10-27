@@ -21,8 +21,8 @@ Update this doc when a result changes.
 
 ## Status
 
-- **TM**: 33 passed, 0 failed, 7 skipped (TM 5.5.0).
-- **VM**: 32 passed, 0 failed, 8 skipped (VM 2.49.0).
+- **TM**: 44 passed, 0 failed, 6 skipped (TM 5.5.1).
+- **VM**: 38 passed, 0 failed, 12 skipped (VM 2.49.0).
 
 ## Intentional skips
 
@@ -45,39 +45,10 @@ Specs that opt out of a manager via
   implement `window.onurlchange` at all (no mention in its source),
   and the example page duly reports the feature as unavailable. Every
   assertion in that spec is about events only it can produce.
-- **`gm-resource/`** — skipped under **TM only**. The example uses
-  relative `@resource` refs (`./resource.css`, etc.). SM resolves those
-  against the host script's URL; VM resolves them against the URL the
-  script was installed from, which the harness makes a real fixture
-  server URL, so VM installs and fetches them for real. TM accepts
-  absolute URLs only, so it can't install the example cleanly. SM
-  coverage: `tests/examples/gm-resource/gm-resource.spec.ts`.
-- **`require-scope/`** — skipped under **TM only**, same shape, for
-  `@require ./lib.js`. TM installs these examples from a local file, so
-  it has no base URL to resolve a relative ref against even in
-  principle, and the fixture server's port is assigned per run so an
-  absolute URL can't be baked into the file. SM coverage:
-  `tests/examples/require-scope/require-scope.spec.ts`.
-  - Consequence worth stating plainly: **no example exercises
-    `@require` under TM at all**, so the TM-compatibility claim for
-    the concatenated injection arrangement rests on unit and SM-only
-    e2e coverage, plus the VM run — VM installs from the fixture
-    server's URL and resolves the relative ref against it. See the
-    "Cross-manager coverage" entry in [TODO.md](../TODO.md).
-  - `test:e2e:tm` is unaffected — the skip fires before the install
-    step, and that package script never invokes
-    `scripts/sync-manager-scripts.mjs`. A manual sync run *will* try to
-    install both variants; TM prefetches `@require` URLs at the install
-    prompt, so expect that install to error or stall rather than
-    complete.
-- **`use-strict/`** (the "with a @require" test) — skipped under **TM
-  only**, for the same relative `@require` reason. The rest of the
-  example (a top-level `'use strict'` in both worlds) runs under all
-  managers.
-  - TM's `@require` behavior was checked once by hand, with a library
-    served from an absolute local URL: as in VM and SM, a first
-    library's `'use strict'` makes the script strict, and the script's
-    own after a library does nothing.
+- **`require-scope/`** (the relative-paths test only) — skipped under
+  **TM**. `relative/relative-require.user.js` loads its libraries by
+  relative path on purpose, and TM takes absolute URLs only. VM
+  resolves the paths against the fixture-server URL it installs from.
 - **`gm-download/`** (the two tests that let a download complete) —
   skipped under **VM**. Not a VM bug: a Chromium one.
   - VM saves a download by clicking an anchor on a
@@ -99,23 +70,6 @@ Specs that opt out of a manager via
 
 None outstanding under either manager.
 
-### Duplicate installs in the profile — check this first
-
-The `gm-dom` and `headers-run-at` failures seen after the install path
-was repaired were **not** a manager divergence: the TM profile held two
-copies of fourteen example scripts, so each one ran twice on every
-matching page and every `toHaveCount(1)` saw 2.
-
-- The copies pre-dated the repair. Nothing in the suite creates them
-  now — sync matches on `@name` and updates in place — but the profile
-  is persistent, so old damage survives indefinitely.
-- `getInstalledMap` now prints a warning naming any duplicated script,
-  because from the spec end this looks like an injection bug and
-  nothing points at the profile.
-- To clear them: TM dashboard → tick the extra rows → *Apply this to
-  all selected scripts* → **Delete** → Start, and accept the confirm.
-  Keep one copy of each `@name`.
-
 ## Behavior diffs (SM vs TM/VM)
 
 Cases where the managers genuinely behave differently on the same
@@ -124,6 +78,15 @@ behavior down and each picked its own rule. The cross-manager
 assertion has been loosened to accept all of them; SM's specific rule
 stays enforced in an SM-only spec.
 
+- **`gm-resource/`** (`GM_getResourceURL`, and an unknown resource
+  name) — measured under TM 5.5.1, once the example's `@resource`
+  refs became absolute URLs TM could fetch.
+  - `GM_getResourceURL` returns a base64 `data:` URL under TM, where SM
+    and VM mint a `blob:` URL. The page renders either, so the spec
+    checks the scheme per manager and fetches the URL under all three.
+  - An unknown name gives `null` from both `GM_getResourceText` and
+    `GM_getResourceURL` under TM, and `undefined` under SM and VM. The
+    spec expects each manager's own value.
 - **`headers-inject-into/`** (content-world isolation) — TM doesn't
   implement `@inject-into` at all. It's a Violentmonkey /
   SourceMonkey header; TM's nearest equivalent is `@sandbox`. VM does
@@ -231,8 +194,8 @@ one.
     registration is unresolved.
   - Nothing the harness can arrange — recorded as a divergence, not a
     setup gap.
-  - TM still does need the toggle, and it's step 4 of the one-time
-    profile setup either way.
+  - TM still does need the toggle, which the test browser's profile
+    grants (see cross-manager-testing.md, "The test browser").
 
 - **`GM_download` needs Chrome's `downloads` permission granted to
   TM.**
@@ -245,13 +208,10 @@ one.
   - VM needs no equivalent: it uses `chrome.downloads` only when the
     permission is already granted and falls back to an anchor download
     otherwise, so nothing blocks.
-  - `scripts/e2e-manager-preflight.mjs` writes the grant into the test
-    profile's `Preferences` before the browser starts (browser must be
-    closed — Chrome rewrites that file from memory on exit). Same
-    shortcut `tests/fixtures/extension.ts` uses for
-    `user_scripts_enabled` on the SM profile.
-  - A one-time pre-edit backup is left at
-    `Preferences.pre-sm-downloads-grant`.
+  - The test browser's launch (`tests/fixtures/manager-launch.ts`)
+    writes the grant into the new profile's `Preferences` before the
+    browser starts. Same shortcut
+    the SM launch uses for `user_scripts_enabled`.
 - **TM's permission prompts are auto-answered.** The driver clicks OK
   on any `ask.html` permission page — see
   `autoApprovePermissionPrompts` in

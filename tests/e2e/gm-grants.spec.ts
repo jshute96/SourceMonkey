@@ -12,9 +12,8 @@
 //      USER_SCRIPT-world GM runtime isn't visible from
 //      MAIN); the other GM_x names are undefined.
 //
-// Phase 2 doesn't implement any actual API behavior — calling any
-// granted API just throws "not implemented yet". Tests assert on the
-// binding *shape*, not behavior. Behavior tests come in later phases.
+// Tests assert on the binding *shape*, not behavior, which the
+// per-API specs cover.
 
 import fs from 'node:fs';
 import path from 'node:path';

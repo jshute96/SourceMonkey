@@ -60,6 +60,13 @@ test('--open-browser starts a lasting browser once, on a profile of its port', a
       code: 1,
       out: `The profile ${profile} is in use by the browser on port ${port}. Use \`--browser ${port}\`, or another --profile`,
     });
+    // A --profile given with the port has to be that browser's own.
+    expect(cli('--open-browser', '--browser', String(port), '--profile', profile)).toEqual({ code: 0, out: `[sm-dev] A browser is already running at 127.0.0.1:${port}` });
+    const elsewhere = path.join(config, 'elsewhere');
+    expect(cli('--open-browser', '--browser', String(port), '--profile', elsewhere)).toEqual({
+      code: 1,
+      out: `The browser at 127.0.0.1:${port} isn't using the profile ${elsewhere}. Use another --browser port to start one with it`,
+    });
   } finally {
     // The browser, by the lock on its profile, however far this got.
     try {

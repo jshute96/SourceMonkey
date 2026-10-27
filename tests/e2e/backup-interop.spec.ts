@@ -49,7 +49,7 @@ interface OtherManager {
 // saved can still be imported once it's closed.
 async function launchManager(manager: 'tampermonkey' | 'violentmonkey', optionsPath: string, downloads: string): Promise<OtherManager> {
   fs.mkdirSync(downloads, { recursive: true });
-  const launched = await launchExtensionBrowser({ manager, downloadsDir: downloads, grantPermissions: ['downloads'] });
+  const launched = await launchExtensionBrowser({ manager, downloadsDir: downloads, permissions: ['downloads'] });
   const sw = launched.context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'))
     ?? await launched.context.waitForEvent('serviceworker');
   const id = new URL(sw.url()).host;

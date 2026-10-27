@@ -4,11 +4,13 @@
 // also offers its loaded scripts and open tabs (console-commands.ts).
 // Both print the same lines, so an answer reads the same either way.
 
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { isMarkupContentType, looksLikeMarkup, markupResponseMessage } from '../markup-response.js';
 import { unusableMatchGroupKey } from '../url-match.js';
+import { ALLOWED_ENTRY_SCHEMES, MANIFEST_FILENAME, parseManifest, resolveManifestEntryUrl } from '../collection-scan.js';
 import { asError, asWarning, code, heading, id, INVALID_PREFIX, quoted, roleCell, tableLines, textCell, ui, url, WARNING_LEVEL, type Cell } from './output-style.js';
 import { HAS_SCHEME, globFiles, globMistake, isDirectory, isGlob, walkScripts } from './path-args.js';
 import { jsonResult, type MatchPage, type ValidateData } from './json-output.js';
@@ -36,14 +38,93 @@ export const REMOTE_SCRIPT = /^https?:\/\//i;
 // `label` is how the output names it.
 export type ScriptSource = { label: string; file: string } | { label: string; url: string; text: string };
 
+// A script `validate` couldn't read (a manifest's dead entry): invalid,
+// with why, while the manifest's others are still checked.
+type UnreadSource = { label: string; error: string };
+
+/** What `validate` checks: a script, or one it couldn't read. */
+export type ValidateSource = ScriptSource | UnreadSource;
+
+/**
+ * Whether a word names a manifest: a `script_manifest.json`, the one
+ * name a manifest has, as a path or a URL (by its path, so a query
+ * doesn't hide it).
+ */
+export function isManifestArg(word: string): boolean {
+  let file = word;
+  if (REMOTE_SCRIPT.test(word) || /^file:/i.test(word)) {
+    try {
+      file = new URL(word).pathname;
+    } catch {
+      return false;
+    }
+  }
+  return path.posix.basename(file.replace(/\\/g, '/')) === MANIFEST_FILENAME;
+}
+
+/**
+ * The scripts a manifest lists, resolved against it as the extension
+ * resolves them: a path for each `file:` entry, a URL for each web one,
+ * each once. The manifest is a path, a `file:` URL or a web address.
+ */
+export async function manifestScripts(input: string, cwd = process.cwd()): Promise<string[]> {
+  let base: string;
+  let body: string;
+  if (REMOTE_SCRIPT.test(input)) {
+    ({ url: base, text: body } = await fetchScript(input));
+  } else {
+    const file = /^file:/i.test(input) ? fileURLToPath(input) : path.resolve(cwd, input);
+    body = await readFile(file, 'utf8').catch(() => {
+      throw new UsageError(noSuchFileMessage(input));
+    });
+    base = pathToFileURL(file).href;
+  }
+  let entries: string[];
+  try {
+    entries = parseManifest(body);
+  } catch (err) {
+    throw new UsageError(`The manifest ${quoted(input)} can't be read: ${(err as Error).message}`);
+  }
+  const scripts = new Set<string>();
+  for (const entry of entries) {
+    let resolved: URL;
+    try {
+      resolved = resolveManifestEntryUrl(entry, base);
+    } catch (err) {
+      throw new UsageError(`The manifest ${quoted(input)} can't be read: ${(err as Error).message}`);
+    }
+    // A manifest on the web doesn't reach into this machine's files.
+    if (resolved.protocol === 'file:' && REMOTE_SCRIPT.test(base)) {
+      throw new UsageError(`The manifest ${quoted(input)} lists ${quoted(entry)}, a local file, which a manifest on the web can't`);
+    }
+    if (!ALLOWED_ENTRY_SCHEMES.has(resolved.protocol)) {
+      throw new UsageError(`The manifest ${quoted(input)} lists ${quoted(entry)}, which isn't an http, https or file URL`);
+    }
+    scripts.add(resolved.protocol === 'file:' ? fileURLToPath(resolved) : resolved.href);
+  }
+  if (scripts.size === 0) throw new UsageError(`The manifest ${quoted(input)} lists no scripts`);
+  return [...scripts];
+}
+
 /**
  * `validate`'s arguments as scripts, in the order given: a web address
  * is fetched, a glob expanded, a directory searched for `*.user.js`
  * files.
  */
-export async function validateSources(inputs: string[], cwd = process.cwd()): Promise<ScriptSource[]> {
-  const sources: ScriptSource[] = [];
+export async function validateSources(inputs: string[], cwd = process.cwd()): Promise<ValidateSource[]> {
+  const sources: ValidateSource[] = [];
   for (const input of inputs) {
+    if (isManifestArg(input)) {
+      for (const listed of await manifestScripts(input, cwd)) {
+        const entry = REMOTE_SCRIPT.test(listed) ? listed : shownPath(listed, cwd);
+        try {
+          sources.push(...await scriptSources([entry], cwd));
+        } catch (err) {
+          sources.push({ label: entry, error: (err as Error).message });
+        }
+      }
+      continue;
+    }
     if (REMOTE_SCRIPT.test(input)) {
       sources.push(...await scriptSources([input], cwd));
       continue;
@@ -183,11 +264,13 @@ export function validateLines(label: string, prepared: PreparedScript): { lines:
  * `validate` over `sources`: each script's lines, then the counts.
  * Exits 1 when any is invalid.
  */
-export async function validateAll(sources: ScriptSource[], roots: ScriptRoots, out: (line: string) => void, json = false): Promise<number> {
+export async function validateAll(sources: ValidateSource[], roots: ScriptRoots, out: (line: string) => void, json = false): Promise<number> {
   const counts: Record<ValidateVerdict, number> = { ok: 0, invalid: 0, unchecked: 0 };
   const results: ValidateData['results'] = [];
   for (const source of sources) {
-    const { lines, verdict, error, warnings } = validateLines(source.label, await prepareSource(source, roots));
+    const { lines, verdict, error, warnings } = 'error' in source
+      ? { lines: [`${INVALID_PREFIX}${source.label}`, asError(`    ${source.error}`)], verdict: 'invalid' as const, error: source.error, warnings: [] }
+      : validateLines(source.label, await prepareSource(source, roots));
     counts[verdict]++;
     if (json) {
       results.push({ script: source.label, verdict, ...(error ? { error } : {}), ...(warnings.length > 0 ? { warnings } : {}) });
@@ -205,7 +288,7 @@ export async function validateAll(sources: ScriptSource[], roots: ScriptRoots, o
 }
 
 /** The line after `validate`'s scripts. */
-function validateSummary(counts: Record<ValidateVerdict, number>): string {
+export function validateSummary(counts: Record<ValidateVerdict, number>): string {
   return `${counts.ok} ok, ${counts.invalid} invalid${counts.unchecked ? `, ${counts.unchecked} unchecked` : ''}`;
 }
 

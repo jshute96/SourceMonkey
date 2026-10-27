@@ -23,9 +23,12 @@ What the rules mean, and how other managers read them:
   registers: `matches` for `@match`, `includeGlobs` / `excludeGlobs`
   for globs.
 - **The wrapper's in-page matcher** (`userscript-prelude.js`) narrows
-  that wherever Chrome can't say a rule exactly. It mirrors
-  `url-match.ts` and must agree with it; the prelude cases in
-  `tests/unit/injector.test.mjs` check the two side by side.
+  that wherever Chrome can't say a rule exactly.
+  - The worker builds its regexes at registration (`pageMatcher` in
+    `url-match.ts`), so the page only tests them against its URL.
+  - The prelude cases in `tests/unit/injector.test.mjs` and the
+    `pageMatcher` cases in `tests/unit/url-match.test.mjs` check it
+    agrees with `urlMatchesScript`.
 
 ### Lenient readings (`canonicalMatchPatterns`)
 
@@ -50,8 +53,9 @@ Chrome's spelling, done before anything else looks at a pattern.
   registration**, so all three see one pattern. Chrome registers the
   rewritten form: an unrewritten pattern would be refused, and the
   script would stop running where its author said.
-- **`userscript-prelude.js` carries the same rewrite**, because the
-  wrapper-side matcher has to agree with what the SW registered.
+- **The wrapper's regexes are built from the rewritten form too**
+  (`pageMatcher`), so the in-page matcher agrees with what the SW
+  registered.
 - **Not measured against a real Tampermonkey** in the suite: that
   needs the cross-manager browser profile, which is set up by hand
   (see [cross-manager-testing.md](cross-manager-testing.md)).

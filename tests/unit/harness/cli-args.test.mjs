@@ -114,7 +114,7 @@ test('match gives a script that can never match its per-URL answer, and a broken
   }
 });
 
-test('validate and match fetch a script given as a URL, and run refuses one', async () => {
+test('validate and match fetch a script given as a URL, and start takes one', async () => {
   // Async, not spawnSync: the server answers from this same process.
   const { createServer } = await import('node:http');
   const { readFileSync } = await import('node:fs');
@@ -152,9 +152,10 @@ test('validate and match fetch a script given as a URL, and run refuses one', as
     const html = await cli('validate', `${base}/page.user.js`);
     assert.equal(html.code, 1);
     assert.match(html.stderr, /^Could not fetch \S+: The server returned an HTML page, not JavaScript \(Content-Type "text\/html"\); the link may be dead or behind a login\n$/);
+    // Taken: what's refused is only a start with nothing after it to keep it going.
     const run = await cli('start', url);
     assert.equal(run.code, 2);
-    assert.equal(run.stderr.split('\n')[0], `ERROR: The start command loads scripts from files, and ${url} is a URL. Save it to a file first.`);
+    assert.match(run.stderr.split('\n')[0], /^ERROR: The start command with nothing after it would stop the run/);
   } finally {
     server.close();
   }
@@ -339,13 +340,12 @@ test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
   assert.deepEqual(cli('tabs'), none);
   // status needs no run: it says there are none, after the browser the line names.
   const bare = spawnSync(process.execPath, [CLI, 'status'], { encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
-  assert.equal(bare.stdout, 'No current run. (Use `start` or `attach` to connect to one.)\n\nNo other active runs\n');
+  assert.equal(bare.stdout, 'No current run. (Use `start` or `attach` to connect to one.)\nNo other active runs\n');
   const status = spawnSync(process.execPath, [CLI, '--existing-browser', '--browser', '1', 'status'], { encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
   assert.equal(status.status, 0);
   assert.equal(status.stdout, [
     'No current run. (Use `start` or `attach` to connect to one.)',
     'Browser: None answering at 127.0.0.1:1. Start one with `sm-dev --open-browser --browser 127.0.0.1:1`.',
-    '',
     'No other active runs',
     '',
   ].join('\n'));
@@ -406,13 +406,12 @@ test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
   assert.deepEqual(cli('tabs'), none);
   // status needs no run: it says there are none, after the browser the line names.
   const bare = spawnSync(process.execPath, [CLI, 'status'], { encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
-  assert.equal(bare.stdout, 'No current run. (Use `start` or `attach` to connect to one.)\n\nNo other active runs\n');
+  assert.equal(bare.stdout, 'No current run. (Use `start` or `attach` to connect to one.)\nNo other active runs\n');
   const status = spawnSync(process.execPath, [CLI, '--existing-browser', '--browser', '1', 'status'], { encoding: 'utf8', env: { ...process.env, SM_DEV_RUNS_DIR: RUNS_DIR } });
   assert.equal(status.status, 0);
   assert.equal(status.stdout, [
     'No current run. (Use `start` or `attach` to connect to one.)',
     'Browser: None answering at 127.0.0.1:1. Start one with `sm-dev --open-browser --browser 127.0.0.1:1`.',
-    '',
     'No other active runs',
     '',
   ].join('\n'));

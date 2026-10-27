@@ -7,7 +7,7 @@
 //     focuses the tab that is already open instead of stacking up
 //     copies, and scrolls it to whatever the link pointed at.
 
-import type { Page } from '@playwright/test';
+import type { Page, Route } from '@playwright/test';
 import { closeCollectionsTabs, test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 
@@ -162,5 +162,68 @@ test.describe('cross-page links', () => {
 
     await options.close();
     await collections.close();
+  });
+
+  test('Help opens the README in a new tab, by a plain or a middle click', async ({
+    extensionContext, extensionId,
+  }) => {
+    // Answered here, so the test doesn't reach GitHub.
+    const help = (r: Route) => r.fulfill({ body: 'help' });
+    await extensionContext.route('https://github.com/**', help);
+    for (const file of ['collections.html', 'options.html']) {
+      const page = await extensionContext.newPage();
+      await page.goto(`chrome-extension://${extensionId}/${file}`);
+      for (const button of ['left', 'middle'] as const) {
+        const [opened] = await Promise.all([
+          extensionContext.waitForEvent('page'),
+          page.locator('#open-help').click({ button }),
+        ]);
+        await opened.waitForURL('https://github.com/jshute96/SourceMonkey#readme');
+        await opened.close();
+      }
+      await page.close();
+    }
+    await extensionContext.unroute('https://github.com/**', help);
+  });
+
+  test('a middle click on Options or Collections opens another tab beside this one, and Shift a window', async ({
+    extensionContext, extensionId, getServiceWorker,
+  }) => {
+    const sw = await getServiceWorker();
+    const tabsOf = (file: string) => sw.evaluate(async (f) => (await chrome.tabs.query({}))
+      .filter((t) => (t.pendingUrl ?? t.url ?? '').includes(f))
+      .map((t) => ({ id: t.id!, index: t.index, windowId: t.windowId, active: t.active })), file);
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const options = await extensionContext.newPage();
+    await options.goto(`chrome-extension://${extensionId}/options.html`);
+    await page.bringToFront();
+    const here = (await tabsOf('collections.html')).find((t) => t.active)!;
+    // Moved off the slot right of `here`, so only the new tab can be there.
+    await sw.evaluate((id) => chrome.tabs.move(id, { index: -1 }), (await tabsOf('options.html'))[0].id);
+    const before = new Set((await tabsOf('options.html')).map((t) => t.id));
+    const added = async (file: string, known: Set<number>) =>
+      (await tabsOf(file)).filter((t) => !known.has(t.id));
+
+    // A second Options tab, though one is open: a plain click would reuse it.
+    await page.locator('#open-options').click({ button: 'middle' });
+    await expect.poll(async () => (await added('options.html', before)).length).toBe(1);
+    const [beside] = await added('options.html', before);
+    expect(beside).toMatchObject({ index: here.index + 1, windowId: here.windowId, active: false });
+
+    before.add(beside.id);
+    await page.locator('#open-options').click({ modifiers: ['Shift'] });
+    await expect.poll(async () => (await added('options.html', before)).length).toBe(1);
+    const [inWindow] = await added('options.html', before);
+    expect(inWindow.windowId).not.toBe(here.windowId);
+
+    const collections = new Set((await tabsOf('collections.html')).map((t) => t.id));
+    await options.bringToFront();
+    await options.locator('#open-collections').click({ button: 'middle' });
+    await expect.poll(async () => (await added('collections.html', collections)).length).toBe(1);
+
+    for (const p of extensionContext.pages()) {
+      if (/(options|collections)\.html/.test(p.url())) await p.close();
+    }
   });
 });

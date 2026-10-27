@@ -12,6 +12,14 @@ One-line descriptions of every source file, grouped by directory.
 | `LICENSE` | MIT license text |
 | `package.json` | Node project manifest, scripts, devDependencies |
 | `pnpm-lock.yaml` | pnpm dependency lockfile |
+| `.pnpmfile.cjs` | pnpm hook run when packing for npm: drops `scripts`, and sets `sourcemonkey`'s npm description |
+| `.npmrc` | Makes npm show install scripts' output, so the pnpm-only `preinstall` check explains itself under npm or npx |
+| `.nojekyll` | Empty marker so GitHub Pages serves the repo's files as they are, without Jekyll processing |
+| `packages/sourcemonkey/README.md` | The `sourcemonkey` npm page: the tools, install, and a first run and test |
+| `pnpm-workspace.yaml` | pnpm workspace: the root `sourcemonkey` package plus `packages/sm-dev` |
+| `packages/sm-dev/package.json` | The `sm-dev` npm package, a wrapper over `sourcemonkey` so `npx sm-dev` works |
+| `packages/sm-dev/cli.js` | The wrapper's `sm-dev` command: imports and so runs `sourcemonkey`'s CLI |
+| `packages/sm-dev/README.md` | The wrapper's npm page: what it is, and to install `sourcemonkey` in a repo instead |
 | `tsconfig.json` | TypeScript compiler config for the extension build |
 | `tsconfig.lib.json` | The `sourcemonkey` package build: every module plus the harness, with declarations, into `lib/` |
 | `tsconfig.tests.json` | Typecheck-only config extending the build one to cover `tests/` (`pnpm run typecheck`) |
@@ -36,18 +44,13 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `scripts/build.mjs` | Build the extension into `dist/` (assets + `tsc`) and the package into `lib/` (optional `--watch`) |
 | `scripts/sm-dev` | Runs the harness's command line from this checkout, from the built `lib/` (it never builds) |
-| `scripts/zip_extension.sh` | Build and zip the extension for distribution, packing all of `dist/` |
-| `scripts/release-extension.sh` | Cut a `vX.Y.Z` GitHub release: version/branch/tag checks, zip, push tag, `gh release create` (draft by default) |
+| `scripts/zip_extension.sh` | Build and zip `dist/` for distribution; release builds add a Chrome Web Store zip without `key` |
+| `scripts/pack-npm.sh` | Pack both npm packages into `.tgz` files, with `packages/sourcemonkey/README.md` as `sourcemonkey`'s README |
+| `scripts/release.sh` | Cut a `vX.Y.Z` release: checks, zips and package `.tgz`s, tag, GitHub release (draft by default), npm publish |
 | `scripts/serve-examples.mjs` | Local HTTP server for `tests/examples/`, including the `/__slow/?ms=N` delay route the `headers-run-at` demo needs |
 | `scripts/make_manifest.sh` | Scan the current dir for `*.user.js` and emit a SourceMonkey HTTP-manifest JSON array to stdout (redirect to `script_manifest.json`) |
-| `scripts/open-test-browser-with-SourceMonkey.sh` | Launch Chromium with the unpacked SM extension + CDP port 9222 for cross-manager Playwright runs |
-| `scripts/open-test-browser.sh` | Launch Chromium with a named manager's persistent profile (TM or VM, installed manually) + its CDP port for that Playwright project |
-| `scripts/sync-manager-scripts.mjs` | Standalone CLI that connects to the running TM or VM browser via CDP and installs/updates every `*.user.js` under `tests/examples/` |
 | `scripts/update-public-suffixes.mjs` | Regenerates `src/public-suffixes.ts` from the ICANN section of the Public Suffix List (run by hand, output committed) |
 | `scripts/clean-stale-test-profiles.mjs` | Sweep, run before the e2e suites, of `/tmp` profiles and data dirs left by test runs and temp browsers that died early |
-| `scripts/e2e-manager-preflight.mjs` | Gate before `test:e2e:tm` / `:vm`: probes the manager's CDP port, pre-grants TM's `downloads`, opens or asks to close the browser |
-| `scripts/inspect-tm-dashboard.mjs` | Diagnostic: dumps every visible row on the TM dashboard with cell classes — use when listInstalled selectors stop working |
-| `scripts/inspect-tm-install.mjs` | Diagnostic: drives one TM install and dumps the confirmation-page buttons — use when the Install-button selector stops working |
 
 ## Source (`src/`)
 
@@ -75,7 +78,7 @@ and `lib/`.
 | `src/github-urls.ts` | Maps a GitHub raw URL to its github.com page |
 | `src/github-auth.ts` | Persisted GitHub PAT cache + `githubAuthHeaders(url)` host-gated helper for attaching `Authorization: Bearer …` to api/raw/github.com-raw fetches |
 | `src/markup-response.ts` | Detects an HTML page served where JavaScript was expected (Content-Type + leading `<`), and words the failure |
-| `src/collection-scan.ts` | Cycle-neutral scan primitives shared by `directories.ts` and `github-provider.ts` |
+| `src/collection-scan.ts` | Scan primitives shared by the collection scanners, and the manifest parser and entry resolver sm-dev uses too |
 | `src/script-build.ts` | Builds a script row from text: header parse and validation, matching, startup logs, `@require` loading, parse check |
 | `src/script-display.ts` | Pure display helpers: size/status/storage-usage formatting, the shared status view + viewer / preview / compare URLs, the script label and full source, slash-aware wrapping, name/path decoding, SRI-fragment strip, enable-toggle tooltip, pending-on-disk summary |
 | `src/script-icon.ts` | A script's own `@icon`: which header tag declares it, and the size and type rules an icon file must meet |
@@ -85,7 +88,7 @@ and `lib/`.
 | `src/stack-link.ts` | Pure stack-ref helpers: parse refs in a log message, decode our URLs for reading, map a stack's lines back to its files |
 | `src/script-source-url.ts` | Canonical `sourcemonkey://SourceMonkey/…` URL builders for every `{code}` entry — main, config, prelude, require, plus page-wide bridge / GM runtime |
 | `src/userscript-header.ts` | Parser for the `// ==UserScript== … // ==/UserScript==` metadata block + header/body splitter, with per-tag line numbers |
-| `src/url-match.ts` | Pure URL-matching predicate for `@match` / `@include` / `@exclude` patterns (incl. `.tld` hosts), plus the `@match` grammar check and its lenient rewrites |
+| `src/url-match.ts` | Pure URL-matching predicate for `@match` / `@include` / `@exclude` patterns (incl. `.tld` hosts), the `@match` grammar check and lenient rewrites, and the wrapper's prebuilt regexes |
 | `src/public-suffixes.ts` | Generated: the ICANN public suffix rules that `.tld` host patterns match, one per line |
 | `src/unsafe-window-use.ts` | Text scan for an ungranted `unsafeWindow` reference, ignoring a source that declares the name itself |
 | `src/runtime-messages.ts` | The `sm:*` report types injected scripts send the service worker, plus its `sm:manual` for sm-dev |
@@ -120,9 +123,9 @@ stay directly in `src/` so the extension's URLs have no folder in them.
 | `src/manifest.json` | MV3 extension manifest |
 | `src/parse-sandbox.html` | Sandboxed page (manifest `sandbox.pages`) — the only context allowed `'unsafe-eval'` / `'unsafe-inline'` |
 | `src/offscreen.html` | Offscreen document markup — hosts the sandboxed parse iframe |
-| `src/collections.html` | Collections page markup: header bar with Options / Refresh All, Add field, file-access banner slot, collection list |
+| `src/collections.html` | Collections page markup: header bar with Help / Options / Refresh All, Add field, file-access banner slot, collection list |
 | `src/popup.html` | Toolbar popup markup ("Active scripts"): header bar with Open and a ⋯ menu, banners (sm-dev, reload), script area |
-| `src/options.html` | Options page markup: header bar with the Collections link, settings list (link-capture toggle, debug-logging toggle), local search-roots box + file-access banner slot, Downloads-folder field, GitHub auth token, storage-usage table with links to the debug pages |
+| `src/options.html` | Options page markup: header bar with Help / Collections, settings list (link-capture toggle, debug-logging toggle), local search-roots box + file-access banner slot, Downloads-folder field, GitHub auth token, storage-usage table with links to the debug pages |
 | `src/userscript.html` | Userscript viewer markup: header bar, status box (banner + versions panel), controls row, install callout + preview actions, details panel, tab strip, code box, log pane |
 | `src/compare.html` | Compare page markup: header bar, the fields table slot, view controls, tab strip, diff box |
 | `src/connect-prompt.html` | Connection prompt window markup: the standard header bar, the script and site, and the one-time and kept choices |
@@ -164,7 +167,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/solo-click.ts` | Enable checkbox tooltip with its multi-enable hint, and the Ctrl/Cmd-click reader that opts out of the sweep |
 | `src/extension/options.ts` | Options page controller — boolean setting checkboxes, local search-roots box (parse + existence checks, refresh on save), Downloads-folder field, GitHub-token controls, storage-usage table |
 | `src/extension/page-heading.ts` | Import-free module holding the viewer heading's vocabulary and DOM, and the early paint that names the header bar before the page's first paint |
-| `src/extension/page-links.ts` | Cross-page links between extension pages: the named Collections / Options tabs and the header bar's home link |
+| `src/extension/page-links.ts` | Cross-page links between extension pages: the named Collections / Options tabs, the header bar's home link and buttons |
 | `src/extension/user-scripts-access.ts` | "Allow User Scripts" probe plus the shared heading and fix line for the collections page and popup |
 | `src/extension/userscript.ts` | Userscript viewer controller — installed mode (`?script=`), preview mode (`?preview=`), in-page switching between copies, the Collection row's Move button, the controls row's Local copy / delete-copy buttons, live `storage` watchers, log pane |
 | `src/extension/compare.ts` | Compare page controller — loads two copies (stored, a preview's download, or an import's backup copy), the fields table with its swap, per-file tabs, unified / side-by-side diff rendering, change-block arrows |
@@ -272,6 +275,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/saved-pages.ts` | Serving a saved page at its URL for `--from-saved` and `serveHtml`, with its `_files` folder |
 | `src/harness/checks.ts` | `match` and `validate`'s shared half: finding the scripts named, and the lines each prints |
 | `src/harness/path-args.ts` | Globs (`*`, `**`) and directory searches for sm-dev's file arguments |
+| `src/harness/playwright-chromium.ts` | Loads the repo's Playwright or sm-dev's own, and explains a missing Chromium build and the fix |
 | `src/harness/command-lines.ts` | Input lines into a run's commands: multi-line `{{ ... }}` blocks (`eval`, `set`, `type`, `cdp`), comments, sent lists |
 | `src/harness/command-list.ts` | Every sm-dev command in one list, in the help's named sections, with subcommands, their options, and the help views |
 | `src/harness/output-style.ts` | Output markup by role (IDs, URLs, commands), sm-dev's message prefixes, tables, and painting lines for a terminal |
@@ -319,12 +323,13 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/fixtures/extension.ts` | Playwright fixture: launches Chromium with the extension, exposes SW handle, HTTP fixture server, and the `sm` SW-api proxy; `testWithBrowserDownloads` variant leaves downloads to Chrome, `testWithBackForwardCache` keeps the back/forward cache |
 | `tests/fixtures/harness.ts` | Fixtures for the `sm-dev` project: the package fixture plus fixture server, scripts dir, `loadScript`, `watchPage` |
 | `tests/fixtures/debug-browser.ts` | A headless Chromium with SourceMonkey, a CDP debugging port and a temp profile, stopped with its helper processes |
-| `tests/fixtures/manager.ts` | Manager-agnostic Playwright fixture for the examples suite: SM (unpacked build) or TM/VM (persistent CWS profile) per project metadata |
-| `tests/fixtures/managers.mjs` | Per-manager table (profile dir, CDP port, Web Store ID, env vars) shared by the fixture, preflight, and CLIs |
-| `tests/fixtures/userscript-files.mjs` | Finds `*.user.js` files on disk and reads their `@name`/`@version`, shared by both manager drivers and the sync CLI |
+| `tests/fixtures/manager.ts` | Manager-agnostic Playwright fixture for the examples suite: SM (unpacked build) or TM/VM (fresh browser) per project metadata |
+| `tests/fixtures/managers.mjs` | Per-manager table (label, headed env var, test-browser setup) for the TM and VM test fixtures |
+| `tests/fixtures/userscript-files.mjs` | Finds `*.user.js` files on disk and reads their `@name`/`@version`, shared by both manager drivers |
 | `tests/fixtures/sourcemonkey-launch.ts` | Launch (through sm-dev's launcher), SW-handle and HTTP-fixture-server helpers shared by `extension.ts` and `manager.ts` |
-| `tests/fixtures/slow-route.mjs` | `/__slow/?ms=N` delay route, static content-types, and the shared static-file server used by the fixture server and the example/sync CLIs |
-| `tests/fixtures/tampermonkey-driver.mjs` | TM dashboard driver: lists installed scripts, installs/updates via import-from-file, auto-OKs TM permission prompts |
+| `tests/fixtures/manager-launch.ts` | Launches a new browser and temp profile with TM or VM from sm-dev's cache, with its grants pre-written |
+| `tests/fixtures/slow-route.mjs` | `/__slow/?ms=N` delay route, static content-types, and the shared static-file server used by the fixture server and `scripts/serve-examples.mjs` |
+| `tests/fixtures/tampermonkey-driver.mjs` | TM dashboard driver: lists installed scripts, installs via import-from-file, auto-OKs TM permission prompts |
 | `tests/fixtures/violentmonkey-driver.mjs` | VM driver: lists and installs scripts through VM's own background commands, installing from a fixture-server URL |
 | `tests/fixtures/viewer-selectors.ts` | Userscript-viewer selectors shared by several specs, where the right element isn't the obvious one |
 | `tests/fixtures/extension-id.ts` | Computes Chrome's deterministic unpacked-extension ID from an absolute path |
@@ -456,6 +461,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/parse-sandbox-host.test.mjs` | Unit tests for `isParseVerdict` — only the three real statuses pass, so an odd reply can't read as `invalid` |
 | `tests/unit/parse-location.test.mjs` | Unit tests for probe selection and line mapping, driven by positions Chromium really reported |
 | `tests/unit/parse-check-node.test.mjs` | Unit tests for the Node parse checker: verdict, both probes' positions, and the two probe-selection routes |
+| `tests/unit/playwright-chromium.test.mjs` | The message for a missing Playwright Chromium build: the build wanted, those installed, the fix |
 | `tests/unit/validate-corpus.test.mjs` | Drives the corpus validator as a subprocess over a hand-built offline dependency tree |
 | `tests/unit/diagnostic-location.test.mjs` | Unit tests for the diagnostic label + validator, especially what they do with a partial location |
 | `tests/unit/file-loader.test.mjs` | Unit tests for ref resolution (schemes, relative paths, traversal) and for the reason each resolve/fetch failure reports |
@@ -481,7 +487,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/channel.test.mjs` | Unit tests for the channel key's registry gate, its document keys, and that our pieces meet only there |
 | `tests/unit/channel-helpers.mjs` | Test helpers for the channel key: the registry, event names, a gate over a test's stub |
 | `tests/unit/injector.test.mjs` | Unit tests for the injector: spec build, active-spec collection, refusal logging, retry limits, sync serialization and scoping |
-| `tests/unit/generated-wrappers.test.mjs` | Guard test: each minified wrapper (`WRAPPER_*`) is a single line of valid JS with load-bearing tokens intact |
+| `tests/unit/generated-wrappers.test.mjs` | Guard test: each minified wrapper (`WRAPPER_*`) is valid JS with load-bearing tokens intact |
 | `tests/unit/source-layout.test.mjs` | Checks the `src/` split: what `lib/` and `dist/` compile, and that shared modules are shared |
 | `tests/unit/page-writes.test.mjs` | No page-only module imports a store writer directly or writes storage itself |
 | `tests/unit/examples.test.mjs` | Example pages keep the footer, scripts are named `SourceMonkey example: <dir>: …`, each dir is listed in README and index |
@@ -560,6 +566,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/missing-scripts.test.mjs` | Unit tests for the never-started Log warnings, their hints, and the CSP `sandbox` check |
 | `tests/examples/README.md` | Overview of the interactive userscript example pages; how to serve and use as a cross-manager compliance reference |
 | `tests/examples/index.html` | Index page linking the per-example subdirs |
+| `tests/examples/script_manifest.json` | Manifest listing every example script, so the examples load from a manifest URL; regenerated with `make_manifest.sh` |
 | `tests/examples/examples.css` | Shared styling for all example pages |
 | `tests/examples/<api>/` | Each example dir holds `<api>.html`, `<api>.user.js`, and `<api>.spec.ts` — the page, the userscript that drives it, and its Playwright e2e |
 | `tests/examples/gm-info/` | `GM_info` example: a header-heavy script hands its `GM_info` to the page, which renders a cross-manager comparison table |
@@ -585,9 +592,10 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/examples/headers-inject-into/` | `@inject-into` header example: MAIN-world (`page`) vs USER_SCRIPT-world (`content`) userscripts showing window-isolation |
 | `tests/examples/unsafe-window/` | `unsafeWindow` example: reading/calling/writing page globals, the isolated-world variant where it can't work, and the ungranted-reference variant |
 | `tests/examples/use-strict/` | Top-level `'use strict'` example: strict mode in both worlds, and which file's directive counts with a `@require` |
-| `tests/examples/require-scope/` | `@require` scope example: a shared lib's top-level class/const/function reaching both injection worlds |
+| `tests/examples/require-scope/` | `@require` scope example: a shared lib reaching both injection worlds, plus relative `@require` paths |
 | `tests/examples/xmlhttp-connect/` | `@connect` example: scripts declaring none, one site, and `*`, with buttons to try each site and prompt answer |
 | `tests/bad-examples/` | Deliberately broken `*.user.js` files (plus the `@require` libraries some of them need, and the ones that merely warn) for the SM-only spec; outside `tests/examples/` so the TM loader doesn't see them |
+| `tests/bad-examples/script_manifest.json` | Manifest listing every script in `tests/bad-examples/`; regenerated with `make_manifest.sh` |
 | `tests/userscripts/` | Userscripts for manual testing, not loaded by default |
 | `tests/userscripts/no-click-nav.user.js` | Follows links, goes back, or opens a URL after a delay, so it works with the popup open |
 | `tests/e2e/bad-scripts.spec.ts` | SM-only e2e: each bad script gets the expected status, error location, and byte-for-byte viewer render |
@@ -604,6 +612,7 @@ unit tests.
 | `tests/unit/harness/run-log.test.mjs` | Unit tests for a run's log files: the timestamp format and unique names |
 | `tests/unit/harness/wait.test.mjs` | Unit tests for `wait`'s delays and the message when a tab doesn't settle |
 | `tests/unit/harness/path-args.test.mjs` | Unit tests for sm-dev's glob matching and file argument expansion |
+| `tests/unit/harness/manifest-args.test.mjs` | Unit tests for sm-dev's manifest arguments: which words are manifests, and the scripts one lists |
 | `tests/unit/harness/cli-args.test.mjs` | Unit tests for `sm-dev`'s command line: `start` flags, `match` output, scripts by URL, `--run`, `--` lines, misuse |
 | `tests/unit/harness/page-commands.test.mjs` | Unit tests for how the page commands name keys for `key`, read `click`'s flags and `cdp` calls, and word errors |
 | `tests/unit/harness/command-args.test.mjs` | Unit tests for the command parser: quotes, flags with `=` or not, tabs, text, forms, refused arguments |
@@ -662,7 +671,7 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 | `tests/greasyfork-examples/validate-corpus.mjs` | CLI that runs the install-time checks over the corpus offline and groups failures, with JSON output |
 | `tests/greasyfork-examples/record-results.mjs` | CLI that records findings in `corpus.json`: imports offline validation, sets test results, tags and notes, defines hand-added tags |
 | `tests/greasyfork-examples/serve-results.mjs` | Serves `results.html`, `corpus.json`, `corpus-help.js` and the downloaded scripts on localhost, for the results page |
-| `tests/greasyfork-examples/show-on-GreasyFork.user.js` | Userscript that shows corpus validation and test status beside each script's stats on Greasy Fork |
+| `tests/greasyfork-examples/show-on-GreasyFork.user.js` | Userscript that shows corpus validation and test status beside each script's stats on Greasy Fork, from GitHub Pages or a local server |
 | `tests/greasyfork-examples/corpus-help.js` | One-sentence descriptions of corpus test statuses, reasons and built-in tags, the tooltips in `results.html` and the Greasy Fork userscript |
 | `tests/greasyfork-examples/results.html` | Static page that reads `corpus.json` into a sortable, filterable table of findings, a summary of counts, and a code viewer |
 | `tests/greasyfork-examples/download-scripts.mjs` | CLI that downloads the corpus's userscripts plus their `@require` / `@resource` dependencies into a URL-shaped tree |
@@ -725,7 +734,7 @@ For userscript repos to install, so their coding agents know how to use `sm-dev`
 | `docs/corpus-validation.md` | The corpus validator: offline dependency roots, how the report groups failures, JSON records |
 | `docs/corpus-validation-results.md` | Snapshot of the validator's findings over the example suites and the GreasyFork top-2000 |
 | `docs/testing.md` | Unit + e2e test harness layout, the SW test surface, and the Chrome-flags workaround for headless user-scripts |
-| `docs/cross-manager-testing.md` | How the examples suite runs against Tampermonkey and Violentmonkey: persistent profiles, CDP attach, the two install mechanisms, fragile bits |
+| `docs/cross-manager-testing.md` | How the examples suite runs against Tampermonkey and Violentmonkey: the fresh test browser, the two install mechanisms, fragile bits |
 | `docs/cross-manager-test-results.md` | Snapshot of what passes / skips / fails under Tampermonkey and Violentmonkey today, with triage notes for each divergence |
 | `docs/redirect-page.md` | Canonical GitHub-hosted "front door" the extension watches for; deep-link target that rewrites to `chrome-extension://...` |
 | `docs/deep-link.md` | Design of the external-page → extension-page redirect (GitHub URL + `webNavigation` + allowlisted `page` param) |
@@ -747,3 +756,5 @@ For userscript repos to install, so their coding agents know how to use `sm-dev`
 | `docs/sm-dev-logs.md` | A run's logs: the sources, what the stream, `logs` and `wait log` show, positions, and attributing lines |
 | `docs/sm-dev-json.md` | sm-dev's `--json` output: how it prints, each command's result type, and examples |
 | `docs/harness-guide.md` | User-facing: what a userscript repo installs, the `sm-dev` commands, the Playwright fixture API, known limitations |
+| `docs/releasing.md` | How to cut a release: the GitHub release, the npm packages and the Chrome Web Store upload |
+| `docs/chrome-web-store/` | Files for the Chrome Web Store listing: the description, screenshots, and the promo tile with the source that renders it |
