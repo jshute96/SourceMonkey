@@ -186,6 +186,36 @@ test.describe('sm-dev typed commands', () => {
     await expect.poll(() => host.getValue(script.id!, 'said')).toBe('hi');
   });
 
+  test('run-now runs a script again over the running copy, with a warning, and status says so', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {
+    const script = await loadScript({
+      relativePath: 'again.user.js',
+      meta: { name: 'Again', match: ['*://*/target.html'], runAt: 'document-start', grant: ['GM_getValue', 'GM_setValue'] },
+      body: `GM_setValue('runs', GM_getValue('runs', 0) + 1);`,
+    });
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect.poll(() => host.getValue(script.id!, 'runs')).toBe(1);
+
+    const lines: string[] = [];
+    const tabs = [{ n: 1, page, link: attachment }];
+    const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(plainLine(l)), stop: () => undefined };
+    const run = async (line: string) => {
+      lines.length = 0;
+      await runConsoleCommand(line, ctx);
+      return [...lines];
+    };
+    const row = `* 1: Again (${scriptsDir.path}/again.user.js)`;
+
+    expect(await run('run-now')).toEqual([
+      '[sm-dev] Reran Again on T1',
+      '[sm-dev] Warning: This script runs at document-start, but the page has already loaded',
+      '[sm-dev] Warning: A copy of this script is already running here. Its listeners, timers and changes to the page stay.',
+    ]);
+    await expect.poll(() => host.getValue(script.id!, 'runs')).toBe(2);
+    await expect.poll(() => host.manualRunOf(attachment, script.id!)).toBe('rerun');
+    expect(await run('scripts')).toEqual(['Loaded scripts (with status on active tab T1):', row, '     Active (rerun manually)']);
+    expect(await run('run-now T1.Nobody')).toEqual(['[sm-dev] No loaded script matches Nobody. Use `scripts` to list them.']);
+  });
+
   test('a dialog a menu command opens waits for accept, and blocks page commands meanwhile', async ({ page, fixtureServer, host, attachment, loadScript }) => {
     const script = await loadScript({
       relativePath: 'ask.user.js',

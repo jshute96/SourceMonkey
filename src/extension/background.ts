@@ -33,6 +33,7 @@ import {
   scriptGrantsSubsystem,
   scriptWorld,
   indexedScript,
+  matchScriptForUrl,
   type MatchedScript,
 } from './match-index.js';
 import { BRIDGE_DENIED, STORAGE_SUBSYSTEMS, type ApiSubsystem } from '../gm-api-catalog.js';
@@ -87,6 +88,7 @@ import {
   buildSwapEvalBody,
   executeManualRun,
   isManualRunCandidate,
+  normalizeDeclaredRunAt,
   needsGmRuntime,
   forgetRegistrationState,
   isUserScriptsAvailable,
@@ -96,6 +98,7 @@ import {
   syncRegistrations,
   userScriptsUsable,
   unregisterAllRegistrations,
+  type ManualRunInjection,
   type SyncScope,
 } from './injector.js';
 import { documentKey, loadChannelKey, rekey } from './channel.js';
@@ -129,6 +132,7 @@ import {
   noteScriptWarning,
   pruneFrameRuns,
   runsHere,
+  runsIn,
   setCurrentDoc,
   writeDocState,
   type ActualStatus,
@@ -248,7 +252,8 @@ import {
 } from './sm-dev-link.js';
 import {
   MANUAL_RUN_COLLECTION_OFF, MANUAL_RUN_NOT_HERE, MANUAL_RUN_NOT_INSTALLED, MANUAL_RUN_NOT_MANUAL, MANUAL_RUN_PAGE,
-  MANUAL_RUN_PAGE_CHANGED, MANUAL_RUN_SCRIPT_OFF, MANUAL_RUN_SM_DEV, MANUAL_RUN_TAB_GONE,
+  MANUAL_RUN_PAGE_CHANGED, MANUAL_RUN_SCRIPT_OFF, MANUAL_RUN_SM_DEV, MANUAL_RUN_TAB_GONE, RUN_NOW_NOT_HERE,
+  type RunNowResult,
   SKIP_REASON_SM_DEV, SM_DEV_PROTOCOL, type ManagedCollection, type ManagedScript, type ProtocolVersion,
 } from '../sm-dev-protocol.js';
 import { managedChanges } from './managed-changes.js';
@@ -328,6 +333,7 @@ import {
 } from './gm-download.js';
 import {
   clearTab as clearMenuCommandsForTab,
+  clearScriptCommands,
   findMenuCommand,
   menuCommandGroup,
   getMenuCommandsForTab,
@@ -358,6 +364,7 @@ import {
 } from './gm-tab-data.js';
 import { dropCommandsOpen, getCommandsOpen, setCommandsOpen } from './popup-commands-open.js';
 import {
+  asSentence,
   buildPopupView,
   POPUP_CHANGED_MESSAGE,
   POPUP_CLOSE_MESSAGE,
@@ -370,6 +377,7 @@ import {
   POPUP_SET_ENABLED_MESSAGE,
   POPUP_SET_COMMANDS_OPEN_MESSAGE,
   RELOAD_NO_SCRIPTS_LABEL,
+  runNowWarnings,
   type PopupChangedMessage,
   type PopupCloseMessage,
   type PopupClosingMessage,
@@ -382,6 +390,7 @@ import {
   type PopupView,
   type PopupViewRequest,
   type ReloadMode,
+  type RunNowRisks,
 } from './popup-view.js';
 import { identityKey } from './script-identity.js';
 import { setCollectionEnabledExclusive, setScriptEnabledExclusive } from './script-enablement.js';
@@ -642,9 +651,13 @@ interface SourceMonkeyApi {
   // Run a manual script (`@run-at context-menu`) on `tabId` now: the
   // popup's "Run this script", which sm-dev's `menu` fires too.
   runManualScript: (tabId: number, scriptId: string) => Promise<{ ok: boolean; error?: string }>;
+  // Run any script on `tabId` now: the popup's "Run now", sm-dev's
+  // `run-now` (protocol 3.1). See docs/run-now.md.
+  runScriptNow: (tabId: number, scriptId: string) => Promise<RunNowResult>;
   // Drives the popup's "Reload page with no userscripts" for `tabId`
   // — the same handler the real click runs.
   reloadWithoutScripts: (tabId: number) => Promise<void>;
+  reloadWithScript: (tabId: number, scriptId: string) => Promise<void>;
   // Drives the toolbar-click handler for a click on `tabId`, which
   // Playwright can't click. Two calls inside the double-click window
   // are a double click.
@@ -885,9 +898,21 @@ const api: SourceMonkeyApi = {
     // assertions can rely on the result instead of polling page state.
     return await dispatchMenuCommand(tabId, scriptId, commandId, documentId);
   },
-  runManualScript: (tabId, scriptId) => runManualScript(tabId, scriptId),
+  // Its answer as before protocol 3.1, for an older sm-dev.
+  runManualScript: async (tabId, scriptId) => {
+    const result = await runManualScript(tabId, scriptId);
+    return result.ok ? { ok: true } : result;
+  },
+  // Without `logged`, which is the worker's own.
+  runScriptNow: async (tabId, scriptId) => {
+    const result = await runScriptNow(tabId, scriptId);
+    return result.ok ? result : { ok: false, error: result.error };
+  },
   reloadWithoutScripts: async (tabId) => {
     await reloadTabWithMode(tabId, { kind: 'none' });
+  },
+  reloadWithScript: async (tabId, scriptId) => {
+    await reloadTabWithMode(tabId, { kind: 'with', scriptId });
   },
   debugMatchIndex: async (url: string) => {
     await ensureLoaded();
@@ -1472,10 +1497,47 @@ function noteCommitForSkipScripts(
     && Date.now() - armed.at <= SKIP_SCRIPTS_ARM_TTL_MS
   ) {
     skipScriptsDocByTab.set(tabId, { documentId, mode: armed.mode });
-    return true;
+    // Keeps nothing out, so not a skip reload: the reload fast path
+    // still applies. Its script is run once the commit is recorded.
+    return armed.mode.kind !== 'with';
   }
   skipScriptsDocByTab.delete(tabId);
   return false;
+}
+
+// "Reload page with this script", for a script that's off: once the
+// reload has committed, the script is run in the new document when its
+// rules match it, as "Run now" runs it (docs/run-now.md). Its iframes
+// get it as each one loads (`runWithInFrame`). Called right after the
+// commit's own tab work is queued, which the run's bookkeeping waits
+// behind.
+function runAfterReload(tabId: number, documentId: string, url: string): void {
+  const mode = skipModeFor(tabId, documentId);
+  if (mode?.kind !== 'with') return;
+  if (!INJECTABLE_SCHEME.test(url) || matchScriptForUrl(mode.scriptId, url) === undefined) return;
+  runForReload(tabId, mode.scriptId, { topDocId: documentId, frameId: 0, documentId });
+}
+
+// A frame that just committed in a page loaded by "Reload page with
+// this script": the frame gets the script when its rules match it.
+// Lasts as long as the page does, so iframes added later get it too, as
+// they would an enabled script. Run from the tab's queue; the run itself
+// isn't awaited, since it queues its own bookkeeping.
+async function runWithInFrame(tabId: number, frameId: number, documentId: string, url: string): Promise<void> {
+  const record = await getTabRecord(tabId);
+  const topDocId = record?.currentDocId;
+  const scriptId = topDocId ? getDocState(record, topDocId)?.runWith : undefined;
+  if (!topDocId || !scriptId || indexedScript(scriptId)?.noframes) return;
+  if (!INJECTABLE_SCHEME.test(url) || matchScriptForUrl(scriptId, url) === undefined) return;
+  runForReload(tabId, scriptId, { topDocId, frameId, documentId });
+}
+
+function runForReload(tabId: number, scriptId: string, opts: RunNowOptions): void {
+  void runScriptNow(tabId, scriptId, { ...opts, afterReload: true }).then((result) => {
+    if (!result.ok && !('logged' in result && result.logged)) {
+      logScriptEvent(scriptId, { level: 'info', source: 'manual-run', tabId, message: `Not run: ${result.error}` });
+    }
+  });
 }
 
 // The skip reload's mode, when `documentId` is that reload's document.
@@ -1489,6 +1551,7 @@ function skipModeFor(tabId: number, documentId: string): ReloadMode | null {
 function skipReasonFor(mode: ReloadMode, scriptId: string): string | null {
   if (mode.kind === 'none') return SKIP_REASON_RELOAD_WITHOUT_SCRIPTS;
   if (mode.kind === 'only') return scriptId === mode.scriptId ? null : SKIP_REASON_RELOAD_ONLY;
+  if (mode.kind === 'with') return null;
   return scriptId === mode.scriptId ? SKIP_REASON_RELOAD_WITHOUT_THIS : null;
 }
 
@@ -1681,11 +1744,13 @@ async function updateTabMatches(
     if (prev.scriptsSkipped) state.scriptsSkipped = true;
     if (prev.skipOnly !== undefined) state.skipOnly = prev.skipOnly;
     if (prev.skipWithout !== undefined) state.skipWithout = prev.skipWithout;
+    if (prev.runWith !== undefined) state.runWith = prev.runWith;
   } else {
     const mode = skipModeFor(tabId, docId);
     if (mode?.kind === 'none') state.scriptsSkipped = true;
     if (mode?.kind === 'only') state.skipOnly = mode.scriptId;
     if (mode?.kind === 'without') state.skipWithout = mode.scriptId;
+    if (mode?.kind === 'with') state.runWith = mode.scriptId;
   }
   // Likewise what an sm-dev run's claim on the tab let run.
   if (restored) {
@@ -1706,6 +1771,7 @@ async function updateTabMatches(
     if (prev.loadUrl) state.loadUrl = prev.loadUrl;
     if (prev.warnedIds) state.warnedIds = prev.warnedIds;
     if (prev.manualRuns) state.manualRuns = prev.manualRuns;
+    if (prev.rerunIds) state.rerunIds = prev.rerunIds;
     if (prev.loadedBefore) state.loadedBefore = true;
     if (prev.loadedWithoutUserscripts) state.loadedWithoutUserscripts = true;
     if (prev.frameRuns) state.frameRuns = prev.frameRuns;
@@ -2304,6 +2370,8 @@ async function popupScriptInputs(ids: readonly string[]): Promise<CachedPopupScr
             ? { invalid: s.errorMessage ? describeDiagnostic(s.errorMessage, s.errorLocation) : '' }
             : {}),
           ...(isManualScript(s) ? { manual: true } : {}),
+          ...(s.header && normalizeDeclaredRunAt(getValue(s.header, 'run-at')) === 'document-start'
+            ? { documentStart: true } : {}),
         },
         run: scratchRunOf(s.fileUrl),
       });
@@ -2376,7 +2444,7 @@ function isReloadMode(value: unknown): value is ReloadMode {
   const m = value as Partial<{ kind: string; scriptId: unknown }> | null;
   if (!m || typeof m !== 'object') return false;
   if (m.kind === 'none') return true;
-  return (m.kind === 'only' || m.kind === 'without') && typeof m.scriptId === 'string';
+  return (m.kind === 'only' || m.kind === 'without' || m.kind === 'with') && typeof m.scriptId === 'string';
 }
 
 // ---------- The icon's right-click menu ----------
@@ -2575,21 +2643,12 @@ function installPopupListener(): void {
       work = reloadTabWithMode(tabId, req.mode);
     } else if (msg.type === POPUP_RUN_SCRIPT_MESSAGE) {
       const req = msg as Partial<PopupRunScriptRequest>;
-      if (typeof req.scriptId !== 'string') {
+      const ids = Array.isArray(req.scriptIds) ? req.scriptIds.filter((id): id is string => typeof id === 'string') : [];
+      if (ids.length === 0) {
         sendResponse(null);
         return undefined;
       }
-      // The popup offers Run only where it can run, so a refusal means
-      // something changed meanwhile. Said in the script's Log, since
-      // the popup shows nothing else for it. (A failure from Chrome is
-      // logged, and on the row, already.)
-      const scriptId = req.scriptId;
-      work = runManualScript(tabId, scriptId).then((result) => {
-        if (!result.ok && !result.logged) {
-          logScriptEvent(scriptId, { level: 'info', source: 'manual-run', tabId, message: `Not run: ${result.error}` });
-        }
-        return result;
-      });
+      work = runScriptsFromPopup(tabId, ids);
     } else {
       const req = msg as PopupCommandRequest;
       if (typeof req.scriptId !== 'string' || typeof req.commandId !== 'string') {
@@ -2653,6 +2712,29 @@ async function dispatchMenuCommand(
   return { ok: false, error: String((reason as Error)?.message ?? reason) };
 }
 
+// The popup's "Run this script", "Run now", and the page menu's runs of
+// all newly enabled or updated scripts: one at a time, in the order a
+// load runs them (by @run-at, then as given). The popup offers a run
+// only where it can go ahead, so a refusal means something changed
+// meanwhile. Said in the script's Log, since the popup shows nothing
+// else for it. (A failure from Chrome is logged, and on the row,
+// already.)
+async function runScriptsFromPopup(tabId: number, scriptIds: readonly string[]): Promise<void> {
+  const phases = ['document-start', 'document-body', 'document-end', 'document-idle'];
+  const phase = async (id: string): Promise<number> => {
+    const header = (await getScriptMeta(id))?.header;
+    return phases.indexOf(normalizeDeclaredRunAt(header ? getValue(header, 'run-at') : undefined));
+  };
+  const ordered = await Promise.all(scriptIds.map(async (id, i) => ({ id, i, phase: await phase(id) })));
+  ordered.sort((a, b) => a.phase - b.phase || a.i - b.i);
+  for (const { id } of ordered) {
+    const result = await runScriptNow(tabId, id);
+    if (!result.ok && !('logged' in result && result.logged)) {
+      logScriptEvent(id, { level: 'info', source: 'manual-run', tabId, message: `Not run: ${result.error}` });
+    }
+  }
+}
+
 // Whether a tab's sm-dev claim lets manual script `match` run there:
 // the rule for scripts that run on load (`handleCheckPending`). A
 // scratch script only in its own run's tabs, and in a tab a run
@@ -2662,19 +2744,20 @@ function manualRunAllowed(claim: SmDevClaim | null, match: MatchedScript): boole
 }
 
 // The manual scripts that could be run on `tabId`'s page at `url` now:
-// the popup's Run items and sm-dev's `sm:manual` reports, by the same
-// rules `runManualScript` applies.
+// the popup's Run items and sm-dev's `sm:manual` reports. The rules
+// `runScriptNow` applies, and in a tab with its scripts switched off,
+// none (a run there is sm-dev's own `run-now`).
 async function runnableManualScripts(tabId: number, url: string): Promise<MatchedScript[]> {
   await claimsReady();
   const claim = activeClaim(tabId);
   return findMatchesForUrl(url, 'manual').filter((m) => manualRunAllowed(claim, m));
 }
 
-// Documents each manual script was run in (documentId → script ids),
-// for `bridgeMayActAs`, which runs on every page-world GM call and so
-// mustn't read storage when it can help it. The tab state's
-// `manualRuns` backs it after a worker restart. Oldest dropped past
-// the cap; that only costs a storage read.
+// Documents each script was run in manually (documentId → script ids),
+// frames included, for `bridgeMayActAs`, which runs on every page-world
+// GM call and so mustn't read storage when it can help it. The page's
+// tab state's `manualRuns` backs it after a worker restart. Oldest
+// dropped past the cap; that only costs a storage read.
 const manualRunDocs = new Map<string, Set<string>>();
 const MANUAL_RUN_DOCS_MAX = 200;
 
@@ -2686,13 +2769,16 @@ function noteManualRunDoc(documentId: string, scriptId: string): void {
   if (manualRunDocs.size > MANUAL_RUN_DOCS_MAX) manualRunDocs.delete(manualRunDocs.keys().next().value!);
 }
 
-// Whether manual script `scriptId` was run in the sender's document.
+// Whether script `scriptId` was run manually in the sender's document.
+// After a worker restart, a frame's run is taken from its page's state,
+// which counts a run in any of its frames.
 async function manualRanIn(sender: chrome.runtime.MessageSender, scriptId: string): Promise<boolean> {
   const documentId = (sender as { documentId?: string }).documentId;
   const tabId = sender.tab?.id;
   if (!documentId || tabId === undefined) return false;
   if (manualRunDocs.get(documentId)?.has(scriptId)) return true;
-  return getDocState(await getTabRecord(tabId), documentId)?.manualRuns?.[scriptId] !== undefined;
+  const pageDocId = (await frameInfo(sender)).topDocId || documentId;
+  return getDocState(await getTabRecord(tabId), pageDocId)?.manualRuns?.[scriptId] !== undefined;
 }
 
 // Documents given the sandboxed-page fallback, so a second ask while the
@@ -2776,41 +2862,131 @@ function inTabQueue<T>(tabId: number, fn: () => Promise<T>): Promise<T> {
 }
 
 // `logged`: the failure is in the script's Log already.
-type ManualRunResult = { ok: true } | { ok: false; error: string; logged?: true };
+type ManualRunResult = RunNowResult | { ok: false; error: string; logged?: true };
 
 // Run manual script `scriptId` (`@run-at context-menu`) on `tabId`'s
-// top frame now: the popup's "Run this script", and sm-dev's. Each call
-// is another run. Always answers, so a caller never waits on a run that
-// failed part way. See docs/manual-scripts.md.
+// top frame now: the call sm-dev before protocol 3.1 makes for "Run this
+// script". Refuses a script that runs on load, as it always did; a newer
+// sm-dev calls `runScriptNow`.
 async function runManualScript(tabId: number, scriptId: string): Promise<ManualRunResult> {
+  await ensureLoaded();
+  const meta = await getScriptMeta(scriptId);
+  if (meta && meta.status === 'ok' && !isManualScript(meta)) return { ok: false, error: MANUAL_RUN_NOT_MANUAL };
+  return runScriptNow(tabId, scriptId);
+}
+
+// Run script `scriptId` on `tabId`'s page now, as asked: a manual
+// script's "Run this script" (its top frame), or "Run now" for one that
+// runs on load (each frame it matches), from the popup, sm-dev's
+// `run-now`, or "Reload page with this script". Each call is another
+// run. Always answers, so a caller never waits on a run that failed
+// part way. See docs/run-now.md and docs/manual-scripts.md.
+async function runScriptNow(tabId: number, scriptId: string, opts: RunNowOptions = {}): Promise<ManualRunResult> {
   try {
-    return await tryManualRun(tabId, scriptId);
+    return await tryRunNow(tabId, scriptId, opts);
   } catch (err) {
     console.info(`[SourceMonkey] manual run of ${getScriptLogLabel(scriptId)} on tab ${tabId} failed:`, err);
     return { ok: false, error: `Internal error: ${describeError(err)}` };
   }
 }
 
-// Why stored script `scriptId` can't be run as a manual script now,
-// going by its row alone, or null when it can.
-async function manualScriptRefusal(scriptId: string): Promise<string | null> {
+// Why stored script `scriptId` can't be run now, going by its row
+// alone, or null when it can. A script that runs on load can be run
+// while it's off, which is how one is tried out; a manual script is run
+// only while it's on, as its Run item is offered.
+async function runNowRefusal(scriptId: string): Promise<string | null> {
   const script = await getScriptMeta(scriptId);
   if (!script) return MANUAL_RUN_NOT_INSTALLED;
-  if (!isManualScript(script)) return MANUAL_RUN_NOT_MANUAL;
   if (script.status !== 'ok') {
     return describeDiagnostic(script.errorMessage ?? 'This script failed to load', script.errorLocation);
   }
+  if (!isManualScript(script)) return null;
   if (!isScriptEnabled(script)) return MANUAL_RUN_SCRIPT_OFF;
   const collections = new Map((await getCollections()).map((c) => [c.id, c]));
   if (!isManualRunCandidate(script, collections)) return MANUAL_RUN_COLLECTION_OFF;
   return null;
 }
 
-async function tryManualRun(tabId: number, scriptId: string): Promise<ManualRunResult> {
+// Whether a tab's sm-dev claim lets a run now go ahead for a script of
+// sm-dev run `smDevRun`: a scratch script only in its own run's tabs,
+// and in a tab a run controls, only that run's scripts. Unlike a load,
+// a tab with its scripts switched off (`--noscript`) takes one: the run
+// was asked for.
+function runNowAllowed(claim: SmDevClaim | null, smDevRun: string | undefined): boolean {
+  return claim ? smDevRun === claim.runId : smDevRun === undefined;
+}
+
+// A document a run goes to.
+interface RunTarget { frameId: number; documentId: string; url: string }
+
+// Narrowing a run, for "Reload page with this script":
+//   - `topDocId`: the page's document it must still be on;
+//   - `frameId` and `documentId`: the one document it goes to;
+//   - `afterReload`: the document has only just started, so the
+//     warnings about a page that has loaded don't apply.
+interface RunNowOptions { topDocId?: string; frameId?: number; documentId?: string; afterReload?: true }
+
+// The tab's documents script `scriptId` would run in now, top frame
+// first: a manual script, or a `@noframes` one, only the top frame;
+// others each frame whose own URL its rules match.
+async function runTargets(tabId: number, scriptId: string, topOnly: boolean): Promise<RunTarget[]> {
+  let frames: { frameId: number; url: string; documentId?: string }[] = [];
+  try {
+    frames = (await chrome.webNavigation.getAllFrames({ tabId }) ?? []) as typeof frames;
+  } catch { /* closed */ }
+  return frames
+    .filter((f): f is RunTarget => f.documentId !== undefined && (f.frameId === 0 || !topOnly)
+      && INJECTABLE_SCHEME.test(f.url) && matchScriptForUrl(scriptId, f.url) !== undefined)
+    .sort((a, b) => a.frameId - b.frameId);
+}
+
+// Whether a copy of `scriptId` other than itself, by identity
+// (`@namespace` + `@name`), runs in the document `state` is for.
+async function otherCopyRuns(state: TabMatchState, scriptId: string): Promise<boolean> {
+  const identity = identityKey((await getScriptMeta(scriptId))?.header ?? null);
+  if (identity === null) return false;
+  const running = new Set([...Object.keys(state.actual), ...Object.keys(state.frameRuns ?? {})]);
+  running.delete(scriptId);
+  for (const id of running) {
+    if (identityKey((await getScriptMeta(id))?.header ?? null) === identity) return true;
+  }
+  return false;
+}
+
+// Before a rerun: drop what the copy already running in `docs` set up
+// through the GM runtime, so its menu commands and value listeners
+// don't sit beside the new run's. The worker's list goes first (and
+// sm-dev hears of it); then each runtime holding the old copy drops
+// its own, awaited, so it can't wipe what the new run registers. Its
+// other effects on the page stay: nothing can undo those.
+async function retireRunningCopy(tabId: number, targets: readonly RunTarget[], scriptId: string): Promise<void> {
+  const docs = targets.map((t) => t.documentId);
+  const top = targets.find((t) => t.frameId === 0)?.documentId;
+  await new Promise<void>((resolve) => inMenuQueue(tabId, async () => {
+    try {
+      const removed = clearScriptCommands(tabId, docs, scriptId);
+      if (removed.length === 0) return;
+      notifyPopup(tabId);
+      for (const c of removed) {
+        emitSmDevEvent({
+          kind: 'menu', op: 'remove', tabId, documentId: c.documentId,
+          topFrame: c.documentId === top, scriptId, commandId: c.commandId,
+        });
+      }
+    } finally {
+      resolve();
+    }
+  }));
+  const msg = { type: 'sm:gm-retire-run', smWorld: pushWorld(scriptId), smScript: scriptId, scriptId };
+  await Promise.all(docs.map((documentId) => chrome.tabs.sendMessage(tabId, msg, { documentId }).catch(() => undefined)));
+}
+
+async function tryRunNow(tabId: number, scriptId: string, opts: RunNowOptions): Promise<ManualRunResult> {
   await ensureLoaded();
-  const refusal = await manualScriptRefusal(scriptId);
+  const refusal = await runNowRefusal(scriptId);
   if (refusal) return { ok: false, error: refusal };
   let script = (await getScript(scriptId))!;
+  const manual = isManualScript(script);
   let url = '';
   try {
     url = (await chrome.tabs.get(tabId)).url ?? '';
@@ -2818,11 +2994,19 @@ async function tryManualRun(tabId: number, scriptId: string): Promise<ManualRunR
     return { ok: false, error: MANUAL_RUN_TAB_GONE };
   }
   if (!INJECTABLE_SCHEME.test(url)) return { ok: false, error: MANUAL_RUN_PAGE };
-  const match = findMatchesForUrl(url, 'manual').find((m) => m.id === scriptId);
-  if (!match) return { ok: false, error: MANUAL_RUN_NOT_HERE };
+  const known = indexedScript(scriptId);
+  // An `ok` script the index doesn't hold yet: just installed.
+  if (!known) return { ok: false, error: 'Internal error: SourceMonkey has not indexed this script yet. Try again.' };
+  const topOnly = manual || known.noframes === true;
+  const notHere = topOnly ? MANUAL_RUN_NOT_HERE : RUN_NOW_NOT_HERE;
+  // The documents it goes to: all it matches, or the one asked for.
+  const targetsNow = async () => (await runTargets(tabId, scriptId, topOnly))
+    .filter((t) => opts.documentId === undefined || (t.frameId === opts.frameId && t.documentId === opts.documentId));
+  if ((await targetsNow()).length === 0) return { ok: false, error: notHere };
   await claimsReady();
-  if (!manualRunAllowed(activeClaim(tabId), match)) return { ok: false, error: MANUAL_RUN_SM_DEV };
-  // Never registered, so the sync's parse check hasn't seen it.
+  if (!runNowAllowed(activeClaim(tabId), known.smDevRun)) return { ok: false, error: MANUAL_RUN_SM_DEV };
+  // Not registered (a manual or disabled script), so the sync's parse
+  // check may not have seen it.
   const checked = (await verifyParseChecks([script])).get(scriptId);
   if (checked) script = checked;
   if (script.status !== 'ok') {
@@ -2834,94 +3018,163 @@ async function tryManualRun(tabId: number, scriptId: string): Promise<ManualRunR
   const build = (isolated: boolean) => buildManualRunInjections(
     script, chrome.runtime.getManifest().version, getScriptLogLabel(scriptId), gmSnapshot, isolated,
   );
-  let injections = await build(false);
+  const built = await build(false);
   // validateHeader keeps a script with no usable pattern from being `ok`.
-  if (!injections) return { ok: false, error: 'Internal error: This script has no page pattern Chrome can use' };
+  if (!built) return { ok: false, error: 'Internal error: This script has no page pattern Chrome can use' };
   const name = scriptDisplayName(script);
+  const documentStart = !manual && normalizeDeclaredRunAt(getValue(script.header!, 'run-at')) === 'document-start';
 
-  // Count the run on the document it's for, in the tab's queue, before
+  // Count the run on the page's document, in the tab's queue, before
   // injecting: its own sm:start, queued behind, then finds a manual run
   // rather than an unexpected script. The page may have moved on during
-  // the awaits above, so the document is read, and checked, here.
-  const counted = await inTabQueue(tabId, async (): Promise<{ documentId: string } | { error: string }> => {
-    let frame: { url: string; documentId?: string } | null = null;
+  // the awaits above, so the documents are read, and checked, here.
+  type Counted = { topDocId: string; targets: RunTarget[]; rerun: boolean; warnings: string[] };
+  const counted = await inTabQueue(tabId, async (): Promise<Counted | { error: string }> => {
+    let top: { url: string; documentId?: string } | null = null;
     try {
-      frame = await chrome.webNavigation.getFrame({ tabId, frameId: 0 }) as { url: string; documentId?: string } | null;
+      top = await chrome.webNavigation.getFrame({ tabId, frameId: 0 }) as { url: string; documentId?: string } | null;
     } catch { /* closed */ }
-    const documentId = frame?.documentId;
-    if (!frame || !documentId) return { error: MANUAL_RUN_TAB_GONE };
+    const topDocId = top?.documentId;
+    if (!top || !topDocId) return { error: MANUAL_RUN_TAB_GONE };
+    if (opts.topDocId !== undefined && topDocId !== opts.topDocId) return { error: MANUAL_RUN_PAGE_CHANGED };
     // Turned off, or edited, meanwhile: said as such.
-    const changed = await manualScriptRefusal(scriptId);
+    const changed = await runNowRefusal(scriptId);
     if (changed) return { error: changed };
-    if (!findMatchesForUrl(frame.url, 'manual').some((m) => m.id === scriptId)) {
-      return { error: frame.url === url ? MANUAL_RUN_NOT_HERE : MANUAL_RUN_PAGE_CHANGED };
+    const targets = await targetsNow();
+    if (targets.length === 0) {
+      return { error: top.url === url && opts.documentId === undefined ? notHere : MANUAL_RUN_PAGE_CHANGED };
     }
     const record = await getTabRecord(tabId);
-    let state = getDocState(record, documentId);
+    let state = getDocState(record, topDocId);
     if (!state) {
       // The worker lost this document's state (a restart): start one,
       // as a report would (`recordScriptReport`).
-      const found = findMatchesForUrl(frame.url);
+      const found = findMatchesForUrl(top.url);
       const claimFields = await smDevClaimFields(tabId, found);
       const matches = expectedMatches(found, claimFields.smDevRun);
-      state = { documentId, url: frame.url, matches, actual: {}, loadMatchIds: matches.map((m) => m.id), ...claimFields };
+      state = { documentId: topDocId, url: top.url, matches, actual: {}, loadMatchIds: matches.map((m) => m.id), ...claimFields };
     }
-    state = noteManualRun(state, scriptId);
-    noteManualRunDoc(documentId, scriptId);
-    const next = writeDocState(record, documentId, state);
+    const docs = targets.map((t) => t.documentId);
+    const rerun = runsIn(state, scriptId, docs);
+    // A manual script is meant to be run again and again: none of these
+    // apply to it.
+    const risks: RunNowRisks = manual ? {} : {
+      documentStart: documentStart && !opts.afterReload,
+      rerun,
+      otherCopy: await otherCopyRuns(state, scriptId),
+      loadedBefore: state.loadedBefore === true && !opts.afterReload,
+    };
+    state = noteManualRun(state, scriptId, docs);
+    for (const t of targets) noteManualRunDoc(t.documentId, scriptId);
+    const next = writeDocState(record, topDocId, state);
     await setTabRecord(tabId, next);
-    if (next.currentDocId === documentId) await renderBadge(tabId, state);
-    return { documentId };
+    if (next.currentDocId === topDocId) await renderBadge(tabId, state);
+    return { topDocId, targets, rerun, warnings: runNowWarnings(risks) };
   });
   if ('error' in counted) return { ok: false, error: counted.error };
+  const { topDocId, targets, rerun, warnings } = counted;
+
+  if (!manual) {
+    // A run into one iframe (an iframe of a page loaded by "Reload page
+    // with this script") names it.
+    const frame = targets.length === 1 && targets[0]!.frameId !== 0 ? `\nIn an iframe at ${targets[0]!.url}` : '';
+    const ran = `${rerun ? 'Rerun' : 'Run'} manually on ${url}`;
+    logScriptEvent(scriptId, {
+      level: 'info', source: 'manual-run', tabId,
+      message: (warnings.length > 0 ? `${ran}. ${warnings.map(asSentence).join(' ')}` : ran) + frame,
+    });
+    if (rerun) await retireRunningCopy(tabId, targets, scriptId);
+  }
 
   // Outside the queue: the run's own work (an alert() it opens, say)
-  // mustn't hold up the tab's other bookkeeping. Aimed at the document
-  // checked above, so Chrome refuses rather than run it on another page.
-  try {
-    // A page whose sandbox turns off its own script runs a page-world
-    // script isolated, as on load (`runBlockedMainScripts`).
-    let isolated = false;
-    if (injections.some((i) => i.world === 'MAIN') && !await pageWorldRuns(tabId, counted.documentId)) {
-      const built = await build(true);
-      // The same headers as the page-world build, which wasn't null.
-      if (!built) return { ok: false, error: 'Internal error: This script could not be built to run isolated' };
-      injections = built;
-      isolated = true;
-    }
-    // A page-world run goes under the document's own key, not the
-    // install's: see `documentKey`. An isolated one keeps the install's,
-    // which the page can't reach, so it shares that world's registered
-    // GM runtime and prelude rather than loading its own.
-    if (injections.some((i) => i.world === 'MAIN')) {
-      const key = await documentKey(counted.documentId, scriptId);
-      injections = injections.map((i) => ({ ...i, js: i.js.map((j) => ({ code: rekey(j.code, key) })) }));
-    }
-    await executeManualRun(tabId, counted.documentId, injections);
-    if (isolated) logSandboxFallback(scriptId, tabId, counted.documentId);
-    return { ok: true };
-  } catch (err) {
-    // The page replaced since it was counted: an expected race, not
-    // this page's error. Told apart by asking, not by Chrome's wording.
-    let current: string | undefined;
-    try {
-      current = (await chrome.webNavigation.getFrame({ tabId, frameId: 0 }) as { documentId?: string } | null)?.documentId;
-    } catch { /* closed */ }
-    if (current !== counted.documentId) return { ok: false, error: MANUAL_RUN_PAGE_CHANGED };
-    const error = `Chrome could not run this script on this page: ${describeError(err)}`;
-    console.info(`[SourceMonkey] manual run of ${getScriptLogLabel(scriptId)} on tab ${tabId} failed: ${describeError(err)}`);
-    logScriptEvent(scriptId, { level: 'error', source: 'manual-run', tabId, message: error });
-    await inTabQueue(tabId, async () => {
-      const record = await getTabRecord(tabId);
-      const state = getDocState(record, counted.documentId);
-      if (!state) return;
-      const next = applyScriptReport(state, scriptId, { state: 'error', name, message: error }, true);
-      const nextRecord = writeDocState(record, counted.documentId, next);
-      await setTabRecord(tabId, nextRecord);
-      if (nextRecord.currentDocId === counted.documentId) await renderBadge(tabId, next);
-    });
-    return { ok: false, error, logged: true };
+  // mustn't hold up the tab's other bookkeeping. Each run is aimed at
+  // a document checked above, so Chrome refuses rather than run it on
+  // another page.
+  const failures: { target: RunTarget; error: string }[] = [];
+  for (const target of targets) {
+    const error = await runInDocument(tabId, scriptId, target.documentId, built, build);
+    if (error !== null) failures.push({ target, error });
   }
+  if (failures.length === 0) return { ok: true, rerun, warnings };
+
+  // The page, or a frame, replaced since it was counted: an expected
+  // race, not this page's error. Told apart by asking, not by Chrome's
+  // wording.
+  const docOf = async (frameId: number): Promise<string | undefined> => {
+    try {
+      return (await chrome.webNavigation.getFrame({ tabId, frameId }) as { documentId?: string } | null)?.documentId;
+    } catch {
+      return undefined;
+    }
+  };
+  if (await docOf(0) !== topDocId) return { ok: false, error: MANUAL_RUN_PAGE_CHANGED };
+  const gone: RunTarget[] = [];
+  for (const { target } of failures) {
+    if (target.frameId !== 0 && await docOf(target.frameId) !== target.documentId) gone.push(target);
+  }
+  failures.splice(0, failures.length, ...failures.filter((f) => !gone.includes(f.target)));
+  if (failures.length === 0) {
+    return gone.length < targets.length ? { ok: true, rerun, warnings } : { ok: false, error: MANUAL_RUN_PAGE_CHANGED };
+  }
+  for (const { target, error } of failures) {
+    console.info(`[SourceMonkey] manual run of ${getScriptLogLabel(scriptId)} on tab ${tabId} frame ${target.frameId} failed: ${error}`);
+    logScriptEvent(scriptId, {
+      level: 'error', source: 'manual-run', tabId,
+      message: target.frameId === 0 ? error : `${error}\nIn an iframe at ${target.url}`,
+    });
+  }
+  await inTabQueue(tabId, async () => {
+    const record = await getTabRecord(tabId);
+    let state = getDocState(record, topDocId);
+    if (!state) return;
+    for (const { target, error } of failures) {
+      state = target.frameId === 0
+        ? applyScriptReport(state, scriptId, { state: 'error', name, message: error }, true)
+        : applyFrameReport(state, scriptId, target.documentId, {
+          state: 'error', name, message: error, frameId: target.frameId, url: target.url,
+        }, true);
+    }
+    const nextRecord = writeDocState(record, topDocId, state);
+    await setTabRecord(tabId, nextRecord);
+    if (nextRecord.currentDocId === topDocId) await renderBadge(tabId, state);
+  });
+  // Ran somewhere: what failed is on the row and in the Log.
+  if (failures.length + gone.length < targets.length) return { ok: true, rerun, warnings };
+  return { ok: false, error: failures[0]!.error, logged: true };
+}
+
+// Inject one manual run into document `documentId`. Answers why it
+// didn't run, or null.
+async function runInDocument(
+  tabId: number, scriptId: string, documentId: string,
+  built: ManualRunInjection[], build: (isolated: boolean) => Promise<ManualRunInjection[] | null>,
+): Promise<string | null> {
+  let injections = built;
+  // A page whose sandbox turns off its own script runs a page-world
+  // script isolated, as on load (`runBlockedMainScripts`).
+  let isolated = false;
+  if (injections.some((i) => i.world === 'MAIN') && !await pageWorldRuns(tabId, documentId)) {
+    const asIsolated = await build(true);
+    // The same headers as the page-world build, which wasn't null.
+    if (!asIsolated) return 'Internal error: This script could not be built to run isolated';
+    injections = asIsolated;
+    isolated = true;
+  }
+  // A page-world run goes under the document's own key, not the
+  // install's: see `documentKey`. An isolated one keeps the install's,
+  // which the page can't reach, so it shares that world's registered
+  // GM runtime and prelude rather than loading its own.
+  if (injections.some((i) => i.world === 'MAIN')) {
+    const key = await documentKey(documentId, scriptId);
+    injections = injections.map((i) => ({ ...i, js: i.js.map((j) => ({ code: rekey(j.code, key) })) }));
+  }
+  try {
+    await executeManualRun(tabId, documentId, injections);
+  } catch (err) {
+    return `Chrome could not run this script on this page: ${describeError(err)}`;
+  }
+  if (isolated) logSandboxFallback(scriptId, tabId, documentId);
+  return null;
 }
 
 // chrome.webNavigation gives us the documentId we need to distinguish
@@ -2968,7 +3221,12 @@ function installNavigationListeners(): void {
     if (d.frameId !== 0) {
       // A frame's new document ends the runs (and menu commands) of
       // the one it replaced. See docs/frames.md.
-      if (d.frameId > 0) enqueueTabWork(d.tabId, () => pruneGoneFramesAndRepaint(d.tabId));
+      if (d.frameId > 0) {
+        enqueueTabWork(d.tabId, async () => {
+          await pruneGoneFramesAndRepaint(d.tabId);
+          if (d.documentId) await runWithInFrame(d.tabId, d.frameId, d.documentId, d.url);
+        });
+      }
       return;
     }
     // Another page: its documents register afresh as they start.
@@ -3001,6 +3259,7 @@ function installNavigationListeners(): void {
       d.tabId,
       () => updateTabMatches(d.tabId, d.url, d.documentId ?? null, 'navigation', batch, !!d.documentId),
     );
+    if (d.documentId) runAfterReload(d.tabId, d.documentId, d.url);
   });
   wn.onHistoryStateUpdated.addListener((d) => {
     if (d.frameId !== 0) return;
@@ -3410,7 +3669,9 @@ async function propagateStaleScripts(scriptIds: string[]): Promise<void> {
     // showing only an outdated MISSING row are intentionally NOT
     // promoted; without an actual report there's no "running code" to
     // be stale against, and a reload won't change what the badge shows.
-    const relevant = scriptIds.filter((id) => runsHere(current, id));
+    // Not a manual script (`@run-at context-menu`): each run uses its
+    // current copy, so the one running is never outdated.
+    const relevant = scriptIds.filter((id) => runsHere(current, id) && !isManualScriptId(id));
     if (relevant.length === 0) continue;
     affectedTabs++;
     enqueueTabWork(tabId, () => applyStaleToTab(tabId, relevant));
@@ -5045,8 +5306,10 @@ async function bridgeMayActAs(
   await ensureLoaded();
   // URL-based, so this answers "could this script run here?" rather
   // than "did it?".
-  const match = findMatchesForUrl(url, 'any').find((m) => m.id === scriptId && m.world === 'MAIN');
-  if (!match) return false;
+  // A script that's off can still have been run here by "Run now".
+  const match = findMatchesForUrl(url, 'any').find((m) => m.id === scriptId)
+    ?? (await manualRanIn(sender, scriptId) ? matchScriptForUrl(scriptId, url) : undefined);
+  if (!match || match.world !== 'MAIN') return false;
   // Nor in a frame, for a script kept to the top frame.
   if (match.noframes && (await frameInfo(sender)).subframe) return false;
   // A manual script runs in a document only when asked, so the page
@@ -5581,6 +5844,7 @@ function installScriptMessageListener(): void {
       reason?: string;
       detail?: string;
       opaqueOrigin?: boolean;
+      manualRun?: boolean;
       __viaBridge?: boolean;
     };
     enqueueTabWork(tabId, () => recordScriptReport(tabId, sender, type, payload));
@@ -5758,6 +6022,9 @@ async function recordScriptReport(
     reason?: string;
     detail?: string;
     opaqueOrigin?: boolean;
+    // On a start: a run someone asked for (`startManualRun` in
+    // userscript-prelude.js).
+    manualRun?: boolean;
     __viaBridge?: boolean;
   },
 ): Promise<void> {
@@ -5809,6 +6076,7 @@ async function recordScriptReport(
     ...(payload.stack !== undefined ? { stack: payload.stack } : {}),
     ...(payload.reason !== undefined ? { reason: payload.reason } : {}),
     ...(payload.detail !== undefined ? { detail: payload.detail } : {}),
+    ...(payload.manualRun === true ? { manualRun: true } : {}),
   });
   // GM_* cross-tab broadcast openers table: register the
   // (scriptId, tabId) pair on EITHER sm:start or sm:swapped. The
@@ -5948,10 +6216,10 @@ async function recordScriptReport(
   const wrapperLoadedAt = typeof payload.loadedAt === 'number' && payload.loadedAt > 0
     ? payload.loadedAt : null;
   let isStale = false;
-  // A manual script runs its current copy each time, so it's never
-  // stale (and a new run replaces the last one's outcome).
+  // A manual run (a manual script's, or "Run now") runs the current
+  // copy, so it isn't stale, and it replaces the last run's outcome.
   await ensureLoaded();
-  const manual = isManualScriptId(id);
+  const manual = isManualScriptId(id) || payload.manualRun === true;
   // sm:swapped means the wrapper just ran the freshest content, so a
   // stored.loadedAt that matches the payload.loadedAt is expected and
   // does NOT make this report stale. Skip the check for that branch.
@@ -5981,7 +6249,7 @@ async function recordScriptReport(
     if (!record || !page) return;
     const next = applyFrameReport(page, id, senderDocId, {
       ...report, frameId: sender.frameId!, url: senderUrl, ...(isStale ? { stale: true as const } : {}),
-    });
+    }, manual);
     if (next === page) return;
     await setTabRecord(tabId, writeDocState(record, pageDocId, next));
     if (record.currentDocId === pageDocId) await renderBadge(tabId, next);
@@ -6017,10 +6285,10 @@ async function recordScriptReport(
     payload.__viaBridge === true ? 'MAIN' : 'USER_SCRIPT',
     payload.opaqueOrigin === true,
   );
-  if (type === SM_SWAPPED_MSG) {
-    // The swap landed the latest body, so any prior stale marker for
-    // this id (e.g. from an earlier sm:start on this same documentId)
-    // no longer reflects reality.
+  if (type === SM_SWAPPED_MSG || (type === SM_START_MSG && payload.manualRun === true)) {
+    // The swap landed the latest body, as a manual run does, so any
+    // prior stale marker for this id (e.g. from an earlier sm:start on
+    // this same documentId) no longer reflects reality.
     next = clearScriptStale(next, id);
   } else if (isStale) {
     next = markScriptStale(next, id);

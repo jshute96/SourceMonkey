@@ -24,7 +24,7 @@ import { randomBytes } from 'node:crypto';
 import type { BrowserContext, CDPSession, Page, Worker } from '@playwright/test';
 
 import {
-  SM_DEV_EVENT, SM_DEV_MARKERS, SM_DEV_PROTOCOL, type ManagedCollection, type ManagedFileContent, type ManagedOnDisk, type ManagedScriptIcons, type ScriptIconsLoad, type ManagedScript, type ProtocolVersion,
+  SM_DEV_EVENT, SM_DEV_MARKERS, SM_DEV_PROTOCOL, type ManagedCollection, type ManagedFileContent, type ManagedOnDisk, type ManagedScriptIcons, type ScriptIconsLoad, type ManagedScript, type ProtocolVersion, type RunNowResult,
 } from '../sm-dev-protocol.js';
 import type { StackLayout } from '../composed-source.js';
 import type { PushedFile } from '../external-files.js';
@@ -135,6 +135,8 @@ export type ExtensionEvent =
   | {
     kind: 'report'; type: string; tabId: number; documentId: string; topFrame?: boolean; scriptId: string; name: string; url: string;
     message?: string; stack?: string; reason?: string; detail?: string; at: number;
+    // A start of a run someone asked for (protocol 3.1).
+    manualRun?: true;
   }
   | { kind: 'log'; scriptId: string; entry: LogEntry; fromReport?: boolean; at: number }
   | {
@@ -580,6 +582,20 @@ export class ExtensionLink {
     if (!result.ok) throw new Error(result.error ?? 'Internal error: SourceMonkey did not say why the script did not run');
   }
 
+  /**
+   * Runs any script in a tab now, as the popup's "Run now" does (protocol
+   * 3.1): whether it ran over a copy already there, and why it may not
+   * work as expected. Throws with the extension's reason when it can't.
+   */
+  async runScriptNow(tabId: number, scriptId: string): Promise<{ rerun: boolean; warnings: string[] }> {
+    this.requireMinor(1, '`run-now`');
+    const result = await this.call(({ t, s }) =>
+      (self as unknown as { SourceMonkey: Api }).SourceMonkey.runScriptNow(t, s),
+    { t: tabId, s: scriptId });
+    if (!result.ok) throw new Error(result.error);
+    return { rerun: result.rerun, warnings: result.warnings };
+  }
+
   /** The collections and installed scripts, for the `collection` and `script` commands. */
   readonly manager: ManagerControl = managerControl((fn, arg) => this.call(fn, arg));
 
@@ -705,6 +721,7 @@ interface Api {
   writeGmValues(scriptId: string, writes: { key: string; value?: unknown; deleted?: boolean }[]): Promise<void>;
   fireActionContextMenuItem(tabId: number, scriptId: string, commandId: string, documentId?: string): Promise<{ ok: boolean }>;
   runManualScript(tabId: number, scriptId: string): Promise<{ ok: boolean; error?: string }>;
+  runScriptNow(tabId: number, scriptId: string): Promise<RunNowResult>;
   scriptsOnTab(tabId: number): Promise<{ id: string; name: string; status: string; collection: string; number?: number }[]>;
   clickNotification(notificationId: string): boolean;
   answerConnectPrompt(promptId: string, choice: 'once' | 'cancel' | 'allow' | 'allow-all' | 'deny'): Promise<boolean>;

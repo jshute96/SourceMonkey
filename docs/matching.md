@@ -311,6 +311,10 @@ Added by the popup's view (details in
   - Ones disabled or removed since that never started don't.
   - In a tab an sm-dev run controls, the scripts its claim kept out
     don't (`countsOnBadge`).
+  - Scripts kept out by a reload (`Not loaded`) count only when no
+    other script has a status. "Reload page with no userscripts" shows
+    them all, in grey; once one runs (by "Run now", or with only or
+    without one script), only the scripts that tried to run count.
 - **Color** — red, purple, orange or grey, the first whose line
   applies, else green.
 - **No badge** — when no script has a status here, or on a page
@@ -414,11 +418,14 @@ Click for details. Double-click for collections.
 
 The popup's page menu, and the icon's right-click menu, reload the tab
 once with every script skipped.
-Its per-script menus have two narrower forms:
+Its per-script menus have narrower forms:
 
 - **With only this script**: every other script skips (`skipOnly`).
 - **Without this script**: just that one skips (`skipWithout`).
-- The armed marker carries which of the three (`ReloadMode` in
+- **With this script**, for a script that's off: none skips, and it is
+  run in the page and its iframes as each loads, as "Run now" runs it
+  (`runWith`; see [run-now.md](run-now.md#reload-page-with-this-script)).
+- The armed marker carries which one (`ReloadMode` in
   `src/extension/popup-view.ts`); the rest of this section applies to
   all of them.
 

@@ -935,13 +935,25 @@
     return entry;
   }
 
-  /* A manual script (`@run-at context-menu`), injected on request by
-     "Run this script" (see docs/manual-scripts.md). The request is the
-     decision, so there is no check-pending round trip and no @run-at
-     wait: the body runs as soon as the combined entry hands it over.
-     The worker sends the GM values snapshot along in the config. */
+  /* A manual run: a manual script (`@run-at context-menu`) injected by
+     "Run this script" (see docs/manual-scripts.md), or any script by
+     "Run now" (docs/run-now.md). The request is the decision, so there
+     is no check-pending round trip. A manual script has no @run-at to
+     wait for, so its body runs as soon as the combined entry hands it
+     over. A script that runs on load still waits for its @run-at
+     (`waitRunAt`), which has usually passed already. The worker sends
+     the GM values snapshot along in the config. */
   function startManualRun(entry, cfg) {
-    entry.runAtFired = true;
+    if (cfg.manualRun.waitRunAt) {
+      entry.runAtFired = false;
+      waitForRunAt(cfg.runAt, function (dueBeforeLoad) {
+        entry.runAtFired = true;
+        entry.replayLoad = !!dueBeforeLoad;
+        flushPending(entry);
+      });
+    } else {
+      entry.runAtFired = true;
+    }
     entry.decision = bare({ action: "run" });
     if (cfg.manualRun.gmValues) {
       entry.decision.gmValues = cfg.manualRun.gmValues;
@@ -1176,6 +1188,9 @@
       /* As on sm:swapped. Sent in the same task as the body's
          storage.init, just before it. */
       gmSeq: decision.gmSeq,
+      /* A run someone asked for (startManualRun): it replaces the last
+         run's outcome rather than leaving an error standing. */
+      manualRun: cfg.manualRun ? true : undefined,
       url: location.href
     });
     try {

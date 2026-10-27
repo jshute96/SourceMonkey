@@ -159,7 +159,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/popup.ts` | Toolbar popup controller: renders the worker's view, toggles scripts and collections, menus, menu commands, reloads |
 | `src/extension/more-menu.ts` | The ⋯ button and the menu it opens, shared by the toolbar popup and the collections page |
 | `src/extension/popup-commands-open.ts` | SW-side store of which scripts' command lists are open in a tab's popup, kept for the tab's lifetime |
-| `src/extension/popup-view.ts` | Pure model of the toolbar popup: rows by collection, statuses, tooltips, reload banner; popup ↔ worker messages |
+| `src/extension/popup-view.ts` | Pure model of the toolbar popup: rows by collection, statuses, tooltips, reload banner, Run now items; popup ↔ worker messages |
 | `src/extension/script-enablement.ts` | Enable toggles that keep one copy of each script active, restore displaced copies, and run Enable all |
 | `src/extension/script-blobs.ts` | Storage format 2: splits script rows from their bodies in shared `blob:<sha256>` rows, reads them back, migrates format 1, deletes unused blobs |
 | `src/extension/script-keys.ts` | The identity and location keys that say two rows are copies of one script, shared with the store |
@@ -554,6 +554,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/gm-notification.spec.ts` | E2E tests for `GM_notification` (call shapes, Promise return, empty-text rejection, gating) |
 | `tests/e2e/toolbar-click.spec.ts` | Opening the collections page from the toolbar: a repeat open reuses the window's existing tab |
 | `tests/e2e/gm-menu.spec.ts` | SM-only E2E for `GM_registerMenuCommand` via the SW test surface, incl. the per-document clear rules |
+| `tests/e2e/run-now.spec.ts` | "Run now": scripts kept out, disabled, updated or only in frames, the badge count, the popup's items |
 | `tests/e2e/manual-scripts.spec.ts` | Manual scripts (`@run-at context-menu`): never registered, run on request, refusals, the popup's Run item |
 | `tests/unit/window-onurlchange.test.mjs` | Unit tests for the SW-side `window.onurlchange` driver (document targeting, message shape, no-receiver rejection) |
 | `tests/e2e/window-onurlchange.spec.ts` | E2E for `@grant window.onurlchange` — pushState / replaceState / fragment / back delivery, payload shape, gating, assignment form |
@@ -720,6 +721,7 @@ For userscript repos to install, so their coding agents know how to use `sm-dev`
 | `docs/diagnostics.md` | The shared location every content-derived verdict carries, who produces one, and how surfaces make it clickable |
 | `docs/site-icons.md` | Favicon fetch+cache + the icon slot rendered beside each script name; URL extraction lives in `match-targets.ts` |
 | `docs/status-popup.md` | The toolbar "Active scripts" popup: clicks, layout, rows by collection, statuses, banners, reload modes |
+| `docs/run-now.md` | "Run now": running a load-time script into the open page from the popup or sm-dev, warnings, reruns |
 | `docs/manual-scripts.md` | Manual scripts (`@run-at context-menu`): never registered, run from the popup or sm-dev, re-run rules |
 | `docs/requires.md` | `@require` pipeline: resolution, storage, refresh policy, cross-script dedup, failure handling, injection composition |
 | `docs/local-file-overrides.md` | Loading `@require` / `@resource` / `@icon` from local disk instead of the declared URL: suffix rule, safety gate, refresh + cache policy, UI |

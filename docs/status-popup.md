@@ -185,6 +185,8 @@ From top to bottom:
 
 - Reload page: a plain reload, every script included.
 - Reload page with no userscripts. Not on a page no script matches.
+- Run newly enabled scripts now, and Rerun updated scripts now, after a
+  separator, each only when it applies (see [run-now.md](run-now.md)).
 - Every reload leaves the popup open, and it redraws for the new page
   load.
 - SourceMonkey options (the Options page).
@@ -269,15 +271,21 @@ Anything that opens a page (names, pills, the header's icon, name and
 - separator
 - Reload page with only this script.
 - Reload page without this script.
+- separator
+- Run now, or Rerun updated version now, where offered (see
+  [run-now.md](run-now.md)), with a ⚠ when it may not work as
+  expected.
 
 - The two reloads are per-script versions of the page-wide one, and
   share its mechanism (see
   [matching.md](matching.md#reload-with-no-userscripts)).
 - After either, the scripts kept out stay in the Enabled list with
   status `Not loaded`.
-- Not in a tab an sm-dev run controls.
-- Greyed for a script that isn't active (its box or its collection is
-  off): running it alone or keeping it out would do nothing.
+- Not in a tab an sm-dev run controls, and neither is Run now.
+- A script that isn't active (its box or its collection is off) gets
+  "Reload page with this script" in their place: running it alone or
+  keeping it out would do nothing.
+  - Greyed instead for one that failed to load.
 
 ### Status pills
 
@@ -320,6 +328,8 @@ page it affects:
 - **Still running** (purple outline, Enabled section): disabled since
   load, by its own box or its collection's, but still running in this
   document.
+  - Not for a disabled script run by "Run now": that reads `Running`,
+    asking for no reload ([run-now.md](run-now.md)).
 - **Reload** (purple outline): the page loaded before this copy of
   the extension started, so whether the script runs is unknown
   (`UNTRACKED`; see
@@ -482,6 +492,8 @@ Within each section, scripts sit under a heading per collection.
   extension pages:
   - `sm:popup-view` gets the `PopupView` for a tab.
   - `sm:popup-reload` reloads with a `ReloadMode`.
+  - `sm:popup-run-script` runs scripts now: a manual script's Run, Run
+    now, or the page menu's runs of several.
   - `sm:popup-command` runs a menu command.
   - `sm:popup-set-enabled` ticks or unticks a script's or collection's
     box, with `solo` for a Ctrl/Cmd-click (`setScriptEnabledExclusive`,

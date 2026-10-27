@@ -5,7 +5,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { bannerText, buildPopupView } from '../../dist/extension/popup-view.js';
+import {
+  bannerText, buildPopupView, runNowTooltip,
+  RUN_NOW_WARNING_DOCUMENT_START, RUN_NOW_WARNING_LOADED_BEFORE, RUN_NOW_WARNING_OTHER_COPY, RUN_NOW_WARNING_RERUN,
+} from '../../dist/extension/popup-view.js';
 import { computeBadge } from '../../dist/extension/tab-status.js';
 
 const URL_ = 'https://example.com/';
@@ -246,6 +249,9 @@ test('a script matching only the URL the page moved to in place says so', () => 
   assert.equal(row.status, 'PENDING');
   assert.match(row.tooltip, /^This page changed its address since it loaded/);
   assert.equal(v.banner, 'Reload required: Some scripts haven\'t run on this page yet');
+  // It can be run now, but wasn't newly enabled.
+  assert.deepEqual(row.runNow, { kind: 'run', warnings: [] });
+  assert.equal(v.runEnabled, undefined);
 });
 
 test('one that did match the load URL was enabled since', () => {
@@ -515,4 +521,90 @@ test('a frames-only script disabled since the page loaded is Still running, in i
   });
   assert.deepEqual(names(v.frames), ['A: framed=STILL_RUNNING']);
   assert.equal(v.banner, 'Reload required: Scripts disabled');
+});
+
+// ---- Run now (docs/run-now.md) ----
+
+const runItem = (v, id) => [...v.enabled, ...v.frames, ...v.disabled].flatMap((g) => g.rows).find((r) => r.id === id)?.runNow;
+
+test('Run now: offered on scripts that haven\'t started here, and on disabled ones', () => {
+  const v = view({
+    st: state({
+      matches: [m('kept'), m('missing'), m('ran')],
+      actual: { ran: { state: 'started', name: 'ran' } },
+      loadMatchIds: ['kept', 'missing', 'ran'],
+      skipWithout: 'kept',
+    }),
+    scripts: [script('kept', 'A'), script('missing', 'A'), script('ran', 'A'), script('new', 'A'), script('off', 'A', { enabled: false })],
+  });
+  assert.deepEqual(runItem(v, 'kept'), { kind: 'run', warnings: [] });
+  assert.deepEqual(runItem(v, 'missing'), { kind: 'run', warnings: [] });
+  assert.deepEqual(runItem(v, 'new'), { kind: 'run', warnings: [] });
+  assert.deepEqual(runItem(v, 'off'), { kind: 'run', warnings: [] });
+  assert.equal(runItem(v, 'ran'), undefined);
+  // The page menu's run of all newly enabled scripts.
+  assert.deepEqual(v.runEnabled, { ids: ['new'], warnings: [] });
+  assert.equal(v.rerunUpdated, undefined);
+});
+
+test('Run now: an updated script is rerun, with its warnings, and joins the page menu\'s rerun', () => {
+  const v = view({
+    st: state({
+      matches: [m('u')],
+      actual: { u: { state: 'started', name: 'u' } },
+      loadMatchIds: ['u'],
+      staleScriptIds: ['u'],
+    }),
+    scripts: [script('u', 'A', { documentStart: true })],
+  });
+  assert.deepEqual(runItem(v, 'u'), { kind: 'rerun', warnings: [RUN_NOW_WARNING_DOCUMENT_START, RUN_NOW_WARNING_RERUN] });
+  assert.deepEqual(v.rerunUpdated, { ids: ['u'], warnings: [RUN_NOW_WARNING_DOCUMENT_START, RUN_NOW_WARNING_RERUN] });
+});
+
+test('Run now: warns about another copy running, and a page loaded before SourceMonkey started', () => {
+  const v = view({
+    st: state({ matches: [m('a')], actual: { a: { state: 'started', name: 'S' } }, loadMatchIds: ['a'], loadedBefore: true }),
+    scripts: [
+      script('a', 'A', { identity: 'ns\u0000S', name: 'S' }),
+      script('b', 'B', { identity: 'ns\u0000S', name: 'S', enabled: false }),
+    ],
+    keepIds: new Set(['b']),
+  });
+  assert.deepEqual(runItem(v, 'b').warnings, [RUN_NOW_WARNING_OTHER_COPY, RUN_NOW_WARNING_LOADED_BEFORE]);
+  assert.match(runNowTooltip(runItem(v, 'b').warnings), /^The script may not work as expected:\n• Another copy/);
+});
+
+test('Run now: none in an sm-dev tab, for a manual script, or for an invalid one', () => {
+  const smDev = view({
+    st: state({ matches: [m('a')], loadMatchIds: ['a'], smDevAllow: null }),
+    scripts: [script('a', 'A')],
+  });
+  assert.equal(runItem(smDev, 'a'), undefined);
+  const others = view({
+    st: state(),
+    scripts: [script('man', 'A', { manual: true }), script('bad', 'A', { invalid: 'Broken' })],
+  });
+  assert.equal(others.manual.flatMap((g) => g.rows)[0].runNow, undefined);
+  assert.equal(runItem(others, 'bad'), undefined);
+});
+
+test('a disabled script run manually reads Running, with no reload asked for', () => {
+  const v = view({
+    st: state({ actual: { off: { state: 'started', name: 'off' } }, manualRuns: { off: 1 } }),
+    scripts: [script('off', 'A', { enabled: false })],
+  });
+  assert.deepEqual(names(v.enabled), ['A: off=OK']);
+  assert.match(v.enabled[0].rows[0].tooltip, /^Run manually\n/);
+  assert.equal(v.banner, null);
+});
+
+test('a script rerun manually says so', () => {
+  const v = view({
+    st: state({
+      matches: [m('a')], actual: { a: { state: 'started', name: 'a' } }, loadMatchIds: ['a'],
+      manualRuns: { a: 1 }, rerunIds: ['a'],
+    }),
+    scripts: [script('a', 'A')],
+  });
+  assert.match(v.enabled[0].rows[0].tooltip, /^Rerun manually\n/);
 });

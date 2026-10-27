@@ -75,6 +75,11 @@ export interface TabMatchState {
   // LOADED, like a full skip.
   skipOnly?: string;
   skipWithout?: string;
+  // Loaded by "Reload page with this script" for this script, which is
+  // off: it's run in the page, and in each iframe that loads while this
+  // document lasts, as "Run now" runs it (docs/run-now.md). Keeps
+  // nothing out.
+  runWith?: string;
   // Set when an sm-dev run controlled the tab as this document loaded
   // (sm-dev-link.ts): the script ids it let run, or null for none. The
   // rest were told to skip, so they show as NOT_LOADED too.
@@ -116,11 +121,16 @@ export interface TabMatchState {
   // was current (a failed GM_download, a style the page's CSP blocked,
   // ...). The popup shows them as Warning and the tooltip counts them.
   warnedIds?: string[];
-  // Manual scripts (`@run-at context-menu`) asked to run on this
-  // document, with how many times each was. They're never in `matches`,
-  // since nothing expects them to run, so this is what keeps their
-  // reports from reading as UNEXPECTED. See docs/manual-scripts.md.
+  // Scripts run manually on this document, with how many times each
+  // was: a manual script (`@run-at context-menu`) from its Run item, or
+  // any script from "Run now" (docs/run-now.md). A manual script is
+  // never in `matches`, since nothing expects it to run, and a disabled
+  // script run now isn't either, so this is what keeps their reports
+  // from reading as UNEXPECTED.
   manualRuns?: Record<string, number>;
+  // Of those, the ones run over a copy already running here (from the
+  // load, or an earlier manual run): their status says "Rerun manually".
+  rerunIds?: string[];
   // Set on a document that was already open when this copy of the
   // extension started (installed, updated or reloaded): nothing saw it
   // load, so whether its scripts run is unknown. Any copy still running
@@ -255,10 +265,11 @@ export function computeBadge(
     }
     let status: RowStatus;
     let message: string | undefined;
-    // A manual script runs its current copy each time it's asked, so
-    // it's never stale, and it's expected once it has run.
+    // A script run manually is expected once it has run. Each manual
+    // run uses the current copy, so its start clears `stale`, and a
+    // manual script (`@run-at context-menu`) is never marked stale.
     const manual = state.manualRuns?.[id] !== undefined;
-    if (actual && stale.has(id) && !manual) {
+    if (actual && stale.has(id)) {
       // Whether the wrapper reported started or errored, that report
       // came from the OLD content. RELOAD/purple is more actionable
       // than ERROR/red here — the on-disk fix may already address the
@@ -302,7 +313,11 @@ export function computeBadge(
   }
   rows.sort((a, b) => compareScriptNames(a.name, b.name));
 
-  const count = [...allIds].filter((id) => countsOnBadge(state, id)).length;
+  // Kept out on purpose (NOT_LOADED) counts only when nothing else has
+  // a status: a page reloaded with no userscripts shows them all, in
+  // grey, but once one runs, only what tried to run counts.
+  const others = rows.some((r) => r.status !== 'NOT_LOADED');
+  const count = rows.filter((r) => countsOnBadge(state, r.id) && (r.status !== 'NOT_LOADED' || !others)).length;
   return { count, rows };
 }
 
@@ -518,11 +533,34 @@ export function applyScriptReport(
   };
 }
 
-// Pure: count a request to run manual script `id` on this document.
-// Recorded before the run is injected, so its reports find it there.
-export function noteManualRun(state: TabMatchState, id: string): TabMatchState {
+// Whether `id` runs in any of `documentIds`: the page's own document
+// (this state's) or its frames'.
+export function runsIn(state: TabMatchState, id: string, documentIds: readonly string[]): boolean {
+  return documentIds.some((d) => (d === state.documentId ? state.actual[id] : state.frameRuns?.[id]?.[d]) != null);
+}
+
+// Pure: count a request to run script `id` manually on this document,
+// into `documentIds` (the page's own document unless given). Recorded
+// before the run is injected, so its reports find it there. A run over
+// a copy that reported running in one of those documents (from the
+// load or an earlier manual run) is noted as a rerun; one whose earlier
+// run never started isn't.
+export function noteManualRun(
+  state: TabMatchState, id: string, documentIds: readonly string[] = [state.documentId],
+): TabMatchState {
   const runs = state.manualRuns ?? {};
-  return { ...state, manualRuns: { ...runs, [id]: (runs[id] ?? 0) + 1 } };
+  const rerun = runsIn(state, id, documentIds);
+  const rerunIds = state.rerunIds ?? [];
+  return {
+    ...state,
+    manualRuns: { ...runs, [id]: (runs[id] ?? 0) + 1 },
+    ...(rerun && !rerunIds.includes(id) ? { rerunIds: [...rerunIds, id] } : {}),
+  };
+}
+
+// Whether `id` was rerun manually on this document (`rerunIds`).
+export function wasRerun(state: TabMatchState, id: string): boolean {
+  return state.rerunIds?.includes(id) ?? false;
 }
 
 // Pure: note that a wrapper in `world` reported from this document, and
@@ -546,15 +584,16 @@ export function notePageReport(
 
 // Pure: merge a report from a script in one of the page's iframes, the
 // same way `applyScriptReport` does for the top frame: an error stays
-// for that frame's document.
+// for that frame's document, unless a manual run's start replaces it.
 export function applyFrameReport(
   state: TabMatchState,
   id: string,
   frameDocId: string,
   run: FrameRun,
+  manual = false,
 ): TabMatchState {
   const runs = state.frameRuns?.[id] ?? {};
-  if (run.state === 'started' && runs[frameDocId]?.state === 'error') return state;
+  if (!manual && run.state === 'started' && runs[frameDocId]?.state === 'error') return state;
   return {
     ...state,
     frameRuns: { ...state.frameRuns, [id]: { ...runs, [frameDocId]: run } },

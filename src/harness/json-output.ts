@@ -56,6 +56,7 @@ export const STDERR_LINE = '\u0000sm-dev:stderr ';
  */
 export const JSON_COMMANDS = [
   'list', 'status', 'scripts', 'tabs', 'frames', 'values', 'get', 'match', 'validate', 'menu', 'logs', 'probe', 'collection', 'script',
+  'run-now',
 ];
 
 /** The line carrying `command`'s result, `data`'s fields after `command`. */
@@ -169,6 +170,10 @@ export type TabState =
   // A manual script (`@run-at context-menu`) that matches the tab's
   // page and hasn't been run there.
   | 'manual'
+  // Running because someone asked for the run (`run-now`, or a manual
+  // script's Run), the first time or again over a copy already there.
+  | 'run-manually'
+  | 'rerun-manually'
   | 'error'
   | 'refused'
   | 'not-started'
@@ -417,6 +422,19 @@ export interface ValidateData {
     /** Absent when there are none. */
     warnings?: string[];
   }[];
+}
+
+export interface RunNowData {
+  /** The tab it ran in, and the script, by its number (`2`). */
+  tab: string;
+  script: string;
+  /**
+   * It ran over a copy already there. This and `warnings` are absent
+   * when the script opened a dialog before the extension answered.
+   */
+  rerun?: boolean;
+  /** Why it may not work as expected, as the `Warning:` lines say. */
+  warnings?: string[];
 }
 
 export interface MenuData {

@@ -16,6 +16,8 @@ export interface MenuItem {
   wire?: (button: HTMLButtonElement, close: () => void) => void;
   separator?: boolean;
   hidden?: boolean;
+  // Shown as a warning sign after the label, with this as its tooltip.
+  warning?: string;
 }
 
 let openMenuEl: HTMLElement | null = null;
@@ -55,6 +57,14 @@ export function openMenu(btn: HTMLButtonElement, items: readonly MenuItem[]): vo
     b.textContent = item.label ?? '';
     b.disabled = item.disabled === true;
     if (item.title) b.title = item.title;
+    if (item.warning) {
+      const sign = document.createElement('span');
+      sign.className = 'warn-icon';
+      sign.setAttribute('aria-label', 'Warning');
+      sign.textContent = '⚠';
+      b.append(sign);
+      b.title = item.warning;
+    }
     if (item.wire) {
       item.wire(b, closeMenu);
     } else {

@@ -169,7 +169,7 @@
   var PUSHED = [
     "sm:gm-value-update", "sm:gm-values-stale", "sm:gm-xhr-event", "sm:gm-tab-closed",
     "sm:gm-notification-event", "sm:gm-menu-fire",
-    "sm:gm-download-event"
+    "sm:gm-download-event", "sm:gm-retire-run"
   ];
   /* Pushes that carry nothing script-scoped, so there is no reply to
      address and no `smWorld` to gate on. `sm:gm-resync-hint` is a bare

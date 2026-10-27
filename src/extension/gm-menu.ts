@@ -155,6 +155,26 @@ export function unregisterMenuCommand(
   return true;
 }
 
+// Drop all of `scriptId`'s commands registered from `docIds`: before
+// "Run now" runs it again there, so the copy already running doesn't
+// keep its commands beside the new run's (docs/run-now.md). Returns
+// the commands that went.
+export function clearScriptCommands(tabId: number, docIds: Iterable<string>, scriptId: string): MenuCommandEntry[] {
+  const docs = byTab.get(tabId);
+  if (!docs) return [];
+  const removed: MenuCommandEntry[] = [];
+  for (const docId of docIds) {
+    const scripts = docs.get(docId)?.scripts;
+    const list = scripts?.get(scriptId);
+    if (!scripts || !list) continue;
+    removed.push(...list);
+    scripts.delete(scriptId);
+    if (scripts.size === 0) docs.delete(docId);
+  }
+  if (docs.size === 0) byTab.delete(tabId);
+  return removed;
+}
+
 // Every registration in a tab, keyed by scriptId, in registration
 // order: the top frame's first, then each frame's.
 function allCommandsForTab(tabId: number): Map<string, MenuCommandEntry[]> {

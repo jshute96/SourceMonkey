@@ -493,6 +493,23 @@ $R start ... --values-file values.json         # seed from a JSON file
 - A reload or navigation leaves it unrun again.
 - In a spec: `gm.runScript()`.
 
+### Running a script now, without a reload
+
+```sh
+$R run-now          # the selected script, in this tab, now
+$R run-now T2.2     # script 2 in tab T2
+```
+
+- It runs in each of the tab's frames the script's rules match, even
+  in a `--noscript` tab, so `reload --noscript` then `run-now` shows
+  the script starting on a page that has already loaded.
+- Over a copy already running, it runs the script again: the old
+  copy's menu commands go, but its listeners, timers and page changes
+  stay.
+- `Warning:` lines say when the run may not work as expected, as for
+  a `document-start` script run late.
+- In a spec: `gm.runNow()`.
+
 ### Working from a saved page
 
 Use a saved copy when the live page needs a login, keeps changing,

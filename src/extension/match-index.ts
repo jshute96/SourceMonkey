@@ -320,30 +320,41 @@ export function findMatchesForUrl(url: string, kind: MatchKind = 'load'): Matche
     if (disabledCollections.has(entry.collectionId)) continue;
     if (kind === 'load' && entry.manual) continue;
     if (kind === 'manual' && !entry.manual) continue;
-    if (urlMatchesScript(url, entry.matching)) {
-      out.push({
-        id: entry.id,
-        name: entry.name,
-        matching: entry.matching,
-        collectionId: entry.collectionId,
-        world: entry.world,
-        ...(entry.smDevRun !== undefined ? { smDevRun: entry.smDevRun } : {}),
-        ...(entry.manual ? { manual: true as const } : {}),
-        ...(entry.noframes ? { noframes: true as const } : {}),
-      });
-    }
+    if (urlMatchesScript(url, entry.matching)) out.push(asMatched(entry));
   }
   // Stable display order for the tooltip.
   out.sort((a, b) => compareScriptNames(a.name, b.name));
   return out;
 }
 
+// Script `id` as `findMatchesForUrl` gives it, when its rules match
+// `url`, enabled or not, and whatever its collection: what "Run now"
+// can run (docs/run-now.md). Undefined for one the index doesn't hold.
+export function matchScriptForUrl(id: string, url: string): MatchedScript | undefined {
+  const entry = cache.get(id);
+  return entry && urlMatchesScript(url, entry.matching) ? asMatched(entry) : undefined;
+}
+
+function asMatched(entry: CacheEntry): MatchedScript {
+  return {
+    id: entry.id,
+    name: entry.name,
+    matching: entry.matching,
+    collectionId: entry.collectionId,
+    world: entry.world,
+    ...(entry.smDevRun !== undefined ? { smDevRun: entry.smDevRun } : {}),
+    ...(entry.manual ? { manual: true as const } : {}),
+    ...(entry.noframes ? { noframes: true as const } : {}),
+  };
+}
+
 // What the index knows of script `id` (any `ok` script, enabled or
 // not), or undefined for one it doesn't hold.
-export function indexedScript(id: string): Pick<MatchedScript, 'world' | 'noframes' | 'manual'> | undefined {
+export function indexedScript(id: string): Pick<MatchedScript, 'world' | 'noframes' | 'manual' | 'smDevRun'> | undefined {
   const entry = cache.get(id);
   return entry && {
     world: entry.world,
+    ...(entry.smDevRun !== undefined ? { smDevRun: entry.smDevRun } : {}),
     ...(entry.noframes ? { noframes: true as const } : {}),
     ...(entry.manual ? { manual: true as const } : {}),
   };

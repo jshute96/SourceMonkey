@@ -225,7 +225,7 @@ const NO_SCRIPTS = 'No scripts are loaded';
 
 
 // The commands that act on the current tab, which there may not be.
-const NEEDS_A_TAB = new Set(['menu', 'open', 'reload', 'focus', 'closetab', 'accept', 'dismiss', ...PAGE_COMMANDS]);
+const NEEDS_A_TAB = new Set(['menu', 'run-now', 'open', 'reload', 'focus', 'closetab', 'accept', 'dismiss', ...PAGE_COMMANDS]);
 
 // `script` and `tab` pick one, as `scripts` and `tabs` do given one,
 // so each is run as its plural.
@@ -460,8 +460,10 @@ export function onlyInspects(line: string): boolean {
  */
 export function hasJsonForm(line: string): boolean {
   const [typed = '', ...words] = commandWords(line);
-  // Each collection and script verb has one, the changing ones too.
+  // Each collection and script verb has one, the changing ones too, and
+  // so does `run-now`.
   if (managerCommandOf([typed, ...words])) return true;
+  if ((RUN_ALIASES[typed] ?? typed) === 'run-now') return true;
   return JSON_COMMANDS.includes(RUN_ALIASES[typed] ?? typed) && onlyInspects(line);
 }
 
@@ -633,6 +635,18 @@ export async function runConsoleCommand(
       if (blockedByDialog([ref.tab])) return false;
       // The label after `T2.` may be quoted too.
       return fireMenu(ctx, ref.tab, unquoteWhole(ref.rest).text, timeoutMs);
+    }
+    case 'run-now': {
+      // `T2.2`, `2`, or the selected script on this tab.
+      const ref = text ? tabRef(ctx, text, tab, true) : { tab, rest: '', named: false };
+      if (!ref) return false;
+      const script = ref.rest ? pickScript(ctx, ref.rest) : current;
+      if (!script) {
+        if (!ref.rest) ctx.out(`[sm-dev] ${NO_SCRIPTS}`);
+        return false;
+      }
+      if (blockedByDialog([ref.tab])) return false;
+      return runNow(ctx, ref.tab, script);
     }
     case 'frames':
       return framesCommand(ctx, args, tab);
@@ -1282,7 +1296,11 @@ function managerRun(ctx: ConsoleContext): ManagerRun {
         if (script) {
           const running = activeOn(ctx, tab, script.id);
           const waiting = waitingOn(ctx, tab, script.id, running);
-          out.push({ activity: { tab: name, state: activityState(ctx, running, waiting) }, text: activityWord(ctx, running, waiting) });
+          const manual = manualRunOn(ctx, tab, script.id);
+          out.push({
+            activity: { tab: name, state: activityState(ctx, running, waiting, manual) },
+            text: activityWord(ctx, running, waiting, manual),
+          });
           continue;
         }
         const other = label === undefined ? undefined : (await ctx.others?.onTab(tab).catch((): OtherScript[] => []))?.find((o) => o.label === label);
@@ -1827,8 +1845,9 @@ function subtree(frames: J.Frame[], id: string): J.Frame[] {
 // tab's page, since nothing reports what ran.
 function activeOn(ctx: ConsoleContext, tab: ControlledTab, scriptId: string | undefined): boolean {
   // Switched to run no scripts: the host's last word from it can still
-  // be a start from before, since a load with none says nothing.
-  if (tab.noScript) return false;
+  // be a start from before, since a load with none says nothing. Only
+  // a run asked for (`run-now`) runs there.
+  if (tab.noScript) return !ctx.predicted && scriptId !== undefined && ctx.host.manualRunOf(tab.link, scriptId) !== undefined;
   if (ctx.predicted) {
     const script = ctx.scripts.find((s) => s.id === scriptId);
     if (script === undefined || ctx.predictedOff?.has(ctx.extensionIdOf?.(script))) return false;
@@ -1846,18 +1865,28 @@ function waitingOn(ctx: ConsoleContext, tab: ControlledTab, scriptId: string | u
   return !running && !ctx.predicted && scriptId !== undefined && ctx.host.manualScripts(tab.link).includes(scriptId);
 }
 
+// How a script running on a tab's top frame came to: a run someone
+// asked for (`run-now`), or a rerun, else undefined.
+function manualRunOn(ctx: ConsoleContext, tab: ControlledTab, scriptId: string | undefined): 'run' | 'rerun' | undefined {
+  return ctx.predicted || scriptId === undefined ? undefined : ctx.host.manualRunOf(tab.link, scriptId);
+}
+
+// What `manualRunOn` gives, after a running script's word.
+const MANUAL_RUN_NOTE = { run: ' (run manually)', rerun: ' (rerun manually)' } as const;
+
 // `activeOn`'s answer, as JSON.
-function activityState(ctx: ConsoleContext, active: boolean, waiting = false): J.TabState {
+function activityState(ctx: ConsoleContext, active: boolean, waiting = false, manual?: 'run' | 'rerun'): J.TabState {
   if (ctx.predicted) return active ? 'expected' : 'not-expected';
   if (waiting) return 'manual';
+  if (active && manual) return manual === 'run' ? 'run-manually' : 'rerun-manually';
   return active ? 'running' : 'not-running';
 }
 
 // `activeOn`'s answer, in words.
-function activityWord(ctx: ConsoleContext, active: boolean, waiting = false): string {
+function activityWord(ctx: ConsoleContext, active: boolean, waiting = false, manual?: 'run' | 'rerun'): string {
   if (ctx.predicted) return active ? 'Expected using match rules' : 'Not expected using match rules';
   if (waiting) return WAITING_FOR_MENU;
-  return active ? 'Running' : 'Not running';
+  return active ? `Running${manual ? MANUAL_RUN_NOTE[manual] : ''}` : 'Not running';
 }
 
 /**
@@ -2046,7 +2075,8 @@ function scriptJson(ctx: ConsoleContext, script: PreparedScript): J.Script {
     tabs: ctx.tabs().map((tab) => {
       const running = activeInTab(ctx, tab, script.id);
       const where = framesWhere(ctx, tab, script.id);
-      return { tab: tabName(tab), state: activityState(ctx, running, waitingOn(ctx, tab, script.id, running)), ...(where ? { frames: where } : {}) };
+      const state = activityState(ctx, running, waitingOn(ctx, tab, script.id, running), manualRunOn(ctx, tab, script.id));
+      return { tab: tabName(tab), state, ...(where ? { frames: where } : {}) };
     }),
   };
 }
@@ -2649,6 +2679,39 @@ async function runManual(ctx: ConsoleContext, tab: ControlledTab, scriptId: stri
   return true;
 }
 
+// Run a script on a tab now (`run-now`), as the popup's "Run now" does:
+// one that hasn't started there, one that's off, or a new copy over one
+// already running. The run's start (or error) prints as any script's
+// does. False when it didn't run.
+async function runNow(ctx: ConsoleContext, tab: ControlledTab, script: PreparedScript): Promise<boolean> {
+  const name = preparedScriptName(script);
+  // Settled here either way, as in `runManual`.
+  const run = ctx.host.runScriptNow(tab.link, script.id ?? '').then(
+    (result) => ({ result }), (err: unknown) => ({ failed: err as Error }));
+  if (await fire(tab, run.then((r) => 'result' in r)) === false) {
+    const { failed } = await run as { failed: Error };
+    ctx.out(`${MISTAKE_PREFIX}${name} did not run: ${failed.message}`);
+    return false;
+  }
+  // Ran, or opened a dialog while running: then the extension hasn't
+  // answered yet, so whether it was a rerun, and its warnings, aren't
+  // known.
+  const done = await Promise.race([run, Promise.resolve(null)]);
+  const result = done && 'result' in done ? done.result : null;
+  if (ctx.json) {
+    ctx.out(jsonResult('run-now', {
+      tab: tabName(tab), script: scriptNumber(ctx, script),
+      ...(result ? { rerun: result.rerun, warnings: result.warnings } : {}),
+    } satisfies J.RunNowData));
+  } else {
+    const verb = result ? (result.rerun ? 'Reran' : 'Ran') : 'Started';
+    ctx.out(`[sm-dev] ${ui`${verb} ${S.name(name)} on ${S.id(tabName(tab))}`}`);
+    for (const w of result?.warnings ?? []) ctx.out(`${S.SM_DEV_PREFIX}${S.WARNING_PREFIX}${w}`);
+  }
+  if (!tab.dialogs?.current) await fire(tab, tab.link.drain().then(() => true));
+  return true;
+}
+
 // The other tabs with a menu command of that label.
 function elsewhereFor(ctx: ConsoleContext, tab: ControlledTab, label: string): ControlledTab[] {
   return ctx.tabs().filter((t) => t !== tab && fromTab(ctx, t, ctx.host.reports.menuCommands).some((c) => c.name === label));
@@ -2749,7 +2812,9 @@ function activityLine(ctx: ConsoleContext, tab: ControlledTab, id: string | unde
   const active = activeInTab(ctx, tab, id);
   const tabs = ctx.tabs().filter((t) => activeInTab(ctx, t, id));
   const places = ui`${tabs.map((t) => ui`${S.id(tabName(t))}${framesSuffix(ctx, t, id)}`).join(', ')}`;
-  if (active) return ui`${DETAIL}${tabs.length === 1 && framesWhere(ctx, tab, id) === undefined ? 'Active' : ui`Active on ${places}`}`;
+  const manual = manualRunOn(ctx, tab, id);
+  const note = manual ? MANUAL_RUN_NOTE[manual] : '';
+  if (active) return ui`${DETAIL}${tabs.length === 1 && framesWhere(ctx, tab, id) === undefined ? 'Active' : ui`Active on ${places}`}${note}`;
   const here = waitingOn(ctx, tab, id, active) ? WAITING_FOR_MENU : 'Not active';
   if (tabs.length === 0) return `${DETAIL}${here}`;
   return ui`${DETAIL}${here === 'Not active' ? ui`Not active on ${S.id(tabName(tab))}` : here}. Active on ${places}.`;

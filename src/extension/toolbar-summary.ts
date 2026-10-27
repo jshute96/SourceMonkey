@@ -115,6 +115,12 @@ export function summarizeToolbar(view: PopupView, state: TabMatchState | null): 
   // The rows the popup gives a status, so the count and the lines
   // agree: a script disabled or deleted since load that never started
   // has none, and one enabled since that hasn't run yet does.
-  const counted = count((r) => r.status !== null && r.status !== 'NOT_RUN' && (state === null || countsOnBadge(state, r.id)));
+  // Scripts kept out on purpose (Not loaded) count only when nothing
+  // else does: after "Reload page with no userscripts" the badge shows
+  // them all, in grey, but once one runs (or with only / without one
+  // script), only the scripts that tried to run count.
+  const badged = (r: PopupRow) => r.status !== null && r.status !== 'NOT_RUN' && (state === null || countsOnBadge(state, r.id));
+  const othersBadged = rows.some((r) => badged(r) && r.status !== 'NOT_LOADED');
+  const counted = count((r) => badged(r) && (r.status !== 'NOT_LOADED' || !othersBadged));
   return { count: counted, color, title: [...head, ...lines, TOOLBAR_CLICK_HINT].join('\n') };
 }

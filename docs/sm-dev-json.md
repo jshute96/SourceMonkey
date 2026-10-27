@@ -183,6 +183,9 @@ type TabState =
                          // picked installed one that isn't on the page
   | "manual"             // a run's manual script (@run-at context-menu)
                          // that matches, and hasn't been run there
+  | "run-manually"       // a run's script, running because it was asked
+                         // for (`run-now`, or a manual script's Run)
+  | "rerun-manually"     // the same, run again over a copy already there
   // An installed script, as the toolbar badge shows it:
   | "error"              // started, then threw
   | "refused"            // Chrome refused to run it
@@ -840,6 +843,44 @@ JSON:
         }
       ]
     }
+  ]
+}
+```
+
+### `run-now [T<n>.][script]`
+
+Runs a script now, and gives what happened. A refusal prints an
+`ERROR:` line instead.
+
+```ts
+interface RunNowData {
+  tab: string;           // "T1"
+  script: string;        // the run's number for it: "2"
+  rerun?: boolean;       // it ran over a copy already there
+  warnings?: string[];   // why it may not work as expected
+}
+```
+
+- `rerun` and `warnings` are absent when the script opened a dialog
+  before the extension answered.
+
+Text:
+
+```text
+[sm-dev] Reran Menu example on T1
+[sm-dev] Warning: A copy of this script is already running here. Its listeners, timers and changes to the page stay.
+```
+
+JSON:
+
+```json
+{
+  "command": "run-now",
+  "tab": "T1",
+  "script": "1",
+  "rerun": true,
+  "warnings": [
+    "A copy of this script is already running here. Its listeners, timers and changes to the page stay."
   ]
 }
 ```
