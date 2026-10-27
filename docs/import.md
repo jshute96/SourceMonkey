@@ -132,8 +132,7 @@ their collections ([below](#scripts-collections)).
   3. A built-in scripts collection for the same scheme.
   4. A user's scripts collection with the same name, ignoring case.
 - **Only one that isn't here is restored** (`restorable`). One that is
-  shows as Already here, and its scripts import one by one, as from
-  any backup.
+  shows as Already here ([below](#collections-here)).
 - A restored collection takes its name, kind, location and local-files
   flag from the backup. Its enabled flag too, with the Directory
   collections section's Enabled state on; otherwise it is on.
@@ -153,6 +152,23 @@ their collections ([below](#scripts-collections)).
   - A manifest collection from such an export has no path for its
     scripts. It is listed as Can't restore, and its scripts import one
     by one.
+
+### Collections here
+
+A directory, manifest or GitHub collection that is already here isn't
+made again (`updatable`, then `additions` in the request).
+
+- **The scripts it doesn't have are added to it** (`addingScripts`):
+  those with no copy here, each at its path, from the backup's text, as
+  a restore adds them. Its next refresh then loads what the location
+  has, or drops one whose file is gone.
+- The ones it has are listed as existing scripts.
+- It keeps its own enabled state, whatever the backup's.
+- An import never removes a collection's scripts.
+- The scripts it can add aren't listed in the New section, whether or
+  not it is checked.
+- A collection here that the backup can't place scripts in (Can't
+  restore, below) has its scripts imported one by one.
 
 ### Scripts collections
 
@@ -175,32 +191,42 @@ Import.
   changes, Existing with no changes, and Invalid.
   - Each is headed with its count ("New scripts (3)") and shows only
     when the file has such scripts.
-  - Each has its own options, then a table of just the scripts they
-    apply to.
+  - Each has its own options, then a table of just what they apply
+    to.
   - A line above each section and below the last sets them apart.
 - **Values and enabled state are options per section.** Scripts that
   arrive fresh (restored or new) take the backup's by default. For an
   existing script they'd overwrite what it has now, so they start off.
 - **Directory collections**, first, for an SM export with collections
-  to restore ([above](#restoring-collections)): Name, Kind (Directory,
-  GitHub or Manifest), Location (linked), Scripts, and Status (New,
-  Already here, or Can't restore). Scripts collections aren't listed.
-  - A new one is checked to be restored. The others are unchecked and
-    can't be checked; the Status tooltip says why.
-  - The heading's checkbox checks or clears all that can be restored.
-  - The scripts a checked collection takes aren't listed in the New or
-    Existing sections. Unchecking it moves them there.
-  - Its options, all on:
-    - **Use stored values from the backup.**
-    - **Use enabled state from the backup**, for the collections and
-      their scripts. Off, they load enabled.
+  to restore or add to ([above](#restoring-collections)): Name, Kind
+  (Directory, GitHub or Manifest), Location (linked), Scripts, Enabled,
+  and Status (New, Already here, or Can't restore). Scripts collections
+  aren't listed.
+  - A new one is checked to be restored, and one here is checked when
+    it has scripts to add. The others can't be checked; the Status
+    tooltip says why.
+  - Scripts: a new one's count; for one here, its count, or
+    `1 → 2` when scripts are added.
+  - Enabled: `✓` or `☐`, the state it will have: for a new one, the
+    backup's with its option on, else on; for one here, its own. Blank
+    for one that can't be restored.
+  - A count that grows has a light yellow cell, as a change in the
+    Existing table has.
+  - The heading's checkbox checks or clears all that can be checked.
+  - The scripts a new collection takes aren't listed in the New or
+    Existing sections. Unchecked, it is skipped with all its scripts.
+  - Its options, on one line, both on: **Use from the backup:
+    Enabled state, Stored values.** Enabled state is for restored
+    collections and the scripts added to collections; off, they load
+    enabled.
 - The New and Existing tables have a checkbox per script (and one for
   all), a **Type** column and a **Values** column:
   - Type is the scheme chip the collections page shows (`http`,
     `github`, `file`, `imported`, `scratch`), linked to the location
-    when it is a URL or a file. For a new script it is where the backup
-    says it loaded from (`imported` when it gives none); for an
-    existing one, the installed copy's.
+    when it is a URL or a file. For a new script it is where the import
+    will put it (`arrivingLocation`): its location, else `imported`.
+    For an existing one, the installed copy's, and an arrow to where
+    replacing its text moves it (below).
   - In New, Values has a check when the file has stored values for the
     script. Existing shows a comparison (below).
   - Each column heading's tooltip says what the column shows, in these
@@ -220,15 +246,13 @@ Import.
     - When a collection already has that name, the choice shows the
       numbered name the import will give it ("… (2)"), worked out as
       the worker does (`freeCollectionName`).
-  - **Use stored values from the backup** (on).
-  - **Use enabled state from the backup** (on). Off, they load enabled, as
-    any install does.
-  - **Link scripts to their location from the import** (on): a script
-    with a location (an http(s) URL or a file) is installed at it,
-    starting from the file's text, and can get updates from there.
-    Off, or without one, it is kept as an imported script.
-    - A script edited in TM (`user_modified`) is always kept as its
-      text: its location serves something else.
+  - **Use from the backup: Enabled state, Stored values**, both on.
+    Without the enabled state, they load enabled, as any install does.
+  - A script with a location (an http(s) URL or a file) is installed
+    at it, starting from the file's text, and gets updates from there.
+    Without one, it is kept as an imported script.
+    - A script edited in TM (`user_modified`) is kept as its text: its
+      location serves something else.
     - A file is linked only if it can be read at import time, since a
       refresh drops a scripts-collection row whose file is gone. One
       that can't be read uses the backup's copy instead, and the result
@@ -243,10 +267,16 @@ Import.
     - **Version:** `1.0`, or `1.0 → 2.0 (Newer)` / `(Older)`.
     - **Content:** Same, or a `DIFF` button that opens the compare
       page ([compare.md](compare.md)): the installed copy on the left,
-      the backup's on the right ("Import from *file*"), with its bundled `@require` files.
-      Their tooltips list the copies here. Disabled while importing.
+      the backup's on the right ("Import from *file*"), with its
+      bundled `@require` files. Their tooltips list the copies here.
+      Disabled while importing.
     - **Enabled:** `✓` or `☐`, marks rather than checkboxes so they
       don't look clickable, or two with an arrow.
+    - **Type:** in a scripts collection, where a new install of the
+      backup's copy would load from (`locationChange`): `imported →
+      http` for one the backup has an address for, `http → imported`
+      for one it has none for (or edited in TM). In other collections
+      the collection says where, so it doesn't change.
     - **Values:** blank for none, `✓` when only the installed copy has
       them (the backup has none, so they stay), `∅ → ✓` added,
       `✓ → ∅` removed (the backup's are empty), `✓ (Same)`, or
@@ -254,8 +284,8 @@ Import.
       (`readScriptValues`).
   - The Enabled and Values columns are greyed while their Replace
     option is off. A difference the current choices will apply has a
-    light yellow cell: Version and Content when the text is replaced,
-    Enabled and Values when their option is on.
+    light yellow cell: Version, Content and Type when the text is
+    replaced, Enabled and Values when their option is on.
   - A row the current choices do nothing to is greyed, with its
     checkbox disabled; it keeps its check for when the choices change.
     Its tooltip says why.
@@ -270,31 +300,30 @@ Import.
       the same, which also brings the backup's dependency files. (A
       script with no changes at all is in the next section and never
       imports.)
-    - These change only a copy kept as text (imported or scratch). A
-      script that loads from a URL or file keeps loading from there,
-      and the hint under them says so.
-  - **Replace stored values with values from the backup** (off):
-    whole, as TM and VM do.
-  - **Replace enabled state with the state from the backup** (off).
+    - These replace any script's text. One that loads from a URL or
+      file runs the backup's text until its next refresh loads what its
+      location has then, as it would after a first import.
+  - **Replace from the backup: Enabled state, Stored values**, both
+    off. Values are replaced whole, as TM and VM do.
   - Values and enabled state apply to each checked row, whatever the
     text choice.
 - **Existing scripts with no changes:** those the same in every column
-  (text, enabled state, values), which never import.
+  (text, type, enabled state, values), which never import.
   - A line, "N existing scripts are exactly the same and will not be
     imported.", and a Show button for their table, hidden by default.
   - The table has the Existing columns, without checkboxes.
 - **Invalid scripts:** "These scripts cannot be imported", and a table
   of each one's file in the zip and the reason.
 - The button counts what will happen: "Import 3 scripts", restored
-  collections' scripts included. With nothing to do it's greyed, and
-  its tooltip says "This import would update zero scripts."
+  and added scripts included. With nothing to do it's greyed, and its
+  tooltip says "This import would update zero scripts."
 - Afterwards the dialog shows only the results: a line each for what
-  was restored, imported and updated ("Imported 1 script.", "Updated 4
-  scripts."), and what failed.
+  was restored, added, imported and updated
+  ("Added 1 script to 1 collection.", "Updated 4 scripts."), and what
+  failed.
   - The choices are gone, since there's nothing left to do there. To
     import more, or retry after a failure, open the dialog again.
-  - Close or Esc closes it, landing the page on the collection new
-    scripts went into, else the first one restored.
+  - Close or Esc closes it. The page stays where it was.
 
 ## Applying it
 
@@ -317,8 +346,27 @@ Import.
   - A name already taken gets a number, unless it is the one inferred
     from the location (which may repeat, as when adding a collection)
     or a built-in collection's own name.
-- **Updates:** new text is written to the text row and the script
-  refreshed; enabled state through `setScriptsEnabled`; values replaced whole.
+- **Additions** add scripts to a collection here through the same
+  path, at their paths (a URL or path it already holds is refused).
+- **Updates:** new text rebuilds the script as an install builds it
+  (`replaceImportedText`), keeping its id, collection and enabled
+  state:
+  - One kept as text has its text row rewritten, in the same write as
+    its row, so a build that fails leaves the old text.
+  - One that loads from a URL or file runs the backup's text. The
+    rebuilt row has no modified time or HTTP validators, so its next
+    refresh reads the location again rather than skipping it.
+  - The last update check's results (`versionProbes`) are dropped, as
+    the new text may name other update URLs.
+  - `relink` moves one in a scripts collection to the backup's
+    location or to an imported location. A file that can't be read now
+    leaves it where it loads from (kept as text, for one kept as
+    text). A location the collection already holds is refused. Once
+    the row is written, the old location's text rows are removed.
+  - A check of the script that was fetching while the import moved it
+    doesn't write its result, which is for the old location.
+  - Enabled state goes through `setScriptsEnabled`; values are
+    replaced whole.
 - What failed is reported per script; the rest still apply.
 
 ## Testing
@@ -329,9 +377,11 @@ Import.
 - E2E: `tests/e2e/import.spec.ts` drives the dialog: an export
   imported after its collection is gone (linked to a file still there,
   kept as text for one that isn't), its collection restored with its
-  values and then refreshed, a re-import matched by id, a TM backup with
-  a bundled `@require` and then a newer version, a script linked to its
-  URL, scripts that can't be read, and files that aren't backups.
+  values and then refreshed, then re-imported to add back a lost
+  script, a re-import matched by id, a TM backup
+  with a bundled `@require` and then a newer version, a script linked
+  to its URL, then its text replaced and moved to an imported
+  location, scripts that can't be read, and files that aren't backups.
 - Round trip: `tests/e2e/backup-roundtrip.spec.ts` exports one
   collection of each kind, with scripts of each kind (linked to a file
   or URL, kept as text, disabled, invalid, empty, with dependencies and

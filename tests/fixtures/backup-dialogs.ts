@@ -40,12 +40,12 @@ export interface ImportChoicesInput {
   restoreEnabled?: boolean;
   newValues?: boolean;
   newEnabled?: boolean;
-  newLink?: boolean;
   // Which existing scripts' text the backup's replaces.
   existing?: 'leave' | 'newer' | 'always';
   existingValues?: boolean;
   existingEnabled?: boolean;
-  // Restore the backup's collections that aren't here (all of them).
+  // Check (or clear) all the backup's collections the import can
+  // restore or add to.
   restore?: boolean;
   // The Add to collection option's label, or part of it.
   into?: string;
@@ -66,7 +66,7 @@ export async function chooseImport(page: Page, choices: ImportChoicesInput): Pro
   if (choices.existing) await page.locator(`${d} #import-existing-${choices.existing}`).check();
   const boxes: [boolean | undefined, string][] = [
     [choices.restoreValues, 'restore-values'], [choices.restoreEnabled, 'restore-enabled'],
-    [choices.newValues, 'new-values'], [choices.newEnabled, 'new-enabled'], [choices.newLink, 'new-link'],
+    [choices.newValues, 'new-values'], [choices.newEnabled, 'new-enabled'],
     [choices.existingValues, 'existing-values'], [choices.existingEnabled, 'existing-enabled'],
   ];
   for (const [on, id] of boxes) if (on !== undefined) await page.locator(`${d} #import-${id}`).setChecked(on);
@@ -109,13 +109,13 @@ export async function newCollections(page: Page): Promise<{ name: string; off: b
 // The Collections table's rows: Name, Kind, Location (as shown),
 // Scripts, Status, and whether it is checked to be restored.
 export async function collectionRows(page: Page): Promise<{
-  name: string; kind: string; location: string; scripts: string; status: string; restore: boolean;
+  name: string; kind: string; location: string; scripts: string; enabled: string; status: string; restore: boolean;
 }[]> {
   await previewShown(page);
   return await page.locator(`${IMPORT_DIALOG} #import-collections-table tbody tr`).evaluateAll((rows) => rows.map((r) => {
     const cells = [...r.querySelectorAll('td')].map((td) => td.textContent ?? '');
     return {
-      name: cells[1], kind: cells[2], location: cells[3], scripts: cells[4], status: cells[5],
+      name: cells[1], kind: cells[2], location: cells[3], scripts: cells[4], enabled: cells[5], status: cells[6],
       restore: (r.querySelector('input') as HTMLInputElement).checked,
     };
   }));

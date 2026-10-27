@@ -213,7 +213,8 @@ dialog.sm-dialog.import-dialog { width: 920px; }
 .import-table.with-checks td:first-child, .import-table.with-checks th:first-child { width: 1.5em; padding-right: 0; }
 .import-table :is(.import-name, .import-location, .import-collection) { overflow-wrap: anywhere; }
 .import-table .import-type a { text-decoration: none; }
-.import-table .import-version, .import-table .import-here, .import-table .import-values, .import-table .import-enabled { white-space: nowrap; }
+.import-table .import-version, .import-table .import-here, .import-table .import-values, .import-table .import-enabled,
+.import-table .import-type, .import-table .import-count { white-space: nowrap; }
 .import-table .import-skip { color: #888; }
 /* Existing scripts: a column whose option is off, and a difference the
    import will apply. */
@@ -223,6 +224,7 @@ dialog.sm-dialog.import-dialog { width: 920px; }
 .import-table button.import-diff { padding: 0 0.6em; font-size: 12px; font-weight: 600; color: #1d4ed8; }
 .import-dialog .dlg-unchanged { display: flex; gap: 8px; align-items: baseline; }
 .import-dialog .dlg-toggle { font: inherit; padding: 1px 8px; }
+.import-dialog .dlg-pair { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 14px; row-gap: 4px; }
 .import-dialog .dlg-into { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
 .import-dialog .dlg-into input[type="radio"] { margin: 0; }
 .import-dialog .dlg-into select { font: inherit; padding: 2px 6px; max-width: 100%; }

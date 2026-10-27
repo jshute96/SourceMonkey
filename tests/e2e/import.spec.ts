@@ -68,10 +68,12 @@ test.describe('backup import', () => {
   }) => {
     dir.write({ relativePath: 'alpha.user.js', meta: { name: 'Alpha', match: ['https://example.com/*'] }, body: 'void 1;\n' });
     dir.write({ relativePath: 'beta.user.js', meta: { name: 'Beta', match: ['https://example.com/*'] }, body: 'void 2;\n' });
-    const added = await sm.addCollection(dir.path);
+    // A scripts collection's scripts import one by one.
+    const added = await sm.createCollection({ kind: 'scripts', name: 'Mine' });
+    for (const file of ['alpha.user.js', 'beta.user.js']) await sm.installScript(path.join(dir.path, file), { collectionId: added!.id });
     const { scripts } = (await sm.getCollectionWithScripts(added!.id))!;
-    const alpha = scripts.find((s) => s.relativePath === 'alpha.user.js')!;
-    const beta = scripts.find((s) => s.relativePath === 'beta.user.js')!;
+    const alpha = scripts.find((s) => s.relativePath.endsWith('alpha.user.js'))!;
+    const beta = scripts.find((s) => s.relativePath.endsWith('beta.user.js'))!;
     await sm.setScriptEnabled(beta.id, false);
     await sm.writeGmValues(alpha.id, [{ key: 'theme', value: 'dark' }, { key: 'count', value: 3 }, { key: 'cfg', value: { a: [1] } }]);
     await sm.syncNow();
@@ -85,15 +87,15 @@ test.describe('backup import', () => {
     fs.rmSync(path.join(dir.path, 'beta.user.js'));
 
     await openImport(page, '#page-menu', saved);
-    // Not restoring the collection: its scripts import one by one.
     await previewShown(page);
-    await chooseImport(page, { restore: false });
+    // Into a new collection, not one made like Mine.
+    await page.locator(`${IMPORT_DIALOG} #import-new-pick`).check();
     expect(await newRows(page)).toEqual([
       { name: 'Alpha', version: '', type: 'file', href: `file://${dir.path}/alpha.user.js` },
       { name: 'Beta', version: '', type: 'file', href: `file://${dir.path}/beta.user.js` },
     ]);
-    // Only new scripts: no Existing or Invalid section.
-    await expect(page.locator(`${IMPORT_DIALOG} #import-collections .import-heading`)).toHaveText('Directory collections (1)');
+    // Only new scripts: no other section.
+    await expect(page.locator(`${IMPORT_DIALOG} #import-collections`)).toBeHidden();
     await expect(page.locator(`${IMPORT_DIALOG} #import-new .import-heading`)).toHaveText('New scripts (2)');
     await expect(page.locator(`${IMPORT_DIALOG} #import-existing`)).toBeHidden();
     await expect(page.locator(`${IMPORT_DIALOG} #import-invalid`)).toBeHidden();
@@ -110,7 +112,7 @@ test.describe('backup import', () => {
     expect([newAlpha.relativePath, newAlpha.status, newAlpha.enabled]).toEqual([path.join(dir.path, 'alpha.user.js'), 'ok', true]);
     expect([newBeta.relativePath.startsWith('imported:///'), newBeta.status, newBeta.enabled]).toEqual([true, 'ok', false]);
     expect(await sm.getGmValues(newAlpha.id)).toEqual({ theme: 'dark', count: 3, cfg: { a: [1] } });
-    // The page lands on the new collection.
+    // The page shows the new collection.
     const section = `.collection[data-collection-id="${into.id}"]`;
     await expect(page.locator(section)).toBeVisible();
     await expect(page.locator(`${section} .scheme-chip.chip-file`)).toHaveCount(1);
@@ -147,7 +149,7 @@ test.describe('backup import', () => {
 
     await openImport(page, '#page-menu', saved);
     expect(await collectionRows(page)).toEqual([
-      { name: 'My scripts', kind: 'Directory', location: dir.path, scripts: '2', status: 'New', restore: true },
+      { name: 'My scripts', kind: 'Directory', location: dir.path, scripts: '2', enabled: '\u2713', status: 'New', restore: true },
     ]);
     // Its scripts go with it, so no other section lists them.
     await expect(page.locator(`${IMPORT_DIALOG} #import-new`)).toBeHidden();
@@ -172,12 +174,18 @@ test.describe('backup import', () => {
     expect(after.map((s) => [s.id, s.relativePath])).toEqual([[newAlpha.id, 'alpha.user.js']]);
     expect(await sm.getGmValues(newAlpha.id)).toEqual({ theme: 'dark' });
 
-    // Here now, so a second import doesn't restore it again: its
-    // scripts are matched one by one.
+    // Here now, so a second import doesn't restore it again: the script
+    // it has is matched, and the one it lost is added back. It keeps its
+    // own enabled state.
+    await sm.setCollectionEnabled(restored.id, false);
+    await sm.syncNow();
     await openImport(page, '#page-menu', saved);
-    expect(await collectionRows(page)).toEqual([
-      { name: 'My scripts', kind: 'Directory', location: dir.path, scripts: '2', status: 'Already here', restore: false },
-    ]);
+    expect(await collectionRows(page)).toEqual([{
+      name: 'My scripts', kind: 'Directory', location: dir.path, scripts: '1 \u2192 2', enabled: '\u2610',
+      status: 'Already here', restore: true,
+    }]);
+    const collectionCell = (col: string) => page.locator(`${IMPORT_DIALOG} #import-collections-table td[data-col="${col}"]`);
+    await expect(collectionCell('count')).toHaveClass(/import-change/);
     // Alpha is just as the backup has it.
     expect(await existingRows(page)).toEqual([]);
     expect(await unchangedNames(page)).toEqual(['Alpha']);
@@ -187,7 +195,19 @@ test.describe('backup import', () => {
     await page.locator(`${IMPORT_DIALOG} #import-unchanged-toggle`).click();
     await expect(page.locator(`${IMPORT_DIALOG} #import-unchanged-table`)).toBeVisible();
     await expect(page.locator(`${IMPORT_DIALOG} #import-unchanged-table input`)).toHaveCount(0);
-    expect((await newRows(page)).map((r) => r.name)).toEqual(['Beta']);
+    // Beta goes back into the collection, not the New section.
+    await expect(page.locator(`${IMPORT_DIALOG} #import-new`)).toBeHidden();
+    await expect(page.locator(`${IMPORT_DIALOG} #import-confirm-btn`)).toHaveText('Import 1 script');
+    // Unchecked, nothing changes.
+    await chooseImport(page, { restore: false });
+    await expect(collectionCell('count')).not.toHaveClass(/import-change/);
+    await expect(page.locator(`${IMPORT_DIALOG} #import-confirm-btn`)).toBeDisabled();
+    await chooseImport(page, { restore: true });
+    expect(await confirmImport(page)).toBe('Added 1 script to 1 collection.');
+    await closeImport(page);
+    const again = (await sm.getCollectionWithScripts(restored.id))!;
+    expect(again.collection.enabled).toBe(false);
+    expect(again.scripts.map((s) => [s.relativePath, s.enabled])).toEqual([['alpha.user.js', true], ['sub/beta.user.js', false]]);
     await page.close();
   });
 
@@ -286,9 +306,11 @@ test.describe('backup import', () => {
     // Nothing to do to it: its box is off limits, and so is the all box.
     await expect(alphaBox).toBeDisabled();
     await expect(allBox).toBeDisabled();
+    // Always replaces even the same text.
     await chooseImport(page, { existing: 'always' });
-    // It loads from its own file, so its text isn't replaced: only its
-    // values or state can change, and those start off.
+    expect((await existingRows(page))[0].affected).toBe(true);
+    await expect(alphaBox).toBeEnabled();
+    await chooseImport(page, { existing: 'leave' });
     expect((await existingRows(page))[0].affected).toBe(false);
     await expect(alphaBox).toBeDisabled();
     const cell = (col: string) => page.locator(`${IMPORT_DIALOG} #import-existing-table td[data-col="${col}"]`);
@@ -422,6 +444,61 @@ test.describe('backup import', () => {
     await page.close();
   });
 
+  test('a newer backup replaces a linked script\'s text until its next refresh, and can move it where the backup has it', async ({
+    extensionContext, extensionId, sm, fixtureServer,
+  }) => {
+    const url = `${fixtureServer.baseUrl}/gm-log/gm-log.user.js`;
+    const v1 = userscript('From the web', '0.1', '// @match       https://example.com/*\n');
+    fs.writeFileSync(path.join(dir.path, 'v1.txt'), tampermonkeyJson([{ name: 'From the web', uuid: 'tm-w', text: v1, fileUrl: url }]));
+    const page = await extensionContext.newPage();
+    await collectionsPage(page, extensionId);
+    expect(await importVia(page, '#page-menu', path.join(dir.path, 'v1.txt'))).toBe('Imported 1 script.');
+    const into = await collectionByName(sm, 'Imported from Tampermonkey');
+    const [row] = (await sm.getCollectionWithScripts(into.id))!.scripts;
+    const version = async (): Promise<string | undefined> =>
+      (await sm.getCollectionWithScripts(into.id))!.scripts[0].header?.tags.find((t) => t.tag === 'version')?.value;
+
+    // Newer, at the same address: its text is replaced, and it stays
+    // linked.
+    const v2 = v1.replace('0.1', '0.2');
+    fs.writeFileSync(path.join(dir.path, 'v2.txt'), tampermonkeyJson([{ name: 'From the web', uuid: 'tm-w', text: v2, fileUrl: url }]));
+    await openImport(page, '#page-menu', path.join(dir.path, 'v2.txt'));
+    expect(await existingRows(page)).toEqual([{
+      name: 'From the web', version: '0.1 \u2192 0.2 (Newer)', content: 'DIFF', enabled: '\u2713', type: 'http', values: '', affected: true,
+    }]);
+    expect(await confirmImport(page)).toBe('Updated 1 script.');
+    await closeImport(page);
+    let [after] = (await sm.getCollectionWithScripts(into.id))!.scripts;
+    expect([after.id, after.relativePath]).toEqual([row.id, url]);
+    expect(await version()).toBe('0.2');
+    // Its next refresh loads what the address has.
+    await sm.updateCollection(into.id, 'manual');
+    const served = (await sm.getCollectionWithScripts(into.id))!.scripts[0].header!;
+    const tag = (name: string): string => served.tags.find((t) => t.tag === name)?.value ?? '';
+    expect(tag('name')).not.toBe('From the web');
+
+    // A backup with no address (matched by name) keeps it as its text,
+    // as an install would.
+    const v3 = `// ==UserScript==\n// @name ${tag('name')}\n// @namespace ${tag('namespace')}\n// @version 99\n// @match https://example.com/*\n// ==/UserScript==\nvoid 3;\n`;
+    fs.writeFileSync(path.join(dir.path, 'v3.txt'), tampermonkeyJson([{ name: tag('name'), uuid: 'tm-other', text: v3 }]));
+    await openImport(page, '#page-menu', path.join(dir.path, 'v3.txt'));
+    const [existing] = await existingRows(page);
+    expect(existing.type).toBe('http \u2192 imported');
+    await chooseImport(page, { existing: 'always' });
+    await expect(page.locator(`${IMPORT_DIALOG} #import-existing-table td[data-col="type"]`)).toHaveClass(/import-change/);
+    expect(await confirmImport(page)).toBe('Updated 1 script.');
+    await closeImport(page);
+    [after] = (await sm.getCollectionWithScripts(into.id))!.scripts;
+    expect(after.id).toBe(row.id);
+    expect(after.relativePath).toMatch(/^imported:/);
+    expect(await version()).toBe('99');
+    // The page shows its new type without a reload.
+    const section = `.collection[data-collection-id="${into.id}"]`;
+    await expect(page.locator(`${section} .scheme-cell .scheme-chip.chip-imported`)).toHaveCount(1);
+    await expect(page.locator(`${section} .scheme-cell .scheme-chip.chip-http`)).toHaveCount(0);
+    await page.close();
+  });
+
   test('scripts that can\'t be read are listed under Invalid scripts', async ({ extensionContext, extensionId }) => {
     const enc = new TextEncoder();
     fs.writeFileSync(path.join(dir.path, 'mixed.zip'), buildZip([
@@ -441,7 +518,8 @@ test.describe('backup import', () => {
 
   test('the page behind the open dialog doesn\'t scroll', async ({ extensionContext, extensionId }) => {
     const page = await extensionContext.newPage();
-    await page.setViewportSize({ width: 1000, height: 600 });
+    // Short enough that the dialog itself scrolls, not just its table.
+    await page.setViewportSize({ width: 1000, height: 450 });
     await collectionsPage(page, extensionId);
     // Make the page tall enough to scroll.
     await page.evaluate(() => { document.body.appendChild(Object.assign(document.createElement('div'), { style: 'height: 3000px' })); });

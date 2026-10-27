@@ -6,14 +6,18 @@ import assert from 'node:assert/strict';
 
 import {
   actionFor,
+  addingScripts,
   buildImportRequest,
+  collectionScripts,
   contentText,
   DEFAULT_CHOICES,
   hereText,
+  locationChange,
   planCollections,
   planImport,
   restorable,
   restorePath,
+  updatable,
   valuesText,
   versionText,
 } from '../../dist/extension/import-plan.js';
@@ -34,7 +38,7 @@ function backupScript(index, name, over = {}) {
 function copy(id, name, over = {}) {
   return {
     id, collectionId: 'c', collectionName: 'Mine', fileUrl: `https://example.com/${id}.user.js`,
-    header: parseHeader(text(name, over.version)), contentHash: `hash-${id}`, enabled: true, stored: false, ...over,
+    header: parseHeader(text(name, over.version)), contentHash: `hash-${id}`, enabled: true, stored: false, inScripts: true, ...over,
   };
 }
 
@@ -118,26 +122,24 @@ test('the choices decide each script', () => {
     existing: { ...DEFAULT_CHOICES.existing, ...existing },
   }));
 
-  // The defaults: only a newer stored text changes an existing script.
+  // The defaults: only a newer text changes an existing script.
   const newer = act();
   assert.deepEqual(newer[0], { kind: 'install', linkTo: 'https://example.com/w.user.js' });
   // Edited in the other manager: kept as its text.
   assert.deepEqual(newer[1], { kind: 'install' });
-  // A copy that loads from its location keeps its text.
-  assert.deepEqual(newer[2], { kind: 'skip' });
+  // A copy that loads from its location takes the newer text too.
+  assert.deepEqual(newer[2], { kind: 'update', text: true, values: false, enabled: false });
   assert.deepEqual(newer[3], { kind: 'update', text: true, values: false, enabled: false });
   assert.deepEqual(newer[4], { kind: 'skip' });
 
-  assert.deepEqual(act({ fresh: { link: false } })[0], { kind: 'install' });
   // Values and enabled state apply whatever the text choice.
   const all = act({ existing: { values: true, enabled: true } });
-  assert.deepEqual(all[2], { kind: 'update', text: false, values: true, enabled: false });
+  assert.deepEqual(all[2], { kind: 'update', text: true, values: true, enabled: false });
   assert.deepEqual(all[3], { kind: 'update', text: true, values: false, enabled: true });
   assert.deepEqual(all[4], { kind: 'update', text: false, values: true, enabled: false });
   assert.deepEqual(act({ existing: { text: 'leave' } }).slice(2).map((a) => a.kind), ['skip', 'skip', 'skip']);
   assert.deepEqual(act({ existing: { text: 'leave', enabled: true } })[3], { kind: 'update', text: false, values: false, enabled: true });
-  // A copy with a location never takes the backup's text.
-  assert.deepEqual(act({ existing: { text: 'always' } })[4], { kind: 'skip' });
+  assert.deepEqual(act({ existing: { text: 'always' } })[4], { kind: 'update', text: true, values: false, enabled: false });
   // Always replaces a stored copy's text even when it's the same.
   const same = planImport(backup([backupScript(0, 'Kept')]), [copy('k', 'Kept', { stored: true, contentHash: 'h0' })], ['h0']);
   assert.equal(same[0].here, 'same');
@@ -167,6 +169,50 @@ test('the request carries what each kept row needs', () => {
   assert.deepEqual(request.updates, [{ scriptId: 'u', text: scripts[1].text, files: {} }]);
 });
 
+test('replacing the text in a scripts collection moves it to where an install would put it', () => {
+  const at = 'https://example.com/a.user.js';
+  const p = (script, match) => planImport(backup([script]), [match], ['new'])[0];
+  // Kept as text, and the backup has a location: linked to it.
+  const linking = p(backupScript(0, 'A', { location: at }), copy('a', 'A', { stored: true }));
+  assert.equal(locationChange(linking), at);
+  // Linked, and the backup has none: kept as its text.
+  assert.equal(locationChange(p(backupScript(0, 'A'), copy('a', 'A'))), null);
+  // Edited in the other manager: kept as its text, as an install keeps it.
+  assert.equal(locationChange(p(backupScript(0, 'A', { location: at, userModified: true }), copy('a', 'A', { fileUrl: at }))), null);
+  // The same location, or a collection that says where: no change.
+  assert.equal(locationChange(p(backupScript(0, 'A', { location: at }), copy('a', 'A', { fileUrl: at }))), undefined);
+  assert.equal(locationChange(p(backupScript(0, 'A'), copy('a', 'A', { inScripts: false }))), undefined);
+  assert.equal(locationChange(p(backupScript(0, 'A'), copy('a', 'A', { stored: true }))), undefined);
+
+  const b = backup([backupScript(0, 'A', { location: at, version: '2.0', foreignId: 'f' })]);
+  const plan = planImport(b, [copy('a', 'A', { stored: true })], ['new']);
+  const [update] = buildImportRequest(b, plan, new Set([0]), DEFAULT_CHOICES, { newCollectionName: 'I' }).updates;
+  assert.deepEqual(update.relink, { to: at, name: 'A', location: at, foreignId: 'f' });
+});
+
+test('a directory collection here gets the scripts it doesn\'t have', () => {
+  const dir = { uuid: 'd', name: 'Dir', kind: 'directory', location: '/home/me/s', enabled: false, localFiles: true };
+  const scripts = [
+    backupScript(0, 'Have', { collection: 'd', location: '/home/me/s/have.user.js' }),
+    backupScript(1, 'Missing', { collection: 'd', location: '/home/me/s/sub/missing.user.js', values: { v: 1 } }),
+  ];
+  const b = { ...backup(scripts), collections: [dir] };
+  const plan = planImport(b, [copy('h', 'Have', { fileUrl: 'file:///home/me/s/have.user.js', inScripts: false })], ['h0', 'h1']);
+  const collections = planCollections(b, [{ id: 'here', name: 'Dir', path: 'file:///home/me/s', enabled: true, scriptCount: 1 }]);
+  assert.deepEqual(addingScripts(collections[0], plan), [1]);
+  assert.equal(updatable(collections[0], plan), true);
+  // Its scripts leave the New section whether it's checked or not.
+  assert.deepEqual([...collectionScripts(collections, plan)], [1]);
+
+  const request = buildImportRequest(b, plan, new Set([0, 1]), DEFAULT_CHOICES, { newCollectionName: 'I' }, collections, new Set(['d']));
+  assert.equal(request.installs.length, 0);
+  assert.equal(request.restores, undefined);
+  assert.deepEqual(request.additions.map((a) => ({ ...a, installs: a.installs.map((i) => [i.name, i.relativePath, i.values]) })), [
+    { collectionId: 'here', installs: [['Missing', 'sub/missing.user.js', { v: 1 }]] },
+  ]);
+  assert.equal(buildImportRequest(b, plan, new Set([0, 1]), DEFAULT_CHOICES, { newCollectionName: 'I' }, collections, new Set()).additions, undefined);
+});
+
 test('backup collections match by id, location, built-in scheme, or a scripts collection\'s name', () => {
   const collections = [
     { uuid: 'c-id', name: 'X', kind: 'scripts', location: null, enabled: true, localFiles: true },
@@ -181,10 +227,10 @@ test('backup collections match by id, location, built-in scheme, or a scripts co
     relativePath: c.kind === 'manifest' ? `s${i}.user.js` : undefined,
   }));
   const here = [
-    { id: 'c-id', name: 'Renamed', path: 'container:abc' },
-    { id: 'h-dir', name: 'Other name', path: 'file:///home/me/s' },
-    { id: 'h-http', name: 'Scripts from web', path: 'container:http' },
-    { id: 'h-mine', name: 'mine', path: 'container:def' },
+    { id: 'c-id', name: 'Renamed', path: 'container:abc', enabled: true, scriptCount: 0 },
+    { id: 'h-dir', name: 'Other name', path: 'file:///home/me/s', enabled: true, scriptCount: 0 },
+    { id: 'h-http', name: 'Scripts from web', path: 'container:http', enabled: true, scriptCount: 0 },
+    { id: 'h-mine', name: 'mine', path: 'container:def', enabled: true, scriptCount: 0 },
   ];
   const plan = planCollections({ ...backup(scripts), collections }, here);
   // A collection with no scripts in the backup has nothing to restore.

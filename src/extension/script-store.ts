@@ -1792,8 +1792,9 @@ export async function smDevCollectionRuns(): Promise<string[]> {
 // ---------- Imports ----------
 //
 // Applies an import the page planned from a backup file (docs/import.md):
-// new scripts installed into one scripts collection, and updates to
-// scripts already here. The page reads the file and decides what
+// collections restored, scripts added to collections here, new scripts
+// installed into scripts collections, and updates to scripts already
+// here. The page reads the file and decides what
 // happens to each script; this writes it.
 
 // One new script.
@@ -1838,12 +1839,24 @@ export type ImportNamed =
   | { collectionId: string; installs: ImportInstall[] }
   | { create: Omit<ImportRestore, 'installs'>; installs: ImportInstall[] };
 
+// Scripts added to a directory, manifest or GitHub collection here, at
+// their paths.
+export interface ImportAddition {
+  collectionId: string;
+  installs: ImportInstall[];
+}
+
 // A change to a script already here. Each field is applied when present.
 export interface ImportUpdate {
   scriptId: string;
-  // New text, for a script kept only as its text.
+  // New text. A script that loads from a URL or file runs it until its
+  // next refresh loads what its location has then.
   text?: string;
   files?: Record<string, PushedFile>;
+  // With `text`, where it loads from now, in a scripts collection: a URL
+  // or file to link it to, or null to keep it as its text, with its
+  // import record's fields. Absent, it stays where it is.
+  relink?: { to: string | null; name: string; location?: string; foreignId?: string };
   enabled?: boolean;
   // Replaces all its values.
   values?: Record<string, unknown>;
@@ -1856,18 +1869,19 @@ export interface ImportRequest {
   installs: ImportInstall[];
   updates: ImportUpdate[];
   restores?: ImportRestore[];
+  additions?: ImportAddition[];
   // New scripts placed by their collection in the backup, not `into`.
   named?: ImportNamed[];
 }
 
 export interface ImportOutcome {
-  // The collection new scripts went into, when there were any, else the
-  // first one restored.
-  collectionId: string | null;
   installed: number;
   // Collections made again, and their scripts (not in `installed`).
   restored: number;
   restoredScripts: number;
+  // Scripts added to collections here, and how many collections.
+  added: number;
+  addedTo: number;
   updated: number;
   // Scripts to be linked to a file that couldn't be read, kept as text.
   keptAsText: string[];
@@ -1878,15 +1892,15 @@ export async function importScripts(request: ImportRequest): Promise<ImportOutco
   const now = Date.now();
   const failed: ImportOutcome['failed'] = [];
   const keptAsText: string[] = [];
-  let collectionId: string | null = null;
   let installed = 0;
   let restored = 0;
   let restoredScripts = 0;
+  let added = 0;
+  let addedTo = 0;
   for (const restore of request.restores ?? []) {
     try {
       const out = await installImported({ create: await restoreTarget(restore, now) }, restore.installs, request.source, now, failed, keptAsText);
       if (out.collectionId) {
-        collectionId ??= out.collectionId;
         restored++;
         restoredScripts += out.installed;
       }
@@ -1894,12 +1908,21 @@ export async function importScripts(request: ImportRequest): Promise<ImportOutco
       for (const item of restore.installs) failed.push({ name: item.name, message: describeError(err) });
     }
   }
+  for (const addition of request.additions ?? []) {
+    try {
+      const target = await checkedImportCollection(addition.collectionId, true);
+      const out = await installImported({ existing: target, anyKind: true }, addition.installs, request.source, now, failed, keptAsText);
+      added += out.installed;
+      if (out.installed > 0) addedTo++;
+    } catch (err) {
+      for (const item of addition.installs) failed.push({ name: item.name, message: describeError(err) });
+    }
+  }
   for (const group of request.named ?? []) {
     try {
       const target: ImportTarget = 'collectionId' in group ? { existing: await checkedImportCollection(group.collectionId) }
         : { create: await restoreTarget(group.create, now) };
       const out = await installImported(target, group.installs, request.source, now, failed, keptAsText);
-      collectionId = out.collectionId ?? collectionId;
       installed += out.installed;
     } catch (err) {
       for (const item of group.installs) failed.push({ name: item.name, message: describeError(err) });
@@ -1907,25 +1930,27 @@ export async function importScripts(request: ImportRequest): Promise<ImportOutco
   }
   if (request.installs.length > 0) {
     const out = await installImported(await importTarget(request.into), request.installs, request.source, now, failed, keptAsText);
-    collectionId = out.collectionId ?? collectionId;
     installed += out.installed;
   }
   let updated = 0;
   for (const update of request.updates) {
     try {
-      if (await applyImportUpdate(update, request.source, now)) updated++;
+      if (await applyImportUpdate(update, request.source, now, keptAsText)) updated++;
     } catch (err) {
       const row = await getScriptMeta(update.scriptId);
       failed.push({ name: row ? scriptDisplayName(row) : update.scriptId, message: describeError(err) });
     }
   }
   await valueWritesSaved();
-  return { collectionId, installed, restored, restoredScripts, updated, keptAsText, failed };
+  return {
+    installed, restored, restoredScripts, added, addedTo, updated, keptAsText, failed,
+  };
 }
 
-// Where new scripts go: a scripts collection here, or a new one, which
-// is made only once there is something to put in it.
-type ImportTarget = { existing: StoredCollection } | { create: StoredCollection };
+// Where new scripts go: a scripts collection here (or, `anyKind`, a
+// directory, manifest or GitHub one, for scripts at their paths), or a
+// new one, which is made only once there is something to put in it.
+type ImportTarget = { existing: StoredCollection; anyKind?: boolean } | { create: StoredCollection };
 
 async function importTarget(into: ImportRequest['into']): Promise<ImportTarget> {
   if ('collectionId' in into) return { existing: await checkedImportCollection(into.collectionId) };
@@ -1959,11 +1984,12 @@ async function restoreTarget(restore: Omit<ImportRestore, 'installs'>, now: numb
   return seed;
 }
 
-// The scripts collection `id`, if new scripts can go into it.
-async function checkedImportCollection(id: string): Promise<StoredCollection> {
+// The scripts collection `id` (or, `anyKind`, any collection), if new
+// scripts can go into it.
+async function checkedImportCollection(id: string, anyKind = false): Promise<StoredCollection> {
   const found = await getRaw<StoredCollection>(collectionKey(id));
   if (!found) throw new Error(COLLECTION_GONE);
-  if (!isContainerCollection(found.path)) throw new Error('Internal error: Scripts can only be imported into a scripts collection');
+  if (!anyKind && !isContainerCollection(found.path)) throw new Error('Internal error: Scripts can only be imported into a scripts collection');
   if (isSmDevCollection(found.path)) throw new Error(SM_DEV_COLLECTION_LOCKED);
   return found;
 }
@@ -2042,7 +2068,7 @@ async function installImported(
       const collections = await getCollections();
       let current: StoredCollection;
       if ('existing' in target) {
-        current = await checkedImportCollection(container.id);
+        current = await checkedImportCollection(container.id, target.anyKind);
       } else {
         // A restored collection whose location or built-in collection
         // is here already: that one holds these scripts.
@@ -2101,25 +2127,12 @@ async function installImported(
 }
 
 // Applies one update. False when it changed nothing.
-async function applyImportUpdate(update: ImportUpdate, source: ImportSource, now: number): Promise<boolean> {
+async function applyImportUpdate(update: ImportUpdate, source: ImportSource, now: number, keptAsText: string[]): Promise<boolean> {
   const row = await getScriptMeta(update.scriptId);
   if (!row) throw new Error(SCRIPT_GONE);
   let changed = false;
   if (update.text !== undefined) {
-    // Only a script kept as its text has text to replace; any other
-    // loads from its location.
-    if (!isStoredTextUrl(row.relativePath)) throw new Error('Internal error: Only an imported or scratch script\'s text can be replaced');
-    const url = row.relativePath;
-    const hasFiles = update.files !== undefined && Object.keys(update.files).length > 0;
-    // Its import record now names this file. A scratch script has none.
-    const info = await getRaw<ImportInfo>(importInfoKey(url));
-    await writeLocal({
-      [scratchTextKey(url)]: update.text,
-      ...(hasFiles ? { [scratchFilesKey(url)]: update.files } : {}),
-      ...(info ? { [importInfoKey(url)]: { ...info, source, importedAt: now } satisfies ImportInfo } : {}),
-    });
-    if (!hasFiles) await removeLocal([scratchFilesKey(url)]);
-    await refreshScript(update.scriptId);
+    await replaceImportedText(row, update.text, update, source, now, keptAsText);
     changed = true;
   }
   if (update.enabled !== undefined && update.enabled !== row.enabled) {
@@ -2131,6 +2144,75 @@ async function applyImportUpdate(update: ImportUpdate, source: ImportSource, now
     changed = true;
   }
   return changed;
+}
+
+// Rebuilds a script from the backup's text, as an install builds one,
+// keeping its id, collection and enabled state. It stays where it loads
+// from, unless `update.relink` moves it. One kept as text has its text
+// row rewritten, so its refreshes load the new text; one that loads
+// from a URL or file comes without the old copy's modified time and
+// HTTP validators, so its next refresh reads its location again.
+async function replaceImportedText(
+  row: ScriptMeta, text: string, update: ImportUpdate, source: ImportSource, now: number, keptAsText: string[],
+): Promise<void> {
+  const collection = await getRaw<StoredCollection>(collectionKey(row.collectionId));
+  if (!collection) throw new Error(COLLECTION_GONE);
+  const was = row.relativePath;
+  let path = was;
+  const relink = update.relink;
+  if (relink) {
+    const linked = relink.to === null ? null : await linkedLocation(relink.to, collection.path);
+    // A file that can't be read here leaves it where it loads from now,
+    // rather than dropping a link that works.
+    if (relink.to !== null && linked === null && isStoredTextUrl(was)) keptAsText.push(relink.name);
+    path = linked ?? (relink.to === null && !isStoredTextUrl(was) ? importedUrl(relink.name) : was);
+  }
+  const files = update.files && Object.keys(update.files).length > 0 ? update.files : undefined;
+  const stored = isStoredTextUrl(path);
+  // The text rows a script kept as text loads from, written with its
+  // row in one step. Written first, a build that failed would leave the
+  // backup's text for the next refresh to pick up, under a script the
+  // import reported as failed. Without bundled files, an empty files row
+  // in the same step, so no refresh pairs the new text with the old
+  // files; it is removed after.
+  let textItems: Record<string, unknown> = {};
+  if (stored) {
+    // Its import record now names this file. A scratch script has none.
+    const prior = path === was ? await getRaw<ImportInfo>(importInfoKey(path)) : undefined;
+    let info: ImportInfo | undefined = prior ? { ...prior, source, importedAt: now } : undefined;
+    if (path !== was) {
+      info = { source, importedAt: now };
+      if (relink?.foreignId) info.foreignId = relink.foreignId;
+      if (relink?.location) info.location = relink.location;
+    }
+    textItems = {
+      [scratchTextKey(path)]: text,
+      [scratchFilesKey(path)]: files ?? {},
+      ...(info ? { [importInfoKey(path)]: info } : {}),
+    };
+  }
+  const built = await buildScriptFromText({
+    id: row.id, collectionId: row.collectionId, relativePath: path, fileUrl: scriptFileUrl(collection.path, path), text, now,
+  });
+  const script = await applyFiles(built, undefined, 'all', new Map(), now, localFileScope(collection), 'await', files);
+  await mutate(async () => {
+    const cur = await getRow<ScriptMeta>(scriptKey(row.id));
+    if (!cur) throw new Error(SCRIPT_GONE);
+    if (path !== cur.relativePath) {
+      const holder = await getRaw<StoredCollection>(collectionKey(cur.collectionId));
+      if (holder && await containerHoldsLocation(holder, canonicalCollectionInput(path))) throw new Error(ALREADY_INSTALLED_IN_TARGET);
+    }
+    const next: StoredScript = { ...script, collectionId: cur.collectionId, enabled: cur.enabled };
+    // Not the last update check's result: the new text may name other
+    // update URLs, and the next check fills it in again.
+    const changed = await changedScriptRows([next], { [scriptKey(row.id)]: cur }, () => undefined);
+    const items = { ...textItems, ...changed.items };
+    if (Object.keys(items).length > 0) await writeLocal(items);
+  });
+  // What it no longer has: the old bundled files, or the text rows of
+  // where it loaded from before.
+  if (stored && !files) await removeLocal([scratchFilesKey(path)]);
+  if (path !== was && isStoredTextUrl(was)) await removeLocal(storedTextKeys(was));
 }
 
 // Replaces all of a script's values with `values`, through the value
@@ -3684,6 +3766,11 @@ export async function refreshScript(
     // rather than by re-reading the collection row: this covers both
     // removal paths, and costs nothing since we needed `cur` anyway.
     if (!cur) return null;
+    // It moved while we fetched (an import relinked it): what we built
+    // is for where it was, and writing it would undo the move and point
+    // it at text rows that are gone. The next check loads it from where
+    // it is now.
+    if (cur.relativePath !== prior.relativePath) return null;
     const merged = preserveConcurrentEdits(next, prior, cur);
     // Same rule as the collection path: a check that found nothing new
     // doesn't rewrite the row. This one matters most — it's the

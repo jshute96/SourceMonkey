@@ -10,7 +10,7 @@ import { identityKey, locationKey } from './script-keys.js';
 import { canonicalCollectionInput, containerKind, isContainerCollection, isFileUrl, isHttpUrl, locationFsPath } from '../file-locations.js';
 import { githubDirScriptFileUrl, parseGithubUrl } from './github-provider.js';
 import { isEmptyScript, type BackupCollection, type BackupScript, type ParsedBackup } from './import-backup.js';
-import type { ImportInstall, ImportNamed, ImportRequest, ImportRestore, ImportUpdate } from './script-store.js';
+import type { ImportAddition, ImportInstall, ImportNamed, ImportRequest, ImportRestore, ImportUpdate } from './script-store.js';
 
 // A script installed here, as the planner needs it.
 export interface InstalledCopy {
@@ -22,8 +22,12 @@ export interface InstalledCopy {
   header: ParsedHeader | null;
   contentHash?: string;
   enabled: boolean;
-  // Kept only as its text, so an import can replace it.
+  // Kept only as its text (imported or scratch).
   stored: boolean;
+  // In a scripts collection, where replacing its text can also change
+  // where it loads from (`locationChange`). In a directory, manifest or
+  // GitHub collection, the collection says where.
+  inScripts: boolean;
   // The id its import record gives it (`ImportInfo.foreignId`).
   importedId?: string;
 }
@@ -91,6 +95,8 @@ export interface HereCollection {
   id: string;
   name: string;
   path: string;
+  enabled: boolean;
+  scriptCount: number;
 }
 
 export interface PlannedCollection {
@@ -98,7 +104,9 @@ export interface PlannedCollection {
   // The backup's scripts a restore puts in it, by index.
   scripts: number[];
   // The collection here it already is. Such a collection isn't made
-  // again: its scripts import one by one, as from any backup.
+  // again: the scripts it doesn't have are added to it
+  // (`addingScripts`), and the ones it has import one by one, as from
+  // any backup.
   here?: HereCollection;
   // Set when it can't be restored: its scripts' paths in it aren't
   // known. Its scripts import one by one.
@@ -159,7 +167,8 @@ export function restorePath(script: BackupScript, collection: BackupCollection):
 // state by default; for a script already here those would overwrite
 // what it has now, so they start off.
 export interface ImportChoices {
-  // Restored collections and their scripts.
+  // The Directory collections section: restored collections and their
+  // scripts, and collections here and the scripts added to them.
   restore: {
     values: boolean;
     enabled: boolean;
@@ -186,20 +195,39 @@ export interface ArrivingChoices {
   values: boolean;
   // Take the backup's enabled state; otherwise it comes in enabled.
   enabled: boolean;
-  // Link a script with a location (a URL or a file) to it, so it can
-  // take updates from there; otherwise it is kept as its text.
-  link: boolean;
+}
+
+// Where a script arriving from the backup loads from: its location (a
+// URL or a file), so it takes updates from there, else undefined, for
+// one kept as its text. A script edited in the other manager is kept as
+// that text: its location serves something else.
+export function arrivingLocation(s: BackupScript): string | undefined {
+  const url = s.location;
+  return url && isLinkable(url) && !s.userModified ? url : undefined;
+}
+
+// Where an existing script loads from once the backup's text replaces
+// its own, when that changes: a URL or file to link it to, or null to
+// keep it as its text. One in a scripts collection becomes what a new
+// install of the backup's would be; one in any other collection loads
+// from where that collection says.
+export function locationChange(p: PlannedScript): string | null | undefined {
+  const m = p.match;
+  if (!m?.inScripts) return undefined;
+  const to = arrivingLocation(p.script);
+  if (!to) return m.stored ? undefined : null;
+  return !m.stored && locationKey(m.fileUrl) === locationKey(to) ? undefined : to;
 }
 
 export const DEFAULT_CHOICES: ImportChoices = {
   restore: { values: true, enabled: true },
-  new: { values: true, enabled: true, link: true, byCollection: true },
+  new: { values: true, enabled: true, byCollection: true },
   existing: { text: 'newer', values: false, enabled: false },
 };
 
 export type RowAction =
   | { kind: 'install'; linkTo?: string }
-  // `text`: the stored text is replaced.
+  // `text`: the script's text is replaced.
   | { kind: 'update'; text: boolean; values: boolean; enabled: boolean }
   | { kind: 'skip' };
 
@@ -211,25 +239,23 @@ function isLinkable(location: string): boolean {
 
 // What happens to one script of the New or Existing section.
 export function actionFor(p: PlannedScript, choices: ImportChoices): RowAction {
-  if (!p.match) return installAction(p.script, choices.new);
+  if (!p.match) return installAction(p.script);
   const { existing } = choices;
   // Always replaces even the same text, as it says, when something else
   // about the script changes: the backup's dependency files come with
   // it. A script with no changes at all the dialog never imports.
-  const text = p.match.stored
-    && (existing.text === 'always' || (existing.text === 'newer' && p.here === 'older-here'));
+  // A script that loads from a URL or file takes the backup's text too,
+  // until its next refresh loads what its location has then.
+  const text = existing.text === 'always' || (existing.text === 'newer' && p.here === 'older-here');
   const values = existing.values && p.script.values !== undefined;
   const enabled = existing.enabled && p.script.enabled !== p.match.enabled;
   if (!text && !values && !enabled) return { kind: 'skip' };
   return { kind: 'update', text, values, enabled };
 }
 
-function installAction(s: BackupScript, choices: ArrivingChoices): RowAction & { kind: 'install' } {
-  const url = s.location;
-  // A script edited in the other manager is kept as that text: its
-  // location serves something else.
-  const link = choices.link && url && isLinkable(url) && !s.userModified;
-  return link ? { kind: 'install', linkTo: url } : { kind: 'install' };
+function installAction(s: BackupScript): RowAction & { kind: 'install' } {
+  const linkTo = arrivingLocation(s);
+  return linkTo ? { kind: 'install', linkTo } : { kind: 'install' };
 }
 
 // How an existing script compares with the backup's, and the copies
@@ -307,13 +333,37 @@ function stableJson(value: unknown): string {
 }
 
 // The scripts `restoring` (collections, by the backup's uuid) puts in
-// collections, which the New and Existing sections then leave out.
+// restored collections.
 export function restoredScripts(collections: readonly PlannedCollection[], restoring: ReadonlySet<string>): Set<number> {
   const out = new Set<number>();
   for (const c of collections) {
     if (restorable(c) && restoring.has(c.collection.uuid)) for (const i of c.scripts) out.add(i);
   }
   return out;
+}
+
+// The scripts the Directory collections section takes, which the New
+// and Existing sections leave out: all those of the collections it can
+// restore, and all those it can add to collections here, checked or
+// not. An unchecked collection's scripts aren't imported.
+export function collectionScripts(collections: readonly PlannedCollection[], plan: readonly PlannedScript[]): Set<number> {
+  const out = new Set<number>();
+  for (const c of collections) for (const i of restorable(c) ? c.scripts : addingScripts(c, plan)) out.add(i);
+  return out;
+}
+
+// The backup's scripts a directory, manifest or GitHub collection here
+// doesn't have, which an import adds to it at their paths, as a restore
+// would: those with no copy here.
+export function addingScripts(c: PlannedCollection, plan: readonly PlannedScript[]): number[] {
+  if (!c.here || c.cantRestore || c.collection.kind === 'scripts') return [];
+  return c.scripts.filter((i) => !plan[i].match);
+}
+
+// A directory, manifest or GitHub collection here that an import can
+// add scripts to.
+export function updatable(c: PlannedCollection, plan: readonly PlannedScript[]): boolean {
+  return addingScripts(c, plan).length > 0;
 }
 
 // A directory, manifest or GitHub collection that isn't here and can be
@@ -339,7 +389,8 @@ function installItem(s: BackupScript, choices: ArrivingChoices, linkTo: string |
 }
 
 // The request the worker applies: the collections in `restoring` with
-// all their scripts, then the rows the user kept checked. With
+// all their scripts (or, for one here, the scripts it doesn't have),
+// then the rows the user kept checked. With
 // `byCollection`, a new script from one of the backup's scripts
 // collections goes into it by name; the rest go `into`.
 export function buildImportRequest(
@@ -356,8 +407,7 @@ export function buildImportRequest(
     if (!restorable(c) || !restoring.has(c.collection.uuid)) continue;
     const bc = c.collection;
     // Its scripts load from its location, so they aren't linked one by one.
-    const arriving = { ...choices.restore, link: false };
-    const installs = c.scripts.map((i) => ({ ...installItem(plan[i].script, arriving, undefined), relativePath: restorePath(plan[i].script, bc)! }));
+    const installs = c.scripts.map((i) => ({ ...installItem(plan[i].script, choices.restore, undefined), relativePath: restorePath(plan[i].script, bc)! }));
     const restore: ImportRestore = {
       name: bc.name, kind: bc.kind, location: bc.location,
       enabled: choices.restore.enabled ? bc.enabled : true, localFiles: bc.localFiles, installs,
@@ -365,7 +415,14 @@ export function buildImportRequest(
     if (bc.builtin) restore.builtin = bc.builtin;
     restores.push(restore);
   }
-  const restored = restoredScripts(collections, restoring);
+  const additions: ImportAddition[] = [];
+  for (const c of collections) {
+    if (!updatable(c, plan) || !restoring.has(c.collection.uuid)) continue;
+    const bc = c.collection;
+    const installs = addingScripts(c, plan).map((i) => ({ ...installItem(plan[i].script, choices.restore, undefined), relativePath: restorePath(plan[i].script, bc)! }));
+    additions.push({ collectionId: c.here!.id, installs });
+  }
+  const restored = collectionScripts(collections, plan);
   const installs: ImportInstall[] = [];
   const named = new Map<string, ImportNamed>();
   const updates: ImportUpdate[] = [];
@@ -398,6 +455,12 @@ export function buildImportRequest(
       if (action.text) {
         update.text = s.text;
         update.files = s.files;
+        const to = locationChange(p);
+        if (to !== undefined) {
+          update.relink = { to, name: s.name };
+          if (s.location) update.relink.location = s.location;
+          if (s.foreignId) update.relink.foreignId = s.foreignId;
+        }
       }
       if (action.enabled) update.enabled = s.enabled;
       if (action.values && s.values) update.values = s.values;
@@ -406,6 +469,7 @@ export function buildImportRequest(
   }
   const request: ImportRequest = { source: backup.source, into, installs, updates };
   if (restores.length > 0) request.restores = restores;
+  if (additions.length > 0) request.additions = additions;
   if (named.size > 0) request.named = [...named.values()];
   return request;
 }

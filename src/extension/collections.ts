@@ -194,17 +194,10 @@ const pageMenuBtn = moreMenuButton('More actions');
 pageMenuBtn.id = 'page-menu';
 pageMenuBtn.title = 'More actions';
 pageMenuBtn.addEventListener('click', () => openMenu(pageMenuBtn, [
-  { label: 'Import scripts\u2026', run: () => void runImport() },
+  { label: 'Import scripts\u2026', run: () => void openImportDialog() },
   { label: 'Export all collections\u2026', run: () => openExportDialog({ scope: { all: true } }) },
 ]));
 
-// The import dialog, then the collection its new scripts went into.
-async function runImport(): Promise<void> {
-  const landed = await openImportDialog();
-  if (!landed) return;
-  await repaintPage();
-  jumpToCollection(landed);
-}
 refreshAllBtn.after(pageMenuBtn);
 // The menu is fixed in place, so it would stay put while its button
 // scrolls or the layout moves it.
@@ -1026,6 +1019,11 @@ function syncScriptRow(
     else if (!wanted && has) actionCell.replaceChildren();
   }
 
+  // An import can move a script in a scripts collection to another
+  // location (a URL to imported text, say), which changes its chip.
+  const schemeCell = row.querySelector<HTMLTableCellElement>('td.scheme-cell');
+  if (schemeCell && schemeCell.dataset.location !== script.relativePath) paintSchemeCell(schemeCell, script);
+
   const sizeCell = row.querySelector<HTMLTableCellElement>('td.size-cell');
   const size = formatScriptSize(script);
   if (sizeCell && sizeCell.textContent !== size) sizeCell.textContent = size;
@@ -1073,6 +1071,12 @@ function syncScriptRow(
   }
   row.classList.toggle('disabled', !collectionOn || !scriptOn);
   return repainted;
+}
+
+// A scripts collection row's Type chip, for where the script loads from.
+function paintSchemeCell(cell: HTMLTableCellElement, script: ScriptMeta): void {
+  cell.dataset.location = script.relativePath;
+  cell.replaceChildren(makeSchemeChip(script.relativePath));
 }
 
 // Are `wanted` already the container's element children, in that order?
@@ -1738,14 +1742,11 @@ function renderScriptRow(
   const iconCount = fillNameCell(nameCell, script, collectionPath, localFiles);
   tr.appendChild(nameCell);
 
-  // For column parity with the live table. A container collection can't
-  // actually reach here — its scan is built from the scripts it holds,
-  // so nothing in one ever reads as vanished — but a table whose rows
-  // disagree about column count stops lining up.
+  // A scripts collection's rows each show where the script loads from.
   if (inContainer) {
     const schemeCell = document.createElement('td');
     schemeCell.className = 'scheme-cell';
-    schemeCell.appendChild(makeSchemeChip(script.relativePath));
+    paintSchemeCell(schemeCell, script);
     tr.appendChild(schemeCell);
   }
 
@@ -2660,7 +2661,7 @@ function renderTombstoneRow(
   if (inContainer) {
     const schemeCell = document.createElement('td');
     schemeCell.className = 'scheme-cell';
-    schemeCell.appendChild(makeSchemeChip(script.relativePath));
+    paintSchemeCell(schemeCell, script);
     tr.appendChild(schemeCell);
   }
 

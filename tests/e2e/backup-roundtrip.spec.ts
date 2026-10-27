@@ -210,19 +210,19 @@ test.describe('backup round trip', () => {
     expect((await collectionRows(page)).map((r) => r.restore)).toEqual([false, false, false]);
     await all.check();
     expect((await collectionRows(page)).map((r) => r.restore)).toEqual([true, true, true]);
-    // Not restoring the directory, its scripts import one by one, but
-    // the empty one can't: it's listed as invalid. They have no scripts
-    // collection, so all new scripts go into the one picked.
+    // Not restoring the directory skips it with all its scripts: no other
+    // section lists them.
     const localBox = page.locator(`${IMPORT_DIALOG} #import-collections-table tbody tr`).first().locator('input');
+    const newNames = await page.locator(`${IMPORT_DIALOG} #import-new-table .import-name`).allInnerTexts();
+    const button = page.locator(`${IMPORT_DIALOG} #import-confirm-btn`);
+    const withDir = await button.innerText();
     await localBox.uncheck();
-    await expect(page.locator(`${IMPORT_DIALOG} #import-new-table .import-name`))
-      .toHaveText(['Alpha', 'broken', 'Beta', 'Web', 'Loose', 'MineFile', 'MineWeb', 'Kept']);
-    await expect(page.locator(`${IMPORT_DIALOG} #import-invalid-table tbody tr`)).toHaveText(['emptyThe script is empty']);
-    await expect(page.locator(`${IMPORT_DIALOG} #import-new-by-collection`)).toBeHidden();
-    expect(await newCollections(page)).toEqual([]);
-    await localBox.check();
+    await expect(page.locator(`${IMPORT_DIALOG} #import-new-table .import-name`)).toHaveText(newNames);
     await expect(page.locator(`${IMPORT_DIALOG} #import-invalid`)).toBeHidden();
+    await expect(button).not.toHaveText(withDir);
     expect(await newCollections(page)).toEqual(fromScriptsCollections);
+    await localBox.check();
+    await expect(button).toHaveText(withDir);
     const result = await confirmImport(page);
     await closeImport(page);
     expect(result).toBe(`Restored 3 collections with 8 scripts.\n\nImported ${fromScriptsCollections.length} scripts.`);
