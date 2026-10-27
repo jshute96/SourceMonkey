@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name        SourceMonkey example: frames: top frame only
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.2
+// @version     1.0.3
 // @description Matches the page and its frames, but @noframes keeps it to the top frame.
+// @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
+// @match       https://jshute96.github.io/SourceMonkey/tests/examples/frames/frames.html
 // @match       *://*/*frames/frames.html
 // @match       *://*/*frames/frame-a.html
 // @match       *://*/*frames/frame-b.html

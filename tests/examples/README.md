@@ -33,8 +33,9 @@ npx sm-dev --manager tm start https://jshute96.github.io/SourceMonkey/tests/exam
 ```
 
 Two examples need parts GitHub Pages can't serve: the slow route in
-`headers-run-at/`, and a second host for `frames/`. For those, serve
-the examples locally ([Running locally](#running-locally)).
+`headers-run-at/`, and a second host for `frames/` (on Pages, its
+Frame B is on the page's own origin). For those, serve the examples
+locally ([Running locally](#running-locally)).
 
 ## How an example is built
 
@@ -46,6 +47,10 @@ Each example lives in its own subdirectory and pairs:
 - `<api>.user.js` — a real userscript with the metadata header,
   `@match`-ed at `*://*/*<api>/<api>.html` (and a `file:///` variant)
   so it picks up the page regardless of how it's served.
+  - Its first `@match` names the page's GitHub Pages URL, which a
+    manager shows as the script's link and site. (A script that
+    names its page with `@include` instead puts it in an `@include`.)
+  - Its `@icon` is SourceMonkey's icon on GitHub Pages.
 - `<api>.spec.ts` — the Playwright e2e coverage for this example.
   Lives next to the page + userscript so per-API work stays in one
   dir; Playwright is configured to discover it (see
@@ -224,6 +229,9 @@ prose paragraphs. Mirrors the project-wide doc convention.
 2. Use both `@match *://*/*<api>/<api>.html` and
    `@match file:///*/<api>/<api>.html` so the script matches under
    any local server port and any host, plus direct file:// opens.
+   Put `@match https://jshute96.github.io/SourceMonkey/tests/examples/<api>/<api>.html`
+   before them, so managers link to the published page. Add
+   `@icon https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png`.
 3. Follow the *Page conventions* layout above. Header-demo dirs
    may use `<h2>Header</h2>` in place of `<h2>APIs</h2>` since
    they demonstrate a userscript header, not a `GM_*` API.

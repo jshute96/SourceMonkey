@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name        SourceMonkey example: headers-include-regex: @exclude with /i flag
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.6
+// @version     1.0.7
 // @description @match names this page, and so does an @exclude regex with an i flag after it. This matches.
+// @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
+// @match       https://jshute96.github.io/SourceMonkey/tests/examples/headers-include-regex/headers-include-regex.html
 // @match       *://*/*headers-include-regex/headers-include-regex.html
 // @match       file:///*/headers-include-regex/headers-include-regex.html
 // @exclude     /HEADERS-INCLUDE-REGEX\.HTML/i

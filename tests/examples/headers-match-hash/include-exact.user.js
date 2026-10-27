@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name        SourceMonkey example: headers-match-hash: @include without the hash
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.7
+// @version     1.0.8
 // @description @include names the page without a hash. This matches with no hash only.*
+// @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
+// @include     https://jshute96.github.io/SourceMonkey/tests/examples/headers-match-hash/headers-match-hash.html
 // @include     *://*/headers-match-hash/headers-match-hash.html
 // @include     file:///*/headers-match-hash/headers-match-hash.html
 // @grant       none

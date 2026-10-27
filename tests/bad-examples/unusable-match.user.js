@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name        Unusable Match
 // @namespace   https://github.com/jshute96/SourceMonkey
+// @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
 // >>> the error: the only @match is one Chrome refuses, and there is no @include.
 // @match       https://www.*.com/*
-// @version     1.0.0
+// @version     1.0.1
 // ==/UserScript==
 // A script with no pattern Chrome would accept and nothing else to
 // match on, so it can never run on any page — the same position as a

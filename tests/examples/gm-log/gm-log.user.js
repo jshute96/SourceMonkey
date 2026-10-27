@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name        SourceMonkey example: gm-log: GM_log
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.2
+// @version     1.0.3
 // @description Demonstrate GM_log against several arg shapes.
+// @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
+// @match       https://jshute96.github.io/SourceMonkey/tests/examples/gm-log/gm-log.html
 // @match       *://*/*gm-log/gm-log.html
 // @match       file:///*/gm-log/gm-log.html
 // @run-at      document-end

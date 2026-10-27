@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name        Unparsable Require
 // @namespace   https://github.com/jshute96/SourceMonkey
+// @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
 // @match       https://example.com/*
-// @version     1.0.0
+// @version     1.0.1
 // @require     ./unparsable-require-lib.js
 // ==/UserScript==
 // The @require fetches successfully and the header is well-formed, so

@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name        SourceMonkey example: frames: every frame
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.3
+// @version     1.0.4
 // @description Runs in the page and each of its frames, sharing a counter across them.
+// @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
+// @match       https://jshute96.github.io/SourceMonkey/tests/examples/frames/frames.html
 // @match       *://*/*frames/frames.html
 // @match       *://*/*frames/frame-a.html
 // @match       *://*/*frames/frame-b.html

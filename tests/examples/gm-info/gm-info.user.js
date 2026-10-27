@@ -1,14 +1,15 @@
 // ==UserScript==
 // @name        SourceMonkey example: gm-info: GM_info
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     2.1.3
+// @version     2.1.4
 // @description Hand GM_info to the page, which renders it.
 // @author      SourceMonkey examples
 // @copyright   2026, SourceMonkey examples
 // @license     MIT
 // @homepageURL https://github.com/jshute96/SourceMonkey
 // @supportURL  https://github.com/jshute96/SourceMonkey/issues
-// @icon        https://jshute96.github.io/SourceMonkey/tests/examples/gm-info/icon.svg
+// @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
+// @match       https://jshute96.github.io/SourceMonkey/tests/examples/gm-info/gm-info.html
 // @match       *://*/*gm-info/gm-info.html
 // @match       file:///*/gm-info/gm-info.html
 // @include     *://*/gm-info/gm-info.html?include=*
@@ -28,7 +29,7 @@
 // back through GM_info:
 //   - the `?include=` / `?exclude=` patterns never match this page;
 //   - `@exclude-match` is a VM-only tag (SM and TM don't parse it);
-//   - `lib.js` / `resource.txt` / `icon.svg` are stubs next to this
+//   - `lib.js` / `resource.txt` are stubs next to this
 //     file, named by their GitHub Pages URLs so every manager can fetch
 //     them. SourceMonkey reads the copies on disk instead when the
 //     script is loaded from this directory (a local file override).

@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name        SourceMonkey example: headers-include-regex: /i flag
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.5
+// @version     1.0.6
 // @description A regex @include with an i flag after it. This doesn't match.
+// @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
 // @include     /HEADERS-INCLUDE-REGEX\.HTML/i
 // @grant       none
 // ==/UserScript==

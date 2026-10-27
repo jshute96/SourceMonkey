@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name        Unknown Grant
 // @namespace   https://github.com/jshute96/SourceMonkey
+// @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
 // @match       https://example.com/*
-// @version     1.0.0
+// @version     1.0.1
 // @grant       GM_setValue
 // >>> the error: no such GM API, so this grant is dropped.
 // @grant       GM_notARealApi

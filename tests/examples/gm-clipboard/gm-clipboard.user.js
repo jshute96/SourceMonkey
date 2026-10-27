@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name        SourceMonkey example: gm-clipboard: GM_setClipboard
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.2
+// @version     1.0.3
 // @description Copy a text value to the system clipboard.
+// @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
+// @match       https://jshute96.github.io/SourceMonkey/tests/examples/gm-clipboard/gm-clipboard.html
 // @match       *://*/*gm-clipboard/gm-clipboard.html
 // @match       file:///*/gm-clipboard/gm-clipboard.html
 // @run-at      document-end

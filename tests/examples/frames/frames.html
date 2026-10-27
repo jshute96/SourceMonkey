@@ -30,7 +30,9 @@
       <li>This page holds two frames: <em>Frame A</em> on the same
         origin, and <em>Frame B</em> on another origin
         (<code>localhost</code> and <code>127.0.0.1</code> swapped),
-        with a nested frame inside it.</li>
+        with a nested frame inside it. Frame B is only on another
+        origin when this page is served from one of those hosts;
+        elsewhere it's on this page's origin.</li>
       <li><code>every-frame.user.js</code> matches all four documents,
         and logs a row in each one it runs in. Its Count button
         increments a shared <code>GM_setValue</code> counter; every
@@ -60,9 +62,11 @@
   </main>
   <script>
     // Frame B on the other loopback host name: another origin, served
-    // by the same server.
-    var other = location.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
-    var b = location.protocol === 'file:' ? 'frame-b.html'
+    // by the same server. Elsewhere (file:, GitHub Pages) it stays on
+    // this origin: pointing a public page at localhost would load from
+    // the viewer's own machine, and Chrome asks permission for that.
+    var other = { localhost: '127.0.0.1', '127.0.0.1': 'localhost' }[location.hostname];
+    var b = !other ? 'frame-b.html'
       : location.protocol + '//' + other + (location.port ? ':' + location.port : '') + location.pathname.replace(/[^/]*$/, 'frame-b.html');
     document.getElementById('frame-b').src = b;
   </script>

@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name        SourceMonkey example: gm-download: GM_download
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.5
+// @version     1.0.6
 // @description Click buttons to download files with various GM_download call shapes.
+// @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
+// @match       https://jshute96.github.io/SourceMonkey/tests/examples/gm-download/gm-download.html
 // @match       *://*/*gm-download/gm-download.html
 // @match       file:///*/gm-download/gm-download.html
 // @run-at      document-end

@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name        SourceMonkey example: gm-tab: GM_getTab / GM_saveTab / GM_getTabs
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.1
+// @version     1.0.2
 // @description Count this page's loads per tab and list every tab's object with the per-tab APIs.
+// @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
+// @match       https://jshute96.github.io/SourceMonkey/tests/examples/gm-tab/gm-tab.html
 // @match       *://*/*gm-tab/gm-tab.html
 // @match       file:///*/gm-tab/gm-tab.html
 // @run-at      document-end

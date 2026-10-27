@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name        SourceMonkey example: require-scope: relative @require paths
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.0
+// @version     1.0.1
 // @description Loads two @require libraries by relative path, in order.
+// @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
+// @match       https://jshute96.github.io/SourceMonkey/tests/examples/require-scope/require-scope.html
 // @match       *://*/*require-scope/require-scope.html
 // @match       file:///*/require-scope/require-scope.html
 // @run-at      document-end

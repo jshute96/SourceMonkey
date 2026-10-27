@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name        SourceMonkey example: unsafe-window: unsafeWindow with no grant
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.2
+// @version     1.0.3
 // @description Uses unsafeWindow without granting it, the way many real scripts do, and reports what the manager hands over.
+// @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
+// @match       https://jshute96.github.io/SourceMonkey/tests/examples/unsafe-window/unsafe-window.html
 // @match       *://*/*unsafe-window/unsafe-window.html
 // @match       file:///*/unsafe-window/unsafe-window.html
 // @run-at      document-end

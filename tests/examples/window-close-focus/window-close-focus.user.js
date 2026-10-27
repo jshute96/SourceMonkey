@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name        SourceMonkey example: window-close-focus: window.close / window.focus
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.4
+// @version     1.0.5
 // @description Close the current tab and raise the browser window through the manager's window.* grants.
+// @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
+// @match       https://jshute96.github.io/SourceMonkey/tests/examples/window-close-focus/window-close-focus.html
 // @match       *://*/*window-close-focus/window-close-focus.html
 // @match       file:///*/window-close-focus/window-close-focus.html
 // @run-at      document-end

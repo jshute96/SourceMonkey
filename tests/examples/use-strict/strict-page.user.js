@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name        SourceMonkey example: use-strict: top-level 'use strict' in the page world
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.2
+// @version     1.0.3
 // @description Reports whether a 'use strict' at the very top of the script puts it in strict mode.
+// @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
+// @match       https://jshute96.github.io/SourceMonkey/tests/examples/use-strict/use-strict.html
 // @match       *://*/*use-strict/use-strict.html
 // @match       file:///*/use-strict/use-strict.html
 // @run-at      document-end

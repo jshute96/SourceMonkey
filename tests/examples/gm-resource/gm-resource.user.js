@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name        SourceMonkey example: gm-resource: GM_getResourceText / GM_getResourceURL
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.4
+// @version     1.0.5
 // @description Read prefetched @resource files as text and as URLs.
+// @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
+// @match       https://jshute96.github.io/SourceMonkey/tests/examples/gm-resource/gm-resource.html
 // @match       *://*/*gm-resource/gm-resource.html
 // @match       file:///*/gm-resource/gm-resource.html
 // @run-at      document-end

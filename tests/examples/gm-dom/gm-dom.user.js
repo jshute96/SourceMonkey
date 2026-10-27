@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name        SourceMonkey example: gm-dom: GM_addStyle / GM_addElement
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.2
+// @version     1.0.3
 // @description Inject styles and elements into the page via DOM helpers.
+// @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
+// @match       https://jshute96.github.io/SourceMonkey/tests/examples/gm-dom/gm-dom.html
 // @match       *://*/*gm-dom/gm-dom.html
 // @match       file:///*/gm-dom/gm-dom.html
 // @run-at      document-end

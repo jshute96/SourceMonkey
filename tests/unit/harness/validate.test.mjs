@@ -54,7 +54,7 @@ test('every script in tests/examples validates clean', () => {
   // Except one flagged on purpose: an @match naming a #hash never runs
   // here, while Violentmonkey runs it.
   assert.deepEqual(bad.map(([name, s]) => `${name}: ${s.lines[0]}`), [
-    'match-hash.user.js: @match *://*/*headers-match-hash/headers-match-hash.html#part names a #hash that @match can\'t see, so this script would never run on any page; use @include to match on the hash (in tests/examples/headers-match-hash/match-hash.user.js, line 6)',
+    'match-hash.user.js: @match https://jshute96.github.io/SourceMonkey/tests/examples/headers-match-hash/headers-match-hash.html#part names a #hash that @match can\'t see, so this script would never run on any page; use @include to match on the hash (in tests/examples/headers-match-hash/match-hash.user.js, line 7)',
   ]);
   assert.equal(code, 1);
   // Guard against the walker silently matching nothing.
@@ -83,7 +83,7 @@ test('tests/bad-examples produces the same verdicts the browser records', () => 
 test('validate shows every warning, with the line it is about', () => {
   const { scripts } = validate('tests/bad-examples');
   assert.deepEqual(scripts.get('unknown-grant.user.js')?.lines, [
-    'warn: Ignoring unsupported @grant GM_notARealApi, GM_alsoNotReal (in tests/bad-examples/unknown-grant.user.js, line 8)',
+    'warn: Ignoring unsupported @grant GM_notARealApi, GM_alsoNotReal (in tests/bad-examples/unknown-grant.user.js, line 9)',
   ]);
 });
 

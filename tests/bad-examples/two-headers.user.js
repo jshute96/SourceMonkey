@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name        Two Headers (first)
 // @namespace   https://github.com/jshute96/SourceMonkey
+// @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
 // @match       https://example.com/*
-// @version     1.0.1
+// @version     1.0.2
 // ==/UserScript==
 console.log('[bad-examples/two-headers] two metadata blocks; SourceMonkey honors the first and treats the second as code');
 

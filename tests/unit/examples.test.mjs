@@ -48,6 +48,35 @@ test('every example userscript is named for its directory', () => {
   }
 });
 
+// A script that names its page site-lessly (`*://*/...`) names the
+// page's GitHub Pages URL first, with the same tag, so managers show
+// that as the script's link and site.
+test('example userscripts name their GitHub Pages page first', () => {
+  const files = fs.readdirSync(EXAMPLES, { recursive: true })
+    .map((f) => String(f).split(path.sep).join('/'))
+    .filter((f) => f.endsWith('.user.js'));
+  for (const file of files) {
+    const text = fs.readFileSync(path.join(EXAMPLES, file), 'utf8');
+    const rules = [...text.matchAll(/^\/\/ @(match|include)\s+(\S+)$/gm)];
+    const siteless = rules.find((r) => r[2].startsWith('*://*/'));
+    if (!siteless) continue;
+    const page = siteless[2].replace(/^\*:\/\/\*\/\*?/, '');
+    assert.equal(`@${rules[0][1]} ${rules[0][2]}`,
+      `@${siteless[1]} https://jshute96.github.io/SourceMonkey/tests/examples/${page}`, file);
+  }
+});
+
+test('example userscripts use the SourceMonkey icon', () => {
+  const files = fs.readdirSync(EXAMPLES, { recursive: true })
+    .map((f) => String(f).split(path.sep).join('/'))
+    .filter((f) => f.endsWith('.user.js'));
+  for (const file of files) {
+    const text = fs.readFileSync(path.join(EXAMPLES, file), 'utf8');
+    const icon = /^\/\/ @icon\s+(\S+)$/m.exec(text)?.[1];
+    assert.equal(icon, 'https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png', file);
+  }
+});
+
 // Each script_manifest.json lists every userscript under its directory,
 // sorted, so loading it (in sm-dev or as a collection) gets them all.
 // Regenerate it with `sh ../../scripts/make_manifest.sh > script_manifest.json`
