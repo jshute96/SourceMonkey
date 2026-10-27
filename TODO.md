@@ -1855,6 +1855,30 @@ Left from its design:
     `emitInitialLoadLog` over a freshly added collection
     (`src/extension/script-store.ts`), and the boot log replay in
     `src/extension/script-updater.ts`. Both want `mapWithConcurrency`.
+- Import follow-ups (see [docs/import.md](docs/import.md)):
+  - **Per-row actions.** The checkbox and the sections decide each
+    row; a row can't yet be given its own action.
+  - **Settings we don't model.** TM's and VM's per-script overrides
+    (match rules, run-at, noframes) are dropped without a word. The
+    preview could say which scripts had them.
+  - **Undo.** A "Remove this import" that also removes the values it
+    brought, as VM's import offers.
+  - **Very large backups.** The page sends every script's text, values
+    and dependency bodies to the worker in one message, which Chrome
+    caps at about 64 MiB. Sending them in batches would lift that.
+  - **The viewer's Location row** shows an imported script's
+    `imported:///…` location. Its import record (`importInfo:`) says
+    where it came from and where it loaded from before, which would
+    read better there.
+- `GM_setValue` rows outlive the script that owned them. `removeScript`
+  and `removeCollection` drop the structural rows but never call
+  `wipeValues` (only an sm-dev run's test collection is wiped on
+  removal), so `gmval:<scriptId>:*` keys accumulate under ids nothing
+  refers to any more. Harmless in the sense that nothing reads them;
+  it is storage that only grows. Easier to run into now that an import
+  brings values with its scripts. The reason to think before wiring it
+  up: a remove-then-re-add of the same script currently keeps its
+  settings, and only sometimes is that the wrong answer.
 - a collection whose refresh drops its LAST script says nothing about it.
   The tombstone rows the collections page leaves for dropped scripts
   (`docs/storage.md`, "Tombstones") hang off the script table, and a

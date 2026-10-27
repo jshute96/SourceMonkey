@@ -95,6 +95,23 @@ test('writes made while a save is in flight go to disk together, latest winning'
   assert.equal(rows.has('gmval:s1:b'), false);
 });
 
+test('an empty write leaves nothing to wait for', async () => {
+  reset();
+  await writeValues('s1', []);
+  // Counted in turns rather than timed: a wait that never ends here
+  // spins on settled promises, which holds off every timer.
+  const settles = async (promise) => {
+    let done = false;
+    void promise.then(() => { done = true; });
+    for (let i = 0; i < 20 && !done; i++) await null;
+    return done;
+  };
+  assert.equal(await settles(valueWritesSaved()), true);
+  // A wipe waits for the script's save the same way.
+  assert.equal(await settles(wipeValues('s1')), true);
+  assert.deepEqual(calls.filter(([op]) => op === 'set'), []);
+});
+
 test('wipe removes saved and unsaved values', async () => {
   reset();
   rows.set('gmval:s1:old', 1);

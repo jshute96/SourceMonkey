@@ -8,7 +8,7 @@
 // bodies).
 
 import {
-  addCollection, backfillCollectionDisplayNames, createCollection, describeError, installScript, markFirstRunComplete, migrateCollectionKeysForPage, withoutBodies,
+  addCollection, backfillCollectionDisplayNames, createCollection, describeError, importScripts, installScript, markFirstRunComplete, migrateCollectionKeysForPage, withoutBodies,
   type AddCollectionResult, type InstallTarget, type ScriptMeta, type StoredScript,
   moveCollection, moveScript, reconcileScriptMembership, removeCollection, removeScript, setCollectionOptions,
   setScriptsEnabled,
@@ -129,6 +129,8 @@ const WORKER_OPS = {
     probeInstalledScript(result);
     return result;
   },
+  // A backup file the page read and planned (docs/import.md).
+  importScripts,
 
   // ---------- Reads ----------
   // GM values come from the worker's value store, which can hold writes

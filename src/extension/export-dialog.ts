@@ -48,7 +48,7 @@ function buildDialog(): DialogElements {
     'This saves a .zip file that SourceMonkey, Tampermonkey, Violentmonkey, and other compatible managers can import.'));
   const include = el<HTMLElement>('div', 'dlg-includes');
   const values = checkbox('export-values', 'Stored values',
-    'Each script’s GM_setValue data.');
+    'Each script’s stored values.');
   const files = checkbox('export-files', 'Dependency files',
     'The @require, @resource and @icon files each script uses.');
   include.append(values.wrap, files.wrap);

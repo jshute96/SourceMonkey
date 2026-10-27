@@ -16,7 +16,7 @@ import { resolveScriptResource } from '../file-loader.js';
 import { iconRefFromHeader } from '../script-icon.js';
 import { fullSource, scriptBasename } from '../script-display.js';
 import { getValue } from '../userscript-header.js';
-import { effectiveDisplayName } from './collection-display.js';
+import { effectiveDisplayName, inferDisplayName } from './collection-display.js';
 import { isSmDevCollection } from './location-kinds.js';
 import { isRelativeRef, mirrorPath, relativeRefPath } from './local-copy.js';
 import { dataUrlContent, ensureIconForUrl } from './site-icon.js';
@@ -80,6 +80,10 @@ interface ManifestScript {
   uuid: string;
   collection: string;
   location: string | null;
+  // Its path in a directory, manifest or GitHub collection, as that
+  // collection's scan names it, so a restore keeps the row a refresh
+  // matches. Absent for a scripts collection, whose `location` is it.
+  relative_path?: string;
   enabled: boolean;
 }
 
@@ -169,9 +173,14 @@ function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
   return true;
 }
 
-// A collection's folder name: its last path segment for one named by a
-// path.
+// A collection's folder name: the name the user gave it, whole, or for
+// one still under the name inferred from its location, that name's last
+// path segment. A user's name is less likely to collide than a base
+// name like `scripts`. The inferred name is stored as `displayName`
+// too, so a given name is one that differs from it.
 function collectionFolderName(collection: StoredCollection): string {
+  const given = collection.displayName?.trim();
+  if (given && given !== inferDisplayName(collection.path)) return safeFileName(given, 'collection');
   const name = effectiveDisplayName(collection);
   const last = name.split('/').filter(Boolean).pop() ?? name;
   return safeFileName(last, 'collection');
@@ -334,13 +343,15 @@ export function planExportEntries(input: ExportInput): ExportPlan {
       if (own.has(path.toLowerCase())) continue;
       entries.push({ path: `${folder}${path}`, data: f.data });
     }
-    manifestScripts.push({
+    const entry: ManifestScript = {
       path: manifestEntryPath(`${stem}.user.js`),
       uuid: script.id,
       collection: collection.id,
       location,
       enabled: isScriptEnabled(script),
-    });
+    };
+    if (collectionKind(collection.path) !== 'scripts') entry.relative_path = script.relativePath;
+    manifestScripts.push(entry);
   }
   for (const [path, data] of shared) entries.push({ path, data });
 

@@ -45,7 +45,7 @@ test('groups icons, GM values, scratch scripts, collections and the rest', () =>
     smDebugLogging: true,
   }));
   assert.equal(rows['Site and script icons'].count, '3 icons');
-  assert.equal(rows['Script values (GM_setValue)'].count, '3 values in 2 scripts');
+  assert.equal(rows['Stored values'].count, '3 values in 2 scripts');
   assert.equal(rows['Scripts run by sm-dev'].count, '1 script');
   assert.equal(rows['Collections'].count, '1 collection');
   assert.equal(rows['Other'].bytes, bytes('smDebugLogging', true));

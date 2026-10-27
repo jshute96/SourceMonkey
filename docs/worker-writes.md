@@ -105,6 +105,9 @@ a real profile needs for local collections at all:
 - **Arguments and results cross as JSON.** The worker's table
   (`WORKER_OPS`) adapts a function whose signature has a timer, a Map,
   or script bodies the page doesn't need.
+  - An import is the one call that sends bodies the other way: the
+    page reads the backup file and hands `importScripts` each script's
+    text, values and dependency files ([import.md](import.md)).
 - No progress events: no page shows a refresh's progress. A page reads
   storage for the outcome, as before.
 

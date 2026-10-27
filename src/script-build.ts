@@ -738,9 +738,10 @@ export async function applyFiles(
   // 'await' so every caller that hasn't thought about it keeps today's
   // behavior; see `ParseCheckMode`.
   parseCheck: ParseCheckMode = 'await',
-  // A scratch script's pushed bodies (sm-dev's local files), which the
-  // store reads from the script's `scratchFiles:` row on every pass,
-  // like a local stand-in, since a push may have changed them.
+  // A scratch script's pushed bodies (sm-dev's local files), or an
+  // imported script's bodies from the backup, which the store reads
+  // from the script's `scratchFiles:` row on every pass, like a local
+  // stand-in, since a push may have changed them.
   pushedFiles?: Record<string, PushedFile>,
 ): Promise<StoredScript> {
   const priorRequires = new Map((prior?.requires ?? []).map((r) => [r.url, r]));
@@ -751,10 +752,12 @@ export async function applyFiles(
   if (localFiles.enabled) await localRootsReady();
   const localRoots = localSearchRoots(built.fileUrl, localFiles);
   // Before the shortcut below, which returns early: the icon has its
-  // own rule for when to look again. Not for a scratch script: sm-dev
-  // pushes its `@require` / `@resource` files but not its icon, and
-  // has already checked the icon on disk itself.
-  if (!pushedFiles) await applyIconCheck(built, prior, recheck, fetchCache, localRoots, localFiles.lookup);
+  // own rule for when to look again. Not for a scratch script with
+  // pushed files: sm-dev pushes its `@require` / `@resource` files but
+  // not its icon, and has already checked the icon on disk itself. An
+  // imported script's icon is fetched as any other's. (`isScratchUrl`
+  // is extension-only, so the scheme is spelled out.)
+  if (!pushedFiles || !built.fileUrl.startsWith('scratch:')) await applyIconCheck(built, prior, recheck, fetchCache, localRoots, localFiles.lookup);
   // `recheck: 'preserve'` short-circuits when both lists are identical
   // to the prior's: no resolve work, no fetch, just keep what we had.
   // This is the hot path on opportunistic refresh.

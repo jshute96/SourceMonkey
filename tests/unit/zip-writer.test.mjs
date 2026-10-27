@@ -31,3 +31,8 @@ test('two entries with one path are refused', () => {
     /two entries named a/,
   );
 });
+
+test('a time outside the years a zip can hold is clamped, not refused', () => {
+  const got = readZip(buildZip([{ path: 'old', data: new Uint8Array([1]), modified: 0 }]));
+  assert.deepEqual(got.map((e) => e.path), ['old']);
+});

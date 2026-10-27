@@ -136,6 +136,7 @@
 .chip-http    { background: #2563eb; }
 .chip-github  { background: #6f42c1; }
 .chip-scratch { background: #0f766e; }
+.chip-imported { background: #475569; }
 
 /* ---- Modal dialog shell ---- */
 /* `.sm-dialog` is the shell — frame, title bar, body grid, error slot,
@@ -156,6 +157,17 @@ dialog.sm-dialog {
   box-sizing: border-box;
 }
 dialog.sm-dialog::backdrop { background: rgba(20, 24, 32, 0.35); }
+/* While a modal dialog is open, the page behind it doesn't scroll. A
+   wheel or arrow key that the dialog can't use (it fits, or it's at
+   its end) would otherwise scroll the page instead. The dialog itself
+   scrolls (the browser caps its height), and keeps a scroll that
+   reaches its end from passing on.
+   Pages with these dialogs (`has-dialogs`) always keep the scrollbar's
+   space, so hiding it doesn't shift the page sideways, whether or not
+   the page was scrolling. */
+html.has-dialogs { scrollbar-gutter: stable; }
+html:has(dialog.sm-dialog:modal) { overflow: hidden; }
+dialog.sm-dialog { overscroll-behavior: contain; }
 /* Wider than the shared default: every row here can hold a long name
    or path — the collection name, the file name with its subdirectory,
    each dependency's path, the description. */
@@ -164,19 +176,62 @@ dialog.sm-dialog.copy-dialog { width: 680px; }
 dialog.sm-dialog.delete-dialog { width: 680px; }
 /* Its result line can hold the saved file's whole path. */
 dialog.sm-dialog.export-dialog { width: 560px; }
-.export-dialog .dlg-intro { grid-column: 1 / -1; margin: 0; }
+:is(.export-dialog, .import-dialog) .dlg-intro { grid-column: 1 / -1; margin: 0; }
 /* Checkbox, then label, with the hint under the label rather than under
    the checkbox. The label is `display: contents` so its checkbox and
    text sit in the grid's columns and a click on the text still ticks. */
-.export-dialog .dlg-option { display: grid; grid-template-columns: auto 1fr; column-gap: 6px; align-items: baseline; }
-.export-dialog .dlg-option .dlg-check { display: contents; }
-.export-dialog .dlg-option .dlg-hint { grid-column: 2; }
-.export-dialog .dlg-includes { display: flex; flex-direction: column; gap: 8px; padding-top: 5px; }
-.export-dialog .dlg-result { grid-column: 1 / -1; overflow-wrap: anywhere; }
-.export-dialog .dlg-result[hidden] { display: none; }
-.export-dialog .dlg-result p { margin: 0 0 4px; }
+:is(.export-dialog, .import-dialog) .dlg-option { display: grid; grid-template-columns: auto 1fr; column-gap: 6px; align-items: baseline; }
+:is(.export-dialog, .import-dialog) .dlg-option .dlg-check { display: contents; }
+/* `display: contents` drops the label's own opacity, so a greyed option
+   greys its text instead. */
+:is(.export-dialog, .import-dialog) .dlg-option .dlg-check.off > span { opacity: 0.5; }
+:is(.export-dialog, .import-dialog) .dlg-option .dlg-hint { grid-column: 2; }
+:is(.export-dialog, .import-dialog) .dlg-includes { display: flex; flex-direction: column; gap: 8px; padding-top: 5px; }
+:is(.export-dialog, .import-dialog) .dlg-result { grid-column: 1 / -1; overflow-wrap: anywhere; }
+:is(.export-dialog, .import-dialog) .dlg-result[hidden] { display: none; }
+:is(.export-dialog, .import-dialog) .dlg-result p { margin: 0 0 4px; }
+/* A blank line before the lists of scripts that didn't import as asked. */
+.import-dialog .dlg-result p.dlg-gap { margin-top: 1em; }
 .export-dialog .dlg-saved-path { overflow-wrap: anywhere; }
 .export-dialog .dlg-saved .copy-btn { display: inline-flex; vertical-align: middle; width: 20px; height: 20px; margin-left: 0.4em; }
+/* The import dialog (src/extension/import-dialog.ts) shares the export
+   dialog's option rows above, and adds the file row and a section per
+   kind of script, each with its own options and table. */
+dialog.sm-dialog.import-dialog { width: 920px; }
+.import-dialog [hidden] { display: none !important; }
+.import-dialog .dlg-file { grid-column: 1 / -1; display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.import-dialog .dlg-file-name { color: #444; overflow-wrap: anywhere; }
+/* Each section spans the dialog: its heading, its controls, then the
+   table of the scripts they apply to. Tall enough for a handful of
+   rows; a big backup scrolls inside it. A line above each section and
+   below the last sets them apart. */
+.import-dialog .import-sections { grid-column: 1 / -1; min-width: 0; border-bottom: 2px solid #9ca3af; }
+.import-dialog .import-section { min-width: 0; border-top: 2px solid #9ca3af; padding: 10px 0 12px; }
+.import-dialog .import-heading { font-size: 1em; font-weight: 600; margin: 0 0 2px; }
+.import-dialog .import-section .import-table-wrap:not(:empty) { margin-top: 8px; max-height: 220px; overflow: auto; border: 1px solid #e5e7eb; border-radius: 4px; }
+.import-table { width: 100%; border-collapse: collapse; font-size: 0.93em; }
+.import-table th { position: sticky; top: 0; background: #f6f7f9; text-align: left; font-weight: 600; }
+.import-table th, .import-table td { padding: 3px 8px; border-bottom: 1px solid #eef0f3; vertical-align: baseline; }
+.import-table.with-checks td:first-child, .import-table.with-checks th:first-child { width: 1.5em; padding-right: 0; }
+.import-table :is(.import-name, .import-location, .import-collection) { overflow-wrap: anywhere; }
+.import-table .import-type a { text-decoration: none; }
+/* A collection's type bubble, at the size of the scripts' Type chips. */
+.import-table .import-kind .collection-type-bubble { padding: 0 5px; border-radius: 8px; font-size: 10px; line-height: 14px; }
+.import-table .import-version, .import-table .import-here, .import-table .import-values, .import-table .import-enabled,
+.import-table .import-type, .import-table .import-count { white-space: nowrap; }
+.import-table .import-skip { color: #888; }
+/* Existing scripts: a column whose option is off, and a difference the
+   import will apply. */
+.import-table td.import-off { color: #888; }
+.import-table td.import-change { background: #fff6bf; }
+/* DIFF: opens the compare page, like the versions panel's button. */
+.import-table button.import-diff { padding: 0 0.6em; font-size: 12px; font-weight: 600; color: #1d4ed8; }
+.import-dialog .dlg-unchanged { display: flex; gap: 8px; align-items: baseline; }
+.import-dialog .dlg-toggle { font: inherit; padding: 1px 8px; }
+.import-dialog .dlg-pair { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 14px; row-gap: 4px; }
+.import-dialog .dlg-into { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.import-dialog .dlg-into input[type="radio"] { margin: 0; }
+.import-dialog .dlg-into select { font: inherit; padding: 2px 6px; max-width: 100%; }
 .sm-dialog .dlg-title {
   font-size: 1em;
   font-weight: 600;

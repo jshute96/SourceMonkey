@@ -137,6 +137,15 @@ export function collectionNameInUse(
   );
 }
 
+// `base`, or `base (2)`, `base (3)`, …: the first name no collection
+// has and a user collection may use. `path` is as for
+// `mayUseReservedName`.
+export function freeCollectionName(base: string, collections: readonly StoredCollection[], path: string | null): string {
+  let name = base;
+  for (let n = 2; collectionNameInUse(name, collections) || !mayUseReservedName(name, path); n++) name = `${base} (${n})`;
+  return name;
+}
+
 // True for manifest collections of any scheme. Thin wrapper so callers
 // don't have to import `directories` just for this. Container
 // collections can never be manifests — their `path` is the synthetic
@@ -158,7 +167,7 @@ export function collectionBubbleKey(path: string): string {
 }
 
 // The small per-row scheme chip a script wears inside a `scripts`
-// collection — `file` / `http` / `github` / `scratch` — since the collection's own
+// collection — `file` / `http` / `github` / `scratch` / `imported` — since the collection's own
 // bubble can't say where each of its scripts loads from. Classified
 // from the script's own location (`relativePath` in a container is the
 // full URL/path the user installed).
@@ -168,10 +177,11 @@ export function makeSchemeChip(location: string): HTMLElement {
   span.className = `scheme-chip chip-${scheme}`;
   span.textContent = scheme;
   span.title = {
-    file: 'Loaded from a local file',
-    http: 'Loaded from the web',
-    github: 'Loaded from GitHub',
-    scratch: 'Stored only in SourceMonkey',
+    file: 'Script updates from a local file',
+    http: 'Script updates from a web source',
+    github: 'Script updates from GitHub',
+    scratch: 'Script is stored only in SourceMonkey',
+    imported: 'Script is imported as text, with no update source',
   }[scheme];
   return span;
 }

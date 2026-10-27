@@ -12,6 +12,9 @@ real-browser end-to-end suite for everything that touches the
   - `tests/unit/harness/` holds the tests of `src/harness/` modules.
 - `tests/e2e/*.spec.ts` — Playwright specs. Launch headless Chromium
   with the unpacked extension loaded.
+  - `backup-interop.spec.ts` also launches a browser with the
+    Tampermonkey or Violentmonkey copy `manager fetch` cached, and is
+    skipped without one ([import.md](import.md#testing)).
 - `tests/fixtures/` — shared harness code.
 - `tests/harness/*.spec.ts` — sm-dev and the fixture consumers import
   (`src/harness/`, see [harness-design.md](harness-design.md)), under

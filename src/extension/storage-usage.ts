@@ -16,6 +16,8 @@ import { BLOB_PREFIX } from './script-blobs.js';
 import { VALUE_PREFIX as GM_VALUE_PREFIX } from './gm-values.js';
 import { isIconCacheKey } from './site-icon.js';
 import {
+  IMPORT_INFO_KEY_PREFIX,
+  isImportedUrl,
   SCRATCH_FILES_KEY_PREFIX,
   SCRATCH_SOURCE_KEY_PREFIX,
   SCRATCH_TEXT_KEY_PREFIX,
@@ -46,10 +48,17 @@ function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-// sm-dev's scratch scripts: the text, its pushed files, and its origin.
+// Scripts whose only copy is in storage, scratch and imported: the
+// text, its pushed files, and its origin.
 const SCRATCH_PREFIXES = [
-  SCRATCH_TEXT_KEY_PREFIX, SCRATCH_FILES_KEY_PREFIX, SCRATCH_SOURCE_KEY_PREFIX,
+  SCRATCH_TEXT_KEY_PREFIX, SCRATCH_FILES_KEY_PREFIX, SCRATCH_SOURCE_KEY_PREFIX, IMPORT_INFO_KEY_PREFIX,
 ];
+
+// Whether a row under one of those prefixes is an imported script's.
+function isImportedRow(key: string): boolean {
+  const prefix = SCRATCH_PREFIXES.find((p) => key.startsWith(p)) ?? '';
+  return isImportedUrl(key.slice(prefix.length));
+}
 
 function startsWithAny(key: string, prefixes: readonly string[]): boolean {
   return prefixes.some((p) => key.startsWith(p));
@@ -71,6 +80,7 @@ export function summarizeLocalStorage(rows: Record<string, unknown>): UsageRow[]
   let values = 0, valueBytes = 0;
   const valueScripts = new Set<string>();
   let scratch = 0, scratchBytes = 0;
+  let imported = 0, importedBytes = 0;
   let collections = 0, collectionBytes = 0;
   let otherBytes = 0;
   // Blob key → the kind whose size it counts under (the first found).
@@ -127,8 +137,14 @@ export function summarizeLocalStorage(rows: Record<string, unknown>): UsageRow[]
       valueBytes += bytes;
       valueScripts.add(key.slice(GM_VALUE_PREFIX.length).split(':', 1)[0]);
     } else if (startsWithAny(key, SCRATCH_PREFIXES)) {
-      if (key.startsWith(SCRATCH_TEXT_KEY_PREFIX)) scratch++;
-      scratchBytes += bytes;
+      const text = key.startsWith(SCRATCH_TEXT_KEY_PREFIX);
+      if (isImportedRow(key)) {
+        if (text) imported++;
+        importedBytes += bytes;
+      } else {
+        if (text) scratch++;
+        scratchBytes += bytes;
+      }
     } else if (key.startsWith(COLLECTION_PREFIX)) {
       collections++;
       collectionBytes += bytes;
@@ -152,11 +168,12 @@ export function summarizeLocalStorage(rows: Record<string, unknown>): UsageRow[]
     { label: '@require files', count: withUnique(plural(requires, 'file'), 'require'), bytes: requireBytes },
     { label: '@resource files', count: withUnique(plural(resources, 'file'), 'resource'), bytes: resourceBytes },
     {
-      label: 'Script values (GM_setValue)',
+      label: 'Stored values',
       count: `${plural(values, 'value')} in ${plural(valueScripts.size, 'script')}`,
       bytes: valueBytes,
     },
     { label: 'Site and script icons', count: plural(icons, 'icon'), bytes: iconBytes },
+    { label: 'Imported scripts kept only here', count: plural(imported, 'script'), bytes: importedBytes },
     { label: 'Scripts run by sm-dev', count: plural(scratch, 'script'), bytes: scratchBytes },
     { label: 'Collections', count: plural(collections, 'collection'), bytes: collectionBytes },
     { label: 'Stored files no script uses', count: plural(unused, 'file'), bytes: unusedBytes },

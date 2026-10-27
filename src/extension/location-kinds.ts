@@ -62,12 +62,16 @@ export function isScratchUrl(input: string): boolean {
 // name reads back as written wherever it is shown decoded (the viewer,
 // stack lines): `My%20Script.user.js` stays that, not `My-20Script`.
 export function scratchUrl(run: string, name: string): string {
-  // A lone surrogate has no encoding (encodeURIComponent throws on it),
-  // so it becomes U+FFFD, as a decoder would show it.
-  const whole = name.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');
-  const segments = whole.split('/').map((segment) => encodeURIComponent(segment));
+  const segments = name.split('/').map(encodeSegment);
   const base = (segments.pop() ?? '').replace(/\.user\.js$/i, '') || 'script';
   return `${SCRATCH_SCHEME}${safeSegment(run)}/${[...segments, `${base}.user.js`].join('/')}`;
+}
+
+// One URL path segment, percent-encoded. A lone surrogate has no
+// encoding (encodeURIComponent throws on it), so it becomes U+FFFD, as
+// a decoder would show it.
+function encodeSegment(text: string): string {
+  return encodeURIComponent(text.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD'));
 }
 
 // The run a scratch script belongs to. Null for a script that isn't one.
@@ -120,10 +124,64 @@ export function smDevRunOfContainer(path: string): string | null {
   return path.startsWith(SM_DEV_CONTAINER_PREFIX) ? path.slice(SM_DEV_CONTAINER_PREFIX.length) : null;
 }
 
-export type ScriptSchemeKind = ContainerKind | 'scratch';
+// ---------- Imported scripts ----------
+//
+// A script brought in from a backup file with no location to load it
+// from, or kept as the file had it (docs/import.md). The scratch
+// mechanism with a second owner: its text is a storage row read back
+// by the fetcher, and its `@require` / `@resource` bodies from the file
+// are pushed files, under the same keys (`scratchTextKey`,
+// `scratchFilesKey`). Unlike a scratch script it belongs to no run, so
+// it runs everywhere, and it sits in an ordinary scripts collection.
+//
+// - Its location is `imported:///<tag>/<name>.user.js`, where `<tag>`
+//   is random, so two imports of one name don't share a text row.
+// - `importInfoKey` names a row saying where it came from.
+
+const IMPORTED_SCHEME = 'imported:///';
+export const IMPORT_INFO_KEY_PREFIX = 'importInfo:';
+
+export function isImportedUrl(input: string): boolean {
+  return input.startsWith(IMPORTED_SCHEME);
+}
+
+// A script whose only copy is its text in storage: a scratch script or
+// an imported one.
+export function isStoredTextUrl(input: string): boolean {
+  return isScratchUrl(input) || isImportedUrl(input);
+}
+
+// A new location for an imported script called `name`.
+export function importedUrl(name: string): string {
+  const tag = crypto.randomUUID().slice(0, 8);
+  return `${IMPORTED_SCHEME}${tag}/${encodeSegment(name.replace(/\.user\.js$/i, '') || 'script')}.user.js`;
+}
+
+export function importInfoKey(url: string): string {
+  return IMPORT_INFO_KEY_PREFIX + url;
+}
+
+// Which manager wrote the file a script was imported from.
+export type ImportSource = 'tampermonkey' | 'violentmonkey' | 'sourcemonkey' | 'other';
+
+/** Where an imported script came from (`importInfoKey`). */
+export interface ImportInfo {
+  source: ImportSource;
+  /** When it was imported, in ms. */
+  importedAt: number;
+  /** The id the file gave it: the other manager's, or SourceMonkey's. */
+  foreignId?: string;
+  /** Where it loaded from before, when the file said: a URL or a file path. */
+  location?: string;
+}
+
+export type ScriptSchemeKind = ContainerKind | 'scratch' | 'imported';
 
 // The scheme chip's kind for a container script: where it came from.
-// A scratch script has no location; its only copy is in storage.
+// A scratch or imported script has no location; its only copy is in
+// storage.
 export function scriptSchemeKind(location: string): ScriptSchemeKind {
-  return isScratchUrl(location) ? 'scratch' : containerKindForSingleFileInput(location);
+  if (isScratchUrl(location)) return 'scratch';
+  if (isImportedUrl(location)) return 'imported';
+  return containerKindForSingleFileInput(location);
 }

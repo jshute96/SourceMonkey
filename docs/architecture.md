@@ -455,8 +455,9 @@ takes effect:
 - [export-format.md](export-format.md) — the backup formats
   Tampermonkey, Violentmonkey and SourceMonkey write, field by field,
   compared.
-- [import.md](import.md) — design in progress for importing scripts
-  from a backup.
+- [import.md](import.md) — importing scripts from a backup: reading
+  each format, matching what's installed, the preview dialog, imported
+  scripts kept as text.
 - [updates.md](updates.md) — how a script updates from its install
   source, `@updateURL` / `@downloadURL` probing, `@version` ordering,
   the OUTDATED status.

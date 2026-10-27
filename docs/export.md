@@ -59,6 +59,9 @@ Violentmonkey uses too.
   types.
 - It deflates each entry and marks non-ASCII names as UTF-8, which
   Tampermonkey's and Violentmonkey's readers both honor.
+- An entry time outside the years a zip can hold (1980 to 2099), such
+  as a row that never recorded a load, is clamped to the nearest one.
+- The import reads zips with it too.
 
 ## Testing
 
@@ -71,5 +74,6 @@ Violentmonkey uses too.
   - Headless Chrome can't show a Save As and reports it as cancelled.
     The test sets `smExportSkipSaveAs` on the page, which saves straight
     to the Downloads folder. Nothing in the extension sets it.
-- Not yet tested: importing the file into real Tampermonkey and
-  Violentmonkey.
+- Cross-manager: `tests/e2e/backup-interop.spec.ts` imports the file
+  into real Tampermonkey and Violentmonkey and checks what they made of
+  it ([import.md](import.md#testing)).

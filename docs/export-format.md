@@ -2,7 +2,7 @@
 
 The backup and export formats userscript managers write, field by
 field: what SourceMonkey's import reads ([import.md](import.md)) and
-what its export will write.
+what its export writes.
 
 - Covers Tampermonkey (TM) 5.5.0 and Violentmonkey (VM) 2.49.0.
 - Neither publishes its format. TM's FAQ names the export methods only
@@ -346,8 +346,9 @@ sourcemonkey-backup-2026-10-17T12-34-56-789Z.zip
 | `<name>/<name>.storage.json` | GM values, as `{ts, data}` | All three |
 | Other files | Dependency and icon files, when included ([below](#dependency-bodies)) | SourceMonkey |
 
-- The collection folder is the collection's name, its last path segment
-  for one named by a path. Only written for more than one collection.
+- The collection folder is the collection's name. For one still under
+  the name inferred from its location, it's that name's last path
+  segment. Only written for more than one collection.
 - TM and VM read scripts at any folder depth, pairing a script's files
   by their full path without the suffix.
 - `<name>` is the script's `@name`, made safe for a file name:
@@ -406,6 +407,14 @@ sourcemonkey-backup-2026-10-17T12-34-56-789Z.zip
       "collection": "b2e4f6a8-1c3d-4e5f-8a9b-0c1d2e3f4a5b",
       "location": "https://greasyfork.org/scripts/1/code/My%20Script.user.js",
       "enabled": true
+    },
+    {
+      "path": "My scripts/Tools/Tools.user.js",
+      "uuid": "6a1b3c5d-7e9f-4a2b-8c4d-6e8f0a1b2c3d",
+      "collection": "5d1c2b9e-8f3a-4c6d-9e2b-1a7f0c4d8e6b",
+      "location": "/home/me/userscripts/tools/tools.user.js",
+      "relative_path": "tools/tools.user.js",
+      "enabled": true
     }
   ]
 }
@@ -437,6 +446,7 @@ Per script, in each collection's order:
 | `uuid` | Its SourceMonkey id; the same as `meta.uuid` in its `.options.json` |
 | `collection` | The `uuid` of its collection |
 | `location` | Where it loads from: a URL, or an absolute file path. `null` for an imported script with no location |
+| `relative_path` | In a directory, manifest or GitHub collection: its path there, as the collection's scan names it (so an import restoring the collection keeps the row its next refresh matches). Absent in a scripts collection |
 | `enabled` | Its own flag, whatever its collection's |
 
 ### `.options.json`
@@ -547,9 +557,9 @@ TM's own layout (`<name>.user.js-<md5>-<basename>` plus a
 | Dependency bodies | Optional | Optional | Never | Optional, as local-override files |
 | Icon file | No | No | No | Optional, with the dependencies |
 | Global settings | Optional | Optional | Always | No |
-| Import matches by | uuid, else namespace + name | Same | namespace + name | Planned ([import.md](import.md)) |
-| Import on a match | Replaces | Replaces | Replaces in place | Planned: the user chooses in a preview |
-| Read by | TM | TM, VM | VM | TM, VM (SM planned) |
+| Import matches by | uuid, else namespace + name | Same | namespace + name | id, then location, then namespace + name ([import.md](import.md#matching-whats-here)) |
+| Import on a match | Replaces | Replaces | Replaces in place | The user chooses in a preview |
+| Read by | TM, SM | TM, VM, SM | VM, SM | TM, VM, SM |
 
 ## Possible enhancements
 

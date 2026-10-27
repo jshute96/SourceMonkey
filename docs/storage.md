@@ -28,9 +28,10 @@ Key spaces in `chrome.storage.local`:
 | `"iconUrl:<url>"`      | `SiteIconEntry`     | Cached `@icon`-declared icon, keyed by header URL (see [site-icons.md](site-icons.md)). |
 | `"firstRunComplete"`   | `boolean`           | Set once the SW has seeded the default collections; gates first-run seeding (see [First-run seeding](#first-run-seeding)). |
 | `"smLocalFileRoots"`   | `string[]`          | Canonical `file://` directory URLs searched for local stand-ins, in order (see [local-file-overrides.md](local-file-overrides.md)). |
-| `"scratch:<url>"`      | `string`            | The text of a scratch script, keyed by its `scratch:///…` location (see [Container collections](#container-collections)). |
-| `"scratchFiles:<url>"` | `Record<ref, PushedFile>` | The `@require` / `@resource` bodies sm-dev pushed with a scratch script, by ref; absent when none were. |
+| `"scratch:<url>"`      | `string`            | The text of a scratch or imported script, keyed by its `scratch:///…` or `imported:///…` location (see [Container collections](#container-collections)). |
+| `"scratchFiles:<url>"` | `Record<ref, PushedFile>` | The `@require` / `@resource` bodies sm-dev pushed with a scratch script, or a backup held for an imported one, by ref; absent when there were none. |
 | `"scratchSource:<url>"` | `ScratchSource` | The file a scratch script was read from (its `file://` URL, and its path as the run was given it), for sm-dev's `script list`; absent from an sm-dev before protocol 1.2. |
+| `"importInfo:<url>"` | `ImportInfo` | Where an imported script came from: the manager, when, the file's id for it, and its old location (see [import.md](import.md#imported-scripts)). |
 | `"scriptNumbers"`      | `StickyNumbers`     | Each script's number, and the removed scripts' numbers held back from reuse (see [Sticky numbers](#sticky-numbers)). |
 | `"connectGrants:<scid>"` | `ConnectGrants` | The hosts the user allowed (or "all sites") or denied a script's `GM_xmlhttpRequest` beyond its `@connect` rules (see [connect-permissions.md](connect-permissions.md)). Removed with the script. |
 | `"enablementTimes"`    | `Record<scid, EnablementTimes>` | When each script last became active and went inactive (see [script-enablement.md](script-enablement.md#active-times)). One key, not fields on the rows, so a collection toggle doesn't rewrite every row. |
@@ -719,6 +720,16 @@ individually installed scripts. Two kinds of row, told apart by path:
     another script row still reads it.
   - The scheme chip reads `scratch`, and the viewer's Location row is
     plain text, since there is nothing to open.
+- **Imported scripts** use the same mechanism in any scripts collection
+  the user has ([import.md](import.md#imported-scripts)).
+  - Each row's location is `imported:///<tag>/<name>.user.js`, its text
+    in the same `scratch:<url>` row and its bundled files in
+    `scratchFiles:<url>`.
+  - Unlike a scratch script it belongs to no run, so it runs everywhere
+    and can be moved like any container script.
+  - Removing it drops its text, files and `importInfo:` rows, on the
+    same rule as a scratch script's.
+  - The scheme chip reads `imported`.
 
 Properties:
 
@@ -1004,7 +1015,8 @@ The Options page's read-only breakdown of `chrome.storage.local`
 (`src/extension/storage-usage.ts`).
 
 - **Rows by kind**: scripts, `@require` and `@resource` files, GM
-  values, icons, scripts run by sm-dev, collections, other.
+  values, icons, imported scripts kept only here, scripts run by
+  sm-dev, collections, other.
 - **Session storage isn't shown**: it holds only this session's logs
   and tab state, with its own quota, and is nowhere near filling.
 - **Blobs by kind**: each `blob:` row counts once, under the kind of
@@ -1174,6 +1186,14 @@ content, no header) before the refresh that loads it — see
   return shape as `addCollection`; null when that container already
   holds the location; throws `COLLECTION_GONE` when the id no longer
   exists.
+- `importScripts(request)` — apply an import the page planned:
+  - restore the backup's collections that aren't here;
+  - add scripts to directory, manifest and GitHub collections here;
+  - install new scripts into the scripts collections the backup names,
+    or into one chosen (made when asked for);
+  - update scripts already here.
+
+  See [import.md](import.md#applying-it).
 - `moveScript(scriptId, target)` — move one already-installed script
   from its container collection into `{collectionId}` or the
   `{schemeDefault: true}` container. Same target shape as

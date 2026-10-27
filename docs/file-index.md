@@ -170,7 +170,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/page-links.ts` | Cross-page links between extension pages: the named Collections / Options tabs, the header bar's home link and buttons |
 | `src/extension/user-scripts-access.ts` | "Allow User Scripts" probe plus the shared heading and fix line for the collections page and popup |
 | `src/extension/userscript.ts` | Userscript viewer controller — installed mode (`?script=`), preview mode (`?preview=`), in-page switching between copies, the Collection row's Move button, the controls row's Local copy / delete-copy buttons, live `storage` watchers, log pane |
-| `src/extension/compare.ts` | Compare page controller — loads two copies (stored, or a preview's download), the fields table with its swap, per-file tabs, unified / side-by-side diff rendering, change-block arrows |
+| `src/extension/compare.ts` | Compare page controller — loads two copies (stored, a preview's download, or an import's backup copy), the fields table with its swap, per-file tabs, unified / side-by-side diff rendering, change-block arrows |
 | `src/extension/debug/icons.ts` | Debug icons controller — lists all cached icons with scope, expiry, per-row refresh/delete, and Delete All |
 | `src/extension/debug/storage.ts` | Debug storage controller: renders the By script, By file and Stored values views, sortable headings, live repaint |
 | `src/extension/resize-observer-loop.ts` | Keeps Chrome's harmless ResizeObserver loop error out of the extension Errors panel |
@@ -179,6 +179,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/move-dialog.ts` | The move-script dialog opened from the viewer's Collection row: destination dropdown, live refusals, runs the move itself |
 | `src/extension/copy-dialog.ts` | The local-copy dialog opened from the viewer's controls row: filename, header fields, dependency checkbox, existing-file checks, runs the copy |
 | `src/extension/export-dialog.ts` | The export dialog opened from the collections page's ⋯ menus: what to include, Save As, the result |
+| `src/extension/import-dialog.ts` | The import dialog opened from the collections page's ⋯ menu: choose a file, preview against what's installed, choices, result |
 | `src/extension/delete-icon.ts` | Paints the two removal glyphs: plain trash can for a record, trash can + disk badge for a file delete |
 | `src/extension/delete-dialog.ts` | The delete-local-script-file confirmation: the file and its path, the dependency lists, an on-disk watch, runs the deletion |
 | `src/extension/file-changes.ts` | Paint-time "deleted" / "modified" chips and the per-collection "refresh pending" chip: listing-based probe, new-file scan, pending counts, tagging, tooltips |
@@ -186,6 +187,9 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/local-copy.ts` | Local copies of a script: name rules, header rewriting, dependency layout, the `chrome.downloads` write; the worker adds the result |
 | `src/extension/export-backup.ts` | The backup export: plans the zip's entries (manifest, TM metadata, values, dependency files), gathers inputs, saves |
 | `src/extension/zip-writer.ts` | Builds the export's zip through the vendored fflate library |
+| `src/extension/import-backup.ts` | Reads a backup (SourceMonkey, Tampermonkey zip or JSON, Violentmonkey, plain zip) into one list of scripts with values and files |
+| `src/extension/import-compare.ts` | Hands a backup's copy of a script from the import dialog to the compare page, over a BroadcastChannel |
+| `src/extension/import-plan.ts` | Matches a backup's scripts and collections to what's here, compares them, and turns the import dialog's choices into a request |
 | `src/vendor/fflate.d.ts` | Types for fflate, which the build copies to `dist/vendor/fflate.js` |
 | `src/extension/script-details.ts` | Builds the viewer's curated details `<dl>` — chosen header fields, the resolved provenance rows, and the Collection row's trailing slot — for both modes; lends the compare page its Collection cell |
 | `src/extension/details-tooltips.ts` | The one table of tooltip text for the details panel's row labels, plus the mode/site-name lookups |
@@ -197,14 +201,14 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/code-links.ts` | Linkifies a Prism-highlighted code block (header-tag values + bare URLs) and builds the shared open-in-new-tab anchor |
 | `src/extension/prism-userscript.ts` | Side-effect module: teaches Prism the `// ==UserScript== …` metadata block so it renders as a tinted band |
 | `src/extension/directories.ts` | Collection I/O: `classifyLocation`, input canonicalizer, script and http(s) fetch, recursive scanner, manifest parser, scratch-script text reads |
-| `src/extension/location-kinds.ts` | Pure location naming: a script location's scheme kind, scratch-script URLs and keys, sm-dev collection paths |
+| `src/extension/location-kinds.ts` | Storage-free location naming: a script location's scheme kind, scratch and imported script URLs and keys, sm-dev collection paths |
 | `src/extension/file-access.ts` | "Allow access to file URLs" probe plus the shared "File access is disabled." banner and its chrome://extensions link |
 | `src/extension/github-provider.ts` | GitHub-only provider integration: URL parsing, default-branch resolution, blob→raw rewrite, Contents-API recursive dir scanner, per-script raw/display URL builders |
 | `src/extension/structural-keys.ts` | Storage key layout of the collection index, collection and script rows, `touchesStructuralRows`, the active-times key |
 | `src/extension/script-store.ts` | Persistent userscript store (chrome.storage.local) plus load/refresh pipeline, addCollection / createCollection / installScript / moveScript / setCollectionOptions / probeCollectionLocation, refreshAllCollections, the enable write that stamps active times, membership reconcile, first-run flag + DEFAULT_COLLECTIONS, legacy `source:*` key migration, the storage format gate |
 | `src/extension/script-updater.ts` | Single entry point for refresh; rate-limits opportunistic background checks, and mirrors every load/refresh outcome into the per-script Log |
 | `src/extension/version-probe-fetch.ts` | Fetching half of update probes — reads a probe URL's `@version`, with bounded size, timeout, and fan-out |
-| `src/extension/collection-display.ts` | Collection-display helpers: bubble key (kind + scheme) and its tooltip, per-row scheme chip, display-name inference, name-in-use + reserved-name checks, manifest flag, anchor id, disabled-collection tooltip |
+| `src/extension/collection-display.ts` | Collection-display helpers: bubble key (kind + scheme) and its tooltip, per-row scheme chip, display-name inference, name-in-use + reserved-name checks, free-name numbering, manifest flag, anchor id, disabled-collection tooltip |
 | `src/extension/glyph.ts` | Renders a sprite glyph into a button, with the label/tooltip pair and the in-flight spin state |
 | `src/extension/script-sites.ts` | Rewrites a script's URL into the hosting site's listing page (Greasy Fork, Sleazy Fork, OpenUserJS, gists) and decides the viewer's row |
 | `src/extension/script-url-hash.ts` | Pure `parseHash` / `buildHash` for the viewer's `#<filename>[:<line>[:<col>]]` / `#Log` URL fragment |
@@ -333,6 +337,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/fixtures/bridge-forge.ts` | Sends the bridge's events as a page holding the channel key would, for tests of the SW-side gate |
 | `tests/fixtures/scripts-dir.ts` | Tmp-dir helper that writes real `*.user.js` files on disk for the production scan/fetch pipeline to ingest |
 | `tests/fixtures/zip-read.mjs` | Minimal zip reader for tests of the export, independent of the writer |
+| `tests/fixtures/backup-dialogs.ts` | Drives the collections page's export and import dialogs for the export, import and cross-manager specs |
 | `tests/fixtures/userscript-server.ts` | Per-test HTTP server with mutable userscript / manifest routes, conditional-GET handling, and a request-arrival wait |
 | `tests/fixtures/sw-api.ts` | Typed wrapper over the `self.SourceMonkey` SW test surface plus the shared `waitFor` / tab-id / badge-colour / all-scripts helpers |
 | `tests/fixtures/capture-nav.ts` | Shared `.user.js` capture waits: start the aborted navigation, then wait for the preview |
@@ -387,6 +392,9 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/local-delete.spec.ts` | Deleting a local copy: own dependencies go, shared ones are kept, an untracked file blocks until deleted by hand, files gone from disk, from every trash can that offers it, control placement |
 | `tests/e2e/local-copy.spec.ts` | Local copies: first copy creates the Downloads collection and takes over, Replace for files and installed scripts, name rules, dependency files, cleanup after a refused write, a copy refusing its own name |
 | `tests/e2e/export.spec.ts` | Backup export: the ⋯ menus and dialog, the saved zip's manifest, TM metadata, values, dependency files |
+| `tests/e2e/import.spec.ts` | Backup import: the dialog's preview and choices, restored collections, imported scripts, matching by id, newer versions, refusals |
+| `tests/e2e/backup-interop.spec.ts` | Backups across real Tampermonkey and Violentmonkey: SM → TM/VM → SM, and their own backups into SM |
+| `tests/e2e/backup-roundtrip.spec.ts` | An export of every collection and script kind restored into an empty SourceMonkey gives the same state back |
 | `tests/e2e/script-log-relay.spec.ts` | The viewer's Clear log is performed by the worker, through its `sm:op` `clearScriptLog` request |
 | `tests/e2e/membership.spec.ts` | Collection membership vs. the script rows: moves and removals that land mid-refresh, and the repair sweep |
 | `tests/e2e/manifest.spec.ts` | Manifest collection refresh: vanished-entry deletion, unreadable-manifest preservation |
@@ -427,6 +435,8 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/local-copy.test.mjs` | Unit tests for local copies: name validation and defaults, the copy-of-itself check, header rewriting, mirror layout, file plan, setting parsing, collection lookup |
 | `tests/unit/export-backup.test.mjs` | Unit tests for the export planner: value encoding, names, manifest and options fields, empty scripts, files and subfolders |
 | `tests/unit/zip-writer.test.mjs` | Unit tests for the zip writer, read back with an independent reader |
+| `tests/unit/import-backup.test.mjs` | Unit tests for the backup reader: each format, value decoding, dependency files, an SM export read back |
+| `tests/unit/import-plan.test.mjs` | Unit tests for the import planner: matching order, Here states, collection restores, the choices' actions, the request |
 | `tests/unit/version-probe.test.mjs` | Unit tests for probe target selection, the outdated verdict, and the staleness gate |
 | `tests/e2e/version-probe.spec.ts` | E2E for update probes: newer/older upstream, unreachable probe, own-URL skip, OUTDATED status + viewer rows |
 | `tests/unit/collection-display.test.mjs` | Unit tests for collection-display helpers: type classification, manifest flag, short-name inference, effective display name |
@@ -736,7 +746,7 @@ For userscript repos to install, so their coding agents know how to use `sm-dev`
 | `docs/local-copy.md` | Local copies of a script: the Downloads collection, why `chrome.downloads`, the dialog, header rewriting, dependency layout, what's next |
 | `docs/export.md` | Exporting collections to a zip: the ⋯ menus, the dialog, where the data comes from, the zip writer |
 | `docs/export-format.md` | Userscript managers' backup formats (Tampermonkey JSON and zip, Violentmonkey zip, SourceMonkey's), field by field, compared |
-| `docs/import.md` | Design in progress for importing scripts from a backup: entry menus, imported scripts, the preview dialog |
+| `docs/import.md` | Importing scripts from a backup: reading each format, imported scripts, matching, the preview dialog, testing |
 | `docs/harness-design.md` | The harness other repos install: `sm-dev` and the Playwright fixture, running scripts in the real extension |
 | `docs/sm-dev-design.md` | Internals of `sm-dev`: runs and clients, command input, tabs and claims, page commands, waiting, the extension's events |
 | `docs/sm-dev-violentmonkey.md` | Design: sm-dev's run scripts and collection/script commands under Violentmonkey, and what other managers share |

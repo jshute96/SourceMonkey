@@ -106,6 +106,7 @@ export const updateCollection = op('updateCollection');
 export const updateAllCollections = op('updateAllCollections');
 export const addCollection = op('addCollection');
 export const installScript = op('installScript');
+export const importScripts = op('importScripts');
 
 // ---------- Reads ----------
 export const readScriptValues = op('readScriptValues');

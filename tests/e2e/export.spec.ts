@@ -7,26 +7,10 @@
 // saved file's path back from `chrome.downloads`, which Playwright's
 // download interception would hide.
 import { testWithBrowserDownloads as test, expect } from '../fixtures/extension';
-import type { Page } from '@playwright/test';
 import { ScriptsDir } from '../fixtures/scripts-dir';
 import { readZip } from '../fixtures/zip-read.mjs';
+import { EXPORT_RESULT as RESULT, exportVia } from '../fixtures/backup-dialogs';
 import fs from 'node:fs';
-
-const DIALOG = 'dialog.export-dialog';
-const RESULT = `${DIALOG} #export-result`;
-
-// Open the collections page and export through `menuButton`'s menu.
-async function exportVia(page: Page, menuButton: string, options: { files?: boolean } = {}): Promise<string> {
-  // Headless Chrome can't show a Save As (see `saveFile`).
-  await page.evaluate(() => { (globalThis as { smExportSkipSaveAs?: boolean }).smExportSkipSaveAs = true; });
-  await page.locator(menuButton).click();
-  await page.locator('.menu button', { hasText: /^Export/ }).click();
-  await expect(page.locator(DIALOG)).toBeVisible();
-  if (options.files) await page.locator(`${DIALOG} #export-files`).check();
-  await page.locator(`${DIALOG} #export-confirm-btn`).click();
-  await expect(page.locator(RESULT)).toBeVisible();
-  return await page.locator(`${RESULT} #export-saved-path`).innerText();
-}
 
 test.describe('backup export', () => {
   let scriptsDir: ScriptsDir;
@@ -82,8 +66,8 @@ test.describe('backup export', () => {
       local_files: true,
     }]);
     expect(manifest.scripts).toEqual(expect.arrayContaining([
-      { path: 'Alpha/Alpha.user.js', uuid: alpha.id, collection: collection!.id, location: `${scriptsDir.path}/alpha.user.js`, enabled: true },
-      { path: 'Beta/Beta.user.js', uuid: beta.id, collection: collection!.id, location: `${scriptsDir.path}/sub/beta.user.js`, enabled: false },
+      { path: 'Alpha/Alpha.user.js', uuid: alpha.id, collection: collection!.id, location: `${scriptsDir.path}/alpha.user.js`, relative_path: 'alpha.user.js', enabled: true },
+      { path: 'Beta/Beta.user.js', uuid: beta.id, collection: collection!.id, location: `${scriptsDir.path}/sub/beta.user.js`, relative_path: 'sub/beta.user.js', enabled: false },
     ]));
 
     expect(byPath.get('Alpha/Alpha.user.js')!.data.toString('utf8'))
