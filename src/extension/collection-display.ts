@@ -177,11 +177,11 @@ export function makeSchemeChip(location: string): HTMLElement {
   span.className = `scheme-chip chip-${scheme}`;
   span.textContent = scheme;
   span.title = {
-    file: 'Loaded from a local file',
-    http: 'Loaded from the web',
-    github: 'Loaded from GitHub',
-    scratch: 'Stored only in SourceMonkey',
-    imported: 'Imported from a backup file, and stored only in SourceMonkey',
+    file: 'Script updates from a local file',
+    http: 'Script updates from a web source',
+    github: 'Script updates from GitHub',
+    scratch: 'Script is stored only in SourceMonkey',
+    imported: 'Script is imported as text, with no update source',
   }[scheme];
   return span;
 }

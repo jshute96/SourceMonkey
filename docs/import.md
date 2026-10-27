@@ -113,10 +113,10 @@ A new script that isn't linked to a location is kept as its text: an
 
 | State | Means |
 |---|---|
-| Same | The same text (content hash) |
+| Same | The same code (content hash) |
 | Backup is newer | The backup's `@version` is newer |
 | Installed is newer | Ours is newer |
-| Same version, different text | The same `@version`, different text |
+| Same version, different code | The same `@version`, different code |
 
 ## Restoring collections
 
@@ -132,7 +132,7 @@ their collections ([below](#scripts-collections)).
   3. A built-in scripts collection for the same scheme.
   4. A user's scripts collection with the same name, ignoring case.
 - **Only one that isn't here is restored** (`restorable`). One that is
-  shows as Already here ([below](#collections-here)).
+  shows as Already exists ([below](#collections-here)).
 - A restored collection takes its name, kind, location and local-files
   flag from the backup. Its enabled flag too, with the Directory
   collections section's Enabled state on; otherwise it is on.
@@ -198,13 +198,14 @@ Import.
   arrive fresh (restored or new) take the backup's by default. For an
   existing script they'd overwrite what it has now, so they start off.
 - **Directory collections**, first, for an SM export with collections
-  to restore or add to ([above](#restoring-collections)): Name, Kind
-  (Directory, GitHub or Manifest), Location (linked), Scripts, Enabled,
-  and Status (New, Already here, or Can't restore). Scripts collections
-  aren't listed.
+  to restore or add to ([above](#restoring-collections)): Collection
+  (its name), Type (the type bubble the collections page shows, such
+  as `file-dir`, `file-manifest` or `github-dir`), Location (linked),
+  Enabled, Status (New, Already exists, or Can't restore), and Scripts.
+  Scripts collections aren't listed.
   - A new one is checked to be restored, and one here is checked when
-    it has scripts to add. The others can't be checked; the Status
-    tooltip says why.
+    it has scripts to add. The others can't be checked; for one that
+    can't be restored, the Status tooltip says why.
   - Scripts: a new one's count; for one here, its count, or
     `1 → 2` when scripts are added.
   - Enabled: `✓` or `☐`, the state it will have: for a new one, the
@@ -231,17 +232,19 @@ Import.
     script. Existing shows a comparison (below).
   - Each column heading's tooltip says what the column shows, in these
     tables and the Directory collections and Invalid ones.
-- **New scripts:** Name, Version, Type, Values.
+- **New scripts:** Name, Version, Enabled, Type, Values.
+  - Enabled: `✓` or `☐`, the state each will have: the backup's with
+    the Enabled state option on, else on.
   - When each has a scripts collection in the backup
     ([above](#scripts-collections)), two choices:
-    - **Add to their collections from the backup** (the default). The
+    - **Add to collections named in the backup** (the default). The
       table gains a Collection column first: the collection here, or
       the name one made for it will get (numbered if taken), with
       "(New)".
-    - **Add to collection** and the picker below. The Collection
+    - **Add to one collection** and the picker below. The Collection
       column is greyed. Clicking or changing the picker picks this.
   - Otherwise only the picker shows.
-  - **Add to collection:** a new scripts collection, "(New) Imported
+  - **Add to one collection:** a new scripts collection, "(New) Imported
     from Tampermonkey (date)", or an existing scripts collection.
     - When a collection already has that name, the choice shows the
       numbered name the import will give it ("… (2)"), worked out as
@@ -268,7 +271,7 @@ Import.
     - **Content:** Same, or a `DIFF` button that opens the compare
       page ([compare.md](compare.md)): the installed copy on the left,
       the backup's on the right ("Import from *file*"), with its
-      bundled `@require` files. Their tooltips list the copies here.
+      bundled `@require` files. Same's tooltip lists the copies here.
       Disabled while importing.
     - **Enabled:** `✓` or `☐`, marks rather than checkboxes so they
       don't look clickable, or two with an arrow.
@@ -308,19 +311,21 @@ Import.
   - Values and enabled state apply to each checked row, whatever the
     text choice.
 - **Existing scripts with no changes:** those the same in every column
-  (text, type, enabled state, values), which never import.
+  (code, type, enabled state, values), which never import.
   - A line, "N existing scripts are exactly the same and will not be
     imported.", and a Show button for their table, hidden by default.
-  - The table has the Existing columns, without checkboxes.
+  - The table has the Existing columns, without checkboxes. Values
+    shows `✓` without "(Same)", since every row is the same.
 - **Invalid scripts:** "These scripts cannot be imported", and a table
-  of each one's file in the zip and the reason.
+  of each one's name (its file, in a zip) and the reason.
 - The button counts what will happen: "Import 3 scripts", restored
   and added scripts included. With nothing to do it's greyed, and its
-  tooltip says "This import would update zero scripts."
-- Afterwards the dialog shows only the results: a line each for what
-  was restored, added, imported and updated
-  ("Added 1 script to 1 collection.", "Updated 4 scripts."), and what
-  failed.
+  tooltip says "This import would update zero scripts".
+- Afterwards the dialog shows only the results: a line each for the
+  collections restored ("Added 1 collection with 2 scripts."), scripts
+  added to collections here, and scripts imported and updated
+  ("Updated 4 scripts."). After a blank line, the scripts kept as text
+  because their files couldn't be read, and what failed.
   - The choices are gone, since there's nothing left to do there. To
     import more, or retry after a failure, open the dialog again.
   - Close or Esc closes it. The page stays where it was.

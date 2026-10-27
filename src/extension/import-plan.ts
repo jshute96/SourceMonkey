@@ -260,25 +260,17 @@ function installAction(s: BackupScript): RowAction & { kind: 'install' } {
 
 // How an existing script compares with the backup's, and the copies
 // here, for the Content cell's tooltip.
-export function hereText(p: PlannedScript): { text: string; title: string } {
-  const texts: Record<HereState, string> = {
-    'new': 'New',
-    'same': 'Same',
-    'older-here': 'Backup is newer',
-    'newer-here': 'Installed is newer',
-    'changed': 'Same version, different text',
-  };
+export function hereTitle(p: PlannedScript): string {
   const titles: Record<HereState, string> = {
     'new': 'Not installed',
-    'same': 'Installed with the same text',
+    'same': 'Installed with the same code',
     'older-here': 'The backup has a newer @version than the installed copy',
     'newer-here': 'The installed copy has a newer @version than the backup',
-    'changed': 'Installed with the same @version but different text',
+    'changed': 'Installed with the same @version but different code',
   };
   const where = p.copies.map((c) => `${p.copies.length > 1 && c === p.match ? '* ' : ''}${c.collectionName}`);
-  const title = p.copies.length === 0 ? titles[p.here]
+  return p.copies.length === 0 ? titles[p.here]
     : `${titles[p.here]}.\n${p.copies.length > 1 ? 'Copies in' : 'In'}: ${where.join(', ')}`;
-  return { text: texts[p.here], title };
 }
 
 // ---------- The Existing table's columns ----------
@@ -307,15 +299,20 @@ export function contentText(p: PlannedScript): string {
 
 // The Values column. A backup without values for the script leaves the
 // installed ones, so that shows only whether it has any; one with
-// values (even none) replaces them whole.
-export function valuesText(installed: Record<string, unknown> | undefined, backup: Record<string, unknown> | undefined): string {
+// values (even none) replaces them whole. `markSame` off, the same
+// values show as just a check, for a table that says its rows are the
+// same.
+export function valuesText(
+  installed: Record<string, unknown> | undefined, backup: Record<string, unknown> | undefined, markSame = true,
+): string {
   const here = installed !== undefined && Object.keys(installed).length > 0;
   if (backup === undefined) return here ? CHECK : '';
   const there = Object.keys(backup).length > 0;
   if (!here && !there) return '';
   if (!here) return `${NOTHING}${ARROW}${CHECK}`;
   if (!there) return `${CHECK}${ARROW}${NOTHING}`;
-  return sameValues(installed, backup) ? `${CHECK} (Same)` : `${CHECK}${ARROW}${CHECK} (Different)`;
+  if (sameValues(installed, backup)) return markSame ? `${CHECK} (Same)` : CHECK;
+  return `${CHECK}${ARROW}${CHECK} (Different)`;
 }
 
 function sameValues(a: Record<string, unknown>, b: Record<string, unknown>): boolean {

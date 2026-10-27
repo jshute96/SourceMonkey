@@ -47,7 +47,7 @@ export interface ImportChoicesInput {
   // Check (or clear) all the backup's collections the import can
   // restore or add to.
   restore?: boolean;
-  // The Add to collection option's label, or part of it.
+  // The Add to one collection option's label, or part of it.
   into?: string;
 }
 
@@ -106,16 +106,17 @@ export async function newCollections(page: Page): Promise<{ name: string; off: b
   })));
 }
 
-// The Collections table's rows: Name, Kind, Location (as shown),
-// Scripts, Status, and whether it is checked to be restored.
+// The Collections table's rows: Collection (its name), Type, Location
+// (as shown), Enabled, Status, Scripts, and whether it is checked to be
+// restored.
 export async function collectionRows(page: Page): Promise<{
-  name: string; kind: string; location: string; scripts: string; enabled: string; status: string; restore: boolean;
+  name: string; location: string; scripts: string; enabled: string; type: string; status: string; restore: boolean;
 }[]> {
   await previewShown(page);
   return await page.locator(`${IMPORT_DIALOG} #import-collections-table tbody tr`).evaluateAll((rows) => rows.map((r) => {
     const cells = [...r.querySelectorAll('td')].map((td) => td.textContent ?? '');
     return {
-      name: cells[1], kind: cells[2], location: cells[3], scripts: cells[4], enabled: cells[5], status: cells[6],
+      name: cells[1], type: cells[2], location: cells[3], enabled: cells[4], status: cells[5], scripts: cells[6],
       restore: (r.querySelector('input') as HTMLInputElement).checked,
     };
   }));

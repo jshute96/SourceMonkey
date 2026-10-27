@@ -11,7 +11,7 @@ import {
   collectionScripts,
   contentText,
   DEFAULT_CHOICES,
-  hereText,
+  hereTitle,
   locationChange,
   planCollections,
   planImport,
@@ -71,7 +71,7 @@ test('an active copy is the one an update goes to', () => {
   const [p] = planImport(backup(scripts), installed, ['h']);
   assert.equal(p.match.id, 'on');
   assert.equal(p.copies.length, 2);
-  assert.match(hereText(p).title, /Copies in: \* New, Old$/);
+  assert.match(hereTitle(p), /Copies in: \* New, Old$/);
 });
 
 test('the Existing table shows installed values, and installed \u2192 backup where they differ', () => {
@@ -89,6 +89,7 @@ test('the Existing table shows installed values, and installed \u2192 backup whe
   assert.equal(valuesText({}, v), '\u2205 \u2192 \u2713');
   assert.equal(valuesText(v, {}), '\u2713 \u2192 \u2205');
   assert.equal(valuesText(v, { a: 1 }), '\u2713 (Same)');
+  assert.equal(valuesText(v, { a: 1 }, false), '\u2713');
   assert.equal(valuesText(v, { a: 2 }), '\u2713 \u2192 \u2713 (Different)');
   // Key order doesn't count.
   assert.equal(valuesText({ a: { x: 1, y: 2 } }, { a: { y: 2, x: 1 } }), '\u2713 (Same)');

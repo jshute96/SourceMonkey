@@ -196,10 +196,10 @@ test.describe('backup round trip', () => {
     await openImport(page, '#page-menu', saved);
     // Directory, manifest and GitHub collections restore; scripts
     // collections' scripts are new scripts, which go back into them.
-    expect((await collectionRows(page)).map((r) => [r.name, r.kind, r.status, r.restore])).toEqual([
-      [dir.path, 'Directory', 'New', true],
-      [expect.any(String), 'Manifest', 'New', true],
-      [expect.any(String), 'GitHub', 'New', true],
+    expect((await collectionRows(page)).map((r) => [r.name, r.type, r.status, r.restore])).toEqual([
+      [dir.path, 'file-dir', 'New', true],
+      [expect.any(String), 'file-manifest', 'New', true],
+      [expect.any(String), 'github-dir', 'New', true],
     ]);
     const fromScriptsCollections = await newCollections(page);
     expect(fromScriptsCollections.map((c) => c.name.endsWith(' (New)'))).toEqual(fromScriptsCollections.map(() => true));
@@ -225,7 +225,7 @@ test.describe('backup round trip', () => {
     await expect(button).toHaveText(withDir);
     const result = await confirmImport(page);
     await closeImport(page);
-    expect(result).toBe(`Restored 3 collections with 8 scripts.\n\nImported ${fromScriptsCollections.length} scripts.`);
+    expect(result).toBe(`Added 3 collections with 8 scripts.\n\nImported ${fromScriptsCollections.length} scripts.`);
     expect(await snapshot(sm, getServiceWorker)).toEqual(before);
 
     // The next refresh of each finds the same rows: same ids, values kept.

@@ -190,6 +190,8 @@ dialog.sm-dialog.export-dialog { width: 560px; }
 :is(.export-dialog, .import-dialog) .dlg-result { grid-column: 1 / -1; overflow-wrap: anywhere; }
 :is(.export-dialog, .import-dialog) .dlg-result[hidden] { display: none; }
 :is(.export-dialog, .import-dialog) .dlg-result p { margin: 0 0 4px; }
+/* A blank line before the lists of scripts that didn't import as asked. */
+.import-dialog .dlg-result p.dlg-gap { margin-top: 1em; }
 .export-dialog .dlg-saved-path { overflow-wrap: anywhere; }
 .export-dialog .dlg-saved .copy-btn { display: inline-flex; vertical-align: middle; width: 20px; height: 20px; margin-left: 0.4em; }
 /* The import dialog (src/extension/import-dialog.ts) shares the export
@@ -213,6 +215,8 @@ dialog.sm-dialog.import-dialog { width: 920px; }
 .import-table.with-checks td:first-child, .import-table.with-checks th:first-child { width: 1.5em; padding-right: 0; }
 .import-table :is(.import-name, .import-location, .import-collection) { overflow-wrap: anywhere; }
 .import-table .import-type a { text-decoration: none; }
+/* A collection's type bubble, at the size of the scripts' Type chips. */
+.import-table .import-kind .collection-type-bubble { padding: 0 5px; border-radius: 8px; font-size: 10px; line-height: 14px; }
 .import-table .import-version, .import-table .import-here, .import-table .import-values, .import-table .import-enabled,
 .import-table .import-type, .import-table .import-count { white-space: nowrap; }
 .import-table .import-skip { color: #888; }
