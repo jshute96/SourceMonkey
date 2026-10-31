@@ -1186,7 +1186,7 @@ inserted before the string/template tokens), but no real userscript
 embeds a fake metadata block that way.
 
 Files with two metadata blocks (see
-`tests/bad-examples/two-headers.user.js`) get a tinted band
+`userscripts/bad-examples/two-headers.user.js`) get a tinted band
 over each block; SourceMonkey itself only honours the first one and
 treats everything past it as body, so the second band is purely a
 visual cue that there's a stray block down there.

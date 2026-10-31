@@ -1,6 +1,6 @@
 # Cross-manager testing
 
-The examples Playwright suite (`tests/examples/`) can run against
+The examples Playwright suite (`userscripts/examples/`) can run against
 SourceMonkey, Tampermonkey, or Violentmonkey. This lets us treat the
 example pages as a compliance reference and surface divergences between
 managers.
@@ -146,7 +146,7 @@ enough to call directly:
 - Only `require-scope/relative/` relies on it now, since it uses
   relative paths on purpose. The other examples name their dependency
   files by GitHub Pages URL, which TM can fetch too (see
-  [tests/examples/README.md](../tests/examples/README.md)).
+  [userscripts/examples/README.md](../userscripts/examples/README.md)).
 - The server binds a fresh port per worker, so the install URL is
   computed per run.
 
@@ -158,9 +158,9 @@ browsers and running scripts with `sm-dev`" for more):
 
 ```sh
 # All of them, in SourceMonkey, on the examples' index page
-scripts/sm-dev start tests/examples/ https://jshute96.github.io/SourceMonkey/tests/examples/index.html
+scripts/sm-dev start userscripts/examples/ https://jshute96.github.io/SourceMonkey/userscripts/examples/index.html
 # One example, in Tampermonkey, on its own page
-scripts/sm-dev --manager tm start tests/examples/gm-info https://jshute96.github.io/SourceMonkey/tests/examples/gm-info/gm-info.html
+scripts/sm-dev --manager tm start userscripts/examples/gm-info https://jshute96.github.io/SourceMonkey/userscripts/examples/gm-info/gm-info.html
 ```
 
 - A `start` with scripts and no URL opens the page the first script's

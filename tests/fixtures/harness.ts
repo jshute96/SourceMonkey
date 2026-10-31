@@ -17,7 +17,7 @@ import { ScriptsDir, type UserscriptSpec } from './scripts-dir.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PAGES_DIR = path.resolve(here, 'pages');
-const EXAMPLES_DIR = path.resolve(here, '..', 'examples');
+const EXAMPLES_DIR = path.resolve(here, '..', '..', 'userscripts', 'examples');
 
 export interface HarnessWorkerFixtures {
   fixtureServer: FixtureServer;

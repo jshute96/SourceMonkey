@@ -9,7 +9,7 @@ asked, each time it's asked, like a bookmarklet.
   sm-dev's `menu`.
 - Unlike Tampermonkey, the script's `@match` / `@include` / `@exclude`
   rules still decide which pages it can run on.
-- Example: `tests/examples/run-at-context-menu/`.
+- Example: `userscripts/examples/run-at-context-menu/`.
 
 ## Header and storage
 

@@ -883,7 +883,7 @@ an update. Only tabs with the sm-dev marker get an icon call now (see
   location, a failed `@require`, and a Log-tab warning. The URL hash is
   the assertion of record: it is the viewer's own source of truth for
   view state, so it can't pass while the pane shows something else.
-- `tests/bad-examples/` — installable by hand. `unknown-grant.user.js`
+- `userscripts/bad-examples/` — installable by hand. `unknown-grant.user.js`
   is the only one that isn't invalid; it demonstrates that a *warning*
   gets a location too.
   - The expected locations live in `tests/fixtures/bad-script-cases.mjs`

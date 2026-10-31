@@ -123,23 +123,23 @@ differently.
 
 ## Example userscripts
 
-[`tests/examples`](tests/examples/README.md) includes example scripts
+[`userscripts/examples`](userscripts/examples/README.md) includes example scripts
 that interactively demonstrate supported `GM` APIs and other
 functionality.
 
 To try them:
 
 1. Add the examples as a collection: on the collections page, add
-   `https://jshute96.github.io/SourceMonkey/tests/examples/script_manifest.json`.
+   `https://jshute96.github.io/SourceMonkey/userscripts/examples/script_manifest.json`.
    - On a new install, the collections page's suggestion box offers this collection.
-2. Open the [examples index page](https://jshute96.github.io/SourceMonkey/tests/examples/index.html).
+2. Open the [examples index page](https://jshute96.github.io/SourceMonkey/userscripts/examples/index.html).
    Each example's page runs its scripts and shows what they did.
 
 Or open them in a fresh browser with [`sm-dev`](#starting-test-browsers-and-running-scripts-with-sm-dev):
 
 ```sh
-npx sm-dev start https://jshute96.github.io/SourceMonkey/tests/examples/script_manifest.json \
-  https://jshute96.github.io/SourceMonkey/tests/examples/index.html
+npx sm-dev start https://jshute96.github.io/SourceMonkey/userscripts/examples/script_manifest.json \
+  https://jshute96.github.io/SourceMonkey/userscripts/examples/index.html
 ```
 
 These also function as the beginnings of a **compliance test suite** for userscript managers, with tests (`*.spec.ts` files in the same directory) that compare behavior across SourceMonkey, Tampermonkey, and Violentmonkey.
@@ -627,7 +627,7 @@ Results:
   status, with notes.
 - [Analysis](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/analysis.html):
   statistics on which headers and `GM_*` APIs the scripts use most.
-- [Show SourceMonkey test status on Greasy Fork](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/show-on-GreasyFork.user.js):
+- [Show SourceMonkey test status on Greasy Fork](https://jshute96.github.io/SourceMonkey/userscripts/greasyfork/show-test-results.user.js):
   a userscript that shows test results inline on Greasy Fork, next to the
   stats on script pages and search pages. Open the link with a userscript
   manager to install it.
@@ -677,7 +677,7 @@ The build also generates `sm-dev` and the test harness code in `lib/`.
 ```sh
 # Example: Run the sm-dev built here.
 scripts/sm-dev --help
-scripts/sm-dev validate tests/examples
+scripts/sm-dev validate userscripts/examples
 ```
 
 ### Test
@@ -700,7 +700,7 @@ node --test tests/unit/header-parser.test.mjs    # For one unit test (run `pnpm 
 pnpm run test:e2e tests/e2e/injection.spec.ts    # For one e2e test
 ```
 
-The examples suite (`tests/examples/`) can also run against
+The examples suite (`userscripts/examples/`) can also run against
 Tampermonkey or Violentmonkey for cross-manager compliance checks.
 Each run starts a new browser with the manager loaded, so there's
 nothing to set up:
@@ -733,13 +733,15 @@ for known per-manager divergences.
 - `tests/`: tests and test data. See [docs/testing.md](docs/testing.md).
   - `tests/unit/`: unit tests.
   - `tests/e2e/`: Playwright tests that load the unpacked extension.
-  - `tests/examples/`: interactive userscript example pages with paired
-    userscripts; double as a cross-manager compliance test. See
-    [tests/examples/README.md](tests/examples/README.md).
-  - `tests/bad-examples/`: example userscripts with errors.
   - `tests/greasyfork-examples/`: [results](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/results.html) and
     [analysis](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/analysis.html) from testing SourceMonkey on a selection
     of top scripts from Greasy Fork.
+- `userscripts/`: userscripts, including examples and test helpers. See
+  [userscripts/README.md](userscripts/README.md).
+  - `userscripts/examples/`: interactive userscript example pages with paired
+    userscripts; double as a cross-manager compliance test. See
+    [userscripts/examples/README.md](userscripts/examples/README.md).
+  - `userscripts/bad-examples/`: example userscripts with errors.
 - `docs/`: design docs. Start with
   [docs/architecture.md](docs/architecture.md) for the component map,
   and [docs/file-index.md](docs/file-index.md) for a one-line

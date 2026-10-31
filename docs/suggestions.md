@@ -7,7 +7,7 @@ finds the example scripts: nothing is installed until the user asks.
 The list is `SUGGESTIONS` in `src/suggestions.ts`. Each title
 links to more about it (`infoUrl`):
 
-- **SourceMonkey example scripts**: the `tests/examples` manifest on
+- **SourceMonkey example scripts**: the `userscripts/examples` manifest on
   GitHub Pages. Add collection adds it in place, named after the
   suggestion, with no dialog.
   - Not the GitHub folder: listing one goes through GitHub's API, which

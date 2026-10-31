@@ -846,7 +846,7 @@ Who sees the stand-in:
 - `tests/e2e/injection.spec.ts`: "document-idle runs before load, so a
   load listener it adds fires" (both worlds, and `window.onload`). Its
   fast fixture page mostly takes the replay path.
-- `tests/examples/headers-run-at/`: the same check under every manager.
+- `userscripts/examples/headers-run-at/`: the same check under every manager.
 
 ### Execution world
 
@@ -933,7 +933,7 @@ written against either may use the name and never declare it. It gets
 the same binding here.
 
 - Measured, not read off their docs:
-  `tests/examples/unsafe-window/ungranted.user.js` uses the name with no
+  `userscripts/examples/unsafe-window/ungranted.user.js` uses the name with no
   grant, and both TM 5.5.0 and VM 2.49.0 hand over the page's own
   object; see
   [cross-manager-test-results.md](cross-manager-test-results.md).
@@ -1652,7 +1652,7 @@ mode, as in Tampermonkey and Violentmonkey:
   concatenated: a first `@require` that starts with one makes the
   script strict, and the script's own after a `@require` does nothing.
   - Tampermonkey and Violentmonkey do the same: VM in
-    `tests/examples/use-strict`, TM checked once by hand (it can't take
+    `userscripts/examples/use-strict`, TM checked once by hand (it can't take
     that example's relative `@require`).
   - That includes a first `@require` that is empty or only comments:
     the `;` we put between files is then the first statement, so the

@@ -14,7 +14,7 @@ import { fetchedVersion } from '../../lib/harness/manager-fetch.js';
 import { createFixtureServer } from '../fixtures/sourcemonkey-launch.js';
 
 const CLI = fileURLToPath(new URL('../../lib/harness/cli.js', import.meta.url));
-const EXAMPLES = fileURLToPath(new URL('../examples', import.meta.url));
+const EXAMPLES = fileURLToPath(new URL('../../userscripts/examples', import.meta.url));
 const PAGES = fileURLToPath(new URL('../fixtures/pages', import.meta.url));
 
 test.skip(fetchedVersion('tampermonkey') === null, 'No Tampermonkey fetched: run sm-dev --manager tm manager fetch');

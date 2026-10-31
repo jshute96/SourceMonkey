@@ -258,9 +258,9 @@ test('a script\'s path in its restored collection: given, or worked out for a di
   assert.equal(restorePath(backupScript(0, 'A', { collection: 'd', location: '/home/me/s/sub/a.user.js' }), dir), 'sub/a.user.js');
   assert.equal(restorePath(backupScript(0, 'A', { collection: 'd', location: '/elsewhere/a.user.js' }), dir), null);
   assert.equal(restorePath(backupScript(0, 'A', { collection: 'd', relativePath: 'given.user.js' }), dir), 'given.user.js');
-  const gh = { ...dir, uuid: 'g', location: 'https://github.com/o/r/tree/main/tests/examples' };
+  const gh = { ...dir, uuid: 'g', location: 'https://github.com/o/r/tree/main/userscripts/examples' };
   assert.equal(restorePath(backupScript(0, 'A', {
-    collection: 'g', location: 'https://raw.githubusercontent.com/o/r/main/tests/examples/a/a.user.js',
+    collection: 'g', location: 'https://raw.githubusercontent.com/o/r/main/userscripts/examples/a/a.user.js',
   }), gh), 'a/a.user.js');
   assert.equal(restorePath(backupScript(0, 'A', { collection: 'g', location: 'https://raw.githubusercontent.com/o/r/dev/x.user.js' }), gh), null);
   // From an export that didn't record it, a manifest's entry is unknown.

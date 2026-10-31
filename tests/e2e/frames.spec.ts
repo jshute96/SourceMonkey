@@ -4,7 +4,7 @@
 // menu commands fired in the document that registered them, and runs
 // that end with their frame.
 //
-// Uses the frames example (tests/examples/frames/), whose own spec
+// Uses the frames example (userscripts/examples/frames/), whose own spec
 // covers what runs where.
 
 import path from 'node:path';
@@ -15,7 +15,7 @@ import { activeTabId, allScripts, waitFor, waitForTabState } from '../fixtures/s
 import { ScriptsDir } from '../fixtures/scripts-dir';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const EXAMPLE_DIR = path.resolve(__dirname, '../examples/frames');
+const EXAMPLE_DIR = path.resolve(__dirname, '../../userscripts/examples/frames');
 
 const EVERY = 'SourceMonkey example: frames: every frame';
 const TOP_ONLY = 'SourceMonkey example: frames: top frame only';

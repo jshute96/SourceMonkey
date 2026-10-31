@@ -1,8 +1,8 @@
-// Checks on the example pages in tests/examples/: each one keeps the
+// Checks on the example pages in userscripts/examples/: each one keeps the
 // shared page skeleton's footer, its scripts' names start with the
 // directory, it's listed in the README table and the index page, and
 // the script_manifest.json files are up to date (see "Adding a new
-// example" in tests/examples/README.md).
+// example" in userscripts/examples/README.md).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const EXAMPLES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../examples');
+const EXAMPLES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../userscripts/examples');
 const dirs = fs.readdirSync(EXAMPLES, { withFileTypes: true })
   .filter((d) => d.isDirectory() && fs.existsSync(path.join(EXAMPLES, d.name, `${d.name}.html`)))
   .map((d) => d.name);
@@ -62,7 +62,7 @@ test('example userscripts name their GitHub Pages page first', () => {
     if (!siteless) continue;
     const page = siteless[2].replace(/^\*:\/\/\*\/\*?/, '');
     assert.equal(`@${rules[0][1]} ${rules[0][2]}`,
-      `@${siteless[1]} https://jshute96.github.io/SourceMonkey/tests/examples/${page}`, file);
+      `@${siteless[1]} https://jshute96.github.io/SourceMonkey/userscripts/examples/${page}`, file);
   }
 });
 

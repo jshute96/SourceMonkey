@@ -9,7 +9,7 @@ The most recent results are published on GitHub Pages:
 
 - [Test results](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/results.html): every script's validation and test status.
 - [Corpus analysis](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/analysis.html): statistics on the scripts and what they use.
-- [Show SourceMonkey test status on Greasy Fork](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/show-on-GreasyFork.user.js): a userscript that shows each script's results beside its stats on Greasy Fork's pages (see [On Greasy Fork pages](#on-greasy-fork-pages)).
+- [Show SourceMonkey test status on Greasy Fork](https://jshute96.github.io/SourceMonkey/userscripts/greasyfork/show-test-results.user.js): a userscript that shows each script's results beside its stats on Greasy Fork's pages (see [On Greasy Fork pages](#on-greasy-fork-pages)).
 
 This README covers the tools and data. For how to test scripts on their
 live sites and record results (also for agents), see the `corpus-testing`
@@ -28,7 +28,7 @@ skill in [`.claude/skills/corpus-testing/`](../../.claude/skills/corpus-testing/
 | `analysis.sql` | yes | The queries behind `analysis.html` | you | `render-analysis.mjs` |
 | `analysis.html` | yes | Corpus statistics report | `render-analysis.mjs` | you |
 | `results.html` | yes | Static page that reads `corpus.json` and shows a sortable, filterable table of every script's validity, test status, tags and notes | you (hand-written) | you, in a browser |
-| `corpus-help.js` | yes | One-sentence description of each test status, n/a reason, fail blame and built-in tag, shown as its tooltip | you | `results.html`, `show-on-GreasyFork.user.js` |
+| `corpus-help.js` | yes | One-sentence description of each test status, n/a reason, fail blame and built-in tag, shown as its tooltip | you | `results.html`, `show-test-results.user.js` |
 
 `corpus.json` is the source of truth. Everything not in git can be rebuilt
 from it.
@@ -44,7 +44,7 @@ from it.
 | `validate-corpus.mjs` | `files/` | stdout, `--json` file | [Validates](#validating-the-corpus) every downloaded script offline; `record-results.mjs validate` runs it |
 | `render-analysis.mjs` | `corpus.db`, `analysis.sql` | `analysis.html` | Renders the statistics report |
 | `serve-results.mjs` | `results.html`, `corpus.json`, `corpus-help.js` | | [Serves the results page](#viewing-results) on localhost |
-| `show-on-GreasyFork.user.js` | `corpus.json`, `corpus-help.js`, from GitHub Pages or `serve-results.mjs` | | Userscript that shows each script's validation and test status on Greasy Fork's script pages and listings |
+| [`show-test-results.user.js`](../../userscripts/greasyfork/show-test-results.user.js) | `corpus.json`, `corpus-help.js`, from GitHub Pages or `serve-results.mjs` | | Userscript that shows each script's validation and test status on Greasy Fork's script pages and listings |
 | `corpus.mjs` | | | Shared helpers: locked `corpus.json` updates, URL to `files/` path mapping |
 
 Each script takes `--help`, which prints its usage.
@@ -474,7 +474,7 @@ never needs regenerating.
 
 ### On Greasy Fork pages
 
-[`show-on-GreasyFork.user.js`](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/show-on-GreasyFork.user.js) shows each
+[`show-test-results.user.js`](https://jshute96.github.io/SourceMonkey/userscripts/greasyfork/show-test-results.user.js) shows each
 script's validation and test status beside its stats, on Greasy Fork's script
 pages and listings. Open that link with a userscript manager installed to
 install it.
@@ -514,7 +514,7 @@ Hand-added `tags` are for what only running the script shows, such as an
 unsupported feature the checks can't see.
 
 - Each is defined in `corpus.json`'s `tags`, with a one-sentence description
-  that `results.html` and `show-on-GreasyFork.user.js` show as its tooltip.
+  that `results.html` and `show-test-results.user.js` show as its tooltip.
 - `set --tag` takes only a defined tag, or a built-in one (from
   `corpus-help.js`) as what made the test fail.
 - `record-results.mjs tag` manages the definitions: `list`, `add`, `update`

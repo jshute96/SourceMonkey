@@ -29,7 +29,7 @@ test.describe('suggestion box', () => {
     const preview = await opened;
     await preview.waitForURL(/userscript\.html\?preview=/);
     expect(new URL(preview.url()).searchParams.get('preview'))
-      .toBe('https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/show-on-GreasyFork.user.js');
+      .toBe('https://jshute96.github.io/SourceMonkey/userscripts/greasyfork/show-test-results.user.js');
     await preview.close();
     await page.close();
   });

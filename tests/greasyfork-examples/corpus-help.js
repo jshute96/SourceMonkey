@@ -1,6 +1,6 @@
 // What the corpus's test statuses, their details (n/a reasons and fail
 // blames) and built-in tags mean, one sentence each: the tooltips in
-// results.html and show-on-GreasyFork.user.js. Reasons and blames mirror
+// results.html and show-test-results.user.js. Reasons and blames mirror
 // REASONS and BLAMES in record-results.mjs. The built-in tags are the ones
 // `record-results.mjs validate` derives; hand-added tags are defined in
 // corpus.json instead (`record-results.mjs tag add`). A `prefix:*` tag entry

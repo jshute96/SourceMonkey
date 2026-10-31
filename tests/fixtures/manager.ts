@@ -94,7 +94,7 @@ function normalize(v: unknown): string | undefined {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PAGES_DIR = path.resolve(__dirname, 'pages');
-const EXAMPLES_DIR = path.resolve(__dirname, '../examples');
+const EXAMPLES_DIR = path.resolve(__dirname, '../../userscripts/examples');
 
 export interface SetupApi {
   /**

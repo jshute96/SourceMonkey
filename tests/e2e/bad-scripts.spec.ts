@@ -1,5 +1,5 @@
 // End-to-end coverage for the malformed-script examples under
-// tests/bad-examples/. Two angles:
+// userscripts/bad-examples/. Two angles:
 //
 //   1. Collection-addition: every bad script either reports the expected
 //      ERROR status (with the right errorMessage), or — for the cases
@@ -15,13 +15,13 @@
 //      structural assertion in test #3 (the `.userscript-header`
 //      span MUST consume the trailing newline) is what guards it.
 //
-// A valid script from tests/examples/gm-info/ is also exercised by
+// A valid script from userscripts/examples/gm-info/ is also exercised by
 // the round-trip path so the test catches a regression that affects
 // well-formed scripts too.
 //
-// The directory lives at tests/bad-examples/ rather than under
-// tests/examples/ so the TM cross-manager sync (which walks
-// tests/examples/ only) never sees these files — TM refuses to
+// The directory lives at userscripts/bad-examples/ rather than under
+// userscripts/examples/ so the TM cross-manager sync (which walks
+// userscripts/examples/ only) never sees these files — TM refuses to
 // install most of them and installs the rest inconsistently. The
 // separation also lets a developer add the dir as its own SM collection
 // and toggle it off without losing the good examples.
@@ -45,7 +45,7 @@ import {
 } from '../fixtures/bad-script-cases.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const GM_INFO_DIR = path.resolve(__dirname, '..', 'examples', 'gm-info');
+const GM_INFO_DIR = path.resolve(__dirname, '..', '..', 'userscripts', 'examples', 'gm-info');
 
 async function openViewer(extensionContext: BrowserContext, extensionId: string, scriptId: string): Promise<Page> {
   const page = await extensionContext.newPage();

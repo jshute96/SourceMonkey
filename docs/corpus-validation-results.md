@@ -14,13 +14,13 @@ Run these first — they're fast, they need no downloaded corpus, and
 they're the check that Node still agrees with the browser:
 
 ```sh
-scripts/sm-dev validate tests/examples tests/bad-examples
+scripts/sm-dev validate userscripts/examples userscripts/bad-examples
 ```
 
 | Suite | Result |
 |-------|--------|
-| `tests/examples/` | 21 scripts, all `ok` |
-| `tests/bad-examples/` | 18 scripts: 6 `ok`, 12 `invalid` |
+| `userscripts/examples/` | 21 scripts, all `ok` |
+| `userscripts/bad-examples/` | 18 scripts: 6 `ok`, 12 `invalid` |
 
 - The bad-examples verdicts match `tests/e2e/bad-scripts.spec.ts` file
   for file — same status on every one, and the same message and line

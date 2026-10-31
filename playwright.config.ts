@@ -13,9 +13,9 @@ delete process.env.FORCE_COLOR;
 // workers share nothing (see tests/fixtures/sourcemonkey-launch.ts).
 //
 // Two spec locations:
-//   - tests/e2e/*.spec.ts          — the main suite, grouped by feature.
-//   - tests/examples/*/*.spec.ts   — per-API spec lives next to its
-//                                    paired example page + userscript.
+//   - tests/e2e/*.spec.ts                — the main suite, grouped by feature.
+//   - userscripts/examples/*/*.spec.ts   — per-API spec lives next to its
+//                                          paired example page + userscript.
 //
 // Projects:
 //   - sourcemonkey (default) — runs every spec under both directories.
@@ -25,7 +25,7 @@ delete process.env.FORCE_COLOR;
 //                              (tests/fixtures/manager-launch.ts).
 //   - violentmonkey          — the same, with VM.
 //
-// SM-internals specs (e2e/) are skipped under the external managers
+// SM-internals specs (tests/e2e/) are skipped under the external managers
 // because they reach into the SM service worker, which doesn't exist
 // there.
 //
@@ -35,7 +35,8 @@ delete process.env.FORCE_COLOR;
 // `pnpm test` doesn't also run the TM and VM suites. See
 // docs/cross-manager-testing.md.
 export default defineConfig({
-  testDir: './tests',
+  // The repo root, since specs live under both tests/ and userscripts/.
+  testDir: '.',
   // Half the cores. Each worker runs its own Chromium with the
   // extension loaded, so this trades memory for wall-clock; leaving
   // headroom keeps the box usable while a run is going.
@@ -56,7 +57,7 @@ export default defineConfig({
   projects: [
     {
       name: 'sourcemonkey',
-      testMatch: ['e2e/**/*.spec.ts', 'examples/**/*.spec.ts'],
+      testMatch: ['tests/e2e/**/*.spec.ts', 'userscripts/examples/**/*.spec.ts'],
       metadata: { manager: 'sourcemonkey' },
       // A retry starts from a fresh browser (Playwright discards the
       // crashed worker and its context), which is what makes it safe.
@@ -66,7 +67,7 @@ export default defineConfig({
       // sm-dev and the `sourcemonkey/harness` fixture's own suite
       // (src/harness/). See docs/harness-design.md.
       name: 'sm-dev',
-      testMatch: ['harness/**/*.spec.ts'],
+      testMatch: ['tests/harness/**/*.spec.ts'],
       retries: 1,
     },
     {
@@ -74,20 +75,20 @@ export default defineConfig({
       // calls sm-dev makes. Run on demand (`pnpm run test:vm-api`). See
       // docs/sm-dev-violentmonkey.md.
       name: 'vm-api',
-      testMatch: ['vm-api/**/*.spec.ts'],
+      testMatch: ['tests/vm-api/**/*.spec.ts'],
     },
     {
       // The same for Tampermonkey (`pnpm run test:tm-api`). See
       // docs/sm-dev-tampermonkey.md.
       name: 'tm-api',
-      testMatch: ['tm-api/**/*.spec.ts'],
+      testMatch: ['tests/tm-api/**/*.spec.ts'],
     },
     {
       // SourceMonkey, Tampermonkey and Violentmonkey loaded together, for
       // how their `.user.js` captures get along. Run on demand
       // (`pnpm run test:all-managers`). See docs/install-capture.md.
       name: 'all-managers',
-      testMatch: ['all-managers/**/*.spec.ts'],
+      testMatch: ['tests/all-managers/**/*.spec.ts'],
       // A describe group's tests share one browser with the managers
       // loaded, rather than each worker launching its own: less load,
       // so less noise in timing-sensitive tests.
@@ -95,7 +96,7 @@ export default defineConfig({
     },
     {
       name: 'tampermonkey',
-      testMatch: ['examples/**/*.spec.ts'],
+      testMatch: ['userscripts/examples/**/*.spec.ts'],
       metadata: { manager: 'tampermonkey' },
       // A spec file's tests stay in one worker, in order, so its
       // scripts are installed into that worker's manager once.
@@ -103,7 +104,7 @@ export default defineConfig({
     },
     {
       name: 'violentmonkey',
-      testMatch: ['examples/**/*.spec.ts'],
+      testMatch: ['userscripts/examples/**/*.spec.ts'],
       metadata: { manager: 'violentmonkey' },
       fullyParallel: false,
     },

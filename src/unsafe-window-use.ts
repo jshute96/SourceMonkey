@@ -5,7 +5,7 @@
 // page's window, and it is what gets the script the binding. Plenty of
 // real scripts never declare it: `unsafeWindow` is implicitly available under Tampermonkey and
 // Violentmonkey — neither keys it off a grant line, measured under TM
-// 5.5.0 and VM 2.49.0 by `tests/examples/unsafe-window/ungranted.user.js`
+// 5.5.0 and VM 2.49.0 by `userscripts/examples/unsafe-window/ungranted.user.js`
 // — so an author who only ever tested there has no reason to add one.
 //
 // Measured over the GreasyFork top 2000: 112 scripts use `unsafeWindow`

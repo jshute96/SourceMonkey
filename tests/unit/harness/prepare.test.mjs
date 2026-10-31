@@ -242,7 +242,7 @@ test('withDefaultScheme reads an existing file, or a word not starting with a ho
   // Run from the repo root, where these exist and `docs.example` doesn't.
   const here = (p) => pathToFileURL(path.resolve(p)).toString();
   assert.equal(withDefaultScheme('README.md'), here('README.md'));
-  assert.equal(withDefaultScheme('tests/examples/index.html'), here('tests/examples/index.html'));
+  assert.equal(withDefaultScheme('userscripts/examples/index.html'), here('userscripts/examples/index.html'));
   assert.equal(withDefaultScheme('tests/no-such-page.html'), here('tests/no-such-page.html'));
   assert.equal(withDefaultScheme('docs.example/x'), 'http://docs.example/x');
   // No dot, no port, not localhost: a path, even one that doesn't exist.

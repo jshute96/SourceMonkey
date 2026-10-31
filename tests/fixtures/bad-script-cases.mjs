@@ -1,4 +1,4 @@
-// Expected outcomes for every file in `tests/bad-examples/`, shared by
+// Expected outcomes for every file in `userscripts/bad-examples/`, shared by
 // the two tests that check them:
 //
 //   - `tests/e2e/bad-scripts.spec.ts` — adds the directory as a real
@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export const BAD_SCRIPTS_DIR = path.resolve(__dirname, '..', 'bad-examples');
+export const BAD_SCRIPTS_DIR = path.resolve(__dirname, '..', '..', 'userscripts', 'bad-examples');
 
 /**
  * @typedef {object} BadCase

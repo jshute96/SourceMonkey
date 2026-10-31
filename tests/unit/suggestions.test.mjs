@@ -19,8 +19,8 @@ test('pendingSuggestions: everything on an empty profile', () => {
 
 test('pendingSuggestions: a collection counts as installed by any of its paths', () => {
   for (const path of [
-    'https://github.com/jshute96/SourceMonkey/tree/main/tests/examples',
-    'https://jshute96.github.io/SourceMonkey/tests/examples/script_manifest.json',
+    'https://github.com/jshute96/SourceMonkey/tree/main/userscripts/examples',
+    'https://jshute96.github.io/SourceMonkey/userscripts/examples/script_manifest.json',
   ]) {
     assert.ok(!ids(pendingSuggestions([path], [])).includes('sourcemonkey-examples'), path);
   }

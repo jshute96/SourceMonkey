@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { isManifestArg, manifestScripts } from '../../../lib/harness/checks.js';
 
 test('a manifest is a script_manifest.json, as a path or a URL', () => {
-  assert.equal(isManifestArg('tests/examples/script_manifest.json'), true);
+  assert.equal(isManifestArg('userscripts/examples/script_manifest.json'), true);
   assert.equal(isManifestArg('https://x.io/a/script_manifest.json?t=1'), true);
   assert.equal(isManifestArg('file:///a/script_manifest.json'), true);
   assert.equal(isManifestArg('https://x.io/a.user.js'), false);
@@ -80,7 +80,7 @@ test('a web manifest resolves its entries against its own URL', async () => {
 test('validate reports a manifest entry that is missing, and checks the rest', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sm-test-manifest-'));
   try {
-    const good = fileURLToPath(new URL('../../examples/headers-match-hash/match-exact.user.js', import.meta.url));
+    const good = fileURLToPath(new URL('../../../userscripts/examples/headers-match-hash/match-exact.user.js', import.meta.url));
     fs.copyFileSync(good, path.join(dir, 'good.user.js'));
     fs.writeFileSync(path.join(dir, 'script_manifest.json'), JSON.stringify(['gone.user.js', 'good.user.js']));
     const cli = fileURLToPath(new URL('../../../lib/harness/cli.js', import.meta.url));

@@ -305,7 +305,7 @@ for the rows):
 
 - The `sm-dev` project in `playwright.config.ts` runs `tests/harness/`,
   sm-dev's and the fixture's own specs (`pnpm run test:sm-dev`).
-- The examples suite (`tests/examples/`) runs under the real managers
+- The examples suite (`userscripts/examples/`) runs under the real managers
   only; the fixture runs scripts in the real extension, which the
   `sourcemonkey` project already covers.
 

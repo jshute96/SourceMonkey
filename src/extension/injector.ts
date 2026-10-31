@@ -364,7 +364,7 @@ export function wrapPreludeEntry(): string {
 //
 // The user program is the arrow's first statement, so a leading
 // `"use strict"` is a real directive and applies to the whole program,
-// as in Tampermonkey and Violentmonkey (tests/examples/use-strict).
+// as in Tampermonkey and Violentmonkey (userscripts/examples/use-strict).
 // Like theirs, it's the first file's: a first `@require` that starts
 // with one makes the script strict too, and the script's own after a
 // `@require` does nothing, even when that `@require` is empty (our `;`

@@ -25,7 +25,7 @@ literal `<all_urls>`.
     match, and a `@match` naming one is ignored (see
     [Patterns SM ignores](#patterns-sm-ignores)).
   - `@include` / `@exclude` do see the fragment (below). See
-    `tests/examples/headers-match-hash/`.
+    `userscripts/examples/headers-match-hash/`.
 
 ### Lenient readings
 
@@ -133,7 +133,7 @@ patterns):
   - Slashes inside it need no escaping.
   - A flag after the closing slash (`/.../i`) makes the pattern a
     glob, which matches nothing.
-  - See `tests/examples/headers-include-regex/`.
+  - See `userscripts/examples/headers-include-regex/`.
 - **Case** is ignored by both, as in TM and VM.
 - **`@exclude`** takes the same patterns, and always wins: if any
   `@exclude` matches a URL, the script doesn't run there.

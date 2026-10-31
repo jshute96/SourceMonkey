@@ -265,17 +265,17 @@ test('linkPathFromMatchPath: pure-literal paths pass through unchanged', () => {
 
 // Scripts in the bundled examples' layout, naming with site-less
 // patterns a page that ships in the script's own directory.
-const FILE_SCRIPT = 'file:///home/u/dev/tests/examples/gm-menu/gm-menu.user.js';
-const HTTP_SCRIPT = 'https://example.com/tests/examples/gm-menu/gm-menu.user.js';
+const FILE_SCRIPT = 'file:///home/u/dev/userscripts/examples/gm-menu/gm-menu.user.js';
+const HTTP_SCRIPT = 'https://example.com/userscripts/examples/gm-menu/gm-menu.user.js';
 
 test('sameDirLinkUrl: host wildcard resolves against the script directory', () => {
   assert.equal(
     sameDirLinkUrl('*://*/gm-menu/gm-menu.html', FILE_SCRIPT),
-    'file:///home/u/dev/tests/examples/gm-menu/gm-menu.html',
+    'file:///home/u/dev/userscripts/examples/gm-menu/gm-menu.html',
   );
   assert.equal(
     sameDirLinkUrl('file:///*/gm-menu/gm-menu.html', FILE_SCRIPT),
-    'file:///home/u/dev/tests/examples/gm-menu/gm-menu.html',
+    'file:///home/u/dev/userscripts/examples/gm-menu/gm-menu.html',
   );
 });
 
@@ -285,7 +285,7 @@ test('sameDirLinkUrl: an http-hosted script keeps its own origin', () => {
   // `*://` and `file://` patterns for the same page give one URL.
   assert.equal(
     sameDirLinkUrl('file:///*/gm-menu/gm-menu.html', HTTP_SCRIPT),
-    'https://example.com/tests/examples/gm-menu/gm-menu.html',
+    'https://example.com/userscripts/examples/gm-menu/gm-menu.html',
   );
 });
 
@@ -294,14 +294,14 @@ test('sameDirLinkUrl: literal text after a wildcard anchors like a directory', (
   // before the directory, so the page matches under any server root.
   assert.equal(
     sameDirLinkUrl('*://*/*gm-menu/gm-menu.html', FILE_SCRIPT),
-    'file:///home/u/dev/tests/examples/gm-menu/gm-menu.html',
+    'file:///home/u/dev/userscripts/examples/gm-menu/gm-menu.html',
   );
   // The suffix has to end the script's directory name...
   assert.equal(sameDirLinkUrl('*://*/*other/gm-menu.html', FILE_SCRIPT), null);
   // ...and the one in the right position when literal dirs follow.
   assert.equal(
     sameDirLinkUrl('*://*/*amples/gm-menu/gm-menu.html', FILE_SCRIPT),
-    'file:///home/u/dev/tests/examples/gm-menu/gm-menu.html',
+    'file:///home/u/dev/userscripts/examples/gm-menu/gm-menu.html',
   );
   assert.equal(sameDirLinkUrl('*://*/*menu/gm-menu/gm-menu.html', FILE_SCRIPT), null);
 });
@@ -320,7 +320,7 @@ test('sameDirLinkUrl: literal directories must match the script dir tail', () =>
   // Deeper overlap is fine as long as the whole literal run matches.
   assert.equal(
     sameDirLinkUrl('*://*/examples/gm-menu/gm-menu.html', FILE_SCRIPT),
-    'file:///home/u/dev/tests/examples/gm-menu/gm-menu.html',
+    'file:///home/u/dev/userscripts/examples/gm-menu/gm-menu.html',
   );
   // ...and a run longer than the script's own path can't match.
   assert.equal(sameDirLinkUrl('*://*/nope/examples/gm-menu/x.html', FILE_SCRIPT), null);
@@ -362,7 +362,7 @@ test('sameDirLinkUrl: a query or fragment on the filename is not a plain neighbo
 test('sameDirLinkUrl: accepts the `http*://` include shorthand', () => {
   assert.equal(
     sameDirLinkUrl('http*://*/gm-menu/gm-menu.html', FILE_SCRIPT),
-    'file:///home/u/dev/tests/examples/gm-menu/gm-menu.html',
+    'file:///home/u/dev/userscripts/examples/gm-menu/gm-menu.html',
   );
 });
 
@@ -404,7 +404,7 @@ test('sameDirLinkUrl: a github script points at the page, not the raw bytes', ()
 test('sameDirLinkUrl: a filename needing escapes is resolved, not concatenated', () => {
   assert.equal(
     sameDirLinkUrl('*://*/gm-menu/my page.html', FILE_SCRIPT),
-    'file:///home/u/dev/tests/examples/gm-menu/my%20page.html',
+    'file:///home/u/dev/userscripts/examples/gm-menu/my%20page.html',
   );
 });
 

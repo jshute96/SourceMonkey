@@ -219,7 +219,7 @@ test.describe('user program scope', () => {
   }) => {
     // The script is the nested scope's first statement, so its
     // directive applies to the whole program, as in Tampermonkey and
-    // Violentmonkey (tests/examples/use-strict).
+    // Violentmonkey (userscripts/examples/use-strict).
     scriptsDir.write({
       relativePath: 'a.user.js',
       meta: {

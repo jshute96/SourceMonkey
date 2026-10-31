@@ -191,7 +191,7 @@ user before elaborating further. Default to action over planning.
   trailing args to the script; don't use `--`, pnpm passes it through
   literally):
   - `pnpm run test:e2e tests/e2e/injection.spec.ts`
-  - `pnpm run test:e2e:tm tests/examples/headers-run-at/headers-run-at.spec.ts`
+  - `pnpm run test:e2e:tm userscripts/examples/headers-run-at/headers-run-at.spec.ts`
     (and `test:e2e:vm` for the Violentmonkey project)
   - Playwright treats the trailing arg as a path filter; useful when
     you want the script's env/config (e.g. `--project=tampermonkey`)
@@ -229,17 +229,17 @@ user before elaborating further. Default to action over planning.
   concern (see `tests/e2e/` for the current split).
 
 ## Editing example userscripts
-- When adding an example under `tests/examples/`, follow the page
+- When adding an example under `userscripts/examples/`, follow the page
   skeleton and the "Adding a new example" checklist in
-  `tests/examples/README.md`: the footer, the `@name` prefix, the
+  `userscripts/examples/README.md`: the footer, the `@name` prefix, the
   README table row, the `index.html` link and the regenerated
   `script_manifest.json` are easy to miss. `tests/unit/examples.test.mjs`
   checks them.
-- Adding, removing or renaming a script in `tests/examples/` or
-  `tests/bad-examples/` means regenerating that directory's
+- Adding, removing or renaming a script in `userscripts/examples/` or
+  `userscripts/bad-examples/` means regenerating that directory's
   `script_manifest.json`: `sh ../../scripts/make_manifest.sh >
   script_manifest.json` from inside it.
-- When changing the body of any `tests/examples/**/*.user.js`, bump
+- When changing the body of any `userscripts/examples/**/*.user.js`, bump
   its `@version` header. Managers update an installed script only when
   the file's `@version` is newer (dotted-numeric ordering), so without
   a bump, a browser that already has the script (a person's own, or an

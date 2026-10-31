@@ -193,7 +193,7 @@ test('offline mode reports why an @icon did not download', async (t) => {
 
 test('offline mode rejects a root that does not exist', async () => {
   await assert.rejects(
-    runValidator(['--offline-root', path.join(os.tmpdir(), 'sm-no-such-root'), 'tests/bad-examples']),
+    runValidator(['--offline-root', path.join(os.tmpdir(), 'sm-no-such-root'), 'userscripts/bad-examples']),
     // A silently-empty run is the failure mode worth pinning: a typo in
     // the root must not read as a corpus with nothing wrong in it.
     (err) => /Download root does not exist/.test(err.stderr ?? ''),

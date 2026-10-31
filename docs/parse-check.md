@@ -509,7 +509,7 @@ See [harness-design.md](harness-design.md#preparets-script-in-injectable-script-
   mapping, driven by positions Chromium really reported. The selection
   rule lives in a plain module precisely so it can be tested here
   rather than only through a browser.
-- `tests/bad-examples/` — installable by hand, one file per route
+- `userscripts/bad-examples/` — installable by hand, one file per route
   through the location logic (body, `@require`, swallowed brace,
   swallowed brace at end of file, join-only collision, unterminated
   construct). Add the directory as a collection to see the real messages.

@@ -1,7 +1,7 @@
 // `sm-dev validate` over the example suites, as a subprocess: its
 // verdicts, and the warnings it prints beside them.
 //
-// The expectations for `tests/bad-examples/` come from the same module
+// The expectations for `userscripts/bad-examples/` come from the same module
 // `tests/e2e/bad-scripts.spec.ts` uses, so this test and the browser one
 // assert the same table. That is the claim being made: validating under
 // Node reproduces what the extension does at install time.
@@ -48,13 +48,13 @@ function validate(...args) {
   return { code: r.status, stdout: r.stdout, stderr: r.stderr, scripts };
 }
 
-test('every script in tests/examples validates clean', () => {
-  const { code, stdout, scripts } = validate('tests/examples');
+test('every script in userscripts/examples validates clean', () => {
+  const { code, stdout, scripts } = validate('userscripts/examples');
   const bad = [...scripts].filter(([, s]) => s.status !== 'ok');
   // Except one flagged on purpose: an @match naming a #hash never runs
   // here, while Violentmonkey runs it.
   assert.deepEqual(bad.map(([name, s]) => `${name}: ${s.lines[0]}`), [
-    'match-hash.user.js: @match https://jshute96.github.io/SourceMonkey/tests/examples/headers-match-hash/headers-match-hash.html#part names a #hash that @match can\'t see, so this script would never run on any page; use @include to match on the hash (in tests/examples/headers-match-hash/match-hash.user.js, line 7)',
+    'match-hash.user.js: @match https://jshute96.github.io/SourceMonkey/userscripts/examples/headers-match-hash/headers-match-hash.html#part names a #hash that @match can\'t see, so this script would never run on any page; use @include to match on the hash (in userscripts/examples/headers-match-hash/match-hash.user.js, line 7)',
   ]);
   assert.equal(code, 1);
   // Guard against the walker silently matching nothing.
@@ -62,8 +62,8 @@ test('every script in tests/examples validates clean', () => {
   assert.match(stdout, new RegExp(`\\n${scripts.size - 1} ok, 1 invalid\\n$`));
 });
 
-test('tests/bad-examples produces the same verdicts the browser records', () => {
-  const { scripts } = validate('tests/bad-examples');
+test('userscripts/bad-examples produces the same verdicts the browser records', () => {
+  const { scripts } = validate('userscripts/bad-examples');
   for (const c of BAD_CASES) {
     const s = scripts.get(c.file);
     assert.ok(s, `missing result for ${c.file}`);
@@ -81,9 +81,9 @@ test('tests/bad-examples produces the same verdicts the browser records', () => 
 });
 
 test('validate shows every warning, with the line it is about', () => {
-  const { scripts } = validate('tests/bad-examples');
+  const { scripts } = validate('userscripts/bad-examples');
   assert.deepEqual(scripts.get('unknown-grant.user.js')?.lines, [
-    'warn: Ignoring unsupported @grant GM_notARealApi, GM_alsoNotReal (in tests/bad-examples/unknown-grant.user.js, line 9)',
+    'warn: Ignoring unsupported @grant GM_notARealApi, GM_alsoNotReal (in userscripts/bad-examples/unknown-grant.user.js, line 9)',
   ]);
 });
 

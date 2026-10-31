@@ -872,7 +872,7 @@ function locationCell(
 // answer:
 //   - a directory or manifest collection stores the path under its
 //     root, so `gm-menu/gm-menu.user.js` in the cell is
-//     `/home/…/tests/examples/gm-menu/gm-menu.user.js` on disk — and
+//     `/home/…/userscripts/examples/gm-menu/gm-menu.user.js` on disk — and
 //     the root is over in the Collection cell, not spliced onto it;
 //   - a github row stores the raw URL and resolves to the `blob` page
 //     URL a human would open;

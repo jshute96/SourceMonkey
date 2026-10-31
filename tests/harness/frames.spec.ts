@@ -12,7 +12,7 @@ import { test, expect } from '../fixtures/harness.js';
 import { runConsoleCommand, type ConsoleContext, type ControlledTab } from '../../lib/harness/console-commands.js';
 import { plainLine } from '../../lib/harness/output-style.js';
 
-const EXAMPLE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'examples', 'frames');
+const EXAMPLE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'userscripts', 'examples', 'frames');
 
 test('frames: ids, the scripts in each frame, menus and match', async ({ page, fixtureServer, host, attachment, loadUserscript, watchPage, scriptsDir }) => {
   const load = (file: string) => loadUserscript(path.join(EXAMPLE, file), { collectionRoot: EXAMPLE });

@@ -11,7 +11,7 @@
 //
 // Everything is read fresh on every request, so reloading the page shows
 // results recorded since. Each response carries the file's Last-Modified
-// date, which show-on-GreasyFork.user.js checks with a HEAD request before
+// date, which show-test-results.user.js checks with a HEAD request before
 // downloading corpus.json again. Listens on 127.0.0.1 only. Any other static server
 // for this folder works too; this one just needs no setup.
 

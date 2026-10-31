@@ -47300,7 +47300,7 @@
         {
           "date": "2026-09-29",
           "version": "4.1",
-          "text": "Blame changed from sourcemonkey to unknown. SourceMonkey running document-idle after `load` may match Tampermonkey: the cross-manager run-at test (`tests/examples/headers-run-at`) finds idle scripts see `readyState=complete` there too. Whether this script's `load` listener ever fires in Tampermonkey or Violentmonkey is untested."
+          "text": "Blame changed from sourcemonkey to unknown. SourceMonkey running document-idle after `load` may match Tampermonkey: the cross-manager run-at test (`userscripts/examples/headers-run-at`) finds idle scripts see `readyState=complete` there too. Whether this script's `load` listener ever fires in Tampermonkey or Violentmonkey is untested."
         },
         {
           "date": "2026-10-01",
@@ -80301,7 +80301,7 @@
         {
           "date": "2026-10-03",
           "version": "0.9",
-          "text": "The script never runs: its only rule is `@include /^https?://(www\\.)?sketchfab\\.com/.*` with no closing slash, so it is a glob, not a regex, and matches no URL (`match` says \"No @match or @include covers this URL\" for model and embed pages).\n\n- Script: managers treat `@include` as a regex only when wrapped in `/.../` (as with a flag after the closing slash, tests/examples/headers-include-regex), so Tampermonkey would skip it too.\n- With a copy given the closing slash, on the embed URL `/models/<id>/embed` it re-injects the viewer bundle (patches 1-4 logged) and adds the DOWNLOAD button, but `allmodel` stays empty after the model renders, as with 492877. On a `/3d-models/` page the viewer is in an iframe, where SourceMonkey doesn't run scripts."
+          "text": "The script never runs: its only rule is `@include /^https?://(www\\.)?sketchfab\\.com/.*` with no closing slash, so it is a glob, not a regex, and matches no URL (`match` says \"No @match or @include covers this URL\" for model and embed pages).\n\n- Script: managers treat `@include` as a regex only when wrapped in `/.../` (as with a flag after the closing slash, userscripts/examples/headers-include-regex), so Tampermonkey would skip it too.\n- With a copy given the closing slash, on the embed URL `/models/<id>/embed` it re-injects the viewer bundle (patches 1-4 logged) and adds the DOWNLOAD button, but `allmodel` stays empty after the model renders, as with 492877. On a `/3d-models/` page the viewer is in an iframe, where SourceMonkey doesn't run scripts."
         }
       ]
     },
@@ -108048,7 +108048,7 @@
         {
           "date": "2026-10-25",
           "version": "2.0.1",
-          "text": "Signed out, headless temp browser:\n\n- Direct load of `tests/examples/index.html`: a Preview item comes first in the Preview / Code / Blame switch, selected by default. The code section is hidden and a sandboxed iframe shows the page with the repo's stylesheet inlined.\n- Code and Preview switch the view back and forth.\n- In-app navigation (no reload): the file tree to `tests/greasyfork-examples/`, then `results.html` gets the Preview tab and preview. That page's body is drawn by its own script, so only its static heading shows, as the script intends.\n- Navigating in-app on to `corpus.mjs` removes the tab and pane and shows the code.\n- No errors in the run's logs."
+          "text": "Signed out, headless temp browser:\n\n- Direct load of `userscripts/examples/index.html`: a Preview item comes first in the Preview / Code / Blame switch, selected by default. The code section is hidden and a sandboxed iframe shows the page with the repo's stylesheet inlined.\n- Code and Preview switch the view back and forth.\n- In-app navigation (no reload): the file tree to `tests/greasyfork-examples/`, then `results.html` gets the Preview tab and preview. That page's body is drawn by its own script, so only its static heading shows, as the script intends.\n- Navigating in-app on to `corpus.mjs` removes the tab and pane and shows the code.\n- No errors in the run's logs."
         }
       ]
     },

@@ -41,13 +41,13 @@ real-browser end-to-end suite for everything that touches the
   corpus of real-world GreasyFork scripts (the top 2000 and more),
   analyses it, and records per-script validation and test results in
   `corpus.json` (see its own `README.md`). Playwright's `testMatch` covers only
-  `e2e/**` and `examples/**`, so nothing here runs as a test.
+  `tests/e2e/**` and `userscripts/examples/**`, so nothing here runs as a test.
 
 `sm-dev validate` runs the install-time pipeline over files on disk
 with no browser. `tests/unit/harness/validate.test.mjs` spawns it over
-`tests/examples/` and `tests/bad-examples/`.
+`userscripts/examples/` and `userscripts/bad-examples/`.
 
-- `validate`'s `tests/bad-examples/` expectations live in
+- `validate`'s `userscripts/bad-examples/` expectations live in
   `tests/fixtures/bad-script-cases.mjs` and are shared with
   `tests/e2e/bad-scripts.spec.ts`, which asserts the same table against
   the real extension in Chromium. One table, two runners: they can't
@@ -141,7 +141,7 @@ It runs against real headless Chromium with `chrome.userScripts`,
       opening a tab, so a test that waits for that tab calls
       `closeCollectionsTabs` first.
   - `fixtureServer` (worker-scoped) — local HTTP server serving
-    `tests/fixtures/pages/` first, with `tests/examples/` mounted as
+    `tests/fixtures/pages/` first, with `userscripts/examples/` mounted as
     a fallback root so example pages are reachable at
     `${baseUrl}/<api>/page.html`. Some routes are not files:
     - `/__slow/<name>?ms=N` — delays a tiny JS/PNG response.
@@ -483,7 +483,7 @@ because they need mutable per-test routes that the shared
 
 ### Examples / compliance suite
 
-`tests/examples/<api>/` pairs a `page.html` with a `script.user.js`
+`userscripts/examples/<api>/` pairs a `page.html` with a `script.user.js`
 for each demoed API. The pages double as a manual exploration tool
 (serve them with `http-server` and click around) and as a
 cross-manager compliance reference (install the same `*.user.js`
@@ -498,8 +498,8 @@ files into TM/VM, hit the same URLs, compare outcomes).
 
 - Each example dir holds its own `<api>.spec.ts` next to the page
   + userscript. Playwright is configured (`testMatch:
-  examples/**/*.spec.ts` in `playwright.config.ts`) to discover them
-  alongside the main `tests/e2e/` suite. Specs cover the same
+  userscripts/examples/**/*.spec.ts` in `playwright.config.ts`) to
+  discover them alongside the main `tests/e2e/` suite. Specs cover the same
   ground as the targeted GM_* specs above but through the public,
   installable userscript surface.
 - Userscripts `@match *://*/*<api>/page.html` so the same patterns

@@ -32,8 +32,8 @@ export interface Suggestion {
   scriptIdentity?: { namespace: string; names: readonly string[] };
 }
 
-const PAGES = 'https://jshute96.github.io/SourceMonkey/tests';
-const REPO = 'https://github.com/jshute96/SourceMonkey/tree/main/tests';
+const PAGES = 'https://jshute96.github.io/SourceMonkey';
+const REPO = 'https://github.com/jshute96/SourceMonkey/tree/main';
 
 export const SUGGESTIONS: readonly Suggestion[] = [
   {
@@ -42,13 +42,13 @@ export const SUGGESTIONS: readonly Suggestion[] = [
     description: 'Demo pages, with scripts showing the GM_* APIs and header tags SourceMonkey supports.',
     kind: 'collection',
     // On github.com, which renders it; GitHub Pages serves it as plain text.
-    infoUrl: 'https://github.com/jshute96/SourceMonkey/blob/main/tests/examples/README.md',
+    infoUrl: 'https://github.com/jshute96/SourceMonkey/blob/main/userscripts/examples/README.md',
     // The GitHub Pages copy, not the GitHub folder: listing a folder
     // goes through GitHub's API, which rate-limits unauthenticated use.
-    location: `${PAGES}/examples/script_manifest.json`,
+    location: `${PAGES}/userscripts/examples/script_manifest.json`,
     collectionPaths: [
-      'https://github.com/jshute96/SourceMonkey/tree/main/tests/examples',
-      `${PAGES}/examples/script_manifest.json`,
+      `${REPO}/userscripts/examples`,
+      `${PAGES}/userscripts/examples/script_manifest.json`,
     ],
   },
   {
@@ -57,8 +57,8 @@ export const SUGGESTIONS: readonly Suggestion[] = [
     description: 'On Greasy Fork script pages, for scripts that have been tested with SourceMonkey, show the test results.',
     kind: 'script',
     // No page of its own yet: the corpus folder, whose README describes it.
-    infoUrl: `${REPO}/greasyfork-examples`,
-    location: `${PAGES}/greasyfork-examples/show-on-GreasyFork.user.js`,
+    infoUrl: `${REPO}/tests/greasyfork-examples`,
+    location: `${PAGES}/userscripts/greasyfork/show-test-results.user.js`,
     // Its @name before 0.8.1 too, for copies installed then.
     scriptIdentity: {
       namespace: 'https://github.com/jshute96/SourceMonkey',

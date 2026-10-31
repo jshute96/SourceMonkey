@@ -40,7 +40,7 @@ Specs that opt out of a manager via
   registering the same caption three times replaces one entry rather
   than stacking three. The test is entirely about that stacking, so
   nothing survives loosening. The by-id test still runs under VM. SM
-  coverage: `tests/examples/gm-menu/gm-menu.spec.ts`.
+  coverage: `userscripts/examples/gm-menu/gm-menu.spec.ts`.
 - **`window-onurlchange/`** — skipped under **VM**. VM doesn't
   implement `window.onurlchange` at all (no mention in its source),
   and the example page duly reports the feature as unavailable. Every
@@ -97,7 +97,7 @@ stays enforced in an SM-only spec.
     globals — a difference in what the header *means*, not a
     world-isolation bug.
   - The isolation assertions are skipped under TM only (guarded in
-    `tests/examples/headers-inject-into/headers-inject-into.spec.ts`);
+    `userscripts/examples/headers-inject-into/headers-inject-into.spec.ts`);
     everything else in that spec, including the page-world half, still
     runs under both. SM's rule stays enforced by the same spec on the
     `sourcemonkey` project.
@@ -246,7 +246,7 @@ never expected to share.
 - **`headers-run-at/`** (slow-script setup) — the example page
   pulls in a slow sync `<script src="/__slow/blocker.js?ms=400">`
   so document-start gets an actual loading-phase injection window.
-  See `tests/examples/README.md` for the serve-script setup that
+  See `userscripts/examples/README.md` for the serve-script setup that
   provides the `/__slow/` route. Not a manager diff — both managers
   need the slow route to exhibit a clean three-state split, the
   setup is just specific to our examples server.

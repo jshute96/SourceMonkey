@@ -363,7 +363,7 @@ wasn't checked.
   See "GM_* APIs not yet in the catalog".
 
 The next items were checked against Tampermonkey 5.5.0 and
-Violentmonkey 2.49.0 with a throwaway `tests/examples/` probe script
+Violentmonkey 2.49.0 with a throwaway `userscripts/examples/` probe script
 (2026-10-04).
 
 - **`GM_setClipboard` ignores its callback** (`setclipboard-callback`:
@@ -509,7 +509,7 @@ extension `Origin` is removed by default. What's still open:
 - **Defaults are unmeasured.** Only `Origin` removal is defaulted;
   `Sec-Fetch-*` is left alone unless a script asks. Whether to match
   Tampermonkey's defaults instead needs TM's actual wire headers,
-  which `tests/examples/gm-xmlhttp/gm-xmlhttp-wire-headers.spec.ts`
+  which `userscripts/examples/gm-xmlhttp/gm-xmlhttp-wire-headers.spec.ts`
   reports as a test attachment under the `tampermonkey` project
   (`SM_PRINT_WIRE_HEADERS=1` prints it; see `docs/testing.md`).
 - **Redirects skip the surgery.** The rule matches the original URL,

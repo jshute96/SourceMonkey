@@ -47,7 +47,7 @@ One-line descriptions of every source file, grouped by directory.
 | `scripts/zip_extension.sh` | Build and zip `dist/` for distribution; release builds add a Chrome Web Store zip without `key` |
 | `scripts/pack-npm.sh` | Pack both npm packages into `.tgz` files, with `packages/sourcemonkey/README.md` as `sourcemonkey`'s README |
 | `scripts/release.sh` | Cut a `vX.Y.Z` release: checks, zips and package `.tgz`s, tag, GitHub release (draft by default), npm publish |
-| `scripts/serve-examples.mjs` | Local HTTP server for `tests/examples/`, including the `/__slow/?ms=N` delay route the `headers-run-at` demo needs |
+| `scripts/serve-examples.mjs` | Local HTTP server for `userscripts/examples/`, including the `/__slow/?ms=N` delay route the `headers-run-at` demo needs |
 | `scripts/make_manifest.sh` | Scan the current dir for `*.user.js` and emit a SourceMonkey HTTP-manifest JSON array to stdout (redirect to `script_manifest.json`) |
 | `scripts/update-public-suffixes.mjs` | Regenerates `src/public-suffixes.ts` from the ICANN section of the Public Suffix List (run by hand, output committed) |
 | `scripts/clean-stale-test-profiles.mjs` | Sweep, run before the e2e suites, of `/tmp` profiles and data dirs left by test runs and temp browsers that died early |
@@ -319,6 +319,18 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/runs.ts` | The runs on this machine: record files, control sockets, and the client connection (`RunClient`) to one |
 | `src/harness/cli.ts` | The `sm-dev` client: global options, `start`, `attach`, `stop`, `exit`, `validate`, `match`, `clear`, `list`, `--stdin`, `--interactive` |
 
+## Userscripts (`userscripts/`)
+
+| File | Description |
+|------|-------------|
+| `userscripts/README.md` | Lists what each `userscripts/` subdirectory holds |
+| `userscripts/examples/` | Interactive example pages, each with its userscripts and Playwright spec; a cross-manager compliance suite (see its `README.md`) |
+| `userscripts/bad-examples/` | Deliberately broken userscripts, plus a few that only warn, for the SM-only bad-scripts tests |
+| `userscripts/debugging/` | Userscripts for manual testing, not loaded by default |
+| `userscripts/debugging/no-click-nav.user.js` | Follows links, goes back, or opens a URL after a delay, so it works with the popup open |
+| `userscripts/greasyfork/` | Userscripts for Greasy Fork pages |
+| `userscripts/greasyfork/show-test-results.user.js` | Userscript that shows corpus validation and test status beside each script's stats on Greasy Fork, from GitHub Pages or a local server |
+
 ## Tests (`tests/`)
 
 | File | Description |
@@ -337,7 +349,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/fixtures/violentmonkey-driver.mjs` | VM driver: lists and installs scripts through VM's own background commands, installing from a fixture-server URL |
 | `tests/fixtures/viewer-selectors.ts` | Userscript-viewer selectors shared by several specs, where the right element isn't the obvious one |
 | `tests/fixtures/extension-id.ts` | Computes Chrome's deterministic unpacked-extension ID from an absolute path |
-| `tests/fixtures/bad-script-cases.mjs` | Expected status / message / error line for every `tests/bad-examples/` file, shared by the e2e spec and the CLI test |
+| `tests/fixtures/bad-script-cases.mjs` | Expected status / message / error line for every `userscripts/bad-examples/` file, shared by the e2e spec and the CLI test |
 | `tests/fixtures/bridge-forge.ts` | Sends the bridge's events as a page holding the channel key would, for tests of the SW-side gate |
 | `tests/fixtures/scripts-dir.ts` | Tmp-dir helper that writes real `*.user.js` files on disk for the production scan/fetch pipeline to ingest |
 | `tests/fixtures/zip-read.mjs` | Minimal zip reader for tests of the export, independent of the writer |
@@ -571,40 +583,6 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/tab-status.test.mjs` | Unit tests for the per-tab badge classification + report-merge helpers |
 | `tests/unit/toolbar-summary.test.mjs` | Unit tests for the toolbar badge color and tooltip status lines |
 | `tests/unit/missing-scripts.test.mjs` | Unit tests for the never-started Log warnings, their hints, and the CSP `sandbox` check |
-| `tests/examples/README.md` | Overview of the interactive userscript example pages; how to serve and use as a cross-manager compliance reference |
-| `tests/examples/index.html` | Index page linking the per-example subdirs |
-| `tests/examples/script_manifest.json` | Manifest listing every example script, so the examples load from a manifest URL; regenerated with `make_manifest.sh` |
-| `tests/examples/examples.css` | Shared styling for all example pages |
-| `tests/examples/<api>/` | Each example dir holds `<api>.html`, `<api>.user.js`, and `<api>.spec.ts` — the page, the userscript that drives it, and its Playwright e2e |
-| `tests/examples/gm-info/` | `GM_info` example: a header-heavy script hands its `GM_info` to the page, which renders a cross-manager comparison table |
-| `tests/examples/gm-log/` | `GM_log` per-script-prefix demo |
-| `tests/examples/gm-storage/` | `GM_setValue`/`getValue`/`deleteValue`/`listValues` examples (form-driven) |
-| `tests/examples/gm-value-listeners/` | `GM_addValueChangeListener` / `GM_removeValueChangeListener` examples |
-| `tests/examples/gm-dom/` | `GM_addStyle` and `GM_addElement` DOM-injection examples |
-| `tests/examples/gm-clipboard/` | `GM_setClipboard` round-trip example |
-| `tests/examples/gm-xmlhttp/` | `GM_xmlhttpRequest` form-driven example (method, body, responseType, anonymous, headers, abort) plus a cross-manager wire-header report |
-| `tests/examples/gm-tab/` | `GM_getTab` / `GM_saveTab` / `GM_getTabs` example: a per-tab load count and note, and every tab's object |
-| `tests/examples/gm-open-in-tab/` | `GM_openInTab` call-shape examples (active, background, positional, onclose) |
-| `tests/examples/gm-notification/` | `GM_notification` call-shape examples (button-driven) |
-| `tests/examples/gm-download/` | `GM_download` call-shape examples (relative + absolute http(s), `data:`, `blob:`, abort, 404, refused cases) |
-| `tests/examples/gm-menu/` | `GM_registerMenuCommand` / `GM_unregisterMenuCommand` button-driven examples |
-| `tests/examples/gm-resource/` | `GM_getResourceText` / `GM_getResourceURL` examples reading prefetched CSS, JSON, and SVG `@resource` files |
-| `tests/examples/window-onurlchange/` | `@grant window.onurlchange` example — page-wired pushState / replaceState / hash / back buttons with a urlchange log |
-| `tests/examples/window-close-focus/` | `@grant window.close` / `window.focus` example — buttons that close this tab and raise the browser window |
-| `tests/examples/frames/` | Iframes example: a page with same- and cross-origin frames (one nested), scripts per frame, `@noframes`, a shared counter |
-| `tests/examples/headers-run-at/` | `@run-at` header example with one userscript per value (`document-start`/`-end`/`-idle`) on a shared page |
-| `tests/examples/run-at-context-menu/` | `@run-at context-menu` example: a manual script that adds a line and menu commands each run |
-| `tests/examples/headers-match-hash/` | How `@match`, `@include` and `@exclude` treat a URL's `#hash`, with each manager's observed results |
-| `tests/examples/headers-include-regex/` | How regex `@include` / `@exclude` treat slashes, flags and case |
-| `tests/examples/headers-inject-into/` | `@inject-into` header example: MAIN-world (`page`) vs USER_SCRIPT-world (`content`) userscripts showing window-isolation |
-| `tests/examples/unsafe-window/` | `unsafeWindow` example: reading/calling/writing page globals, the isolated-world variant where it can't work, and the ungranted-reference variant |
-| `tests/examples/use-strict/` | Top-level `'use strict'` example: strict mode in both worlds, and which file's directive counts with a `@require` |
-| `tests/examples/require-scope/` | `@require` scope example: a shared lib reaching both injection worlds, plus relative `@require` paths |
-| `tests/examples/xmlhttp-connect/` | `@connect` example: scripts declaring none, one site, and `*`, with buttons to try each site and prompt answer |
-| `tests/bad-examples/` | Deliberately broken `*.user.js` files (plus the `@require` libraries some of them need, and the ones that merely warn) for the SM-only spec; outside `tests/examples/` so the TM loader doesn't see them |
-| `tests/bad-examples/script_manifest.json` | Manifest listing every script in `tests/bad-examples/`; regenerated with `make_manifest.sh` |
-| `tests/userscripts/` | Userscripts for manual testing, not loaded by default |
-| `tests/userscripts/no-click-nav.user.js` | Follows links, goes back, or opens a URL after a delay, so it works with the popup open |
 | `tests/e2e/bad-scripts.spec.ts` | SM-only e2e: each bad script gets the expected status, error location, and byte-for-byte viewer render |
 | `tests/e2e/diagnostic-links.spec.ts` | Clicking a diagnostic's location jumps to the file and line, in the installed viewer and the install preview |
 
@@ -679,7 +657,6 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 | `tests/greasyfork-examples/validate-corpus.mjs` | CLI that runs the install-time checks over the corpus offline and groups failures, with JSON output |
 | `tests/greasyfork-examples/record-results.mjs` | CLI that records findings in `corpus.json`: imports offline validation, sets test results, tags and notes, defines hand-added tags |
 | `tests/greasyfork-examples/serve-results.mjs` | Serves `results.html`, `corpus.json`, `corpus-help.js` and the downloaded scripts on localhost, for the results page |
-| `tests/greasyfork-examples/show-on-GreasyFork.user.js` | Userscript that shows corpus validation and test status beside each script's stats on Greasy Fork, from GitHub Pages or a local server |
 | `tests/greasyfork-examples/corpus-help.js` | One-sentence descriptions of corpus test statuses, reasons and built-in tags, the tooltips in `results.html` and the Greasy Fork userscript |
 | `tests/greasyfork-examples/results.html` | Static page that reads `corpus.json` into a sortable, filterable table of findings, a summary of counts, and a code viewer |
 | `tests/greasyfork-examples/download-scripts.mjs` | CLI that downloads the corpus's userscripts plus their `@require` / `@resource` dependencies into a URL-shaped tree |

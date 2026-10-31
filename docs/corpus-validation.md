@@ -126,7 +126,7 @@ diagnostics as its warnings (an `info` note, like a missing
   - A hand-built tree because the real corpus is gitignored (~270 MB).
 - The checking itself is tested through `sm-dev validate` in
   `tests/unit/harness/validate.test.mjs`, against the same
-  `tests/bad-examples/` table the browser test uses.
+  `userscripts/bad-examples/` table the browser test uses.
 
 ## Running it
 
