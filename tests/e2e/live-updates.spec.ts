@@ -306,6 +306,47 @@ test.describe('collections page live updates', () => {
     await page.close();
   });
 
+  test('a collection whose first scan has not finished shows Loading, then the result', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // Adding writes the empty collection row before its first scan, and
+    // the page paints it in between. Seeded directly, so the page is
+    // sure to see that in-between state rather than racing the scan.
+    const empty = ScriptsDir.create();
+    try {
+      await sm.seedStorage({
+        collections: ['fresh', 'filled', 'missing'],
+        'collection:fresh': { id: 'fresh', path: empty.path, lastRefreshedAt: 0, scriptIds: [], enabled: true, displayName: 'fresh' },
+        'collection:filled': { id: 'filled', path: scriptsDir.path, lastRefreshedAt: 0, scriptIds: [], enabled: true, displayName: 'filled' },
+        'collection:missing': { id: 'missing', path: `${empty.path}/gone`, lastRefreshedAt: 0, scriptIds: [], enabled: true, displayName: 'missing' },
+      });
+      scriptsDir.write({ relativePath: 'a.user.js', meta: { name: 'A', match: ['https://example.com/*'] }, body: '' });
+
+      const page = await extensionContext.newPage();
+      await page.goto(`chrome-extension://${extensionId}/collections.html`);
+      const fresh = page.locator('section.collection[data-collection-id="fresh"]');
+      const filled = page.locator('section.collection[data-collection-id="filled"]');
+      await expect(fresh.locator('p.empty')).toHaveText('Loading scripts…');
+      await expect(filled.locator('p.empty')).toHaveText('Loading scripts…');
+      const missing = page.locator('section.collection[data-collection-id="missing"]');
+      await expect(missing.locator('p.empty')).toHaveText('Loading scripts…');
+
+      // An empty directory turns into the none-found message, one with a
+      // script into the table, and a failed scan into its error line
+      // above the none-found message.
+      await sm.updateCollection('fresh', 'manual');
+      await sm.updateCollection('filled', 'manual');
+      await sm.updateCollection('missing', 'manual');
+      await expect(fresh.locator('p.empty')).toHaveText('No *.user.js files found');
+      await expect(filled.locator('tbody tr')).toHaveCount(1);
+      await expect(missing.locator('p[data-message-kind="scan"]')).toContainText('This collection did not load');
+      await expect(missing.locator('p.empty')).toHaveText('No *.user.js files found');
+      await page.close();
+    } finally {
+      empty.cleanup();
+    }
+  });
+
   test('a scan failure appearing and clearing elsewhere updates the section', async ({
     extensionContext, extensionId, sm,
   }) => {

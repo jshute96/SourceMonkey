@@ -328,7 +328,10 @@ keys would look like a wiped profile.
     installed scripts. Container collections have no scan step; their
     `scriptIds` list is the source of truth. See
     [Container collections](#container-collections).
-- `lastRefreshedAt` — epoch ms of the most recent refresh.
+- `lastRefreshedAt` — epoch ms of the most recent refresh. `0` means
+  never refreshed: a new location collection's row is written before its
+  first scan, and the collections page shows "Loading scripts…" for it
+  until the first refresh writes a result or records a failure.
 - `scriptIds` — child script IDs in scan order (a directory by path, a
   manifest as listed), or install order for a container. The
   collections page lists them by name instead.

@@ -948,7 +948,11 @@ async function syncScriptRowsFromStorage(
   // the two shapes have to be swapped whole. Everything else is in
   // place.
   if (scripts.length === 0 || !tbody) {
-    if (scripts.length === 0 && !tbody) return;   // already the message
+    // Already the message, and the right one. The text can change
+    // without a script appearing: "Loading" turns into "none found"
+    // when a new collection's first scan comes back empty or fails.
+    const showsMessage = scripts.length === 0 && !tbody;
+    if (showsMessage && block?.textContent === emptyCollectionText(collection)) return;
     const fresh = await renderScriptBlock(collection, collectionOn);
     if (block) block.replaceWith(fresh);
     else section.appendChild(fresh);
@@ -1718,6 +1722,25 @@ function scanErrorText(collection: StoredCollection): string {
   return collection.scanError ? `This collection did not load: ${collection.scanError}` : '';
 }
 
+// What stands in for the script list when a collection has none.
+//
+// A location collection with `lastRefreshedAt` 0 is one whose first
+// refresh hasn't finished: the add writes the empty row before the
+// scan, and this page paints it in between. "No files found" would
+// claim a result the scan hasn't reached yet.
+//
+// A failed first refresh leaves it at 0 only when the failure came
+// after the scan (a failed scan records `scanError`). The save failure
+// records a refresh error, checked here too. A worker stopping mid-add
+// still leaves "Loading" until the next Refresh.
+function emptyCollectionText(collection: StoredCollection): string {
+  if (isContainerCollection(collection.path)) return 'No scripts added yet';
+  const neverRefreshed = collection.lastRefreshedAt === 0
+    && !collection.scanError && !refreshErrorText(collection.id);
+  if (neverRefreshed) return 'Loading scripts…';
+  return 'No *.user.js files found';
+}
+
 // The section's script list: a table, or the message that stands in for
 // it when the collection has no scripts. Both carry `.script-block` so
 // a repaint can find whichever is present and swap one shape for the
@@ -1737,14 +1760,7 @@ async function renderScriptTable(collection: StoredCollection, collectionOn: boo
   const scripts = sortedByShownName(data?.scripts ?? [], inContainer);
   const localFiles = localFileScope(collection);
 
-  if (scripts.length === 0) {
-    return makeMessage(
-      'empty',
-      inContainer
-        ? 'No scripts added yet'
-        : 'No *.user.js files found',
-    );
-  }
+  if (scripts.length === 0) return makeMessage('empty', emptyCollectionText(collection));
 
   const allOn = allOnByIdentity(scripts.map((s) => ({ identity: rowIdentity(s), on: isScriptEnabled(s) })));
 
