@@ -240,13 +240,27 @@ function markupLine(line: string): string | null {
   return kind[1] ? `<${kind[1]}>${text}</${kind[1]}>` : text;
 }
 
+// An ANSI escape sequence: a CSI one, as for a color (`ESC[31m`,
+// `ESC[38:2::255:0:0m`), or an OSC one, as for a link or a title.
+// eslint-disable-next-line no-control-regex
+const ANSI = /\x1b\[[0-?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
+
+/** `text` without its ANSI escape sequences, as plain output shows it. */
+export function stripAnsi(text: string): string {
+  return text.replace(ANSI, '');
+}
+
 /**
  * A line as shown: painted for a terminal with color, or plain. Plain
  * text that is not one of sm-dev's messages is returned as it is.
+ * Plain, the ANSI codes a script or page logged are taken out, since
+ * nothing would show them as color (a pipe, the log file); a terminal
+ * shows them.
  */
 export function paintOutput(line: string, color: boolean): string {
   const markup = markupLine(line);
-  return markup === null ? line : paintMarkup(markup, color);
+  const painted = markup === null ? line : paintMarkup(markup, color);
+  return color ? painted : stripAnsi(painted);
 }
 
 function paintMarkup(markup: string, color: boolean): string {

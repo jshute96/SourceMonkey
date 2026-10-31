@@ -36,7 +36,7 @@ import { FrameSessions, type FrameSession } from './frame-sessions.js';
 import {
   defaultPageUrl, explainMatch, isDirectoryMessage, NO_DEFAULT_PAGE, noSuchFileMessage, preparedNoframes, preparedScriptPath, prepareScript, pushedFiles, shownPath, warningLines, type PreparedScript,
 } from './prepare.js';
-import { DEFAULT_LOG_SOURCES, inSources, RunLog, streamLine, type LogFields, type LogSource } from './run-logs.js';
+import { DEFAULT_LOG_SOURCES, inSources, RepeatFolder, RunLog, streamLine, type LogFields, type LogSource } from './run-logs.js';
 import { runDownloadsDir } from './run-log.js';
 import { comparableUrl, openingSavedLine, type SavedPageStart } from './saved-pages.js';
 import { echoLine, INVALID_PREFIX, plainLine, quoted } from './output-style.js';
@@ -718,6 +718,9 @@ class Remote {
   // Who gets the stream, each with the log sources it shows; undefined
   // for the run's own.
   private readonly listeners = new Map<(line: string) => void, ReadonlySet<LogSource> | undefined>();
+  // Each reader's stream with repeats folded: the run's own, and each
+  // listener's, since each may show different sources.
+  private readonly folders = new Map<(line: string) => void, RepeatFolder>();
   /** The run's log lines, for `logs` and `wait log`. */
   readonly logs = new RunLog();
   /** When the run started, in epoch ms, as its record says. */
@@ -744,12 +747,26 @@ class Remote {
   readonly out = (line: string): void => {
     const answer = commandOutput.getStore();
     if (answer?.live) {
-      answer.line(line);
+      this.unfolded(answer.line, line);
       return;
     }
-    this.print(line);
-    for (const listener of this.listeners.keys()) listener(line);
+    this.unfolded(this.print, line);
+    for (const listener of this.listeners.keys()) this.unfolded(listener, line);
   };
+
+  // Writes a line that isn't the stream's to `reader`, after the
+  // repeats it held back, so the next stream line shows as new.
+  private unfolded(reader: (line: string) => void, line: string): void {
+    this.folders.get(reader)?.interrupt();
+    reader(line);
+  }
+
+  // `reader`'s stream, repeats folded.
+  private folded(reader: (line: string) => void): RepeatFolder {
+    let folder = this.folders.get(reader);
+    if (!folder) this.folders.set(reader, folder = new RepeatFolder(reader));
+    return folder;
+  }
 
   /**
    * Logs a line of one of the log sources, and prints it where its
@@ -761,8 +778,8 @@ class Remote {
     if (record.streamed === false) return;
     const line = streamLine(record);
     const shows = (sources: ReadonlySet<LogSource>): boolean => record.always === true || inSources(record, sources);
-    if (shows(this.sources)) this.print(line);
-    for (const [listener, sources] of this.listeners) if (shows(sources ?? this.sources)) listener(line);
+    if (shows(this.sources)) this.folded(this.print).line(line);
+    for (const [listener, sources] of this.listeners) if (shows(sources ?? this.sources)) this.folded(listener).line(line);
   };
 
   /** The run's id, once other shells can reach it. */
@@ -815,6 +832,7 @@ class Remote {
   }
 
   async close(): Promise<void> {
+    for (const folder of this.folders.values()) folder.flush();
     await this.control?.close();
   }
 
@@ -826,7 +844,7 @@ class Remote {
     this.followers.add(reply);
     this.onActivity?.(true);
     return () => {
-      this.listeners.delete(reply);
+      this.unlisten(reply);
       this.followers.delete(reply);
       this.onActivity?.(this.followers.size > 0);
     };
@@ -859,8 +877,8 @@ class Remote {
       // To the log and the clients following the run, but not back to
       // the one that sent it, which heads its output itself.
       for (const l of marked) {
-        this.print(l);
-        for (const follower of this.followers) if (follower !== reply) follower(l);
+        this.unfolded(this.print, l);
+        for (const follower of this.followers) if (follower !== reply) this.unfolded(follower, l);
       }
     }
     // Answered straight away, even before the run is ready, and the
@@ -868,25 +886,38 @@ class Remote {
     if (/^\s*stop\s*$/.test(line)) {
       // First, so `sm-dev stop` knows it was heard, and waits for the
       // teardown rather than taking the wait for no answer.
-      reply(`[sm-dev] ${S.ui`Stopping run ${S.id(this.id ?? '')}`}`);
+      this.unfolded(reply, `[sm-dev] ${S.ui`Stopping run ${S.id(this.id ?? '')}`}`);
       if (!sent.follows) this.listeners.set(reply, undefined);
       this.onStop?.();
       return 'hold';
     }
-    if (!this.runner && !this.ending) reply('[sm-dev] The run is still starting. The command runs once it is ready.');
+    if (!this.runner && !this.ending) this.unfolded(reply, '[sm-dev] The run is still starting. The command runs once it is ready.');
     await this.armed;
     if (this.ending || !this.runner) {
-      reply('[sm-dev] The run is ending, so the command was not run');
+      this.unfolded(reply, '[sm-dev] The run is ending, so the command was not run');
       return 1;
     }
     const hooks = { cwd: sent.cwd, words: sent.words, interactive: sent.source === 'prompt', json: sent.json };
     // One that only looks answers its sender alone. One that changes
     // things prints to the stream, which a following sender gets
     // anyway; another gets it while the command runs.
-    return this.runner(line, inspects ? { ...hooks, answer: reply }
-      : sent.follows ? hooks
-        : { ...hooks, start: () => this.listeners.set(reply, undefined), end: () => this.listeners.delete(reply) });
+    // A sender that follows gets the repeats held back before its
+    // command's end, not after its next command's echo. It prints that
+    // echo itself, so the first line after it shows as new.
+    const fresh = (): void => this.folders.get(reply)?.interrupt();
+    const flushed = (): void => this.folders.get(reply)?.flush();
+    return this.runner(line, inspects ? { ...hooks, answer: reply, start: fresh, end: flushed }
+      : sent.follows ? { ...hooks, start: fresh, end: flushed }
+        : { ...hooks, start: () => this.listeners.set(reply, undefined), end: () => this.unlisten(reply) });
   };
+
+  // Stops streaming to `reader`, first reporting the repeats it was
+  // shown only once.
+  private unlisten(reader: (line: string) => void): void {
+    this.folders.get(reader)?.flush();
+    this.folders.delete(reader);
+    this.listeners.delete(reader);
+  }
 }
 
 async function runInBrowser(

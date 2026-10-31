@@ -126,6 +126,16 @@ a tab after T1. `logs` adds the time and tab in front instead:
   where its own way.
 - The stream cuts a console line past 1000 characters. `logs` and
   `wait log` see it whole, up to the 2000 kept.
+- The stream shows a line identical to the one just shown only once
+  (`RepeatFolder`), so a script throwing every 100ms doesn't bury
+  everything else.
+  - `[sm-dev] Repeated N more times` follows when another line comes,
+    when a command's output ends, or every 5 seconds while the repeats
+    go on.
+  - Each reader counts its own, since each may show different sources.
+  - `logs` folds the same lines as `(N times)`, and `wait log` sees each.
+- ANSI color codes a script or page logs show as color at a terminal.
+  Plain output (a pipe, the log file) leaves them out.
 - sm-dev's own notices (`[sm-dev] ...`) aren't log lines: the stream
   shows them, but `logs` and `wait log` don't. What happens in a tab
   (it opened or closed, a dialog box came up) is an `event` instead.

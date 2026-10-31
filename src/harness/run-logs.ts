@@ -6,7 +6,7 @@
 // Light, importing only output-style.ts (which imports nothing):
 // runs.ts, which the sm-dev client loads, takes the sources from here.
 
-import { asError, asWarning, dim, ui } from './output-style.js';
+import { asError, asWarning, dim, stripAnsi, ui } from './output-style.js';
 
 /**
  * Where a line came from, from narrowest to broadest:
@@ -216,7 +216,8 @@ export const noLogLines = (tab?: string): string => `[sm-dev] No log lines match
  */
 export function textMatcher(text: string, flag = '--find'): { matches: (line: string) => boolean; shown: string } | { error: string } {
   const regex = /^\/(.+)\/([a-z]*)$/.exec(text);
-  if (!regex) return { matches: (line) => line.includes(text), shown: JSON.stringify(text) };
+  // A line as plain output shows it, without a script's ANSI colors.
+  if (!regex) return { matches: (line) => stripAnsi(line).includes(text), shown: JSON.stringify(text) };
   let pattern: RegExp;
   try {
     pattern = new RegExp(regex[1], regex[2]);
@@ -228,7 +229,7 @@ export function textMatcher(text: string, flag = '--find'): { matches: (line: st
   return {
     matches: (line) => {
       pattern.lastIndex = 0;
-      return pattern.test(line);
+      return pattern.test(stripAnsi(line));
     },
     shown: text,
   };
@@ -287,6 +288,50 @@ function leveledText(record: LogFields, text: string): string {
 export function streamLine(record: LogFields): string {
   const shown = record.tab !== undefined && (record.tab > 1 || record.frame !== undefined);
   return ui`${dim(`${shown ? `[${lineOrigin(record)}] ` : ''}${sourcePrefix(record)}`)} ${leveledText(record, streamBody(record))}`;
+}
+
+// How long repeats of a streamed line go unreported while they keep coming.
+export const REPEATS_REPORT_MS = 5000;
+
+/**
+ * The stream's lines for one reader, a line identical to the one just
+ * shown held back: a script throwing every 100ms would bury everything
+ * else. They're counted, and a `Repeated N more times` line follows
+ * once another line comes, or after `REPEATS_REPORT_MS` while they go on.
+ */
+export class RepeatFolder {
+  private last: string | undefined;
+  private count = 0;
+  private timer: NodeJS.Timeout | undefined;
+
+  constructor(private readonly write: (line: string) => void, private readonly reportMs = REPEATS_REPORT_MS) {}
+
+  /** A stream line: shown, or counted if it's the last one again. */
+  line(line: string): void {
+    if (line === this.last) {
+      this.count++;
+      this.timer ??= setTimeout(() => this.flush(), this.reportMs).unref();
+      return;
+    }
+    this.flush();
+    this.last = line;
+    this.write(line);
+  }
+
+  /** Reports the repeats held back, before a line of another kind. */
+  flush(): void {
+    clearTimeout(this.timer);
+    this.timer = undefined;
+    if (this.count === 0) return;
+    this.write(`[sm-dev] Repeated ${this.count} more time${this.count === 1 ? '' : 's'}`);
+    this.count = 0;
+  }
+
+  /** Reports the repeats, and takes the next line as new: another line was shown in between. */
+  interrupt(): void {
+    this.flush();
+    this.last = undefined;
+  }
 }
 
 /**

@@ -268,7 +268,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 |------|-------------|
 | `src/harness/index.ts` | Public entry of the harness package: re-exports the install pipeline, hosts, page watcher, and Playwright fixture |
 | `src/harness/page-output.ts` | Whose a page's console lines and errors are (a run script's or the page's), and how logged DOM nodes read |
-| `src/harness/run-logs.ts` | A run's log: the sources, the run-wide buffer, `--log-source` / `--since` / `--tail` parsing, and how lines read |
+| `src/harness/run-logs.ts` | A run's log: the sources, the run-wide buffer, `--log-source` / `--since` / `--tail` parsing, how lines read, and folding the stream's repeats |
 | `src/harness/prepare.ts` | Runs the real install pipeline over a file or text under Node and returns the stored row, its id, world, matching, and diagnostics; also how paths are shown |
 | `src/harness/parse-check-node.ts` | Node counterpart of the sandboxed parse check: `new Function` verdict plus `vm.Script` location probes |
 | `src/harness/host.ts` | What a run or fixture test knows of its scripts: their reports, a copy of their values, menus, and the waits on them |

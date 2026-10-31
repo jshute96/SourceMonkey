@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  DEFAULT_LOG_SOURCES, inSources, logsLines, parseLogSources, parsePosition, parseTail, RunLog, shortConsoleText, streamText, textMatcher, timeOfDay,
+  DEFAULT_LOG_SOURCES, inSources, RepeatFolder, logsLines, parseLogSources, parsePosition, parseTail, RunLog, shortConsoleText, streamText, textMatcher, timeOfDay,
 } from '../../../lib/harness/run-logs.js';
 import { plainLine } from '../../../lib/harness/output-style.js';
 
@@ -137,4 +137,29 @@ test('a line past what logs keeps says so, and is cut whole characters', () => {
   // An emoji straddling the cut is left out, not halved.
   const record = new RunLog().add({ source: 'page', kind: 'log', text: `${'x'.repeat(1999)}😀tail` });
   assert.equal(record.text, `${'x'.repeat(1999)}…`);
+});
+
+test('the stream shows a repeated line once, then how many more times it came', async () => {
+  const shown = [];
+  const folder = new RepeatFolder((l) => shown.push(l), 20);
+  for (const line of ['a', 'b', 'b', 'b', 'c', 'c', 'b']) folder.line(line);
+  assert.deepEqual(shown, ['a', 'b', '[sm-dev] Repeated 2 more times', 'c', '[sm-dev] Repeated 1 more time', 'b']);
+  // Repeats that go on are reported after a while, and counted again.
+  shown.length = 0;
+  folder.line('b');
+  await new Promise((r) => setTimeout(r, 40));
+  folder.line('b');
+  folder.flush();
+  assert.deepEqual(shown, ['[sm-dev] Repeated 1 more time', '[sm-dev] Repeated 1 more time']);
+  // Another line shown in between: the next is new, not a repeat.
+  shown.length = 0;
+  folder.interrupt();
+  folder.line('b');
+  assert.deepEqual(shown, ['b']);
+});
+
+test('--find and wait log match a line as plain output shows it, without ANSI colors', () => {
+  const line = '[page log] \x1b[31mred\x1b[0m done';
+  assert.equal(textMatcher('red done').matches(line), true);
+  assert.equal(textMatcher('/^\\[page log\\] red/').matches(line), true);
 });

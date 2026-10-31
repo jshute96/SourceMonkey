@@ -37,6 +37,8 @@ delete process.env.FORCE_COLOR;
 export default defineConfig({
   // The repo root, since specs live under both tests/ and userscripts/.
   testDir: '.',
+  // Agents' git worktrees under .claude/ hold copies of the specs.
+  testIgnore: ['.claude/**'],
   // Half the cores. Each worker runs its own Chromium with the
   // extension loaded, so this trades memory for wall-clock; leaving
   // headroom keeps the box usable while a run is going.

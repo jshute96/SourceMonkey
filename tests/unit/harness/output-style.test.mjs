@@ -16,6 +16,15 @@ test('a line with no markup, and none of sm-dev\'s prefixes, passes through as i
   }
 });
 
+test('ANSI codes a script logged show at a terminal, and are taken out of plain text', () => {
+  const logged = '[page log] \x1b[31mred\x1b[0m done';
+  assert.equal(paintOutput(logged, true), logged);
+  assert.equal(plainLine(logged), '[page log] red done');
+  assert.equal(plainLine(ui`[script log] ${'\x1b[1;32mok\x1b[m'}`), '[script log] ok');
+  // Colon-form truecolor, and an OSC link.
+  assert.equal(plainLine('\x1b[38:2::255:0:0mred\x1b[0m \x1b]8;;https://x.test\x1b\\link\x1b]8;;\x1b\\'), 'red link');
+});
+
 test('markup is plain text without color, and roles painted with it', () => {
   const line = ui`Tab ${id('T1')}: ${url('https://x.test/?a=1&b=<2>')}`;
   assert.equal(plainLine(line), 'Tab T1: https://x.test/?a=1&b=<2>');

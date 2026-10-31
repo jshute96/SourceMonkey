@@ -437,8 +437,12 @@ test('a new run closes the last run\'s tab; nodes print as tags; own refs decode
       meta: { name: 'Ticker', match: ['*://*/target.html'] },
       body: `setInterval(() => console.log('[ticker] tick'), 10);`,
     });
-    const first = await setup.cli('--root', scriptsDir.path, 'start', '--browser', String(setup.port), ticker, url, '--', 'wait', 'log', 'tick');
-    expect(first).toContain('[script log] [ticker] tick');
+    const first = await setup.cli('--root', scriptsDir.path, 'start', '--browser', String(setup.port), ticker, url, '--', 'wait', 'log', 'tick', '--', 'wait', '1s');
+    // A line ticking every 10ms shows once in each command's output,
+    // then how many more times it came.
+    expect(first.filter((l) => l === '[script log] [ticker] tick').length).toBeLessThan(6);
+    const during = first.slice(first.indexOf('arg > wait 1s'));
+    expect(during).toContainEqual(expect.stringMatching(/^\[sm-dev\] Repeated \d{2,} more times$/));
     expect(first).toContain('[sm-dev] Run D1 ended');
 
     const nodes = scriptsDir.write({

@@ -312,6 +312,9 @@ Command marks:
   - `streamHasColor` decides, per stream: stdout and stderr each at a
     terminal with color, or `FORCE_COLOR`. `NO_COLOR` turns it off.
   - Pipes, files, `--json` results and the run's log get plain text.
+  - ANSI codes a script or page logged pass through to a terminal, and
+    are taken out of plain text (`stripAnsi`), where nothing would show
+    them. `--find` and `wait log` match a line without them too.
 - Lines carry markup: XML-like tags naming roles, not looks
   (`<id>T1</id>`, `<url>`, `<name>`, `<cmd>`, `<code>`, `<h>`, `<sel>`).
   - One table (`STYLES`) maps each role to its look, so colors change
@@ -1832,6 +1835,10 @@ The run commands that drive and read a tab's page (`click`, `type`,
 
 - Real input comes from Playwright's locators and keyboard; the
   accessibility tree from `ariaSnapshot`.
+  - Playwright's keyboard layout has the numpad with NumLock off
+    (`Numpad1` is End, keyCode 35). `key` sends the numpad digits and
+    point itself over CDP, as with NumLock on (`1`, keyCode 97), since
+    that's what a caller naming them wants.
 - A selector with multiple matches acts on the first visible match
   (`click`, `hover`, `type`, `screenshot --selector`).
   - Pages often keep hidden copies (a mobile menu's links) ahead of the

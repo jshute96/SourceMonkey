@@ -112,6 +112,18 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   // Through the keys alias, case-insensitive.
   expect(await run('keys end shift+home')).toEqual(['[sm-dev] Pressed End, Shift+Home']);
   expect(await run('eval document.querySelector("input").value')).toEqual(['"hello wor"']);
+  // Numpad digits type theirs, as with NumLock on, not End and the like.
+  await page.evaluate(() => {
+    const input = document.querySelector('input')!;
+    input.value = '';
+    input.focus();
+    (window as unknown as { keys: string[] }).keys = [];
+    input.addEventListener('keydown', (e) => (window as unknown as { keys: string[] }).keys.push(`${e.key} ${e.code} ${e.keyCode} ${e.location}`));
+  });
+  expect(await run('key Numpad3 NumpadDecimal numpad7')).toEqual(['[sm-dev] Pressed Numpad3, NumpadDecimal, Numpad7']);
+  expect(await page.evaluate(() => (window as unknown as { keys: string[] }).keys)).toEqual(['3 Numpad3 99 3', '. NumpadDecimal 110 3', '7 Numpad7 103 3']);
+  expect(await page.inputValue('input')).toBe('3.7');
+  await page.evaluate(() => { document.querySelector('input')!.value = 'hello wor'; });
   // Several lines as a block, exactly: spaces kept, each line break an
   // Enter. From a file, as it is. The flag and selector
   // are on the command's line; a flag-like word in the text is text.
@@ -425,6 +437,9 @@ test('of multiple matches, click, hover, type and screenshot take the first visi
   expect(await run(`screenshot ${image} --selector .b`)).toEqual([`[sm-dev] Wrote ${path.relative(process.cwd(), image)} (.b, the first visible of 2 matches) from ${page.url()}`]);
   // With none showing, the first, whose action says it is hidden.
   expect((await run('hover .none --timeout-seconds 0.5'))[0]).toMatch(/^\[sm-dev\] The hover command failed: The element stayed hidden/);
+  // A page still loading may not have it yet, and says so.
+  await page.evaluate(() => { document.open(); document.write('<title>x</title>'); });
+  expect(await run('click .b')).toEqual([`[sm-dev] No element matches .b yet, since the page is still loading (${page.url()}). Use \`wait selector .b\` to wait for it.`]);
 });
 
 test('an Escape that leaves the page fullscreen says how to exit', async ({ page, fixtureServer, host, attachment, loadScript }) => {

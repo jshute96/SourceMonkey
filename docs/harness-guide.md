@@ -1565,7 +1565,7 @@ acts on the current tab, or the one `--tab` names (`--tab T2`,
 | `type <selector> <text>` | Types into an element, key by key |
 | `type <selector> --file <path>` | Types a file's text into an element, a last line break included |
 | `type <selector> --clear [text]` | Empties the element first, then types the text if given |
-| `key <keys>...` | Presses keys in order: `key j Shift+ArrowRight Escape` (`keys` works too) |
+| `key <keys>...` | Presses keys in order: `key j Shift+ArrowRight Escape` (`keys` works too). `Numpad0` to `Numpad9` and `NumpadDecimal` type their character, as with NumLock on |
 | `eval <js>` | Evaluates inside the selected script (or in the page, with none) and prints the result |
 | `eval --page <js>` | Evaluates in the page |
 | `eval --script=<script> <js>` | Evaluates inside the named script |

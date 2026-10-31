@@ -24,7 +24,7 @@ import { notSettledMessage, seconds, SETTLE_TIMEOUT_MS, settleTab, timeoutFlagMs
 import { savePageHtml } from './save-html.js';
 import { shownPath } from './prepare.js';
 import { findFrame, frameNodes, parseFrameRef, type FrameIds } from './frames.js';
-import { asError, cmd, code, ERROR_PREFIX, escapeMarkup, heading, id as idRole, MARKUP, message, name as nameRole, quoted, ui, url } from './output-style.js';
+import { asError, cmd, code, ERROR_PREFIX, escapeMarkup, heading, id as idRole, MARKUP, message, name as nameRole, quoted, stripAnsi, ui, url } from './output-style.js';
 import { documentOf, locate, named, noteRefs, onScreen, probeMatches, refOf, refProblem, refsOf, tidy, treeParts, withoutDocument } from './snapshot.js';
 
 export const PAGE_COMMANDS = new Set(['click', 'hover', 'type', 'key', 'eval', 'snapshot', 'screenshot', 'savehtml', 'probe', 'cdp']);
@@ -339,7 +339,7 @@ export async function runPageCommand(
         const isFullscreen = () => document.fullscreenElement !== null;
         const wasFullscreen = escape && await pageSays(page, isFullscreen);
         const pressing = (async () => {
-          for (const key of named) await page.keyboard.press(key);
+          for (const key of named) await pressKey(page, key);
         })();
         await act(pressing, ui`Pressed ${named.map((k) => code(k)).join(', ')}`);
         if (wasFullscreen && !tab.dialogs?.current && await pageSays(page, isFullscreen)) {
@@ -806,6 +806,47 @@ export function keyName(typed: string): string {
   return keyParts(typed).map((part) => (part.length <= 1 ? part : KEYS_BY_LOWER.get(part.toLowerCase()) ?? part)).join('+');
 }
 
+// The numpad keys Playwright's layout has with NumLock off (`Numpad1`
+// is End, keyCode 35): with it on, as on most keyboards, each types its
+// character. The values are each one's character and keyCode.
+const NUMPAD_TYPING: Record<string, [string, number]> = {
+  ...Object.fromEntries(Array.from({ length: 10 }, (_, n) => [`Numpad${n}`, [String(n), 96 + n]])),
+  NumpadDecimal: ['.', 110],
+};
+
+// CDP's modifier bits, by Playwright's name.
+const MODIFIER_BITS: Record<string, number> = { Alt: 1, Control: 2, Meta: 4, Shift: 8, ControlOrMeta: process.platform === 'darwin' ? 4 : 2 };
+
+/**
+ * Presses `key` (`Shift+Numpad3`) as `page.keyboard.press` does, except
+ * that a numpad digit or point types it, as with NumLock on: the
+ * modifiers held through Playwright, the key itself sent over CDP.
+ */
+async function pressKey(page: Page, key: string): Promise<void> {
+  const parts = keyParts(key);
+  const last = parts.at(-1)!;
+  const typing = NUMPAD_TYPING[last];
+  if (!typing) {
+    await page.keyboard.press(key);
+    return;
+  }
+  const held = parts.slice(0, -1);
+  const [text, keyCode] = typing;
+  const modifiers = held.reduce((bits, m) => bits | (MODIFIER_BITS[m] ?? 0), 0);
+  // Shift alone still types; with Control, Alt or Meta held, a key types nothing.
+  const typed = (modifiers & ~MODIFIER_BITS.Shift) === 0 ? { text, unmodifiedText: text } : {};
+  const event = { key: text, code: last, windowsVirtualKeyCode: keyCode, isKeypad: true, modifiers };
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    for (const m of held) await page.keyboard.down(m);
+    await cdp.send('Input.dispatchKeyEvent', { type: typed.text ? 'keyDown' : 'rawKeyDown', ...event, ...typed });
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...event });
+  } finally {
+    for (const m of held.reverse()) await page.keyboard.up(m).catch(() => undefined);
+    await cdp.detach().catch(() => undefined);
+  }
+}
+
 // `+` joins the parts, and is a key itself last (`Control++`). An
 // empty part is a `+` with no key on one side (`Shift+`).
 function keyParts(typed: string): string[] {
@@ -933,7 +974,7 @@ const COVER_HTML_MAX = 150;
  */
 function notReady(message: string, seconds: number): string {
   // The call log's lines are dimmed with terminal color codes.
-  const lines = message.replace(/\x1b\[\d+m/g, '').split('\n').map((line) => line.trim().replace(/^- /, ''));
+  const lines = stripAnsi(message).split('\n').map((line) => line.trim().replace(/^- /, ''));
   const within = `for ${seconds} seconds`;
   for (const line of lines.reverse()) {
     const covered = /^(.+) intercepts pointer events$/.exec(line);
@@ -1147,8 +1188,12 @@ async function matches(page: Page, selector: string, say: (line: string) => void
     const inFrame = within && ids ? `F${ids.number(within)}` : undefined;
     // Quoted as a typed word, for the probe hint.
     const word = !/[\s'"]/.test(selector) ? selector : selector.includes("'") ? `"${selector}"` : `'${selector}'`;
+    // A page still loading may not have it yet, as when the last
+    // command made it leave (a redirect after an alert).
+    const loading = !ref && !within && await pageSays(page, () => document.readyState === 'loading');
     say(ref ? `No element has the ref ${quoted(ref)}. Take a new snapshot for the page's refs.`
-      : `No element matches ${quoted(selector)}${inFrame ? ` in ${inFrame}` : ''}. Use ${quoted(`probe${inFrame ? ` --frame ${inFrame}` : ''} ${word}`)} to look for it.`);
+      : loading ? ui`No element matches ${code(selector)} yet, since the page is still loading (${url(page.url())}). Use ${cmd(`wait selector ${word}`)} to wait for it.`
+        : `No element matches ${quoted(selector)}${inFrame ? ` in ${inFrame}` : ''}. Use ${quoted(`probe${inFrame ? ` --frame ${inFrame}` : ''} ${word}`)} to look for it.`);
   }
   return typeof count === 'number' && count > 0 ? count : null;
 }
