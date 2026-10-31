@@ -182,7 +182,8 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/copy-dialog.ts` | The local-copy dialog opened from the viewer's controls row: filename, header fields, dependency checkbox, existing-file checks, runs the copy |
 | `src/extension/export-dialog.ts` | The export dialog opened from the collections page's ⋯ menus: what to include, Save As, the result |
 | `src/extension/import-dialog.ts` | The import dialog opened from the collections page's ⋯ menu: choose a file, preview against what's installed, choices, result |
-| `src/extension/delete-icon.ts` | Paints the two removal glyphs: plain trash can for a record, trash can + disk badge for a file delete |
+| `src/extension/delete-icon.ts` | Paints the two removal glyphs (record, file) and words their tooltips: Uninstall, or Delete for stored-text scripts |
+| `src/extension/confirm-dialog.ts` | A yes/no confirmation in the shared dialog shell; asks before uninstalling the script on screen |
 | `src/extension/delete-dialog.ts` | The delete-local-script-file confirmation: the file and its path, the dependency lists, an on-disk watch, runs the deletion |
 | `src/extension/file-changes.ts` | Paint-time "deleted" / "modified" chips and the per-collection "refresh pending" chip: listing-based probe, new-file scan, pending counts, tagging, tooltips |
 | `src/extension/local-delete.ts` | Deleting a local copy from disk: which scripts qualify, what goes with them, download-history lookup and removal |
@@ -546,6 +547,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/gm-xhr-headers.test.mjs` | Unit tests for XHR header classification, DNR rule building, and per-request URL tagging |
 | `tests/unit/gm-tab.test.mjs` | Unit tests for the `GM_openInTab` SW dispatcher (mapping, close routing, originator cleanup) |
 | `tests/unit/gm-menu.test.mjs` | Unit tests for the `GM_registerMenuCommand` registry (declaration order, in-place update, per-document scoping of clear/unregister) |
+| `tests/unit/delete-icon.test.mjs` | Unit tests for the trash cans' Uninstall / Delete wording by script location |
 | `tests/unit/deep-link.test.mjs` | Unit tests for `buildDeepLinkTarget` — URL prefix match, allowlist, passthrough params, null on bad input |
 | `tests/unit/markup-response.test.mjs` | Unit tests for the markup guard: content-type families, leading-`<` body test, message wording |
 | `tests/unit/install-capture.test.mjs` | Unit tests for the `.user.js` capture helpers: URL predicate, forge page-view exclusion, install-page URL, one-shot bypass |

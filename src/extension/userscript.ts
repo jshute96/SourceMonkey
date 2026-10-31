@@ -73,7 +73,8 @@ import { openCollectionDialog } from './collection-dialog.js';
 import { openMoveDialog } from './move-dialog.js';
 import { openCopyDialog } from './copy-dialog.js';
 import { openDeleteDialog } from './delete-dialog.js';
-import { setDeleteIcon } from './delete-icon.js';
+import { removalVerb, removeScriptTitle, setDeleteIcon } from './delete-icon.js';
+import { confirmDialog } from './confirm-dialog.js';
 import { setGlyphButton, setGlyphButtonBusy } from './glyph.js';
 import type { DownloadsCopiesSetting } from './local-copy.js';
 import { deletableCopyPath, readCopiesSetting } from './local-delete.js';
@@ -152,6 +153,7 @@ import {
 } from './directories.js';
 import {
   COLLECTION_OFF_TITLE,
+  effectiveDisplayName,
 } from './collection-display.js';
 import { HEADING_SITE_ICONS, NO_TARGET_LINK_TITLE, renderSiteIconInto } from './site-icon.js';
 import { representativeMatch, sameDirLinkUrl } from '../match-targets.js';
@@ -991,6 +993,22 @@ async function removeCopy(
     // when empty, so a previous deletion's report can't outlive it.
     relatedVersionsMessage = result.dependencyErrors.join(' ');
     removedHereDetail = result.dependencyErrors;
+  } else if (copy && id === args.currentScriptId) {
+    // The script this page is about: asked first, as the local copy's
+    // dialog above asks. Another version's row in the table goes on
+    // one click.
+    const confirmed = await confirmDialog({
+      title: `${removeScriptTitle(copy.fileUrl, oneOfMany(rows, id))}?`,
+      details: [
+        { label: 'Script', value: scriptLabel(copy.header, copy.relativePath) },
+        ...(copyCollection ? [{ label: 'Collection', value: effectiveDisplayName(copyCollection) }] : []),
+      ],
+      confirmLabel: removalVerb(copy.fileUrl),
+    });
+    if (!confirmed) {
+      await afterPanelAction(args);
+      return;
+    }
   }
   // Removing the row this page is showing is allowed — it is a copy
   // like any other, and refusing only where you happen to be
@@ -1426,6 +1444,7 @@ async function paintRelatedVersions(args: RelatedVersionsPaint, given?: StoreSna
   const rows = allRelatedRows(related);
   lastRelatedIds = new Set(rows.map((r) => r.script.id));
   lastRelatedRows = rows;
+  repaintRemoveControl?.();
   // The anchor decides how the TABLE is filed, and nothing else. Two
   // things on this page are about the copy actually on screen — the
   // Move picker's targets and the enable toggle's sweep — and after an
@@ -3058,6 +3077,17 @@ function makeScriptActions(
   return [makeLocalCopyControl(script), makeRemoveControl(script, collection)];
 }
 
+// The live controls-row trash can's repaint, for the panel to call once
+// it knows what other versions there are.
+let repaintRemoveControl: (() => void) | null = null;
+
+// Whether `id` is one version of several in the panel's rows, so
+// removing it leaves the script installed: "this version of this
+// script" rather than "this script".
+function oneOfMany(rows: readonly RelatedScript[], id: string): boolean {
+  return rows.some((r) => r.script.id === id) && rows.some((r) => r.script.id !== id);
+}
+
 // The trash can beside Refresh: removes the copy on screen, exactly as
 // its row's trash can in the versions table does (`removeCopy`). Here
 // for every script, so the only copy of one can be removed too.
@@ -3083,15 +3113,26 @@ function makeRemoveControl(
   btn.className = 'remove-script';
   wrap.appendChild(btn);
   wrap.hidden = true;
-  void readCopiesSetting().then((setting) => {
-    const deletesFile = deletableCopyPath(script, collection, setting) !== null;
-    const { removable, title } = removeControl(collection, deletesFile);
+  let deletesFile: boolean | null = null;
+  // Painted once the setting is read, and again by each panel paint:
+  // whether other versions stay decides "this script" or "this version
+  // of this script".
+  const paint = (): void => {
+    if (deletesFile === null) return;
+    const { removable, title } = removeControl(
+      script.fileUrl, collection, deletesFile, oneOfMany(lastRelatedRows, script.id),
+    );
     setDeleteIcon(btn, deletesFile ? 'file' : 'record');
     btn.title = title;
     btn.setAttribute('aria-label', title);
     btn.disabled = !removable;
     wrap.title = removable ? '' : title;
     wrap.hidden = false;
+  };
+  repaintRemoveControl = paint;
+  void readCopiesSetting().then((setting) => {
+    deletesFile = deletableCopyPath(script, collection, setting) !== null;
+    paint();
   });
   btn.onclick = async () => {
     btn.disabled = true;
@@ -3115,6 +3156,9 @@ function makeRemoveControl(
       });
     } finally {
       btn.disabled = false;
+      // Disabling it dropped the focus to the page; after a Cancel the
+      // button is still here, so give it back.
+      if (btn.isConnected && document.activeElement === document.body) btn.focus();
     }
   };
   return wrap;

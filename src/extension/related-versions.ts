@@ -37,7 +37,7 @@ import {
 import { openExtensionTab, wireNamedTabLink } from './page-links.js';
 import { getValue } from '../userscript-header.js';
 import { guardSelectOpeningClick } from './select-open-guard.js';
-import { DELETE_FILE_TITLE, REMOVE_SCRIPT_TITLE, setDeleteIcon } from './delete-icon.js';
+import { DELETE_FILE_TITLE, removeScriptTitle, setDeleteIcon } from './delete-icon.js';
 import { setGlyphButton } from './glyph.js';
 import { markFileChanges, scriptFileTag, tagLocalFile } from './file-changes.js';
 import { enableTitle, watchSoloModifier } from './solo-click.js';
@@ -420,9 +420,12 @@ function fitColumns(container: HTMLElement): void {
   // replace.
   const cols = [...container.querySelectorAll<HTMLElement>('.versions-table col')];
   for (const col of cols) col.style.width = 'auto';
+  // Back to one can wide, so `fitSpannedHeader` decides afresh rather
+  // than only ever growing it.
+  container.style.removeProperty('--w-col-remove');
   // The header's Refresh all is taken out of the measurement entirely,
-  // not merely skipped when its own cell is read. It spans Actions and
-  // Remove (see `appendHeadings`), and under `auto` layout the browser
+  // not merely skipped when its own cell is read. It spans Remove and
+  // Actions (see `appendHeadings`), and under `auto` layout the browser
   // pushes a spanning cell's excess width down INTO the columns it
   // covers — so a cell we never read still widens Actions to the
   // header button, which is the fit this whole pass exists to avoid.
@@ -460,31 +463,31 @@ function fitColumns(container: HTMLElement): void {
   if (spanHead) fitSpannedHeader(container, spanHead);
 }
 
-// Widen Actions if the header button, which covers Actions and Remove,
+// Widen Remove if the header button, which covers Remove and Actions,
 // would otherwise hang off the table's right edge — which it will
 // whenever its words are wider than a row's icon button plus a can.
+// Remove takes the extra, not Actions: both right-align, so the slack
+// sits left of the can and each row's can stays beside its refresh.
 //
 // Everything here is read AFTER the widths above have landed, in the
 // layout the panel will keep: the button's own width (it is never
 // stretched, so its cell's width doesn't decide it) against the width
-// Remove actually rendered at. Remove is not a fitted column — it is
-// one can wide, from the stylesheet — so there is nothing measured to
-// ask instead. A second layout, still with no `await` between, so no
-// frame is painted in the middle.
+// Actions was fitted to. A second layout, still with no `await`
+// between, so no frame is painted in the middle.
 //
 // Either column can be read from any table in the panel: both are
 // container-wide, `--w-col-actions` by construction and Remove because
-// its width is a constant.
+// its width is a constant until this sets it.
 function fitSpannedHeader(container: HTMLElement, spanHead: HTMLTableCellElement): void {
   const action = spanHead.firstElementChild;
   const remove = container.querySelector<HTMLElement>('.versions-table td.col-remove');
   const actions = container.querySelector<HTMLElement>('.versions-table td.col-actions');
   if (!action || !remove || !actions) return;
   const need = Math.ceil(
-    action.getBoundingClientRect().width - remove.getBoundingClientRect().width,
+    action.getBoundingClientRect().width - actions.getBoundingClientRect().width,
   );
-  if (need > actions.getBoundingClientRect().width) {
-    container.style.setProperty('--w-col-actions', `${need}px`);
+  if (need > remove.getBoundingClientRect().width) {
+    container.style.setProperty('--w-col-remove', `${need}px`);
   }
 }
 
@@ -571,8 +574,8 @@ function makeTable(
     'col-status',
     'col-version',
     'col-compare',
-    'col-actions',
     'col-remove',
+    'col-actions',
   ]) {
     const col = document.createElement('col');
     col.className = cls;
@@ -599,18 +602,17 @@ function appendHeadings(
     ['Status', 'col-status'],
     ['Version', 'col-version'],
     ['Compare', 'col-compare'],
-    ['', 'col-actions'],
     ['', 'col-remove'],
+    ['', 'col-actions'],
   ] as const) {
     // The header action (Refresh all) is the table's own control, not
-    // the actions column's heading, so it spans that column and the
-    // removal one and sits flush with the table's right edge. Without
-    // the span it stops a can's width short of it, which reads as a
-    // button that missed its alignment rather than as a heading.
-    if (cls === 'col-remove' && headerAction) continue;
+    // the actions column's heading, so it spans the removal column and
+    // that one, right-aligned like the refresh buttons under it. One
+    // cell, classed as the actions column's, standing in for both.
+    if (cls === 'col-actions' && headerAction) continue;
     const th = document.createElement('th');
-    th.className = cls;
-    if (cls === 'col-actions' && headerAction) {
+    th.className = cls === 'col-remove' && headerAction ? 'col-actions' : cls;
+    if (cls === 'col-remove' && headerAction) {
       // No `scope`: this cell holds the table's own control, not a
       // heading for anything under it. (`colgroup` would be the value
       // if it did head both columns.)
@@ -688,8 +690,9 @@ function versionRow(
   tr.appendChild(statusCell(script.id, status));
   tr.appendChild(versionCell(script));
   tr.appendChild(contentCell(isCurrent ? undefined : script, model));
-  tr.appendChild(actionsCell(rel, actions, isCurrent, verb, mode));
+  // Trash can, then refresh: the order of the controls row above.
   tr.appendChild(removeCell(rel, actions, deletesFile));
+  tr.appendChild(actionsCell(rel, actions, isCurrent, verb, mode));
   return tr;
 }
 
@@ -1045,7 +1048,7 @@ function actionsCell(
   return td;
 }
 
-// The trash can, in its own column to the right of the refetch button —
+// The trash can, in its own column to the left of the refetch button —
 // the same glyph and hover treatment as the collections page's
 // per-script remove (`.remove-script`), so the two read as one control
 // in two places. Its own class, because the panel sits on a different
@@ -1074,13 +1077,15 @@ function collectionNoun(collection: StoredCollection | null): string {
 }
 
 // Whether one copy's trash can acts, and what it says. Shared by the
-// table's rows and the viewer's controls row, so the two agree. The
-// table says "version" (`inTable`), since it lists more than one; the
-// controls row uses the collections page's wording.
+// table's rows and the viewer's controls row, so the two agree.
+// `oneOfMany` says other versions stay installed, so this removes "this
+// version of this script" — every table row, and the controls row while
+// the table is there.
 export function removeControl(
+  fileUrl: string,
   collection: StoredCollection | null,
   deletesFile: boolean,
-  inTable = false,
+  oneOfMany = false,
 ): { removable: boolean; title: string } {
   // A copy whose collection dangles is an orphan — the thing a user
   // would most want to clear out, and nothing will scan it back in — so
@@ -1093,9 +1098,9 @@ export function removeControl(
   const title = deletesFile
     ? DELETE_FILE_TITLE
     : removable
-      ? (inTable ? 'Remove this version of the script' : REMOVE_SCRIPT_TITLE)
-      : `Script from ${collectionNoun(collection)} collection `
-        + 'can only be removed by removing the collection';
+      ? removeScriptTitle(fileUrl, oneOfMany)
+      : `A script from a ${collectionNoun(collection)} collection `
+        + 'can only be uninstalled by removing the collection';
   return { removable, title };
 }
 
@@ -1106,7 +1111,7 @@ function removeCell(
 ): HTMLTableCellElement {
   const td = cell('col-remove');
   if (!actions.remove) return td;
-  const { removable, title } = removeControl(rel.collection, deletesFile, true);
+  const { removable, title } = removeControl(rel.script.fileUrl, rel.collection, deletesFile, true);
   const b = document.createElement('button');
   b.type = 'button';
   b.className = 'versions-remove';  // `.icon-btn` is added by setDeleteIcon
@@ -1217,8 +1222,8 @@ function installRow(
   // Nothing to refetch and nothing to remove: the copy does not exist
   // yet. Empty cells rather than disabled controls, which would imply
   // one does.
-  tr.appendChild(cell('col-actions'));
   tr.appendChild(cell('col-remove'));
+  tr.appendChild(cell('col-actions'));
   return tr;
 }
 

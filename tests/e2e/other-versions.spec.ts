@@ -423,7 +423,7 @@ test.describe('other-versions panel', () => {
     await expect(trash(inFolder.id))
       .toHaveAttribute(
         'title',
-        'Script from directory collection can only be removed by removing the collection',
+        'A script from a directory collection can only be uninstalled by removing the collection',
       );
     await expect(trash(standalone.id)).toBeEnabled();
 
@@ -457,7 +457,7 @@ test.describe('other-versions panel', () => {
       page.locator(`${PANEL} tr[data-script-id="${inManifest.id}"] .versions-remove`),
     ).toHaveAttribute(
       'title',
-      'Script from manifest collection can only be removed by removing the collection',
+      'A script from a manifest collection can only be uninstalled by removing the collection',
     );
     await page.close();
   });
@@ -787,6 +787,11 @@ test.describe('other-versions panel', () => {
     const page = await extensionContext.newPage();
     await page.goto(`chrome-extension://${extensionId}/${viewer(middle)}`);
     await page.locator(`${PANEL} tr.is-current .versions-remove`).click();
+    // The script on screen is asked about first, as one version of
+    // several.
+    await expect(page.locator('dialog.confirm-dialog .dlg-title'))
+      .toHaveText('Uninstall this version of this script?');
+    await page.locator('#confirm-ok-btn').click();
 
     // The row below the one that went away — the whole page, not just
     // the URL: the title is the successor's and the not-found state
@@ -824,6 +829,8 @@ test.describe('other-versions panel', () => {
     });
 
     await page.locator(`${PANEL} tr.is-current .versions-remove`).click();
+    // The script on screen is asked about first.
+    await page.locator('#confirm-ok-btn').click();
     await page.waitForURL(`**/${viewer(last)}`);
     await expect(page.locator(`${PANEL} tr.is-current`)).toHaveAttribute('data-script-id', last);
 
@@ -851,6 +858,8 @@ test.describe('other-versions panel', () => {
     await expect(page.locator(`${PANEL} tr.is-current`)).toHaveAttribute('data-script-id', last);
 
     await page.locator(`${PANEL} tr.is-current .versions-remove`).click();
+    // The script on screen is asked about first.
+    await page.locator('#confirm-ok-btn').click();
     await page.waitForURL(`**/${viewer(first)}`);
 
     // The entry for the removed copy was replaced, not stacked on top
@@ -921,13 +930,18 @@ test.describe('other-versions panel', () => {
     // Every row in this section carries its own button, the current
     // one included.
     await expect(page.locator(`${PANEL} td.col-actions button`)).toHaveCount(2);
-    // It spans the actions and removal columns, so it ends flush with
-    // the removal buttons under it — neither short of them nor hanging
+    // It spans the removal and actions columns, so it ends flush with
+    // the refresh buttons under it — neither short of them nor hanging
     // off the table.
     const headRight = (await page.locator(`${PANEL} th.col-actions button`).boundingBox())!;
-    const canRight = (await page.locator(`${PANEL} td.col-remove button`).first().boundingBox())!;
-    expect(Math.abs((headRight.x + headRight.width) - (canRight.x + canRight.width)))
+    const refreshRight = (await page.locator(`${PANEL} td.col-actions button`).first().boundingBox())!;
+    expect(Math.abs((headRight.x + headRight.width) - (refreshRight.x + refreshRight.width)))
       .toBeLessThanOrEqual(1);
+    // Each row's trash can sits just left of its refresh button, the
+    // order of the controls row above the table.
+    const canRight = (await page.locator(`${PANEL} td.col-remove button`).first().boundingBox())!;
+    expect(refreshRight.x - (canRight.x + canRight.width)).toBeGreaterThanOrEqual(4);
+    expect(refreshRight.x - (canRight.x + canRight.width)).toBeLessThanOrEqual(12);
     await page.close();
   });
 

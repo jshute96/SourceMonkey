@@ -170,8 +170,8 @@ Both name the script the same way, pivoted for where they're read.
      tooltip. In a **preview** that button is the word **Update**
      instead: nothing is being fetched there, so it does not wear the
      refresh arrow (see
-     [script-identity.md](script-identity.md)). Then a trash can, live
-     only for single-file installs.
+     [script-identity.md](script-identity.md)). The trash can comes
+     just before it, live only for single-file installs.
    - **Every row refreshes** in the installed viewer, both sections:
      the refetch re-reads that copy from its own collection, so a
      different-URL copy is as refreshable as a same-URL one — and a row
@@ -587,6 +587,17 @@ the browser's Downloads folder.
   script's only copy can be removed from its page.
   - A local copy's deletes its file too, through the
     [delete dialog](local-delete.md).
+  - Any other script is asked about first (`confirm-dialog.ts`):
+    *Uninstall this script?* with Cancel / **Uninstall**, naming the
+    script and its collection. The same question comes from the
+    panel's trash can on the copy on screen; other rows there go on one
+    click.
+  - While other versions stay installed, the tooltip and the question
+    say *this version of this script* instead.
+  - **Uninstall vs Delete**: removing a record is called *Uninstall*
+    in tooltips and the dialog, since the script's source can give it
+    back. An imported or scratch script says *Delete* instead: its
+    stored text is its only copy (`removalVerb` in `delete-icon.ts`).
   - A script from a directory or manifest collection can't be removed
     on its own: the button is disabled, with the panel's tooltip.
   - With other copies left, the page moves to the next one; with none,

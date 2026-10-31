@@ -27,7 +27,7 @@
 
 import { scriptRowBytes } from './script-blobs.js';
 import { openDeleteDialog } from './delete-dialog.js';
-import { DELETE_FILE_TITLE, REMOVE_SCRIPT_TITLE, setDeleteIcon } from './delete-icon.js';
+import { DELETE_FILE_TITLE, removeScriptTitle, setDeleteIcon } from './delete-icon.js';
 import { setGlyphButton, setGlyphButtonBusy } from './glyph.js';
 import type { DownloadsCopiesSetting } from './local-copy.js';
 import { deletableCopyPath, readCopiesSetting } from './local-delete.js';
@@ -1887,8 +1887,9 @@ function renderScriptRow(
       removeBtn.type = 'button';
       removeBtn.className = 'remove-script';
       setDeleteIcon(removeBtn, 'record');
-      removeBtn.title = REMOVE_SCRIPT_TITLE;
-      removeBtn.setAttribute('aria-label', REMOVE_SCRIPT_TITLE);
+      const title = removeScriptTitle(script.fileUrl);
+      removeBtn.title = title;
+      removeBtn.setAttribute('aria-label', title);
       removeBtn.addEventListener('click', () => {
         void onRemoveScript(script.id, script.collectionId, removeBtn);
       });

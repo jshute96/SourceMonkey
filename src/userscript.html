@@ -542,7 +542,7 @@
       .versions-table col.col-version  { width: var(--w-col-version, 7em); }
       .versions-table col.col-compare  { width: var(--w-col-compare, 7em); }
       .versions-table col.col-actions  { width: var(--w-col-actions, 6em); }
-      .versions-table col.col-remove   { width: 2.4em; }
+      .versions-table col.col-remove   { width: var(--w-col-remove, 2.9em); }
       /* Same #444 as the section heading above the table: the panel's
          two kinds of heading are both headings, and at 11px uppercase
          a lighter grey reads as faded rather than as secondary. */
@@ -742,15 +742,17 @@
          clickable. */
       .versions-table .toggle.toggle-disabled { cursor: not-allowed; opacity: 0.5; }
       .versions-table .toggle.toggle-disabled input[type="checkbox"] { cursor: not-allowed; }
-      /* Trash can, in its own column hard against the table's right
-         edge. The button itself is `.icon-btn` in styles.css — the same
+      /* Trash can, in its own column just left of the refetch arrow,
+         right-aligned so any slack sits on its far side (see
+         `fitSpannedHeader`), with the controls row's gap between the
+         two. The button itself is `.icon-btn` in styles.css — the same
          control as the refetch arrow beside it, which is what the two
          looked like two different widgets before. Disabled (a script
          inside a collection) keeps the button on screen, since the
          column would otherwise look ragged with no clue why. */
       .versions-table .col-remove {
         text-align: right;
-        padding-right: 0;
+        padding-right: 0.5em;
         white-space: nowrap;
       }
       /* A disabled row button (a script inside a collection, which the

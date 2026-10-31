@@ -22,13 +22,26 @@
 // the pair can't drift apart again.
 
 import { renderGlyph } from './glyph.js';
+import { isStoredTextUrl } from './location-kinds.js';
 
 export type DeleteIconKind = 'record' | 'file';
 
-// The two trash cans' tooltips, the same wherever one script's button
+// The trash cans' tooltips, the same wherever one script's button
 // appears: its row on the collections page, and its page's controls row.
-export const REMOVE_SCRIPT_TITLE = 'Remove this script';
 export const DELETE_FILE_TITLE = 'Delete local script file';
+
+// What removing a script's record is called. Uninstall for a script
+// whose source is still out there to install it from again; Delete for
+// an imported or scratch script, whose stored text is its only copy.
+export function removalVerb(fileUrl: string): 'Uninstall' | 'Delete' {
+  return isStoredTextUrl(fileUrl) ? 'Delete' : 'Uninstall';
+}
+
+// The record trash can's tooltip: "Uninstall this script", or "… this
+// version of this script" when other versions of it stay installed.
+export function removeScriptTitle(fileUrl: string, oneOfMany = false): string {
+  return `${removalVerb(fileUrl)} this ${oneOfMany ? 'version of this script' : 'script'}`;
+}
 
 const SYMBOL_ID: Record<DeleteIconKind, string> = {
   record: '#sm-trash',

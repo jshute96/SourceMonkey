@@ -227,9 +227,9 @@ copy: the file on disk and its record in SourceMonkey, after a
 confirmation naming the path and every dependency file the copy loads,
 saying which of them go with it. Copies are the one thing SourceMonkey
 can delete from disk, since the browser downloaded them. On any other
-script, a plain trash can in the same place removes just its record
-(disabled for a script from a directory or manifest collection, which
-is removed with its collection).
+script, a plain trash can in the same place uninstalls it, after a
+confirmation (disabled for a script from a directory or manifest
+collection, which is removed with its collection).
 
 The **⋯** menus, in the header and on each collection, have commands to
 export all collections or one collection to a zip file: a backup, or a

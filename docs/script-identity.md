@@ -305,10 +305,13 @@ the *other* rows.
   actions column, and appears only when more than one row is
   refreshable. Same call as a single row's, with every refreshable id
   — the whole panel in the viewer, the same-URL rows in a preview.
-  - **It spans the actions and removal columns**, so it ends flush
-    with the table's right edge rather than a can's width short of it.
-    It is the table's own control, not a column heading — the removal
-    column has no heading of its own either way.
+  - **It spans the removal and actions columns**, so it ends flush
+    with the table's right edge, over the refetch buttons. It is the
+    table's own control, not a column heading — the removal column has
+    no heading of its own either way.
+    - Any width it needs beyond the refetch column goes to the removal
+      column, whose cans right-align, so each can stays beside its row's
+      refetch button.
 - **Install**, only in the offer section — with the dropdown that picks
   where — and only when the caller passes an `install` action. Two
   callers decline:
@@ -317,9 +320,13 @@ the *other* rows.
     the script twice;
   - an **invalid preview**, which has already said the file cannot be
     installed and hidden its own Install button.
-- **A trash can on every row**, in its own column right of the refetch
-  button — same glyphs and behaviour as the collections page's
-  per-script remove.
+- **A trash can on every row**, in its own column left of the refetch
+  button (the order of the controls row above) — same glyphs as the
+  collections page's per-script remove.
+  - Tooltip *Uninstall this version of this script*, or *Delete …* for
+    an imported or scratch script (see
+    [script-viewer.md](script-viewer.md)). On the copy on screen it
+    asks for confirmation first.
   - **Two glyphs, not one**: a plain can for a row that only drops
     SourceMonkey's record, and a can badged with a disk (in red) for a
     local copy, whose button deletes the file too. Both come from
@@ -327,8 +334,8 @@ the *other* rows.
   - **Live only for scripts in a container collection** (a scripts
     collection — the built-in *Scripts from …* defaults or one the user
     made), which the user installed one at a time.
-  - **Disabled elsewhere**, with the tooltip *Script from **directory**
-    collection can only be removed by removing the collection* — or
+  - **Disabled elsewhere**, with the tooltip *A script from a **directory**
+    collection can only be uninstalled by removing the collection* — or
     ***manifest** collection*, per `collectionHasManifest`.
     - These docs call the whole family "collection collections", but that
       phrase appears nowhere a user can see it, and this message is the

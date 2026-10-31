@@ -121,6 +121,8 @@ test.describe('deleting a local copy', () => {
     // the record.
     await expect(page.locator(DELETE_BTN)).toBeVisible();
     await expectGlyph(page.locator(DELETE_BTN), 'record');
+    // The copy stays, so this is one version of several.
+    await expect(page.locator(DELETE_BTN)).toHaveAttribute('title', 'Uninstall this version of this script');
     await page.goto(viewerUrl(extensionId, copyId));
     const copiesDir = path.join(downloadsDir!, 'SourceMonkey');
     const file = path.join(copiesDir, 'hello.user.js');
@@ -526,7 +528,7 @@ test.describe('deleting a local copy', () => {
     // collection, where every row does — but it is the plain one that
     // removes the record.
     const original = page.locator(`.collection[data-collection-id="${def!.id}"] td.action-cell button`);
-    await expect(original).toHaveAttribute('title', 'Remove this script');
+    await expect(original).toHaveAttribute('title', 'Uninstall this script');
     await expectGlyph(original, 'record');
     await expect(trash).toHaveAttribute(
       'title', 'Delete local script file',
@@ -563,8 +565,21 @@ test.describe('removing a script from its page', () => {
     await expect(btn).toBeEnabled();
     await expectGlyph(btn, 'record');
     // The collections page's wording for the same button.
-    await expect(btn).toHaveAttribute('title', 'Remove this script');
+    await expect(btn).toHaveAttribute('title', 'Uninstall this script');
+
+    // Asked first, and Cancel keeps it.
     await btn.click();
+    const dialog = page.locator('dialog.confirm-dialog');
+    await expect(dialog.locator('.dlg-title')).toHaveText('Uninstall this script?');
+    await expect(dialog.locator('.dlg-body')).toHaveText(/Script\s*Hello\s*Collection\s*Scripts from web/);
+    await expect(dialog.locator('#confirm-ok-btn')).toHaveText('Uninstall');
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(btn).toBeEnabled();
+    expect((await sm.getCollectionWithScripts(def!.id))!.scripts).toHaveLength(1);
+
+    await btn.click();
+    await dialog.locator('#confirm-ok-btn').click();
 
     await expect(page.locator('#message')).toHaveText('This script has been removed');
     expect((await sm.getCollectionWithScripts(def!.id))!.scripts).toHaveLength(0);
@@ -587,7 +602,7 @@ test.describe('removing a script from its page', () => {
       await expect(btn).toBeDisabled();
       await expectGlyph(btn, 'record');
       await expect(btn).toHaveAttribute(
-        'title', 'Script from directory collection can only be removed by removing the collection',
+        'title', 'A script from a directory collection can only be uninstalled by removing the collection',
       );
       await page.close();
     } finally {
