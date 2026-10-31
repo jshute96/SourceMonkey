@@ -89,6 +89,13 @@ export function parseManifest(body: string): string[] {
 // such collections directly if they want them.
 export const ALLOWED_ENTRY_SCHEMES = new Set(['http:', 'https:', 'file:']);
 
+// Whether a resolved manifest entry is a userscript. Like every other
+// way in, a manifest only loads `.user.js` files; an entry for anything
+// else is skipped.
+export function isUserScriptEntry(resolved: URL): boolean {
+  return resolved.pathname.endsWith('.user.js');
+}
+
 // Resolve a manifest entry against the manifest's canonical URL.
 //
 // On top of plain RFC 3986 resolution, if the entry doesn't bring its

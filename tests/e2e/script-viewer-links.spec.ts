@@ -162,6 +162,41 @@ test.describe('userscript viewer link rendering', () => {
     await page.close();
   });
 
+  test('the Open button reaches a local page beside the script', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    // The same-directory fallback gives a `file://` target, which the
+    // plain link opens like any other.
+    scriptsDir.write({
+      relativePath: 'demo/demo.user.js',
+      meta: { name: 'D', match: ['*://*/demo/demo.html'] },
+      body: '',
+    });
+    scriptsDir.writeRaw('demo/demo.html', '<!doctype html><title>Demo</title><p id="demo">the demo page</p>');
+    const collection = await sm.addCollection(scriptsDir.path);
+    const got = await sm.getCollectionWithScripts(collection!.id);
+    const script = got!.scripts.find((s) => s.relativePath === 'demo/demo.user.js')!;
+    const expectedHref = script.fileUrl.replace(/demo\.user\.js$/, 'demo.html');
+
+    const page = await openViewer(extensionContext, extensionId, script.id);
+    const open = page.locator('#open-target-btn');
+    // A file has no site to name.
+    await expect(open).toHaveText('Open target page');
+    await expect(open).toHaveAttribute('href', expectedHref);
+    await expect(open).not.toHaveAttribute('aria-disabled');
+
+    const [opened] = await Promise.all([
+      extensionContext.waitForEvent('page'),
+      open.click(),
+    ]);
+    await opened.waitForURL(expectedHref);
+    await expect(opened.locator('#demo')).toHaveText('the demo page');
+    // The viewer stays where it was.
+    await expect(page).toHaveURL(/userscript\.html\?script=/);
+    await opened.close();
+    await page.close();
+  });
+
   test('header @match lines in the code body become anchors', async ({
     extensionContext, extensionId, sm,
   }) => {

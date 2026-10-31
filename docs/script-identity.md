@@ -183,9 +183,6 @@ the *other* rows.
     panel's offer section.
   - And so does the collections page's **Add** field, which previews any
     single-file location the user types rather than adding it directly.
-  - **Single-file installs only.** The preview keeps an Install button
-    for other shapes too, and those add a whole collection — no one
-    script for the rule to be about.
   - **Only when the new copy is active**: its container collection
     must be enabled.
   - **Even when the new copy landed `invalid`**: it is the one asked
@@ -779,7 +776,6 @@ what it adds.
 |---|---|---|---|
 | Nothing, anywhere | none | the **install callout**: **Install** *into [dropdown]* | none |
 | Any copy, here or from a mirror | one line: ***This script is already installed.*** *Select which instance to update or install.* | Cancel, View raw source | every copy, plus an **Install another copy of this script** section with the same dropdown |
-| A location with no single-file spelling (a `foo.js`, a manifest URL), nothing at this location | as above when a same-`@name` copy exists | the callout without a dropdown — `addCollection` judges the shape | copies, no offer section |
 
 - **"Not installed" means nowhere**, not merely not here: a same-`@name`
   copy from a mirror is still this script, installed.

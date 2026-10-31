@@ -153,7 +153,13 @@ export function renderDetails(container: HTMLElement, model: DetailsModel): void
   const h = model.header;
 
   if (h) {
-    addText(dl, 'Name', getValue(h, 'name'));
+    // Bold: the name is what the rest of the panel describes.
+    const name = getValue(h, 'name');
+    if (name) {
+      const b = document.createElement('b');
+      b.textContent = name;
+      appendRow(dl, 'Name', b);
+    }
     addText(dl, 'Description', getValue(h, 'description'));
     const version = getValue(h, 'version');
     const probes = probesWorthShowing(version, model.versionProbes);

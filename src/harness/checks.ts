@@ -10,7 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { isMarkupContentType, looksLikeMarkup, markupResponseMessage } from '../markup-response.js';
 import { unusableMatchGroupKey } from '../url-match.js';
-import { ALLOWED_ENTRY_SCHEMES, MANIFEST_FILENAME, parseManifest, resolveManifestEntryUrl } from '../collection-scan.js';
+import { ALLOWED_ENTRY_SCHEMES, MANIFEST_FILENAME, isUserScriptEntry, parseManifest, resolveManifestEntryUrl } from '../collection-scan.js';
 import { asError, asWarning, code, heading, id, INVALID_PREFIX, quoted, roleCell, tableLines, textCell, ui, url, WARNING_LEVEL, type Cell } from './output-style.js';
 import { HAS_SCHEME, globFiles, globMistake, isDirectory, isGlob, walkScripts } from './path-args.js';
 import { jsonResult, type MatchPage, type ValidateData } from './json-output.js';
@@ -100,9 +100,11 @@ export async function manifestScripts(input: string, cwd = process.cwd()): Promi
     if (!ALLOWED_ENTRY_SCHEMES.has(resolved.protocol)) {
       throw new UsageError(`The manifest ${quoted(input)} lists ${quoted(entry)}, which isn't an http, https or file URL`);
     }
+    // Skipped, as the extension skips it.
+    if (!isUserScriptEntry(resolved)) continue;
     scripts.add(resolved.protocol === 'file:' ? fileURLToPath(resolved) : resolved.href);
   }
-  if (scripts.size === 0) throw new UsageError(`The manifest ${quoted(input)} lists no scripts`);
+  if (scripts.size === 0) throw new UsageError(`The manifest ${quoted(input)} lists no ${quoted('.user.js')} scripts`);
   return [...scripts];
 }
 

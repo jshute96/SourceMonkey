@@ -117,6 +117,50 @@
         align-items: center;
         gap: 0.5em;
       }
+      /* The Open on <site> link, drawn as a button: the same surface,
+         height and hover as the buttons beside it (styles.css). With no
+         target it has no href and is greyed out like a disabled button. */
+      .meta-row .link-btn {
+        box-sizing: border-box;
+        display: inline-flex;
+        align-items: center;
+        height: var(--icon-btn-size);
+        padding: 0 0.7em;
+        line-height: 1;
+        border: 1px solid var(--btn-border);
+        border-radius: 3px;
+        background: var(--btn-bg);
+        color: var(--btn-fg);
+        text-decoration: none;
+        white-space: nowrap;
+      }
+      .meta-row .link-btn[href]:hover { background: var(--btn-bg-hover); }
+      .meta-row .link-btn[href]:active { background: var(--btn-bg-active); }
+      .meta-row .link-btn[href]:focus-visible { outline: 2px solid #4a90e2; outline-offset: 1px; }
+      .meta-row .link-btn:not([href]) { cursor: not-allowed; opacity: 0.5; }
+      .meta-row .installed-note { display: inline-flex; align-items: center; gap: 0.5em; }
+      /* A green pill with a checkmark, on the "already installed"
+         banner's background (`.banner.installed`) with a darker border
+         so it holds its own beside the buttons. Plain green text was
+         easy to miss under a versions table. Same height as the buttons
+         beside it. */
+      .meta-row .installed-badge {
+        box-sizing: border-box;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35em;
+        height: var(--icon-btn-size);
+        padding: 0 0.7em 0 0.5em;
+        border: 1px solid #86b97a;
+        border-radius: 3px;
+        background: #dbecd6;
+        color: #166534;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .meta-row .installed-check { width: 1.1em; height: 1.1em; flex: none; }
+      .meta-row .installed-note[hidden] { display: none; }
+      .meta-row .installed-note button { font-weight: 400; }
       .meta-row .toggle input[type="checkbox"] { cursor: pointer; margin: 0; }
       .meta-row .toggle.toggle-disabled { cursor: not-allowed; opacity: 0.5; }
       .meta-row .toggle.toggle-disabled input[type="checkbox"] { cursor: not-allowed; }
@@ -1047,6 +1091,16 @@
       <div id="other-versions"></div>
     </div>
     <div id="meta-row" class="meta-row" hidden>
+      <!-- Left of the row's blank space, before the toggle's
+           `margin-left: auto`. "Script installed" and Close show only
+           right after an install from the preview (`?installed=1`). -->
+      <span id="installed-note" class="installed-note" hidden>
+        <span class="installed-badge"><svg class="installed-check" viewBox="0 0 24 24" aria-hidden="true"><use href="#sm-check"/></svg>Script installed</span>
+        <button id="close-tab-btn" type="button" title="Close this tab">Close</button>
+      </span>
+      <!-- An `<a>`, not a button, so middle-click and shift-click open
+           it like any link. Filled per render (`paintOpenTarget`). -->
+      <a id="open-target-btn" class="link-btn"></a>
       <label id="enable-label" class="toggle" title="Enable this script">
         <input id="enable-checkbox" type="checkbox" />
         <span>Enabled</span>
@@ -1064,9 +1118,7 @@
     <!-- Install stays hidden until the fetch has landed and we know
          whether this file is installable and not already installed,
          so it is never clickable without a handler behind it. The
-         dropdown is filled per preview (see `showInstallCallout`); it
-         is absent for a location with no single-file spelling, where
-         Install adds a whole collection instead. -->
+         dropdown is filled per preview (see `showInstallCallout`). -->
     <div id="install-callout" class="install-callout" hidden>
       <button id="install-btn" class="primary" type="button">Install</button>
       <label id="install-target-label" for="install-target">into</label>

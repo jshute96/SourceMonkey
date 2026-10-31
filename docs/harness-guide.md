@@ -672,7 +672,8 @@ Details on each are in [`start` options in detail](#start-options-in-detail).
   - a `script_manifest.json`, as a path or URL, which stands for the
     scripts it lists, resolved against it as the extension resolves a
     manifest collection's (see
-    [http-collections.md](http-collections.md)).
+    [http-collections.md](http-collections.md)). Entries that don't
+    end in `.user.js` are skipped.
 - When a manifest lists an invalid script, `start` skips it, as it
   does an invalid script in a directory.
 - `--watch` and `update` only re-read scripts from disk, so they never

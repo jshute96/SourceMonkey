@@ -1373,49 +1373,6 @@ test.describe('other-versions panel', () => {
     await page.close();
   });
 
-  // The header only stands down for a table that carries the action.
-  // A location with no single-file spelling gets no offer row, so its
-  // Install has nowhere else to live and must stay in the header —
-  // even with two rows below it.
-  test('a location the table cannot offer to install keeps its header Install', async ({
-    extensionContext, extensionId, sm,
-  }) => {
-    const ns = 'https://example.com/ns';
-    // `.js`, not `.user.js`: previewable, but not a single-file input,
-    // so `installOptions` — and with it the offer row — is undefined.
-    const plain = dir.writeRaw(
-      'plain.js',
-      [
-        '// ==UserScript==',
-        '// @name        Twin Script',
-        `// @namespace   ${ns}`,
-        '// @match       https://example.com/*',
-        '// ==/UserScript==',
-        '',
-        'console.log("hi");',
-        '',
-      ].join('\n'),
-    );
-    write('a.user.js', 'Twin Script', { namespace: ns });
-    write('b.user.js', 'Twin Script', { namespace: ns });
-    await sm.addCollection(dir.path);
-    await sm.syncNow();
-
-    const page = await extensionContext.newPage();
-    await page.goto(
-      `chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`file://${plain}`)}`,
-    );
-    await expect(page.locator('#preview-actions')).toBeVisible();
-    // Two same-identity rows below, and no offer row to install from —
-    // so the callout stays, without a dropdown.
-    await expect(page.locator(`${PANEL} tr.is-offer`)).toHaveCount(0);
-    await expect(page.locator(ROWS)).toHaveCount(2);
-    await expect(page.locator('#install-callout')).toBeVisible();
-    await expect(page.locator('#install-btn')).toBeVisible();
-    await expect(page.locator('#install-target')).toHaveCount(0);
-    await page.close();
-  });
-
   // Installed, but not from here. Open and Update would have nothing to
   // act on, so they stay hidden and the panel is the way across.
   test('the preview banner names the different-URL case', async ({

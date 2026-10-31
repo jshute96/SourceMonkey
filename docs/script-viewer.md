@@ -205,11 +205,32 @@ Both name the script the same way, pivoted for where they're read.
      are drawn as one green box (`#status-box.merged`).
    - Full behaviour in [script-identity.md](script-identity.md).
 3. **Controls row** (`#meta-row`) — everything that acts on the
-   script itself, left to right: the `Enabled` toggle, **Local copy…**,
+   script itself, left to right: the post-install note and **Open on
+   `<site>`** (below), a blank space, then the `Enabled` toggle, **Local copy…**,
    the delete trash can (a local copy only), and the **Refresh**
    circular arrow → `refreshScript(scriptId)`. Installed mode only; preview shows the
    banner + action row in its place (see
    [Preview mode](#preview-mode)).
+   - At the row's left, before its blank space: **Open on `<site>`**, a
+     link drawn as a button, so middle-click and shift-click work.
+     - It opens the script's first `@match` site, the page the
+       collections page's site icon opens, or else the
+       [same-directory fallback](#same-directory-fallback).
+     - The label is the host without `www.`; the URL shows in the
+       status bar on hover.
+     - A `file://` target (the fallback for a local script) is a plain
+       link too.
+     - With no target it is greyed out as "Open target page", with the
+       collections page's "Unable to extract link to target site"
+       tooltip.
+   - Right after an Install from the preview, the row starts with a
+     green "Script installed" badge with a checkmark, then a **Close**
+     button that closes the tab.
+     - `doInstall` adds an `installed=1` parameter to the viewer URL.
+       The viewer drops it from the URL at once, so a reload shows the
+       plain row.
+     - The note shows whenever the copy on screen is the one just
+       installed, including after switching copies and coming back.
    - The toggle is a radio button, not a plain checkbox: enabling this
      copy disables every other copy that is running, exactly as the
      panel's own rows do. Ctrl/cmd-click opts out. See
@@ -273,7 +294,7 @@ Both name the script the same way, pivoted for where they're read.
        - Surfacing those two specifically is filed in
          [TODO.md](../TODO.md).
    - Parsed-header fields (when a metadata block is present):
-     - `Name`, `Description`, `Version`
+     - `Name` (in bold), `Description`, `Version`
      - `Version at <update|download> URL` — one row per
        stored update probe, immediately under `Version`. The probed URL
        is the row's tooltip; only `(Newer)` is highlighted.
@@ -810,6 +831,9 @@ controls and where the data comes from.
 
 ### Getting the script
 
+- The page shows and installs one script only. A location whose path
+  doesn't end in `.user.js` (a directory, a manifest) is refused
+  before any fetch.
 - `normalizeCollectionInput` runs first, so a `github.com/.../blob/...`
   URL is fetched (and later stored) in its raw form.
 - `canonicalCollectionInput` then collapses a `file://` URL to its bare
@@ -849,9 +873,7 @@ Banner (`#banner-slot`) states what this file is; the action row
 - **Install** → `installScript(<location>, <target>)`, then jumps to the
   new script's viewer. A web install is not a special kind of script:
   it lands in a scripts collection and picks up normal refresh and
-  update behavior. (A location with no single-file spelling — a
-  `foo.js`, a manifest URL — gets the callout without a dropdown and
-  goes through `addCollection`.)
+  update behavior.
   - The new copy is left as the **only** running one: installing is an
     enable, so it applies the same exclusive rule as the enable
     checkboxes. See

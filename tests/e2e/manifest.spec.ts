@@ -100,6 +100,25 @@ test.describe('manifest collection refresh', () => {
     expect(after!.scripts.find((s) => s.relativePath === 'a.user.js')!.id).toBe(idA);
   });
 
+  test('an entry that is not a .user.js file is skipped', async ({ sm }) => {
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: { name: 'A', match: ['https://example.com/*'] },
+      body: '',
+    });
+    // A valid userscript header, but the wrong extension.
+    fs.writeFileSync(
+      path.join(scriptsDir.path, 'plain.js'),
+      '// ==UserScript==\n// @name Plain\n// @match https://example.com/*\n// ==/UserScript==\n',
+    );
+    const manifestPath = writeManifest(scriptsDir.path, ['a.user.js', 'plain.js', { path: 'style.user.css' }]);
+
+    const collection = await sm.addCollection(manifestPath);
+    const result = await sm.getCollectionWithScripts(collection!.id);
+    expect(result!.collection.scanError).toBeUndefined();
+    expect(result!.scripts.map((s) => s.relativePath)).toEqual(['a.user.js']);
+  });
+
   test('manifest entry pointing at a missing file shows as error', async ({ sm }) => {
     scriptsDir.write({
       relativePath: 'a.user.js',

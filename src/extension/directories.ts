@@ -30,7 +30,7 @@
 // System Access API there is no per-session re-grant.
 
 export type { FoundScript } from '../collection-scan.js';
-import { type FoundScript, MAX_SCAN_DEPTH, MANIFEST_FILENAME, ALLOWED_ENTRY_SCHEMES, parseManifest, resolveManifestEntryUrl } from '../collection-scan.js';
+import { type FoundScript, MAX_SCAN_DEPTH, MANIFEST_FILENAME, ALLOWED_ENTRY_SCHEMES, isUserScriptEntry, parseManifest, resolveManifestEntryUrl } from '../collection-scan.js';
 
 // The manifest helpers live in the shared collection-scan.ts, so sm-dev
 // reads manifests the same way; re-exported for this module's callers.
@@ -620,6 +620,7 @@ async function scanManifest(
         `Manifest entry scheme ${resolved.protocol} is not allowed (use http, https, or file)`,
       );
     }
+    if (!isUserScriptEntry(resolved)) continue;
     // Use urlBaseName on the resolved URL so percent-encoded segments
     // come out human-readable, mirroring scanSingleFile's HTTP path.
     const name = urlBaseName(resolved.href) || entry;

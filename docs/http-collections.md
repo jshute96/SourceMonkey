@@ -155,6 +155,8 @@ field holds that string:
 - Fields other than `path` are ignored, so a manifest can carry extra
   per-script bookkeeping without SourceMonkey needing to know about it.
 - An object entry without a string `path` fails the source.
+- An entry whose path doesn't end in `.user.js` is skipped, as every
+  other way of adding a script requires that extension.
 
 Resolution rules for the entry URL:
 

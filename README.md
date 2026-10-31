@@ -385,6 +385,8 @@ with a `path` field holding that string; other fields are ignored:
 }
 ```
 
+Only entries ending in `.user.js` are loaded; others are skipped.
+
 Entry paths resolve like this:
 
 - **Relative** entries resolve against the manifest's own location, so

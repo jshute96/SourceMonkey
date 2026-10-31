@@ -171,7 +171,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/page-heading.ts` | Import-free module holding the viewer heading's vocabulary and DOM, and the early paint that names the header bar before the page's first paint |
 | `src/extension/page-links.ts` | Cross-page links between extension pages: the named Collections / Options tabs, the header bar's home link and buttons |
 | `src/extension/user-scripts-access.ts` | "Allow User Scripts" probe plus the shared heading and fix line for the collections page and popup |
-| `src/extension/userscript.ts` | Userscript viewer controller — installed mode (`?script=`), preview mode (`?preview=`), in-page switching between copies, the Collection row's Move button, the controls row's Local copy / delete-copy buttons, live `storage` watchers, log pane |
+| `src/extension/userscript.ts` | Userscript viewer controller — installed mode (`?script=`), preview mode (`?preview=`), in-page switching between copies, the Collection row's Move button, the controls row's Open site link and Local copy / delete-copy buttons, live `storage` watchers, log pane |
 | `src/extension/compare.ts` | Compare page controller — loads two copies (stored, a preview's download, or an import's backup copy), the fields table with its swap, per-file tabs, unified / side-by-side diff rendering, change-block arrows |
 | `src/extension/debug/icons.ts` | Debug icons controller — lists all cached icons with scope, expiry, per-row refresh/delete, and Delete All |
 | `src/extension/debug/storage.ts` | Debug storage controller: renders the By script, By file and Stored values views, sortable headings, live repaint |

@@ -1024,12 +1024,16 @@ export function renderPatternIconInto(
   if (target) void paintIcon(inner, ensureSiteIcon(target.origin, target.linkUrl));
 }
 
+// Tooltip for a script with no site to link to: the inert globe here,
+// and the viewer's greyed-out Open button.
+export const NO_TARGET_LINK_TITLE = 'Unable to extract link to target site';
+
 // One icon's wrapper: a link when there is a URL to open, an inert
 // span otherwise. Starts out holding the globe placeholder.
 function buildInner(
   slot: HTMLElement,
   target: MatchTarget | string | null,
-  noLinkTitle = 'Unable to extract link to target site',
+  noLinkTitle = NO_TARGET_LINK_TITLE,
 ): HTMLElement {
   const linkUrl = typeof target === 'string' ? target : target?.linkUrl ?? null;
   const inner = slot.ownerDocument.createElement(linkUrl ? 'a' : 'span');

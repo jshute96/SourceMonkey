@@ -152,7 +152,8 @@ import {
 import {
   COLLECTION_OFF_TITLE,
 } from './collection-display.js';
-import { HEADING_SITE_ICONS, renderSiteIconInto } from './site-icon.js';
+import { HEADING_SITE_ICONS, NO_TARGET_LINK_TITLE, renderSiteIconInto } from './site-icon.js';
+import { representativeMatch, sameDirLinkUrl } from '../match-targets.js';
 // Also the page's early heading paint — see src/extension/page-heading.ts. The
 // module runs once, so importing it here does not repeat that.
 import {
@@ -195,7 +196,7 @@ import { stackLayout } from '../composed-source.js';
 import { buildRequireSourceUrl, buildSourceUrl } from '../script-source-url.js';
 import { startPhaseTimer } from '../phase-timing.js';
 import {
-  addCollection, installScript, updateScript,
+  installScript, updateScript,
   clearScriptLog, enableWithin, forgetDeniedHost, removeScript, revokeConnectHost, setScriptEnabledExclusive,
   setScriptsEnabled, turnOffOtherCopies,
 } from './worker-client.js';
@@ -232,6 +233,15 @@ const previewInput = params.get('preview');
 // for this preview. Gates the "it's a web page, get out of the way"
 // escape below — see CAPTURED_PARAM.
 const previewWasCaptured = params.get(CAPTURED_PARAM) === '1';
+// The script the preview's Install just added (`?installed=1`, set by
+// `doInstall`). Its viewer shows "Script installed" and a Close button
+// beside Open. The parameter is dropped from the URL at once, so a
+// reload shows the plain viewer.
+const INSTALLED_PARAM = 'installed';
+const justInstalledId = params.get(INSTALLED_PARAM) === '1' ? scriptId : null;
+if (justInstalledId) {
+  history.replaceState(null, '', `${viewerUrl(justInstalledId)}${location.hash}`);
+}
 
 const filenameEl = document.getElementById('filename')!;
 const controlsRowEl = document.getElementById('meta-row')!;
@@ -239,6 +249,9 @@ const enableLabelEl = document.getElementById('enable-label') as HTMLLabelElemen
 const enableCheckboxEl = document.getElementById('enable-checkbox') as HTMLInputElement;
 const metaActionsEl = document.getElementById('meta-actions')!;
 const refreshBtn = document.getElementById('refresh-btn') as HTMLButtonElement;
+const installedNoteEl = document.getElementById('installed-note')!;
+const openTargetEl = document.getElementById('open-target-btn') as HTMLAnchorElement;
+document.getElementById('close-tab-btn')!.addEventListener('click', closeTab);
 // Built once with the idle label and restored to it after every
 // refresh, so the two spellings can't drift.
 const REFRESH_LABELS = { idle: 'Refresh', busy: 'Refreshing…' };
@@ -248,7 +261,6 @@ const bannerSlotEl = document.getElementById('banner-slot')!;
 const statusBoxEl = document.getElementById('status-box')!;
 const actionsEl = document.getElementById('preview-actions')!;
 const installCalloutEl = document.getElementById('install-callout') as HTMLElement;
-const installTargetLabel = document.getElementById('install-target-label') as HTMLLabelElement;
 const installTargetSlot = document.getElementById('install-target-slot') as HTMLElement;
 const installBtn = document.getElementById('install-btn') as HTMLButtonElement;
 const openBtn = document.getElementById('open-btn') as HTMLButtonElement;
@@ -845,6 +857,8 @@ function render(script: StoredScript, snapshot?: StoreSnapshot): void {
   // Rebuilt per render rather than updated in place: both controls
   // close over the script row they were built from.
   metaActionsEl.replaceChildren(...makeScriptActions(script, collectionRow));
+  installedNoteEl.hidden = script.id !== justInstalledId;
+  paintOpenTarget(script);
 
   enableCheckboxEl.checked = isScriptEnabled(script);
   enableCheckboxEl.disabled = !collectionEnabled;
@@ -2146,6 +2160,10 @@ const previewLocalFiles = new Map<string, string>();
 // lands, at which point the panel repaints — see `recordPreviewFiles`.
 let previewFiles: { requires: readonly StoredRequire[]; resources: readonly StoredResource[] } | undefined;
 
+// The preview's answer to a location that isn't one `.user.js` file.
+const NOT_A_SINGLE_SCRIPT =
+  'This URL is not a userscript, since its path does not end in .user.js';
+
 async function loadPreview(): Promise<void> {
   const input = previewInput ?? '';
   controlsRowEl.hidden = true;
@@ -2173,6 +2191,13 @@ async function loadPreview(): Promise<void> {
       // rather than under the `Could not fetch this script: ` prefix
       // the other failures there take.
       throw new Error(`This is not a script location. It ${LOCATION_SHAPES}.`);
+    }
+    // This page previews and installs one script. A directory, a
+    // manifest or any other collection is added from the collections
+    // page instead.
+    if (!isSingleFileInput(input)) {
+      badInput = true;
+      throw new Error(NOT_A_SINGLE_SCRIPT);
     }
     // Same canonicalization `addCollection` runs, so what the
     // already-installed check compares is exactly what installing
@@ -2745,11 +2770,6 @@ async function loadPreviewRequire(ref: string, fileUrl: string): Promise<string>
 //     copy, Install with the same dropdown in the panel's own
 //     "Install another copy of this script" section — so header buttons
 //     would only leave the user guessing which copy they meant.
-//
-// The one exception is a location with no single-file spelling (a
-// `foo.js`, a manifest URL): the panel has no offer section to carry
-// Install, so the callout stays — without a dropdown — as long as
-// nothing is installed at this location. `addCollection` judges those.
 async function wireInstallButtons(): Promise<void> {
   // Re-runnable: `afterPanelAction` calls this again when a panel
   // action changed what is installed. Every control it owns is reset
@@ -2771,40 +2791,34 @@ async function wireInstallButtons(): Promise<void> {
   if (!existing && !related.sameIdentity.length) {
     clearBanner();
     // Nothing of this script anywhere, so Install is the only thing to
-    // do here and reads as the default.
-    showInstallCallout(related.installOptions, true);
+    // do here and reads as the default. No options means a location
+    // nothing can be installed from (`loadPreview` turns away anything
+    // that isn't a `.user.js`), so no Install either.
+    if (related.installOptions) showInstallCallout(related.installOptions, true);
+    else hideInstallCallout();
     return;
   }
   renderInstalledBanner();
-  // Copies are listed below, so Install is an alternative to updating
-  // one of them rather than the recommended move — see the table's own
-  // Update buttons, which take the emphasis instead.
-  if (!related.installOptions && !existing) showInstallCallout(undefined, false);
-  else hideInstallCallout();
+  hideInstallCallout();
 }
 
-// The callout, with the dropdown when the location can be installed as
-// a single script. Every entry, "New collection…" included, only
-// selects — Install is what acts, and for "New collection…" it opens
-// the create dialog first and installs into what that makes.
+// The callout: Install, and the dropdown of where to put it. Every
+// entry, "New collection…" included, only selects — Install is what
+// acts, and for "New collection…" it opens the create dialog first and
+// installs into what that makes.
 //
 // `recommended` is what makes Install bold. It only is when this file
 // is new to SourceMonkey: with copies already listed in the table
 // below, updating one of them is the likelier thing to want, and a
 // bold Install would be pointing at the wrong default.
 function showInstallCallout(
-  options: readonly InstallOption[] | undefined,
+  options: readonly InstallOption[],
   recommended: boolean,
 ): void {
   installTargetSlot.replaceChildren();
-  installTargetLabel.hidden = !options;
   installCalloutEl.hidden = false;
   installBtn.disabled = false;
   installBtn.classList.toggle('primary', recommended);
-  if (!options) {
-    installBtn.onclick = () => void doInstall(installBtn, undefined);
-    return;
-  }
   const select = buildInstallSelect(options, { onChange: () => sync() });
   select.id = 'install-target';
   // Its visible label is only the connector "into" — the phrase the
@@ -2880,15 +2894,13 @@ function showOpenButton(id: string): void {
 //
 // `choice` is the dropdown's answer: a listed container (or the
 // not-yet-existing default), or "New collection…" — which asks the
-// dialog first and installs into what it made. `undefined` for a
-// location with no single-file spelling, which `addCollection` adds as
-// a whole collection.
+// dialog first and installs into what it made.
 async function doInstall(
   btn: HTMLButtonElement,
-  choice: InstallChoice | undefined,
+  choice: InstallChoice,
 ): Promise<void> {
-  let target: InstallTarget | undefined;
-  if (choice && 'newCollection' in choice) {
+  let target: InstallTarget;
+  if ('newCollection' in choice) {
     // Deliberately here rather than when the dropdown changed: a
     // keyboard user cursoring past "New collection…" fires `change` on
     // a closed select, and a modal opening under the arrow keys is
@@ -2902,7 +2914,7 @@ async function doInstall(
     });
     if (!outcome) return;
     target = { collectionId: outcome.collection.id };
-  } else if (choice) {
+  } else {
     target = choice.option.collection
       ? { collectionId: choice.option.collection.id }
       : { schemeDefault: true };
@@ -2914,9 +2926,7 @@ async function doInstall(
     // a github blob URL the raw input would cost a second Contents-API
     // round trip that can fail after the user has already clicked
     // Install.
-    const result = target
-      ? await installScript(previewLocation, target)
-      : await addCollection(previewLocation);
+    const result = await installScript(previewLocation, target);
     if (!result) {
       // Raced another tab (or the same URL under a different spelling
       // that normalizes to an already-installed one). Re-run the
@@ -2930,15 +2940,9 @@ async function doInstall(
       result.kind === 'existingContainer'
         ? result.scriptId
         : result.collection.scriptIds[0];
-    // Only a single-file install has one script to speak for. The
-    // preview keeps its Install button for other shapes too (a bare
-    // `.js` file, a manifest URL), and those land a whole collection
-    // whose `scriptIds[0]` is whatever the scan ordered first —
-    // arbitrary enough for a navigation target, not something to
-    // rewrite enable state from.
-    if (scriptId && isSingleFileInput(previewLocation)) await soloRunningCopy(scriptId);
+    if (scriptId) await soloRunningCopy(scriptId);
     location.href = scriptId
-      ? viewerUrl(scriptId)
+      ? `${viewerUrl(scriptId)}&${INSTALLED_PARAM}=1`
       : 'collections.html';
   } catch (err) {
     setMessage(`Install failed: ${describeError(err)}`, 'error');
@@ -2946,6 +2950,53 @@ async function doInstall(
     spinner.remove();
     btn.disabled = false;
   }
+}
+
+// ---------- Open on <site> (installed viewer) ----------
+
+// The controls row's Open link: the script's first `@match` site, the
+// same page the collections page's site icon opens. A pattern that
+// names no site falls back to the page beside the script, as the Match
+// rows do (`sameDirLinkUrl`). With neither, it is greyed out.
+function paintOpenTarget(script: StoredScript): void {
+  const url = representativeMatch(script.matching)?.linkUrl
+    ?? firstNonNull(script.matching.matches, (m) => sameDirLinkUrl(m, script.fileUrl));
+  if (!url) {
+    openTargetEl.removeAttribute('href');
+    openTargetEl.removeAttribute('target');
+    openTargetEl.removeAttribute('rel');
+    // A link with no href has no role, so say what it stands for.
+    openTargetEl.setAttribute('role', 'link');
+    openTargetEl.setAttribute('aria-disabled', 'true');
+    openTargetEl.textContent = 'Open target page';
+    openTargetEl.title = NO_TARGET_LINK_TITLE;
+    return;
+  }
+  openTargetEl.removeAttribute('role');
+  openTargetEl.removeAttribute('aria-disabled');
+  openTargetEl.href = url;
+  openTargetEl.target = '_blank';
+  openTargetEl.rel = 'noopener noreferrer';
+  // No title: hovering a link shows its URL in the status bar.
+  openTargetEl.removeAttribute('title');
+  const site = siteLabel(url);
+  openTargetEl.textContent = site ? `Open on ${site}` : 'Open target page';
+}
+
+// `example.com` for `https://www.example.com/x/`: the host with any
+// port, less a leading `www.`. Null for a URL with no host (`file:`).
+function siteLabel(url: string): string | null {
+  const host = new URL(url).host;
+  if (!host) return null;
+  return host.startsWith('www.') ? host.slice(4) : host;
+}
+
+function firstNonNull<T, R>(items: readonly T[], fn: (item: T) => R | null): R | null {
+  for (const item of items) {
+    const got = fn(item);
+    if (got !== null) return got;
+  }
+  return null;
 }
 
 // ---------- Move (installed viewer) ----------
@@ -3265,6 +3316,10 @@ function leavePage(): void {
     history.back();
     return;
   }
+  closeTab();
+}
+
+function closeTab(): void {
   void chrome.tabs.getCurrent().then((tab) => {
     if (tab?.id != null) void chrome.tabs.remove(tab.id);
   });

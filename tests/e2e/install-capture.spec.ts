@@ -75,6 +75,58 @@ test.describe('.user.js link capture', () => {
     expect(script.status).toBe('ok');
     expect(script.relativePath).toBe(scriptUrl);
     expect(script.bodyText).toContain('Hello From The Web');
+
+    // The controls row says it worked, and offers Close and the site.
+    await expect(page.locator('#installed-note')).toBeVisible();
+    await expect(page.locator('#installed-note')).toContainText('Script installed');
+    await expect(page.locator('#open-target-btn')).toHaveText('Open on example.com');
+    await expect(page.locator('#open-target-btn')).toHaveAttribute('href', 'https://example.com/');
+    // The Name row's value is bold.
+    await expect(page.locator('#header-summary b', { hasText: 'Hello From The Web' })).toBeVisible();
+    // The `installed` parameter is dropped, so the same URL opened
+    // again (or reloaded) is a plain viewer.
+    expect(new URL(page.url()).searchParams.has('installed')).toBe(false);
+    const again = await extensionContext.newPage();
+    await again.goto(page.url());
+    await expect(again.locator('#open-target-btn')).toHaveText('Open on example.com');
+    await expect(again.locator('#installed-note')).toBeHidden();
+    await again.close();
+
+    // Close closes the tab.
+    const closed = page.waitForEvent('close');
+    await page.locator('#close-tab-btn').click();
+    await closed;
+  });
+
+  test('a location that is not one .user.js file is refused before any fetch', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    server.setRoute('/script_manifest.json', '[]');
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/userscript.html?preview=${encodeURIComponent(`${server.baseUrl}/script_manifest.json`)}`);
+    await expect(page.locator('#message')).toHaveText(
+      'This URL is not a userscript, since its path does not end in .user.js',
+    );
+    await expect(page.locator('#install-callout')).toBeHidden();
+    expect(server.requestLog.some((e) => e.path === '/script_manifest.json')).toBe(false);
+    await page.close();
+  });
+
+  test('a script with no target site greys out its Open button', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    server.setRoute('/nosite.user.js', userscriptText('No Site').replace('https://example.com/*', '<all_urls>'));
+    await sm.addCollection(`${server.baseUrl}/nosite.user.js`);
+    const collections = await sm.getCollections();
+    const withScripts = await sm.getCollectionWithScripts(collections[0].id);
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/userscript.html?script=${withScripts!.scripts[0].id}`);
+    const open = page.locator('#open-target-btn');
+    await expect(open).toHaveText('Open target page');
+    await expect(open).not.toHaveAttribute('href');
+    await expect(open).toHaveAttribute('title', 'Unable to extract link to target site');
+    // Not reached from an install, so no note.
+    await expect(page.locator('#installed-note')).toBeHidden();
     await page.close();
   });
 

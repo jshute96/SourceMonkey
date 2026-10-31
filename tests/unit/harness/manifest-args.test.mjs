@@ -33,6 +33,19 @@ test('a local manifest lists paths for its file entries and URLs for web ones', 
   }
 });
 
+test('a manifest entry that is not a .user.js file is skipped', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sm-test-manifest-'));
+  try {
+    const file = path.join(dir, 'script_manifest.json');
+    fs.writeFileSync(file, JSON.stringify(['a.user.js', 'plain.js', { path: 'style.user.css' }]));
+    assert.deepEqual(await manifestScripts(file), [path.join(dir, 'a.user.js')]);
+    fs.writeFileSync(file, JSON.stringify(['plain.js']));
+    await assert.rejects(manifestScripts(file), /lists no `\.user\.js` scripts/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('a web manifest resolves its entries against its own URL', async () => {
   const server = http.createServer((req, res) => {
     if (req.url === '/dir/script_manifest.json') {
