@@ -157,7 +157,8 @@ export async function runPageCommand(
     switch (command) {
       case 'eval': {
         // Its JavaScript: the rest of the line as typed, its quotes its
-        // own, or a block's lines, or a file's.
+        // own unless they wrap all of it (`eval 'document.title'`, quoted
+        // as for a shell), or a block's lines, or a file's.
         const evalIn = input.evalIn ?? 'page';
         const from = input.flags['--file'];
         let expression = [input.text, input.block].filter((part) => part).join('\n');
@@ -478,6 +479,17 @@ export async function runPageCommand(
         }
         const css = input.flags['--css'] === true;
         const html = input.flags['--html'] === true;
+        // How many matches `--css` and `--html` show; 0 for all.
+        const limit = countFlag(input.flags, '--limit', PROBE_MAX);
+        if (typeof limit === 'string') {
+          sayMistake(limit);
+          return;
+        }
+        if (input.flags['--limit'] !== undefined && !css && !html) {
+          sayMistake(`The ${quoted('--limit')} flag goes with ${quoted('--css')} or ${quoted('--html')}`);
+          return;
+        }
+        const max = limit === 0 ? Number.MAX_SAFE_INTEGER : limit;
         if (input.json) {
           const selectors: ProbeData['selectors'] = [];
           for (const selector of input.words) {
@@ -490,7 +502,7 @@ export async function runPageCommand(
               }
               entry.count = count;
               if (count === 0 || (!css && !html)) return;
-              const found = await probeMatches(page, selector, PROBE_MAX, actionMs, frame).catch((err: Error) => plain(err));
+              const found = await probeMatches(page, selector, max, actionMs, frame).catch((err: Error) => plain(err));
               if (typeof found === 'string') {
                 say(`The matches of ${quoted(selector)} could not be read: ${found}`);
                 return;
@@ -522,7 +534,7 @@ export async function runPageCommand(
             else {
               lines.push(ui`found    ${code(selector)}  (${count})`);
               if (!css && !html) return;
-              const found = await probeMatches(page, selector, PROBE_MAX, actionMs, frame).catch((err: Error) => plain(err));
+              const found = await probeMatches(page, selector, max, actionMs, frame).catch((err: Error) => plain(err));
               if (typeof found === 'string') {
                 lines.push(`    The matches could not be read: ${found}`);
                 return;
@@ -538,7 +550,7 @@ export async function runPageCommand(
                 if (css) lines.push(ui`    selector${where}: ${none ? `(none: ${none})` : match.css != null ? code(match.css) : '(none found)'}`);
                 if (html) lines.push(ui`    html${where}: ${code(match.html)}`);
               }
-              if (found.count > found.matches.length) lines.push(`    (${found.count - found.matches.length} more)`);
+              if (found.count > found.matches.length) lines.push(ui`    (${found.count - found.matches.length} more; ${cmd('--limit 0')} shows all)`);
             }
           })();
           const finished = await done(probing);
@@ -808,6 +820,14 @@ interface ClickFlags {
   position?: { x: number; y: number };
 }
 
+/** A flag's whole number (`--limit 5`), `fallback` when not given, or what's wrong with it. */
+function countFlag(flags: Record<string, string | true>, flag: string, fallback: number): number | string {
+  const value = flags[flag];
+  if (value === undefined) return fallback;
+  const n = Number(value);
+  return typeof value === 'string' && value.trim() !== '' && Number.isInteger(n) && n >= 0 ? n : `The ${quoted(flag)} flag takes a whole number, not ${quoted(value)}`;
+}
+
 /**
  * Which parts of the page `snapshot` shows, from its flags: the
  * `--find` text, and how much around each match (see `treeParts`).
@@ -815,12 +835,7 @@ interface ClickFlags {
  * is.
  */
 export function partOptions(flags: Record<string, string | true>, selector: boolean): { text?: string; up: number; context: boolean; limit: number } | null | string {
-  const count = (flag: string, fallback: number): number | string => {
-    const value = flags[flag];
-    if (value === undefined) return fallback;
-    const n = Number(value);
-    return typeof value === 'string' && Number.isInteger(n) && n >= 0 ? n : `The ${quoted(flag)} flag takes a whole number, not ${quoted(value)}`;
-  };
+  const count = (flag: string, fallback: number): number | string => countFlag(flags, flag, fallback);
   const find = flags['--find'];
   if (typeof find === 'string' && find.trim() === '') return 'The `--find` flag needs some text';
   const text = typeof find === 'string' ? find : undefined;

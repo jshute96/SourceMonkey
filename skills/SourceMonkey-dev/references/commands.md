@@ -54,8 +54,8 @@ sm-dev [global options] <command> [args] [-- <command> ...]
   - `--tab all` works only where `all` does: `logs --tab all`, and the
     commands that take an `all` argument (`reload all`, `wait all`).
 - Quotes: in `--stdin` lines, most commands take off one level of
-  quotes around an argument. `eval` and `cdp` don't: their quotes are
-  JavaScript's and JSON's. A quoted word is never a flag.
+  quotes around an argument. `cdp` takes off none: its quotes are
+  JSON's. `eval` keeps quotes inside its JavaScript (`eval '"a" + x'`). A quoted word is never a flag.
 - Flags can go anywhere, also after or inside `eval`'s JavaScript or
   `wait log`'s text (`eval 'await x()' --timeout-seconds 45`). A word
   there shaped like a flag (`--name`) is taken as one, and an unknown
@@ -198,7 +198,7 @@ asked to.
 | `newtab --noscript <url>` | A tab the scripts stay out of (sticky) |
 | `closetab [T2 T3...\|all]` | Close the current tab, the ones named, or all. Closing the last tab leaves a blank tab open. A page's "Leave site?" dialog waits for `accept`/`dismiss`; `--force` skips it |
 | `open [page] [--tab T2]` | Navigate the current tab, or the one named |
-| `reload [T2\|all]` | Reload |
+| `reload [T2\|all]` | Reload. `--force` leaves a page that asks first ("Leave site?") |
 | `focus [T2]` | Bring to the front |
 | `--from-saved [--offline] [--url U]` | On `newtab`/`open`/`start`: serve `.html` files at their recorded URL |
 | `--timeout-seconds S` | On `newtab`/`open`/`reload`: give a slow page S seconds to load (default 30) and settle (default 5) |
@@ -210,7 +210,7 @@ asked to.
 | `snapshot [--selector <sel>] [--visible] [--out F]` | Accessibility tree with refs |
 | `snapshot [--selector <sel>] --find <text>` | Only elements containing the text (case insensitive), within `sel`'s matches |
 | `snapshot ... [--up N] [--context] [--limit N]` | For each match of `--selector` or `--find`: N levels up, or with wrapper divs and small containers; first 5 matches (0: all) |
-| `probe <sel>... [--css] [--html]` | Which match and how many; selector / HTML of the first 10 |
+| `probe <sel>... [--css] [--html]` | Which match and how many; selector / HTML of the first 10 (`--limit n`, `0` for all) |
 | `eval <js>` | Evaluate inside the selected script, where its `GM_*` APIs, `@require` libraries, top-level declarations and IIFE locals are visible; prints JSON (promises awaited). In the page when no script is selected or it hasn't run there |
 | `eval --page <js>` | Evaluate in the page, where the page's own globals are |
 | `eval --script=<script> <js>` | Evaluate inside the named script |

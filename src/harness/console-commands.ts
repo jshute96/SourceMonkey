@@ -890,18 +890,24 @@ export async function runConsoleCommand(
       if (mode === null) return false;
       const named = namedTab(ctx, 'reload', parsed);
       if (named === null) return false;
+      // `--force`: a page that asks first ("Leave site?") is left anyway,
+      // and any dialogs already waiting are answered first.
+      const force = flags['--force'] === true;
       if (named === 'all') {
+        if (force) for (const t of ctx.tabs()) await answerDialog(t, false);
         // All at once, so one slow page holds up no other.
         const all = reloadable(ctx.tabs(), ctx.out);
         for (const t of all) if (!await switchScripts(ctx, t, mode)) return false;
-        const loaded = await Promise.all(all.map((t) => reloadTab(t, ctx.host, ctx.out, timeoutMs)));
+        const loaded = await Promise.all(all.map((t) => reloadTab(t, ctx.host, ctx.out, timeoutMs, force)));
         if (!noWait) await settleTabs(ctx.host, all.filter((_, i) => loaded[i]), ctx.out, timeoutMs);
         return;
       }
       const target = named !== undefined ? pickTab(ctx, named) : tab;
-      if (!target || blockedByDialog([target])) return false;
+      if (!target) return false;
+      if (force) await answerDialog(target, false);
+      if (blockedByDialog([target])) return false;
       if (!await switchScripts(ctx, target, mode)) return false;
-      if (await reloadTab(target, ctx.host, ctx.out, timeoutMs) && !noWait) await settleTabs(ctx.host, [target], ctx.out, timeoutMs);
+      if (await reloadTab(target, ctx.host, ctx.out, timeoutMs, force) && !noWait) await settleTabs(ctx.host, [target], ctx.out, timeoutMs);
       return;
     }
     case 'load': {
@@ -1871,10 +1877,12 @@ export function reloadable(tabs: ControlledTab[], out: (line: string) => void): 
 /**
  * Reload one tab, saying so if it fails. False when it failed, or its
  * scripts never reported (said already), so nothing waits on it more.
+ * `force`: a `beforeunload` dialog the reload opens is accepted.
  */
-export function reloadTab(tab: ControlledTab, host: HarnessHost, out: (line: string) => void, timeoutMs?: number): Promise<boolean> {
+export function reloadTab(tab: ControlledTab, host: HarnessHost, out: (line: string) => void, timeoutMs?: number, force = false): Promise<boolean> {
   const saved = showingSaved(tab);
-  const load = (): Promise<void> => loadPage(tab.page, (o) => tab.page.reload(o), timeoutMs);
+  const reload = (): Promise<void> => loadPage(tab.page, (o) => tab.page.reload(o), timeoutMs);
+  const load = force && tab.dialogs ? () => tab.dialogs!.leavingPage(reload) : reload;
   return loadInTab(tab, host, () => withOfflineHint(tab, saved, load), `[sm-dev] ${tabName(tab)} could not be reloaded`, out);
 }
 
@@ -2197,17 +2205,29 @@ async function closeTabs(ctx: ConsoleContext, words: string[], force: boolean, c
   currentTab(ctx);
 }
 
+// For `--force`: answers the dialog `tab` is waiting on, if any, so it
+// can go on. `leave`: a beforeunload one is accepted, which leaves the
+// page (`closetab`); else it's dismissed like any other, so the
+// navigation it held back doesn't race a reload. One that couldn't be
+// answered is put back, to be named as still waiting.
+async function answerDialog(tab: ControlledTab, leave: boolean): Promise<void> {
+  const dialog = tab.dialogs?.take();
+  if (!dialog) return;
+  try {
+    await (leave && dialog.type() === 'beforeunload' ? dialog.accept() : dialog.dismiss());
+  } catch {
+    if (!tab.page.isClosed()) tab.dialogs!.putBack(dialog);
+  }
+}
+
 // Closes one tab for `closetab`, and says if it didn't close: it asked
 // first (its dialog, reported by the tracker, is waiting on an answer),
 // or it didn't close in time.
 async function closeTab(ctx: ConsoleContext, tab: ControlledTab, force: boolean, timeoutMs: number): Promise<void> {
   const { page } = tab;
   if (force) {
-    // A page stopped on a dialog never finishes closing, so the dialog
-    // goes first: a beforeunload one accepted, which leaves the page,
-    // any other dismissed.
-    const dialog = tab.dialogs?.take();
-    if (dialog) await (dialog.type() === 'beforeunload' ? dialog.accept() : dialog.dismiss()).catch(() => undefined);
+    // A page stopped on a dialog never finishes closing.
+    await answerDialog(tab, true);
     await page.close({ runBeforeUnload: false }).catch(() => undefined);
     return;
   }
@@ -2985,6 +3005,8 @@ export class DialogTracker {
   private openedCount = 0;
   private closedCount = 0;
   private currentOrdinal = 0;
+  // How many `leavingPage` calls are running.
+  private leaving = 0;
 
   private constructor(
     private readonly say: (text: string) => void,
@@ -3055,6 +3077,20 @@ export class DialogTracker {
     }
   }
 
+  /**
+   * `work`, which leaves the page (`reload --force`): a beforeunload
+   * dialog that opens meanwhile is accepted at once, as leaving was
+   * asked for.
+   */
+  async leavingPage<T>(work: () => Promise<T>): Promise<T> {
+    this.leaving++;
+    try {
+      return await work();
+    } finally {
+      this.leaving--;
+    }
+  }
+
   /** The open dialog, now claimed by whoever answers it. */
   take(): Dialog | null {
     const dialog = this.current;
@@ -3073,6 +3109,11 @@ export class DialogTracker {
 
   private opened(dialog: Dialog): void {
     const ordinal = ++this.openedCount;
+    // Counted all the same: its close is counted too.
+    if (this.leaving > 0 && dialog.type() === 'beforeunload') {
+      void dialog.accept().catch(() => undefined);
+      return;
+    }
     for (const wake of this.waiters) wake();
     const message = dialog.message();
     // As markup, so backticks in the page's text are only text.

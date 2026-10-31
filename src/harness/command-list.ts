@@ -72,7 +72,7 @@ export interface ArgSyntax {
   block?: boolean;
   /** Its text can hold a `{{` word (type's), rather than one being a slip. */
   bracesInText?: boolean;
-  /** Text quoted as a whole is unquoted: `any` quotes (default), `single` (JSON), or `none` (JavaScript). */
+  /** Text quoted as a whole is unquoted: `any` quotes (default), `single` (JSON), or `none` (`cdp` calls, a menu label). */
   unquote?: 'any' | 'single' | 'none';
 }
 
@@ -395,7 +395,13 @@ export const HELP_SECTIONS: HelpSection[] = [
         options: [{ term: '--force', about: 'Close without running the pages\' `beforeunload` handlers.' }],
         gap: true,
       },
-      { usage: 'reload [T<n>|all]', syntax: { args: 'words', max: 1, tab: 'lead', tabAll: true }, about: 'Reload this tab, another tab, or all tabs.', gap: true },
+      {
+        usage: 'reload [T<n>|all]',
+        syntax: { args: 'words', max: 1, tab: 'lead', tabAll: true },
+        about: 'Reload this tab, another tab, or all tabs.',
+        options: [{ term: '--force', about: 'Reload even if the page asks first ("Leave site?"), and answer any dialogs already waiting.' }],
+        gap: true,
+      },
       { usage: 'focus [T<n>]', syntax: { args: 'words', max: 1, tab: 'lead' }, about: 'Bring the tab to the front.', gap: true },
     ],
     optionsTitle: 'Options for `open`, `newtab`, `reload`',
@@ -490,8 +496,9 @@ export const HELP_SECTIONS: HelpSection[] = [
         syntax: { args: 'words', tab: 'flag' },
         about: ['Look up selectors.', 'Report which are found, how many times.'],
         options: [
-          { term: '--css', about: `For the first ${PROBE_MAX} matches, show a unique CSS selector, if one exists.` },
-          { term: '--html', about: `For the first ${PROBE_MAX} matches, show the start of each one's HTML.` },
+          { term: '--css', about: 'For each match, show a unique CSS selector, if one exists.' },
+          { term: '--html', about: 'For each match, show the start of its HTML.' },
+          { term: '--limit <n>', about: `How many matches to show (${quoted(PROBE_MAX)} by default, ${quoted('0')} for all).` },
         ],
         gap: true,
       },
@@ -586,7 +593,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       { usage: 'key <keys>...', syntax: { args: 'words', tab: 'flag' }, about: ['Press keys in order, using common key names.', 'e.g. `key j Shift+ArrowRight Escape`'], gap: true },
       {
         usage: 'eval <js>',
-        syntax: { args: 'text', tab: 'flag', block: true, unquote: 'none' },
+        syntax: { args: 'text', tab: 'flag', block: true },
         about: [
           'Evaluate JavaScript inside the selected script and print the result.',
           'It sees the page\'s DOM, the script\'s `GM_*` APIs, its `@require` libraries and its top-level declarations.',

@@ -142,10 +142,13 @@ test('a command about tabs takes its tab as its argument or as --tab, once', () 
 
 test('text is the rest of the line, less the flags in it', () => {
   assert.equal(typed('eval', '"abc".length').text, '"abc".length');
+  // Quotes around all of it are a shell's, taken off; JavaScript's stay.
+  assert.equal(typed('eval', "'document.title'").text, 'document.title');
+  assert.equal(typed('eval', `"a" + 'b'`).text, `"a" + 'b'`);
   assert.deepEqual(typed('eval', 'x --script'), { flags: { '--script': true }, words: [], text: 'x' });
   // A flag anywhere in the text, with its value, as typed or from a shell.
   const js = 'new Promise((r) => setTimeout(r, 30000))';
-  assert.deepEqual(typed('eval', `--tab T2 '${js}' --timeout-seconds 45`), { flags: { '--timeout-seconds': '45' }, tab: 'T2', words: [], text: `'${js}'` });
+  assert.deepEqual(typed('eval', `--tab T2 '${js}' --timeout-seconds 45`), { flags: { '--timeout-seconds': '45' }, tab: 'T2', words: [], text: js });
   assert.deepEqual(sent('eval', '--tab', 'T2', js, '--timeout-seconds', '45'), { flags: { '--timeout-seconds': '45' }, tab: 'T2', words: [], text: js });
   assert.deepEqual(typed('eval', 'a --timeout-seconds=4 + b').text, 'a + b');
   // An unknown one is refused, not run as code; a global one is named as such.

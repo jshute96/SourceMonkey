@@ -1051,8 +1051,9 @@ Some commands take several lines as a block, at the prompt or on stdin:
 - Text quoted as a whole is unquoted, for a menu label, `type`'s text,
   `wait log`'s text: `menu 'Toggle dark'`, `menu T2.'Toggle dark'`. A
   quoted menu label is always a label, even `menu 'all'`. `set` takes off single
-  quotes only, since JSON's strings are double-quoted. `eval` and
-  `cdp` take off none: their quotes are JavaScript's and JSON's.
+  quotes only, since JSON's strings are double-quoted. `cdp` takes off
+  none: its quotes are JSON's. `eval` keeps quotes inside its
+  JavaScript (`eval '"a" + x'`).
 - Flags:
   - A flag that takes a value takes it after a space or `=`:
     `--out tree.txt`, `--out=tree.txt`.
@@ -1362,7 +1363,7 @@ In a run, not given files, they act on the run's scripts and tabs:
 | `newtab [page...\|all]` | Opens a new tab with the scripts for each page, or a blank tab |
 | `closetab [tab...\|all]` | Closes the current tab, the tabs named, or all of them. Closing the last tab leaves a blank tab open. Runs the pages' `beforeunload` handlers unless `--force` (see [Page dialogs](#page-dialogs)) |
 | `open [page] [--tab T2]` | Navigates the current tab, or the one named, to a URL or file (a glob matching one), or to a script's default page |
-| `reload [tab\|all]` | Reloads the page, another tab's, or all tabs at once. `--noscript` / `--script` switch the tabs' scripts off or back on first |
+| `reload [tab\|all]` | Reloads the page, another tab's, or all tabs at once. `--noscript` / `--script` switch the tabs' scripts off or back on first. `--force` leaves a page that asks first ("Leave site?") |
 | `focus [T2]` | Brings the tab to the front, un-minimizing its window |
 | `accept [text]`, `dismiss` | Answers an open dialog, on the current tab or the one `--tab` names (see [Page dialogs](#page-dialogs)) |
 | `connect once\|cancel\|allow\|deny\|allow-all [host]` | Answers SourceMonkey's prompt for a host the script's `@connect` lines don't cover: the selected script's oldest waiting, or its one for `host` |
@@ -1533,6 +1534,10 @@ the stream, rather than being answered automatically.
     (sm-dev's `click`, `type` and `key` count).
   - `closetab --force` closes without running the handlers, even with
     a dialog open.
+- `reload` asks the same way. `reload --force` leaves the page anyway,
+  accepting its `beforeunload` dialog. It first dismisses any dialog
+  the tab is already waiting on, so a navigation that dialog held back
+  doesn't go ahead too.
 - A command that opens a dialog returns once the dialog is up, and says
   so.
 - A dialog in a tab the run doesn't use stays open, for you to
@@ -1569,7 +1574,7 @@ acts on the current tab, or the one `--tab` names (`--tab T2`,
 | `snapshot [--selector <css>] [--visible] [--out file]` | The page (or each element the selector matches) as its accessibility tree, one line per element, each with a ref. `--visible`: only what's on screen. `--out` writes it to a file. `--find <text>`: only elements containing that text (case insensitive). For each match, `--up n` / `--context` add its containers; `--limit n`: how many matches to show (5; 0 for all) |
 | `screenshot <file> [--full] [--selector <css>]` | A PNG or JPEG of what's showing, of the whole page (`--full`), or of one element (`--selector`) |
 | `savehtml <file>` | The page's HTML, to replay later (see [Saved pages](#saved-pages)) |
-| `probe <selector>... [--html] [--css]` | Which selectors match, and how many |
+| `probe <selector>... [--html] [--css] [--limit n]` | Which selectors match, and how many |
 | `logs [--tab T2\|all] [--script <script>]` | The run's log lines, read back (see [Logs](#logs)) |
 | `cdp <Method> [params]` | Sends a raw CDP call to the tab and prints the result as JSON (see [`cdp`](#cdp)) |
 
@@ -1596,7 +1601,8 @@ acts on the current tab, or the one `--tab` names (`--tab T2`,
 
 ### `eval`
 
-- Takes the rest of the line as JavaScript, quotes and all, or several
+- Takes the rest of the line as JavaScript, its quotes kept unless
+  they wrap all of it (`eval 'document.title'`), or multiple
   lines as a block (see [Multi-line blocks](#multi-line-blocks)).
 - `eval --file probe.js` takes the JavaScript from a file instead,
   for a reusable probe with no shell quoting.
@@ -1607,7 +1613,8 @@ acts on the current tab, or the one `--tab` names (`--tab T2`,
   - Its `const`/`let` then stay in that function, where console-style
     code keeps them for later `eval`s.
 - Prints JSON, or an element's or function's description. A promise
-  prints what it settles to.
+  prints what it settles to, as does any object with a `then` method
+  (zone.js pages replace `Promise` with one).
   - A result over 10,000 characters is cut, which leaves it no longer
     valid JSON. `eval --out FILE` writes the whole of it to a file
     instead.
@@ -1660,8 +1667,9 @@ acts on the current tab, or the one `--tab` names (`--tab T2`,
 ### `probe`
 
 - Says which selectors match, and how many.
-- For the first 10 matches, `--css` prints a CSS selector for each and
-  `--html` its HTML, paired when both are given.
+- For the first 10 matches (`--limit n`; `0` for all), `--css` prints a
+  CSS selector for each and `--html` its HTML, paired when both are
+  given.
 - `--css` suggests a short selector that finds just that element:
   `probe --css e4` for a ref's, or `probe --css '.titleline > a'` for
   one per match.

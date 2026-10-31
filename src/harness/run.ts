@@ -1965,6 +1965,9 @@ function tabOutput(out: (line: string) => void, n: number): (line: string) => vo
 // line they came from. It runs before `decodeOwnRefs`, since it matches
 // the scripts' URLs as the page wrote them (still encoded).
 // `scripts`: the scripts the tab runs now.
+// How much of a failed resource's URL a `Failed to load resource` line shows.
+const FAILED_URL_MAX = 200;
+
 function wirePageOutput(
   page: Page, n: number, emit: (fields: LogFields) => void, host: ExtensionHost, extensionOrigin: string,
   scripts: () => readonly PreparedScript[],
@@ -1989,7 +1992,12 @@ function wirePageOutput(
     const url = msg.location().url;
     const frames = call?.frames ?? [];
     const source = consoleSource({ type: msg.type(), text: body, url, frames, extensionWorld: call?.extensionWorld, argCount: msg.args().length }, host.external?.prefix);
-    emit({ source, ...SCRIPT_IN_PAGE[source], kind: msg.type(), tab: n, ...where, scriptId: source === 'script' ? host.scriptOf([url, ...frames]) : undefined, text: body });
+    // Chrome's own line for a failed load (an error with no stack, unlike
+    // one a script writes) doesn't name what failed; the message's
+    // location is that resource. A long `data:` URL is cut short.
+    const failedLoad = url && msg.type() === 'error' && frames.length === 0 && /^Failed to load resource\b/.test(body);
+    const shown = failedLoad ? `${body} (${url.length > FAILED_URL_MAX ? `${url.slice(0, FAILED_URL_MAX)}...` : url})` : body;
+    emit({ source, ...SCRIPT_IN_PAGE[source], kind: msg.type(), tab: n, ...where, scriptId: source === 'script' ? host.scriptOf([url, ...frames]) : undefined, text: shown });
   };
   // In order: a line that logs a DOM node is described from the page,
   // which takes a round trip, and each waits for its stack.

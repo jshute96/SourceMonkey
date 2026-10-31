@@ -499,7 +499,9 @@ sm-dev's up-front check runs it too.
   - `selector`: the rest of the line as typed, less its flags, which
     can go anywhere (a selector never starts with `--`).
   - `text`: some words, then the rest of the line as typed, less the
-    flags in it. Unquoted as a whole unless it's JavaScript or JSON.
+    flags in it. Quotes around all of it are taken off: any quotes for
+    JavaScript (`eval`), single ones for JSON (`set`), none for `cdp`
+    calls or a menu label (`menu` reads its own).
 - Also declared: how it takes a tab (`tab`) and a `{{` block (`block`).
 - A form named by a keyword has its own syntax (`wait log <text>`).
 - Every command carries sm-dev's directory, for relative paths.
@@ -1046,6 +1048,13 @@ and waits for them.
     leaves it, while the others close.
   - `--force` closes without the handlers. It answers an open dialog
     first (a page stopped on one never finishes closing).
+- `reload --force` runs the reload inside `DialogTracker.leavingPage`,
+  which accepts a `beforeunload` dialog that opens meanwhile.
+  - That dialog's open and close are still counted, so later dialogs
+    match their closes.
+  - A dialog the tab was already waiting on is dismissed first, not
+    accepted: accepting a `beforeunload` one would let the navigation
+    it held back race the reload.
 - When `closetab` would close all of the browser's tabs, it opens a
   blank tab first.
   - Closing the last tab closes the browser, which ends a run in a
@@ -1839,6 +1848,9 @@ The run commands that drive and read a tab's page (`click`, `type`,
   (`PageAttachment.evaluate`), in the page's default context, or a
   script's scope for `--script` (below). Results print as JSON, or as
   the DevTools console describes an element or function.
+  - A promise prints what it settles to. So does an object with a
+    `then` method, awaited in the page: zone.js pages replace `Promise`
+    with one, which CDP's `awaitPromise` doesn't wait for.
   - It evaluates as console input (CDP `replMode`: top-level `await`,
     `let` redeclarable). A top-level `return` is a syntax error there,
     so code that fails with that runs again wrapped in

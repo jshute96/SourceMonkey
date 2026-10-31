@@ -119,6 +119,8 @@ a tab after T1. `logs` adds the time and tab in front instead:
 - `script` and `page` lines carry the console type (`log`, `warning`,
   `error`, ...). `sm` lines carry the entry's level.
 - A line with no tab leaves the tab column blank.
+- Chrome's `Failed to load resource: ... 404 ()` line names no URL, so
+  the failed resource's URL follows it in parentheses.
 - Page loads are `event` lines (`Loaded <url>`) for `logs` and
   `wait log`. The stream leaves them out, since it says what loads
   where its own way.

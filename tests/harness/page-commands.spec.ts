@@ -55,6 +55,8 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('eval document.title')).toEqual(['"target"']);
   expect(await run('eval widget')).toEqual(['{\n  "clicks": 0\n}']);
   expect(await run('eval --page typeof widget')).toEqual(['"undefined"']);
+  // A thenable that isn't a native promise (zone.js's) is awaited too.
+  expect(await run('eval --page ({ then(r) { r(42) } })')).toEqual(['42']);
   expect(await run('eval --script widget')).toEqual(['{\n  "clicks": 0\n}']);
   expect(await run('eval --page --script 1')).toEqual(['[sm-dev] ERROR: The `eval` command takes --page or --script, not both']);
   // Inside the script: its GM_* bindings and top-level declarations.
@@ -189,8 +191,12 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('probe i --css --html')).toEqual([
     'found    i  (12)',
     ...Array.from({ length: 10 }, (_, i) => [`    selector: i[title="n${i}"]`, `    html: <i title="n${i}"> ${i} </i>`]).flat(),
-    '    (2 more)',
+    '    (2 more; `--limit 0` shows all)',
   ]);
+  expect(await run('probe i --html --limit 1')).toEqual(['found    i  (12)', '    html: <i title="n0"> 0 </i>', '    (11 more; `--limit 0` shows all)']);
+  expect((await run('probe i --html --limit 0')).length).toBe(13);
+  expect(await run('probe i --limit 2')).toEqual(['[sm-dev] ERROR: The --limit flag goes with --css or --html']);
+  expect(await run('probe i --html --limit x')).toEqual(['[sm-dev] ERROR: The --limit flag takes a whole number, not x']);
   await page.evaluate(() => document.querySelectorAll('i').forEach((i) => i.remove()));
   // Quotes inside a selector are its own.
   expect(await run('probe css=main[id="target"] main[id=\'target\']')).toEqual(['found    css=main[id="target"]  (1)', 'found    main[id=\'target\']  (1)']);

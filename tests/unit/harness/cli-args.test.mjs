@@ -741,12 +741,12 @@ test('each run command takes the flags its help lists, and no others', async () 
   const json = ['--json', '--nojson'];
   const tab = '--tab';
   const expected = {
-    newtab: saved, open: [...saved, tab], reload: [...loads, tab],
+    newtab: saved, open: [...saved, tab], reload: [...loads, '--force', tab],
     closetab: ['--force', T, tab], cdp: ['--file', '--frame', T, tab],
     click: ['--at', '--button', '--count', '--modifiers', '--nowait', '--frame', T, tab], hover: ['--at', '--modifiers', '--nowait', '--frame', T, tab],
     type: ['--nowait', '--file', '--clear', '--frame', T, tab], key: ['--nowait', T, tab],
     eval: ['--page', '--script', '--frame', '--file', '--out', T, tab], snapshot: ['--selector', '--visible', '--out', '--find', '--up', '--context', '--limit', '--frame', T, tab],
-    screenshot: ['--selector', '--full', '--frame', T, tab], probe: ['--css', '--html', '--frame', ...json, T, tab],
+    screenshot: ['--selector', '--full', '--frame', T, tab], probe: ['--css', '--html', '--limit', '--frame', ...json, T, tab],
     load: [T], update: [T],
     wait: ['--timeout-seconds', '--log-source', '--find', '--since', '--frame', tab], logs: ['--script', '--tail', '--log-source', '--find', '--since', ...json, tab],
     status: ['--frames', ...json], values: [...json, tab], set: ['--file', '--force'], menu: [...json, T, tab], tabs: ['--frames', ...json, tab], frames: [...json, tab], focus: [tab],

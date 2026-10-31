@@ -549,6 +549,22 @@ export class PageAttachment implements PageLink {
       if (settled.exceptionDetails) throw threw(settled.exceptionDetails);
       return this.describe(cdp, settled.result);
     }
+    // A promise that isn't the browser's own, as on a page whose zone.js
+    // replaces `Promise`: awaited the same, by an `await` in the page.
+    // A `then` that can't be read leaves the object as it is.
+    if (result.type === 'object' && !result.subtype && result.objectId) {
+      const awaited = await cdp.send('Runtime.callFunctionOn', {
+        objectId: result.objectId,
+        functionDeclaration: `function () {
+          let thenable = false;
+          try { thenable = typeof this.then === 'function'; } catch {}
+          return thenable ? (async () => await this)() : this;
+        }`,
+        awaitPromise: true,
+      }).finally(() => cdp.send('Runtime.releaseObject', { objectId: result.objectId! }).catch(() => undefined));
+      if (awaited.exceptionDetails) throw threw(awaited.exceptionDetails);
+      return this.describe(cdp, awaited.result);
+    }
     return this.describe(cdp, result);
   }
 

@@ -447,6 +447,40 @@ test.describe('sm-dev typed commands', () => {
     expect(asker.isClosed()).toBe(true);
   });
 
+  test('reload --force leaves a page that asks first, and answers a dialog already waiting', async ({ page, fixtureServer, host, attachment }) => {
+    const lines: string[] = [];
+    const asker = await page.context().newPage();
+    const dialogs = await DialogTracker.attach(asker, (t) => lines.push(plainLine(`[sm-dev] ${t}`)), { visible: false, commandsComing: true });
+    await asker.goto(`${fixtureServer.baseUrl}/target.html`);
+    const ask = async (marker: number) => {
+      await asker.evaluate((m) => {
+        window.addEventListener('beforeunload', (e) => e.preventDefault());
+        (window as unknown as { marker: number }).marker = m;
+      }, marker);
+      await asker.mouse.click(5, 5);
+      await expect.poll(() => asker.evaluate(() => navigator.userActivation.hasBeenActive)).toBe(true);
+    };
+    const marker = () => asker.evaluate(() => (window as unknown as { marker?: number }).marker ?? null);
+    const tabs = [{ n: 1, page: asker, link: attachment, dialogs }];
+    const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [], out: (l) => lines.push(plainLine(l)), stop: () => undefined };
+    const run = async (line: string) => {
+      lines.length = 0;
+      await runConsoleCommand(line, ctx);
+      return [...lines];
+    };
+
+    await ask(1);
+    expect(await run('reload --force --nowait')).toEqual([]);
+    await expect.poll(marker).toBe(null);
+
+    // Asked by a plain reload, then forced past it.
+    await ask(2);
+    expect(await run('reload --nowait')).toEqual(['[sm-dev] The page opened a beforeunload dialog. Use `accept` to leave the page or `dismiss` to stay.']);
+    expect(await run('reload --force --nowait')).toEqual([]);
+    await expect.poll(marker).toBe(null);
+    expect(dialogs.current).toBe(null);
+  });
+
   test('open and reload count a page that stopped its own load as loaded', async ({ page, fixtureServer, host, attachment, loadScript }) => {
     const stopped = `${fixtureServer.baseUrl}/stopped.html`;
     const script = await loadScript({ relativePath: 'stop.user.js', meta: { name: 'Stop', match: [stopped] }, body: '' });
