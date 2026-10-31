@@ -441,6 +441,26 @@ takes effect:
 - `tests/e2e/layout-metrics.spec.ts` measures each checkbox column and
   fails if one stops agreeing with itself.
 
+### Centering small items on the text
+
+- **A checkbox, favicon or bubble beside text centers on the text's
+  capitals**, not on its baseline or line box. Plain baseline alignment
+  leaves each one 1 to 2px off:
+  - A checkbox's baseline is its bottom edge, so it sits high.
+  - `text-bottom` sits a favicon on the descender line, so it hangs low.
+  - A bubble's line box reserves descender room below its capitals, so
+    it hangs low.
+- **How:**
+  - Checkboxes and favicons on a shared baseline:
+    `vertical-align: round(calc((1cap - <height>) / 2), 1px)`. `1cap`
+    is the cap height of the text they sit in.
+  - The collection bubble trims its box to its capitals
+    (`text-box: trim-both cap alphabetic`) and lifts itself with `top`,
+    which works as a grid or flex item too, where `vertical-align` does
+    nothing.
+  - A row that centers its items (`align-items: center`) needs neither.
+- **Offsets round to whole pixels**, for the rule above.
+
 ## Cross-cutting docs
 
 - [storage.md](storage.md) — `chrome.storage.local` schema, status

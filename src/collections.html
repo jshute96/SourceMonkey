@@ -86,7 +86,12 @@
          The toggle itself stays at full opacity so users can flip it back. */
       .collection.disabled .collection-header h2,
       .script-table tr.disabled td:not(.toggle-cell) { opacity: 0.45; }
-      .toggle { display: inline-flex; align-items: center; cursor: pointer; position: relative; }
+      /* In a script row, centered on the name's capitals: a checkbox's
+         baseline is its bottom edge, which left it sitting high. `1cap`
+         is the cap height of the font it inherits from the row, 13px the
+         box's. Rounded so the box stays on whole pixels. (The collection
+         header lays it out as a flex item, where this has no effect.) */
+      .toggle { display: inline-flex; align-items: center; cursor: pointer; position: relative; vertical-align: round(calc((1cap - 13px) / 2), 1px); }
       .toggle input[type="checkbox"] { cursor: pointer; margin: 0; }
       .toggle-disabled { cursor: not-allowed; opacity: 0.5; }
       .toggle-disabled input[type="checkbox"] { cursor: not-allowed; }
@@ -117,7 +122,9 @@
         width: calc(var(--icon-cols) * 16px + (var(--icon-cols) - 1) * var(--icon-gap));
         height: 16px;
         margin-right: 0.4em;
-        vertical-align: text-bottom;
+        /* Centered on the name's capitals. `text-bottom` sat the square
+           on the font's descender line, about 1px low. */
+        vertical-align: round(calc((1cap - 16px) / 2), 1px);
         flex: 0 0 auto;
         /* text-indent inherits, and this is a block container: reset it
            so the name cell's negative hanging indent can't shift the
@@ -255,7 +262,7 @@
          `<input type="checkbox">` is what `.toggle` above cancels, and
          without cancelling it here too the ghost's box sits a few pixels
          down and right of every other row's. */
-      .toggle-ghost { display: inline-flex; align-items: center; }
+      .toggle-ghost { display: inline-flex; align-items: center; vertical-align: round(calc((1cap - 13px) / 2), 1px); }
       .toggle-ghost input[type="checkbox"] { margin: 0; }
       .script-table tr.row-removed .scheme-chip { opacity: 0.55; }
     </style>

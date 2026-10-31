@@ -79,7 +79,26 @@
 
 .collection-type-bubble {
   display: inline-block;
-  padding: 1px 8px;
+  /* The pill's box hugs the capitals, not the font's line box, which
+     reserves descender room below and so put the pill low next to
+     capitals and checkboxes. Trimmed to cap height, the padding
+     centers the label in the pill. The height is set, and the top
+     padding rounded so the label's baseline lands on a whole pixel:
+     left fractional, either one put the rows below a wrapped name at
+     fractional offsets.
+
+     Baseline alignment then centers the pill on its own smaller
+     capitals, about 1px below the center of the body-size text beside
+     it. The lift is that 1px. `top` rather than `vertical-align`, because the
+     details row lays the bubble out as a grid item, where
+     `vertical-align` has no effect. */
+  --bubble-height: 18px;
+  text-box: trim-both cap alphabetic;
+  box-sizing: border-box;
+  height: var(--bubble-height);
+  padding: calc(round((var(--bubble-height) + 1cap) / 2, 1px) - 1cap) 8px 0;
+  position: relative;
+  top: round(-0.1em, 1px);
   border-radius: 10px;
   font-size: 11px;
   font-weight: 600;
@@ -87,8 +106,6 @@
   letter-spacing: 0.04em;
   color: #fff;
   text-decoration: none;
-  /* Whole px: 1.5 x 11px = 16.5 would make its whole row fractional. */
-  line-height: 16px;
   white-space: nowrap;
   flex: 0 0 auto;
 }
@@ -210,13 +227,15 @@ dialog.sm-dialog.import-dialog { width: 920px; }
 .import-dialog .import-heading { font-size: 1em; font-weight: 600; margin: 0 0 2px; }
 .import-dialog .import-section .import-table-wrap:not(:empty) { margin-top: 8px; max-height: 220px; overflow: auto; border: 1px solid #e5e7eb; border-radius: 4px; }
 .import-table { width: 100%; border-collapse: collapse; font-size: 0.93em; }
-.import-table th { position: sticky; top: 0; background: #f6f7f9; text-align: left; font-weight: 600; }
+/* z-index: the collection bubble is positioned, so without one it paints
+   over this sticky header as the rows scroll under it. */
+.import-table th { position: sticky; top: 0; z-index: 1; background: #f6f7f9; text-align: left; font-weight: 600; }
 .import-table th, .import-table td { padding: 3px 8px; border-bottom: 1px solid #eef0f3; vertical-align: baseline; }
 .import-table.with-checks td:first-child, .import-table.with-checks th:first-child { width: 1.5em; padding-right: 0; }
 .import-table :is(.import-name, .import-location, .import-collection) { overflow-wrap: anywhere; }
 .import-table .import-type a { text-decoration: none; }
 /* A collection's type bubble, at the size of the scripts' Type chips. */
-.import-table .import-kind .collection-type-bubble { padding: 0 5px; border-radius: 8px; font-size: 10px; line-height: 14px; }
+.import-table .import-kind .collection-type-bubble { --bubble-height: 14px; padding-inline: 5px; border-radius: 8px; font-size: 10px; }
 .import-table .import-version, .import-table .import-here, .import-table .import-values, .import-table .import-enabled,
 .import-table .import-type, .import-table .import-count { white-space: nowrap; }
 .import-table .import-skip { color: #888; }

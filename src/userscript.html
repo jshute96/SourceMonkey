@@ -243,6 +243,11 @@
         grid-template-columns: max-content 1fr;
         column-gap: 0.8em;
         row-gap: 0.25em;
+        /* Each label sits on the first text line of its value, so it
+           stays level with that text when the row also holds a button
+           (Collection's Move, Location's copy) that makes it taller,
+           and stays at the top of a multi-line value (Match). */
+        align-items: baseline;
         margin: 0;
       }
       #header-summary dt {
@@ -503,10 +508,13 @@
         padding: 0 6px 2px 0;
         border-bottom: 1px solid #b9d4b1;
       }
+      /* Cells center in the row, which the row buttons make taller than
+         a line of text. A wrapped Collection or Location grows the row,
+         and the single-line cells center on it. */
       .versions-table td {
         padding: 5px 7px 5px 0;
         line-height: 16px;
-        vertical-align: top;
+        vertical-align: middle;
         border-bottom: 1px solid #c9e0c2;
       }
       .versions-table tr:last-child td { border-bottom-color: transparent; }
@@ -673,6 +681,12 @@
         display: inline-flex;
         align-items: center;
         cursor: pointer;
+        /* A checkbox's baseline is its bottom edge, so on the row's
+           baseline it sat higher than the capitals and the collection
+           bubble beside it. This lowers it to center on the capitals
+           (`1cap` is the row text's cap height, 13px the box's), rounded
+           to keep the box on whole pixels. */
+        vertical-align: round(calc((1cap - 13px) / 2), 1px);
       }
       .versions-table .toggle input[type="checkbox"] { cursor: pointer; margin: 0; }
       /* Same treatment as the controls-row toggle when the parent
