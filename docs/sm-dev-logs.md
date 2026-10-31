@@ -87,19 +87,19 @@ shows the line, once, under its first source's prefix:
 ## The `logs` command
 
 ```text
-logs [tab|all] [script] [--find <text>] [--log-source <source>] [--since <position>] [--tail <N|duration>]
+logs [--tab <tab>|all] [--script <script>] [--find <text>] [--log-source <source>] [--since <position>] [--tail <N|duration>]
 ```
 
-- A tab (`T2`) or `all` picks which tabs; a run script's number (`2`),
-  or a piece of its name, picks one script. Either can be left out, and
-  they combine.
+- `--tab T2` or `--tab all` picks which tabs (the current one by default);
+  `--script` with a run script's number (`2`), or a piece of its name,
+  picks one script. Either can be left out, and they combine.
 - "The scripts that ran on it" are the ones running there now. It
   covers lines with no tab: an `sm` entry for a refresh or a failed
   `@require` shows when its script runs on the tab.
 - Examples:
   - `logs`: the current tab's scripts' output and events.
-  - `logs 2 --log-source sm`: script 2's SourceMonkey Log, on its own.
-  - `logs all --log-source all --find /error/i --tail 5m`: anything
+  - `logs --script 2 --log-source sm`: script 2's SourceMonkey Log, on its own.
+  - `logs --tab all --log-source all --find /error/i --tail 5m`: anything
     with "error" in it, from any tab, in the last five minutes.
 - Identical lines in a row still show once, marked `(N times)`.
 
@@ -161,7 +161,7 @@ next call can pass it to `--since`:
   skips lines already passed over.
 - With nothing to show, `logs` says so first:
   `[sm-dev] No log lines match on tab T4` (or `on any tab` for
-  `logs all`).
+  `logs --tab all`).
 - `wait log` says the line it matched, then `Found at` with its ID:
   `[sm-dev] Wait matched log line: [script log] saved`.
 - A `wait log` that times out gives its timeout message, then

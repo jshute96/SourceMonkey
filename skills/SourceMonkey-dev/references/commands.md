@@ -44,8 +44,15 @@ sm-dev [global options] <command> [args] [-- <command> ...]
   (`ERROR:`). A few commands still exit 0 when they fail, and `probe`
   reports a missing selector without failing: read the output.
 - Flags take a value after a space or `=` (`--out f.txt`,
-  `--out=f.txt`). An unknown flag's error lists the flags the command
-  takes; stray arguments are refused, with the command's usage.
+  `--out=f.txt`). An unknown flag or a stray argument is refused, with
+  the command's usage and flags.
+- Required arguments are positional; optional ones are flags, `--tab`
+  above all: `click .x --tab T2`, `screenshot f.png --selector .x`,
+  `logs --script 2`. Commands about tabs (`reload`, `closetab`,
+  `focus`, `frames`, `wait`) also take the tab as their argument
+  (`reload T2`).
+  - `--tab all` works only where `all` does: `logs --tab all`, and the
+    commands that take an `all` argument (`reload all`, `wait all`).
 - Quotes: in `--stdin` lines, most commands take off one level of
   quotes around an argument. `eval` and `cdp` don't: their quotes are
   JavaScript's and JSON's. A quoted word is never a flag.
@@ -62,7 +69,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | --- | --- | --- |
 | Run | `D1`, or `Dname` from `--run` | `list` shows them |
 | Script | `1`, its path, file name, `@name`, or a unique piece | `T2.3`: script 3 on tab T2 |
-| Tab | `T1`, `targetId=<id>` (or 6+ chars of it) | Page commands take one first: `click T2 .x` |
+| Tab | `T1`, `targetId=<id>` (or 6+ chars of it) | Page commands take one as `--tab`: `click .x --tab T2` |
 | Installed script | `E1` | SourceMonkey's own number, the same in every run |
 | Collection | `C1`, its name or a unique piece, `id=<id>` | A run's test collection: its run, `D1` |
 | Menu command | `M1`, `T2.M1`, or its label | |
@@ -190,9 +197,9 @@ asked to.
 | `newtab [page...]` | Open a controlled tab (becomes current) |
 | `newtab --noscript <url>` | A tab the scripts stay out of (sticky) |
 | `closetab [T2 T3...\|all]` | Close the current tab, the ones named, or all. A page's "Leave site?" dialog waits for `accept`/`dismiss`; `--force` skips it |
-| `open [tab] [page]` | Navigate the current tab, or the one named |
+| `open [page] [--tab T2]` | Navigate the current tab, or the one named |
 | `reload [T2\|all]` | Reload |
-| `focus [tab]` | Bring to the front |
+| `focus [T2]` | Bring to the front |
 | `--from-saved [--offline] [--url U]` | On `newtab`/`open`/`start`: serve `.html` files at their recorded URL |
 | `--timeout-seconds S` | On `newtab`/`open`/`reload`: give a slow page S seconds to load (default 30) and settle (default 5) |
 
@@ -200,9 +207,9 @@ asked to.
 
 | Command | Does |
 | --- | --- |
-| `snapshot [sel] [--visible] [--out F]` | Accessibility tree with refs |
-| `snapshot [sel] --find <text>` | Only elements containing the text (case insensitive), within `sel`'s matches |
-| `snapshot ... [--up N] [--context] [--limit N]` | For each match of `sel` or `--find`: N levels up, or with wrapper divs and small containers; first 5 matches (0: all) |
+| `snapshot [--selector <sel>] [--visible] [--out F]` | Accessibility tree with refs |
+| `snapshot [--selector <sel>] --find <text>` | Only elements containing the text (case insensitive), within `sel`'s matches |
+| `snapshot ... [--up N] [--context] [--limit N]` | For each match of `--selector` or `--find`: N levels up, or with wrapper divs and small containers; first 5 matches (0: all) |
 | `probe <sel>... [--css] [--html]` | Which match and how many; selector / HTML of the first 10 |
 | `eval <js>` | Evaluate inside the selected script, where its `GM_*` APIs, `@require` libraries, top-level declarations and IIFE locals are visible; prints JSON (promises awaited). In the page when no script is selected or it hasn't run there |
 | `eval --page <js>` | Evaluate in the page, where the page's own globals are |
@@ -212,9 +219,9 @@ asked to.
 | `eval --out FILE <js>` | Write the result to a file; printed results are cut past 10,000 characters |
 | `cdp <Method> [json]` | A raw CDP call on the tab; the result as JSON. A `{{` block or `--file` holds several, one per line (see [cdp.md](cdp.md)) |
 | `cdp --frame F2 <Method> [json]` | The same on the target an iframe is in: its own (one from another site), else its page's |
-| `screenshot [sel] [--full] <file>` | PNG of the view, the page, or an element |
+| `screenshot <file> [--full] [--selector <sel>]` | PNG or JPEG of the view, the page, or an element |
 | `savehtml <file>` | Save the DOM for `--from-saved` / `serveHtml` |
-| `logs [T2\|all] [script]` | The run's log for the tab (its scripts' lines and events), timestamped and whole (the stream cuts a line past 1000 characters) |
+| `logs [--tab T2\|all] [--script <script>]` | The run's log for the tab (its scripts' lines and events), timestamped and whole (the stream cuts a line past 1000 characters) |
 | `logs ... --log-source all` | The site's own lines too; or a list, e.g. `sm` for SourceMonkey's Log entries alone |
 | `logs ... --find <text\|/re/>`, `--tail 50`, `--tail 30s` | Only matching lines; the last N, or the last stretch of time |
 | `logs ... --since <position>` | Only lines after a log ID (`Logs up to` gives the last), an ISO 8601 time, or a time of day (`14:05:12`) |
@@ -232,7 +239,7 @@ asked to.
 | `type <sel> --file <path>` | Type a file's text exactly, including a final line break |
 | `type <sel> --clear [text]` | Empty the field first, then type the text if given |
 | `key <keys>...` | `key j Shift+ArrowRight ctrl+end esc` |
-| `accept [tab] [text]`, `dismiss [tab]` | Answer an open dialog |
+| `accept [text]`, `dismiss` | Answer an open dialog (`--tab T2` for another tab's) |
 | `connect once\|cancel\|allow\|deny\|allow-all [host]` | Answer SourceMonkey's prompt for a host the selected script's `@connect` doesn't cover |
 | `--nowait` | On any of these: don't wait for the page to settle |
 | `--timeout-seconds S` | On any command that waits (these, `start`, `eval`, `snapshot`, `probe`, `screenshot`, `closetab`, `load`, `update`, `menu`): S seconds for each wait, in place of its default. On `cdp`, for each call (default 10) |
@@ -247,7 +254,7 @@ asked to.
 | `wait 500ms`, `wait 2s` | Time (last resort) |
 | `--timeout-seconds S` | Give up after S seconds (default 5). On a delay, it may be given if not shorter |
 
-- A tab goes before the form: `wait T2 selector '.x'`.
+- Another tab's element: `wait selector '.x' --tab T2`.
 - `wait log` sees every log source, the site's own lines too, unless
   `--log-source` narrows it. Each is matched in the form the run
   would print it: `[page log] KEYUP 143`.

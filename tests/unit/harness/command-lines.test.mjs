@@ -20,7 +20,7 @@ test('one command per line, blanks and comments skipped', () => {
 
 test('an eval block keeps its lines, and the tab and flags before {{', () => {
   const result = parseCommandList([
-    'eval T2 --script {{',
+    'eval --tab T2 --script {{',
     '  const rows = [...document.querySelectorAll(".athing")];',
     '',
     '  // ids',
@@ -30,7 +30,7 @@ test('an eval block keeps its lines, and the tab and flags before {{', () => {
     'values',
   ].join('\n'));
   assert.deepEqual(texts(result), [
-    'eval T2 --script\n  const rows = [...document.querySelectorAll(".athing")];\n\n  // ids\n  #not a comment in here\n  rows.map((r) => r.id)',
+    'eval --tab T2 --script\n  const rows = [...document.querySelectorAll(".athing")];\n\n  // ids\n  #not a comment in here\n  rows.map((r) => r.id)',
     'values',
   ]);
 });
@@ -84,7 +84,7 @@ test('a refused one-line {{ skips its lines up to the }}, rather than refusing e
 });
 
 test('a cdp block is its calls, one per line', () => {
-  assert.deepEqual(texts(parseCommandList('cdp T2 {{\nPage.enable\nPage.reload {"ignoreCache": true}\n}}')), ['cdp T2\nPage.enable\nPage.reload {"ignoreCache": true}']);
+  assert.deepEqual(texts(parseCommandList('cdp --tab T2 {{\nPage.enable\nPage.reload {"ignoreCache": true}\n}}')), ['cdp --tab T2\nPage.enable\nPage.reload {"ignoreCache": true}']);
 });
 
 test('{{ after another command refuses the whole list', () => {
@@ -127,8 +127,8 @@ test('the assembler reports an open block, and drop forgets it', () => {
 });
 
 test('echoCommand shows a block as the prompt does', () => {
-  const [command] = parseCommandList('  eval T2 {{\n  1 + 1\n}}').commands;
-  assert.deepEqual(echoCommand(command).map(plainLine), ['> eval T2 {{', '...   1 + 1', '... }}']);
+  const [command] = parseCommandList('  eval --tab T2 {{\n  1 + 1\n}}').commands;
+  assert.deepEqual(echoCommand(command).map(plainLine), ['> eval --tab T2 {{', '...   1 + 1', '... }}']);
 });
 
 test('endsOutsideBlock: whether typed lines are ready to run', () => {

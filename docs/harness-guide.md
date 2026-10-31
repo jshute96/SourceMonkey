@@ -1008,7 +1008,7 @@ Some commands take several lines as a block, at the prompt or on stdin:
 - `cdp`: calls, one per line, sharing a session (see [`cdp`](#cdp)).
 
 ```
-> eval T2 {{
+> eval --tab T2 {{
 ... const rows = [...document.querySelectorAll('.athing')];
 ... rows.map((r) => r.id)
 ... }}
@@ -1358,10 +1358,10 @@ In a run, not given files, they act on the run's scripts and tabs:
 | `tab <tab>` | Picks the current tab, which the page commands act on. `tabs <tab>` works too |
 | `newtab [page...\|all]` | Opens a new tab with the scripts for each page, or a blank tab |
 | `closetab [tab...\|all]` | Closes the current tab, the tabs named, or all of them. Runs the pages' `beforeunload` handlers unless `--force` (see [Page dialogs](#page-dialogs)) |
-| `open [tab] [page]` | Navigates the current tab, or the one named, to a URL or file (a glob matching one), or to a script's default page |
+| `open [page] [--tab T2]` | Navigates the current tab, or the one named, to a URL or file (a glob matching one), or to a script's default page |
 | `reload [tab\|all]` | Reloads the page, another tab's, or all tabs at once. `--noscript` / `--script` switch the tabs' scripts off or back on first |
-| `focus [tab]` | Brings the tab to the front, un-minimizing its window |
-| `accept [tab] [text]`, `dismiss [tab]` | Answers an open dialog (see [Page dialogs](#page-dialogs)) |
+| `focus [T2]` | Brings the tab to the front, un-minimizing its window |
+| `accept [text]`, `dismiss` | Answers an open dialog, on the current tab or the one `--tab` names (see [Page dialogs](#page-dialogs)) |
 | `connect once\|cancel\|allow\|deny\|allow-all [host]` | Answers SourceMonkey's prompt for a host the script's `@connect` lines don't cover: the selected script's oldest waiting, or its one for `host` |
 
 - A `[page]` is a URL, a file, a glob, or a script's number for its
@@ -1508,13 +1508,12 @@ A script's `alert`, `confirm` or `prompt` is left open and reported in
 the stream, rather than being answered automatically.
 
 - In a browser on screen, answer it there.
-- Or use `accept` (a prompt's text after it) or `dismiss`, with a tab
-  (`accept T2`) for a dialog on another tab. This works in a headless
-  browser too.
+- Or use `accept` (a prompt's text after it) or `dismiss`, with
+  `--tab` (`accept --tab T2`) for a dialog on another tab. This works
+  in a headless browser too.
   - With several tabs, the report names the tab to give:
-    `Use accept T2 or dismiss T2`.
-  - Prompt text that starts with a tab's name is taken as the tab
-    unless quoted: `accept "T2"`.
+    `Use accept --tab T2 or dismiss --tab T2`.
+  - Prompt text that is a tab's name has to be quoted: `accept "T2"`.
 - In a headless run that can't take commands (it couldn't open its
   socket for other shells), nothing could answer it, so it is dismissed
   and reported.
@@ -1537,7 +1536,7 @@ the stream, rather than being answered automatically.
   answer.
 - A tab one of the run's tabs opens can show a dialog before the run
   starts following it (a script's `confirm()` at load). The run reports
-  that dialog the same way, naming the tab (`accept T2`), but `tabs`
+  that dialog the same way, naming the tab (`accept --tab T2`), but `tabs`
   and `status` list the tab only once the dialog is answered.
 - A tab already showing a dialog when `sm-dev start` starts stops it
   connecting: nothing in that tab answers until the dialog closes. The
@@ -1547,8 +1546,8 @@ the stream, rather than being answered automatically.
 ## Driving and reading the page
 
 These act on a tab's page, as a person would, and read it back. Each
-takes a tab first (`T2`, `targetId=…`), or acts on the
-current one.
+acts on the current tab, or the one `--tab` names (`--tab T2`,
+`--tab targetId=…`).
 
 | Run command | What it does |
 | --- | --- |
@@ -1564,11 +1563,11 @@ current one.
 | `eval --script=<script> <js>` | Evaluates inside the named script |
 | `eval --file <path>` | Evaluates JavaScript from a file |
 | `eval --out FILE <js>` | Writes the result to a file, uncut |
-| `snapshot [selector] [--visible] [--out file]` | The page (or each element the selector matches) as its accessibility tree, one line per element, each with a ref. `--visible`: only what's on screen. `--out` writes it to a file. `--find <text>`: only elements containing that text (case insensitive). For each match, `--up n` / `--context` add its containers; `--limit n`: how many matches to show (5; 0 for all) |
-| `screenshot [selector] [--full] <file>` | A PNG of what's showing, of the whole page (`--full`), or of one element |
+| `snapshot [--selector <css>] [--visible] [--out file]` | The page (or each element the selector matches) as its accessibility tree, one line per element, each with a ref. `--visible`: only what's on screen. `--out` writes it to a file. `--find <text>`: only elements containing that text (case insensitive). For each match, `--up n` / `--context` add its containers; `--limit n`: how many matches to show (5; 0 for all) |
+| `screenshot <file> [--full] [--selector <css>]` | A PNG or JPEG of what's showing, of the whole page (`--full`), or of one element (`--selector`) |
 | `savehtml <file>` | The page's HTML, to replay later (see [Saved pages](#saved-pages)) |
 | `probe <selector>... [--html] [--css]` | Which selectors match, and how many |
-| `logs [tab\|all] [script]` | The run's log lines, read back (see [Logs](#logs)) |
+| `logs [--tab T2\|all] [--script <script>]` | The run's log lines, read back (see [Logs](#logs)) |
 | `cdp <Method> [params]` | Sends a raw CDP call to the tab and prints the result as JSON (see [`cdp`](#cdp)) |
 
 ### Actions
@@ -1646,7 +1645,7 @@ current one.
 - Only refs in the latest snapshot work, so take a new one after the
   page changes. A reload or navigation drops them all; a route change
   within the page (a single-page app's) doesn't.
-  - Refs from `snapshot <selector>` work beside the rest's: it shows
+  - Refs from `snapshot --selector` work beside the rest's: it shows
     parts of a snapshot of the whole page.
 - The whole page includes what scripts add after `<body>` (to
   `<html>`), and open shadow roots.
@@ -1788,8 +1787,8 @@ A line can be in multiple sources, and asking for any of them shows it:
 
 ```sh
 sm-dev logs                                  # this tab: its scripts' lines and events
-sm-dev logs 2 --log-source sm               # script 2's SourceMonkey Log
-sm-dev logs all --log-source all --find /error/i --tail 5m
+sm-dev logs --script 2 --log-source sm      # script 2's SourceMonkey Log
+sm-dev logs --tab all --log-source all --find /error/i --tail 5m
 ```
 
 ```text
@@ -1837,9 +1836,9 @@ sm-dev start x.user.js https://example.com/ -- screenshot before.png \
 | `wait log <text>` or `wait log /regex/` | The run prints a matching line |
 | `wait {500ms\|2s}` | That long passes |
 
-- A tab goes first: `wait T2 selector .x`. One after the form's word
-  (`wait selector T2 .x`) is refused, rather than taken for the
-  selector.
+- `wait selector` and `wait selector-gone` take a tab as `--tab T2`.
+  One before the selector (`wait selector T2 .x`) is refused, rather
+  than taken for the selector.
 
 ### When a tab has settled
 

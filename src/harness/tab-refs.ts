@@ -85,5 +85,5 @@ export function dialogWaitingMessage(waiting: ControlledTab, current: Controlled
   const kind = dialogKind(waiting.dialogs!.current!);
   return waiting === current
     ? `The page is waiting on ${kind} dialog. Use ${quoted('accept')} or ${quoted('dismiss')} first.`
-    : `${tabName(waiting)} is waiting on ${kind} dialog. Use ${quoted(`accept ${tabName(waiting)}`)} or ${quoted(`dismiss ${tabName(waiting)}`)} first.`;
+    : `${tabName(waiting)} is waiting on ${kind} dialog. Use ${quoted(`accept --tab ${tabName(waiting)}`)} or ${quoted(`dismiss --tab ${tabName(waiting)}`)} first.`;
 }

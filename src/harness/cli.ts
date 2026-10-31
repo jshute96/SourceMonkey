@@ -34,7 +34,7 @@ import { helpRequest, parseCommandArgs, splitWords } from './command-args.js';
 import { DEFAULT_MANAGER, MANAGERS, managerMistake, managerNamed, type ManagerName } from './managers.js';
 import type { ManagerVerb } from './manager-actions.js';
 import type { ManagerControl } from './manager-commands.js';
-import { COMMAND_NAMES, MAX_TIMER_SECONDS, OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, TIMEOUT_FLAG, TIMEOUT_NEEDS_SECONDS, GLOBAL_FLAGS, VALUE_GLOBALS, commandHelp, commandNamed, commandSyntax, globalFlagMistake, helpTarget, helpText, timeoutSecondsMs, unsupportedCommand } from './command-list.js';
+import { COMMAND_NAMES, MAX_TIMER_SECONDS, OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, TIMEOUT_FLAG, TIMEOUT_NEEDS_SECONDS, GLOBAL_FLAGS, VALUE_GLOBALS, commandHelp, commandNamed, commandSuggestion, commandSyntax, globalFlagMistake, helpTarget, helpText, timeoutSecondsMs, unsupportedCommand } from './command-list.js';
 import { readJsonFile } from './input-file.js';
 import { echoLine, err as errorLine, ERROR_PREFIX, paintOutput, quoted, SM_DEV_PREFIX, streamHasColor } from './output-style.js';
 // The roles for marked-up output, as S.id(...): their names are common locals here.
@@ -1089,7 +1089,7 @@ function needsRun(words: string[]): boolean {
  */
 async function checkSend(words: string[]): Promise<void> {
   const list = sentList(words);
-  // A command can come as one word (`sm-dev 'eval T1 x'`), split then
+  // A command can come as one word (`sm-dev 'eval --tab T1 x'`), split then
   // as the prompt would.
   const commands = list ? list.commands.map((c) => ({ line: c.text }))
     : words.length === 1 ? [{ line: words[0] }] : [{ words }];
@@ -1137,7 +1137,7 @@ function checkedList(text: string): { commands: AssembledCommand[] } {
 }
 
 function unknownRunCommand(name: string): string {
-  return `${quoted(name)} is not a command a run takes. Use ${quoted('sm-dev help commands')} to list them.`;
+  return `${quoted(name)} is not a command a run takes.${commandSuggestion(name, RUN_COMMAND_NAMES)} Use ${quoted('sm-dev help commands')} to list them.`;
 }
 
 /**
@@ -1915,7 +1915,7 @@ function parseCommand(words: string[]): ParsedCommand {
   const help = helpWords(words);
   if (help) return { kind: 'help', text: () => helpFor(help) };
   if (words.length === 0) throw new UsageError(`A command is needed. ${LIST_COMMANDS}`);
-  // A run's command may come as one argument: `'eval T1 x'`. One of
+  // A run's command may come as one argument: `'eval --tab T1 x'`. One of
   // several lines is a list of them, and never sm-dev's own.
   if (words.length === 1 && words[0].includes('\n')) return { kind: 'send', words };
   if (SHARED_COMMANDS.has(words[0]) && needsRun(words)) return { kind: 'send', words };
@@ -1940,7 +1940,7 @@ function parseCommand(words: string[]): ParsedCommand {
     // A run's ID where the command goes: the old `sm-dev D1 status`.
     const run = runIdOf(opts.command);
     if (run) throw new UsageError(`Name the run with ${quoted('--run')}, before the command: ${quoted(`sm-dev --run ${run} <command>`)}`);
-    throw new UsageError(`Unknown command: ${quoted(opts.command)}. ${LIST_COMMANDS}`);
+    throw new UsageError(`Unknown command: ${quoted(opts.command)}.${commandSuggestion(opts.command)} ${LIST_COMMANDS}`);
   }
   return { kind: 'cli', opts, words };
 }

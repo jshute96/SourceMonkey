@@ -13,18 +13,18 @@ One call, its result printed as JSON:
 
 ```sh
 $R cdp Runtime.evaluate '{"expression": "document.title", "returnByValue": true}'
-$R cdp T2 Page.reload                              # another tab
+$R cdp --tab T2 Page.reload                        # another tab
 $R cdp Browser.getVersion                          # browser-level domains work too
 ```
 
-- It acts on the current tab, or the one named first (`T2`,
-  `targetId=...`).
+- It acts on the current tab, or the one `--tab` names (`--tab T2`,
+  `--tab targetId=...`).
 - Several calls go in a `{{` block, one per line, run in order on one
   session. It stops at the first that fails, and says why:
 
   ```sh
   $R --stdin <<'EOF'
-  cdp T2 {{
+  cdp --tab T2 {{
   Page.enable
   Page.getNavigationHistory
   }}
@@ -68,7 +68,7 @@ clients at the same time.
   (`Opening <url> in T1 [targetId=...]`), and `tabs` lists them all.
   Never pick a tab by URL.
 - Or read it from the tab itself, with no text to scrape:
-  `$R cdp T2 Target.getTargetInfo` gives `targetInfo.targetId`.
+  `$R cdp --tab T2 Target.getTargetInfo` gives `targetInfo.targetId`.
 
 Node 22+ has a built-in `WebSocket`, so a script needs no dependencies:
 

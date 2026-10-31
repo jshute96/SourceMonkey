@@ -265,7 +265,7 @@ Where VM defines these (links are to v2.49.0, the version tried):
   in both page and content mode.
   - So a console line's or error's stack names the script, by E-id.
   - Line numbers match the script's own file.
-- The `script` log source and `logs [tab] <script>` filter on that.
+- The `script` log source and `logs --script <script>` filter on that.
   VM's own code's lines count as the scripts', as SM's do.
 - `event` lines work as now, but VM reports nothing to make a script's
   start or error an event. A script's uncaught error is a `script`

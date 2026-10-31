@@ -8,6 +8,12 @@
 // whether it takes a block. Its flags, and which take a value, are its
 // help's options (`--out FILE` takes one).
 //
+// - Required arguments are positional; optional ones that would sit in
+//   a row (screenshot's element) are flags, so none is guessed wrong.
+// - A tab is `--tab T2` on any command that takes one. A command about
+//   the tab (`reload T2`) takes it as its argument too; elsewhere a tab
+//   leading the arguments is refused, naming `--tab` (`ArgSyntax.tab`).
+//
 // - A flag is `--name`, or `--name value` / `--name=value` for one that
 //   takes a value. One whose value is optional (`--script[=<script>]`)
 //   takes it only as `--name=value`. An unknown flag, a value on one
@@ -26,7 +32,7 @@
 
 import {
   commandSyntax, GLOBAL_FLAGS, globalFlagMistake, hasPlainForm, noSuchFlag, noSuchSubcommand, plainFormWords, SAME_COMMANDS, subcommandsOf,
-  TIMEOUT_FLAG, TIMEOUT_NEEDS_SECONDS, timeoutSecondsMs, type ArgSyntax, type CommandSyntax,
+  TIMEOUT_FLAG, TIMEOUT_NEEDS_SECONDS, timeoutSecondsMs, withUsage, type ArgSyntax, type CommandSyntax,
 } from './command-list.js';
 import { TAB_ARG } from './tab-refs.js';
 import { quoted } from './output-style.js';
@@ -104,7 +110,7 @@ export function unquoteWhole(text: string, which: 'any' | 'single' = 'any'): { t
 export interface ParsedArgs {
   /** Each flag given, by name: its value, or true. */
   flags: Record<string, string | true>;
-  /** The tab that led, as written (`T2`, `targetId=...`). */
+  /** The tab named, by `--tab` or leading, as written (`T2`, `targetId=...`). */
   tab?: string;
   /** The keyword of the form it took (`wait log`), if any. */
   form?: string;
@@ -164,6 +170,11 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
   // that starts it: up to word `regexEnd`.
   let inText = false;
   let regexEnd = -1;
+  // A mistake in the arguments, said once all the words are read, unless
+  // `--help` was given: a slip shouldn't stand in the way of help.
+  let mistake: { error: string } | undefined;
+  // The tab came leading, not as `--tab`.
+  let ledTab = false;
   for (let i = 0; i < list.length; i++) {
     const word = list[i];
     // In a command that takes text, only a flag-shaped word (the text's
@@ -179,11 +190,17 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
       i = taken;
       continue;
     }
-    // A tab first, before any other argument.
-    if (shape.tab && args.length === 0 && parsed.tab === undefined && !word.quoted && TAB_ARG.test(word.text)) {
-      parsed.tab = word.text;
-      args.push(word);
-      continue;
+    // A tab first, before any other argument, for a command about the
+    // tab. Elsewhere it goes in `--tab`.
+    if (shape.tab && ownCount() === 0 && parsed.tab === undefined && !word.quoted && TAB_ARG.test(word.text)) {
+      if (shape.tab === 'flag') {
+        mistake ??= { error: misplacedTab(parsed.form !== undefined ? `${command} ${parsed.form}` : command, word.text) };
+      } else if (shape.tab === 'lead' && args.length === 0) {
+        parsed.tab = word.text;
+        ledTab = true;
+        args.push(word);
+        continue;
+      }
     }
     // The form's keyword, first among the arguments after a tab, or
     // second, after the subject, for a form that names one first.
@@ -192,6 +209,9 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
       if (ownCount() === 1) parsed.subject = args[args.length - 1].text;
       parsed.form = word.text;
       shape = syntax.forms[word.text];
+      // A tab led for the plain form (`wait T2`), but this form takes
+      // one only as `--tab` (`wait T2 selector .x`).
+      if (ledTab && shape.tab === 'flag') mistake ??= { error: misplacedTab(`${command} ${parsed.form}`, parsed.tab!) };
       args.push(word);
       continue;
     }
@@ -212,6 +232,32 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
     args.push(word);
   }
   const own = args.slice((parsed.tab !== undefined ? 1 : 0) + (parsed.form !== undefined ? 1 : 0) + (parsed.subject !== undefined ? 1 : 0));
+  const usageName = parsed.form !== undefined ? `${command} ${parsed.form}` : command;
+
+  // `--tab`: the tab, as a leading one would be, or for a command whose
+  // argument can be a tab, its first argument.
+  // `--tab all` is the `all` argument, for a command that takes one.
+  const tabFlag = parsed.flags['--tab'];
+  let tabText: string | undefined;
+  if (typeof tabFlag === 'string' && shape.tab) {
+    delete parsed.flags['--tab'];
+    const all = tabFlag.toLowerCase() === 'all';
+    const tooMany = withUsage(`The ${quoted(usageName)} command takes one argument`, usageName);
+    if (all && !shape.tabAll) {
+      mistake ??= { error: withUsage(`The ${quoted(usageName)} command doesn't take ${quoted('--tab all')}. Name one tab, as in ${quoted('--tab T2')}`, usageName) };
+    } else if (shape.tab === 'word' && shape.args === 'text') {
+      // Its text, then: nothing else can be given.
+      if (own.length > 0) mistake ??= { error: tooMany };
+      tabText = tabFlag;
+    } else if (shape.tab === 'word' || (shape.tab === 'lead' && all)) {
+      if (parsed.tab !== undefined) mistake ??= { error: withUsage(`The ${quoted(usageName)} command takes one tab`, usageName) };
+      own.unshift({ text: all ? 'all' : tabFlag, start: -1, end: -1, quoted: false });
+    } else if (parsed.tab !== undefined) {
+      mistake ??= { error: withUsage(`The ${quoted(usageName)} command takes one tab`, usageName) };
+    } else {
+      parsed.tab = tabFlag;
+    }
+  }
 
   // The verb first and what it acts on after (`script enable E4`), the
   // other way round from how a subject form is written.
@@ -221,12 +267,12 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
   }
   switch (shape.args) {
     case 'none':
-      if (own.length > 0) return { error: `The ${quoted(command)} command takes ${shape.tab ? 'nothing besides a tab' : 'no arguments'}` };
+      if (own.length > 0) mistake ??= { error: withUsage(`The ${quoted(usageName)} command takes no arguments`, usageName) };
       break;
     case 'words':
       if (shape.max !== undefined && own.length > shape.max) {
         const count = COUNTS[shape.max] ?? String(shape.max);
-        return { error: `The ${quoted(command)} command takes at most ${count} argument${shape.max === 1 ? '' : 's'}${shape.tab ? ' besides a tab' : ''} (${syntax.usage.join(' | ')})` };
+        mistake ??= { error: withUsage(`The ${quoted(usageName)} command takes at most ${count} argument${shape.max === 1 ? '' : 's'}${shape.tab === 'lead' ? ' besides a tab' : ''}`, usageName) };
       }
       parsed.words = own.map((w) => w.text);
       break;
@@ -242,10 +288,11 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
       const rest = own.slice(before);
       let text = typed ? rawOf(head, rest, list) : rest.map((w) => w.text).join(' ');
       if (typed && shape.unquote !== 'none') text = unquoteWhole(text, shape.unquote).text;
-      parsed.text = text;
+      parsed.text = tabText ?? text;
       break;
     }
   }
+  if (mistake && !parsed.help) return mistake;
   // Each flag one the subcommand takes. Not for help, which a slip
   // shouldn't stand in the way of.
   if (!parsed.help) {
@@ -258,9 +305,14 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
       delete parsed.flags[TIMEOUT_FLAG];
     }
     const wrong = Object.keys(parsed.flags).find((flag) => !flags.includes(flag));
-    if (wrong !== undefined) return { error: noSuchFlag(name, wrong, flags) + forOthers(command, syntax, wrong), flag: wrong };
+    if (wrong !== undefined) return { error: noSuchFlag(name, wrong, flags, forOthers(command, syntax, wrong)), flag: wrong };
   }
   return parsed;
+}
+
+// A tab given as an argument to a command that takes it only as `--tab`.
+function misplacedTab(command: string, tab: string): string {
+  return withUsage(`The ${quoted(command)} command takes a tab as ${quoted(`--tab ${tab}`)}, not as an argument`, command);
 }
 
 // The flags `command` takes as its subcommand `form` (`script save`),

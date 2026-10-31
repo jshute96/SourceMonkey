@@ -30,7 +30,7 @@ import { countOf, pickFrame, refFrameProblem } from './page-commands.js';
 import { explainMatch, preparedScriptName } from './prepare.js';
 import { ALL_LOG_SOURCES, foundAt, inSources, linesLost, parseLogSources, parsePosition, searchedUpTo, streamText, textMatcher, type LogRecord } from './run-logs.js';
 import { refProblem } from './snapshot.js';
-import { currentTab, dialogWaitingMessage, NO_TABS, pickTab, TAB_ARG, tabName } from './tab-refs.js';
+import { currentTab, dialogWaitingMessage, NO_TABS, pickTab, tabName } from './tab-refs.js';
 
 /** How long every signal must stay quiet. */
 const QUIET_MS = 200;
@@ -258,7 +258,7 @@ export async function waitFor(ctx: ConsoleContext, parsed: ParsedArgs): Promise<
   if (more.length > 0) {
     // `wait all selector .x`: `all` isn't a tab, so the form wasn't taken.
     if (word === 'all' && (more[0] === 'selector' || more[0] === 'selector-gone')) {
-      return mistake(`The wait ${more[0]} command looks in one tab. Name it (T2), or leave it out for the current one.`);
+      return mistake(`The wait ${more[0]} command looks in one tab. Name it with ${quoted('--tab T2')}, or leave it out for the current one.`);
     }
     const valid = word === 'all' || parseDelay(word) !== null;
     return mistake(`The ${quoted('wait')} command takes a tab, ${quoted('all')}, ${quoted('selector')}, ${quoted('selector-gone')}, ${quoted('log')}, or a delay such as ${quoted('500ms')} or ${quoted('2s')}, not ${quoted(valid ? more.join(' ') : word)}`);
@@ -285,8 +285,6 @@ export async function waitFor(ctx: ConsoleContext, parsed: ParsedArgs): Promise<
   if (kind === 'selector' || kind === 'selector-gone') {
     const selector = parsed.text ?? '';
     if (!selector) return mistake(`The ${quoted(`wait ${kind}`)} command needs a selector, e.g. ${quoted(`wait ${kind} '#results'`)}`);
-    const [first, ...more] = selector.split(/\s+/);
-    if (more.length > 0 && TAB_ARG.test(first)) return mistake(`The tab goes before the word ${kind}: ${quoted(`wait ${first} ${kind} <css>`)}`);
     const frame = await pickFrame(parsed.flags['--frame'], tabs[0], (line) => ctx.out(`[sm-dev] ${line}`));
     if (frame === null) return false;
     return waitForSelector(ctx, tabs[0], selector, kind === 'selector', timeoutMs, frame);

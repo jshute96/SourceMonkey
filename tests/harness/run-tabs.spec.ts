@@ -107,11 +107,11 @@ test('a dialog an opened tab shows before the run takes it over is handled like 
     `,
   });
   const lines = await driveCli([file, `${fixtureServer.baseUrl}/target.html`, '--root', scriptsDir.path], [
-    ['The page opened a confirm dialog: "keep?"', 'accept T2'],
+    ['The page opened a confirm dialog: "keep?"', 'accept --tab T2'],
     ['[opener] answered true', 'exit'],
   ]);
   const text = lines.join('\n');
-  expect(text).toContain('Use `accept T2` or `dismiss T2`');
+  expect(text).toContain('Use `accept --tab T2` or `dismiss --tab T2`');
   expect(text).not.toContain("couldn't follow");
 });
 
@@ -512,11 +512,11 @@ test('a tab without scripts gets none, nor do its tabs, and load and savehtml le
   const saved = path.join(scriptsDir.path, 'plain.html');
   const lines = await driveCli([a, `${base}/target.html`], [
     ['Started as run', `newtab --noscript ${base}/target.html`],
-    ['The page commands now act on T2', 'eval T2 window.open("other.html"), "opened"'],
+    ['The page commands now act on T2', 'eval --tab T2 window.open("other.html"), "opened"'],
     // Its popup is a tab without scripts too.
     ['[T3] [event] Tab opened', `load ${b}`],
     // Only T1 runs scripts, so only it reloads.
-    ['[script log] [B] on /target.html', `savehtml T2 ${saved}`],
+    ['[script log] [B] on /target.html', `savehtml --tab T2 ${saved}`],
     ['Wrote', 'exit'],
   ]);
   expect(lines.some((l) => /^\[T3\] \[event\] Tab opened at .*other\.html \(no scripts\), from T2 /.test(l))).toBe(true);
@@ -600,17 +600,18 @@ test('open and reload switch the tab they name, or the current one, and say when
     ['"/other.html"', 'open --noscript'],
     ['T1 already runs no scripts', `newtab ${base}/target.html`],
     // A tab named, no page: its own page, back with the scripts.
-    ['[T2] [script log] [A] on /target.html', 'open T1 --script'],
-    ['T1 runs the scripts again', 'eval T1 location.pathname'],
+    ['[T2] [script log] [A] on /target.html', 'open --tab T1 --script'],
+    ['T1 runs the scripts again', 'eval --tab T1 location.pathname'],
     // A tab named, then a page.
-    ['"/other.html"', `open T1 ${base}/target.html#t1`],
-    ['[A] on /target.html', 'eval T1 location.hash'],
+    ['"/other.html"', `open --tab T1 ${base}/target.html#t1`],
+    ['[A] on /target.html', 'eval --tab T1 location.hash'],
     // reload with no tab named: the current one, T2.
     ['"#t1"', 'reload --noscript'],
     // A mistake, found before it is sent, stops the piped commands.
     ['T2 runs no scripts from now on', 'open --bogus'],
   ]);
-  expect(lines).toContain('ERROR: The `open` command has no --bogus flag. It takes --noscript, --script, --timeout-seconds, --from-saved, --url, --offline, --nowait.');
+  expect(lines).toContain('ERROR: The `open` command has no --bogus flag.');
+  expect(lines).toContain('  Usage: `open [page]`');
   expect(lines).toContain('That command failed, so the commands after it were not run');
   // T1 stayed on its page when switched back.
   expect(lines.filter((l) => l === '"/other.html"')).toHaveLength(2);
@@ -808,7 +809,7 @@ test('--from-saved lasts for its URL only, --offline lets links out, and a missi
     ['[A] on /target.html titled saved', 'eval window.open("target.html"), "opened"'],
     // A tab it opens gets the live page. (Its first load's console
     // lines aren't shown, so its title is asked.)
-    ['[T2] [event] A started on', 'eval T2 document.title'],
+    ['[T2] [event] A started on', 'eval --tab T2 document.title'],
     ['"target"', () => {
       unlinkSync(file);
       return 'reload T1';
@@ -870,7 +871,7 @@ test('newtab of several saved pages picks the first, serves their _files folders
     ['Started as run', `newtab '${scriptsDir.path}/x *.html' --from-saved --offline`],
     ['[T3] [script log] [A] on /other.html titled x two', 'status'],
     // The first new tab is the current one.
-    ['Scripts (with status on active tab T2)', 'eval T2 getComputedStyle(document.body).color'],
+    ['Scripts (with status on active tab T2)', 'eval --tab T2 getComputedStyle(document.body).color'],
     // Served from the folder beside the file, though offline.
     ['"rgb(1, 2, 3)"', 'exit'],
   ]);

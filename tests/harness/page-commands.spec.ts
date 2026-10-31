@@ -83,12 +83,12 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
 
   // A click the script sees, with the tab named, and the page settled
   // by the time it returns.
-  expect(await run('click T1 button')).toEqual(['[sm-dev] Clicked button']);
+  expect(await run('click --tab T1 button')).toEqual(['[sm-dev] Clicked button']);
   expect(await run('eval document.querySelector("button").textContent')).toEqual(['"Added 1"']);
-  expect(await run('eval --script T1 widget.clicks')).toEqual(['1']);
+  expect(await run('eval --tab T1 --script widget.clicks')).toEqual(['1']);
   expect(await run('click \'#nothing\'')).toEqual(['[sm-dev] No element matches #nothing. Use `probe #nothing` to look for it.']);
   // The id as `tabs` shows it names the tab.
-  expect(await run('eval [targetId=ABCDEF0123456789] document.title')).toEqual(['"target"']);
+  expect(await run('eval --tab [targetId=ABCDEF0123456789] document.title')).toEqual(['"target"']);
   expect(await run('hover button')).toEqual(['[sm-dev] Hovered over button']);
   expect(await run('hover button --modifiers Shift --at 2,2')).toEqual(['[sm-dev] Hovered over button with Shift held, the mouse at 2,2 in it']);
   // A command that failed is false, so a line of several stops there.
@@ -134,12 +134,12 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   const tree = await run('snapshot');
   expect(tree.some((l) => /^  - button "Added 1" \[ref=e\d+\]$/.test(l))).toBe(true);
   expect(tree.some((l) => l.includes('textbox "Note"'))).toBe(true);
-  expect(await run('snapshot button')).toEqual([expect.stringMatching(/^- button "Added 1" \[ref=e\d+\]$/)]);
+  expect(await run('snapshot --selector button')).toEqual([expect.stringMatching(/^- button "Added 1" \[ref=e\d+\]$/)]);
 
   // Files are named from the directory given, as `sm-dev <command>` gives
   // the sender's.
   const dir = scriptsDir.path;
-  expect(await run('snapshot --out tree.txt T1', dir)).toEqual([expect.stringMatching(/^\[sm-dev\] Wrote tree\.txt \(\d+ lines\) from http/)]);
+  expect(await run('snapshot --out tree.txt --tab T1', dir)).toEqual([expect.stringMatching(/^\[sm-dev\] Wrote tree\.txt \(\d+ lines\) from http/)]);
   expect(readFileSync(path.join(dir, 'tree.txt'), 'utf8')).toContain('button "Added 1"');
   // A long eval result is cut when printed, and written whole with --out.
   const long = await run('eval "x".repeat(12000)');
@@ -156,7 +156,7 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   // comment kept off the wrapper's closing.
   writeFileSync(path.join(dir, 'probe.js'), 'const c = widget.clicks;\nreturn { c } // done');
   expect(await run('eval --file probe.js --script', dir)).toEqual(['{\n  "c": 1\n}']);
-  expect(await run('eval --script T1 --file probe.js', dir)).toEqual(['{\n  "c": 1\n}']);
+  expect(await run('eval --tab T1 --script --file probe.js', dir)).toEqual(['{\n  "c": 1\n}']);
   expect(await run('eval --file nope.js', dir)).toEqual(['[sm-dev] ERROR: Couldn\'t read nope.js: The file does not exist']);
   expect(await run('eval --file probe.js 1 + 1', dir)).toEqual(['[sm-dev] ERROR: The `eval` command takes JavaScript or --file, not both']);
   expect(await run('eval --file', dir)).toEqual(['[sm-dev] ERROR: The --file flag needs a value: `--file <path>`']);
@@ -170,10 +170,10 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   lines.length = 0;
   await runConsoleCommand('eval --file probe.js --script', ctx, { cwd: dir, words: ['eval', '--file', 'probe.js', '--script'] });
   expect(lines).toEqual(['{\n  "c": 1\n}']);
-  expect(await run('screenshot button b.png', dir)).toEqual([expect.stringMatching(/^\[sm-dev\] Wrote b\.png \(button\) from http/)]);
+  expect(await run('screenshot b.png --selector button', dir)).toEqual([expect.stringMatching(/^\[sm-dev\] Wrote b\.png \(button\) from http/)]);
   expect(statSync(path.join(dir, 'b.png')).size).toBeGreaterThan(0);
   expect(await run('screenshot --full whole.png', dir)).toEqual([expect.stringMatching(/^\[sm-dev\] Wrote whole\.png from http/)]);
-  expect(await run('screenshot button', dir)).toEqual(['[sm-dev] ERROR: The `screenshot` command writes a .png or .jpg file, and `button` is neither. Name the file last.']);
+  expect(await run('screenshot button', dir)).toEqual(['[sm-dev] ERROR: The `screenshot` command writes a .png or .jpg file, and `button` is neither. For an element, give its selector with --selector.']);
   expect(await run('savehtml nowhere/x.html', dir)).toEqual(['[sm-dev] The savehtml command failed: Could not write nowhere/x.html: Its folder doesn\'t exist']);
   const saved = await run('savehtml page.html', dir);
   expect(saved[0]).toMatch(/^\[sm-dev\] Wrote page\.html \(\d+ chars\) from http/);
@@ -207,11 +207,11 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('eval confirm("sure?")')).toContain('[sm-dev] The expression opened a dialog, which is waiting for an answer.');
   expect(await run('dismiss')).toEqual(['[sm-dev] Dismissed the dialog']);
   expect(await run('screenshot')).toEqual([expect.stringContaining('The `screenshot` command needs a file')]);
-  expect(await run('snapshot --deep')).toEqual(['[sm-dev] ERROR: The `snapshot` command has no --deep flag. It takes --visible, --out, --find, --up, --context, --limit, --timeout-seconds, --frame.']);
+  expect(await run('snapshot --deep')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The `snapshot` command has no --deep flag\.\n {2}Usage: /)]);
   // Every command, not only the ones with flags of their own; a quoted
   // selector with -- in it is one word, not a flag.
-  expect(await run('status --bad')).toEqual(['[sm-dev] ERROR: The `status` command has no --bad flag. It takes --frames, --json, --nojson.']);
-  expect(await run('eval T1 --script --x')).toEqual(['[sm-dev] ERROR: The `eval` command has no --x flag. It takes --page, --script, --file, --out, --timeout-seconds, --frame.']);
+  expect(await run('status --bad')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The `status` command has no --bad flag\.\n {2}Usage: /)]);
+  expect(await run('eval --tab T1 --script --x')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The `eval` command has no --x flag\.\n {2}Usage: /)]);
   expect(await run(`probe '.a --b'`)).not.toContainEqual(expect.stringContaining('flag'));
 
   // A navigation an expression doesn't live through is said as such,
@@ -225,14 +225,14 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('cdp Runtime.evaluate \'{"expression": "document.title", "returnByValue": true}\'')).toEqual([
     JSON.stringify({ result: { type: 'string', value: 'target' } }, null, 2),
   ]);
-  expect(await run('cdp T1 Target.getTargetInfo')).toEqual([expect.stringContaining('"type": "page"')]);
+  expect(await run('cdp --tab T1 Target.getTargetInfo')).toEqual([expect.stringContaining('"type": "page"')]);
   expect(await run('cdp Nope.nothing')).toEqual([expect.stringMatching(/^\[sm-dev\] Nope\.nothing failed: /)]);
   expect(await run('cdp nope')).toEqual([expect.stringContaining('`nope` is not a CDP method')]);
   expect(await run('cdp Page.enable Page.reload')).toEqual([expect.stringContaining('A `cdp` command makes one call')]);
   // A block's calls share a session, so an override one sets holds for
   // the next; it ends with the command.
   const dark = '{"expression": "matchMedia(\'(prefers-color-scheme: dark)\').matches", "returnByValue": true}';
-  expect(await run(`cdp T1\nEmulation.setEmulatedMedia {"features": [{"name": "prefers-color-scheme", "value": "dark"}]}\nRuntime.evaluate ${dark}`)).toEqual([
+  expect(await run(`cdp --tab T1\nEmulation.setEmulatedMedia {"features": [{"name": "prefers-color-scheme", "value": "dark"}]}\nRuntime.evaluate ${dark}`)).toEqual([
     '{}', JSON.stringify({ result: { type: 'boolean', value: true } }, null, 2),
   ]);
   // Undone as the block's session detaches, which Chrome finishes a
@@ -368,7 +368,7 @@ test('click takes a button, modifiers and a count, and says which check its elem
 
   expect(await run('click --button right button')).toEqual(['[sm-dev] Clicked button with the right button']);
   expect(await seen()).toEqual(['contextmenu 2 0', 'auxclick 2 1']);
-  expect(await run('click T1 button --count 2 --modifiers shift')).toEqual(['[sm-dev] Clicked button with Shift held, 2 clicks']);
+  expect(await run('click --tab T1 button --count 2 --modifiers shift')).toEqual(['[sm-dev] Clicked button with Shift held, 2 clicks']);
   expect(await seen()).toEqual(['click 0 1 shift', 'click 0 2 shift', 'dblclick 0 2 shift']);
   expect(await run('click button --button back')).toEqual(['[sm-dev] ERROR: `back` is not a mouse button. Use `left`, `right` or `middle`.']);
 
@@ -457,15 +457,15 @@ test('snapshot refs name elements for the other commands, and it can show only t
   const far = refIn(tree, 'button "Far away"');
 
   // A snapshot of part of the page leaves the rest's refs working.
-  expect(await run('snapshot nav')).toHaveLength(3);
+  expect(await run('snapshot --selector nav')).toHaveLength(3);
   expect(await run(`click ${save}`)).toEqual([`[sm-dev] Clicked ${save} (button "Save")`]);
   expect(await page.locator('[data-testid=save]').getAttribute('data-clicked')).toBe('yes');
   expect(await run(`type [ref=${note}] hello`)).toEqual([`[sm-dev] Typed into [ref=${note}] (textbox "Note")`]);
   await expect(page.locator('input[aria-label=Note]')).toHaveValue('hello');
   expect(await run(`hover ref=${far}`)).toEqual([`[sm-dev] Hovered over ref=${far} (button "Far away")`]);
   expect(await run(`probe ${save} e9999`)).toEqual([`found    ${save}  (1)`, 'missing  e9999']);
-  expect(await run(`snapshot ${save}`)).toEqual([`- button "Save" [ref=${save}]`]);
-  expect(await run(`screenshot ${save} save.png`, scriptsDir.path)).toEqual([expect.stringMatching(/^\[sm-dev\] Wrote save\.png \(e\d+ \(button "Save"\)\) from http/)]);
+  expect(await run(`snapshot --selector ${save}`)).toEqual([`- button "Save" [ref=${save}]`]);
+  expect(await run(`screenshot save.png --selector ${save}`, scriptsDir.path)).toEqual([expect.stringMatching(/^\[sm-dev\] Wrote save\.png \(e\d+ \(button "Save"\)\) from http/)]);
   expect(await run('click e9999')).toEqual(['[sm-dev] No element has the ref e9999. Take a new snapshot for the page\'s refs.']);
 
   // Only what's on screen: the far button is below it, until scrolled to.
@@ -484,7 +484,7 @@ test('snapshot refs name elements for the other commands, and it can show only t
   expect(await run(`probe --css ${save}`)).toEqual([`found    ${save}  (1)`, '    selector: button[data-testid="save"]']);
   expect(await selectorOf(refIn(scrolled, 'Far away'))).toBe('button.far');
   expect(await selectorOf('input[aria-label=Note]')).toBe('input');
-  expect(await run('snapshot --css')).toEqual(['[sm-dev] ERROR: The `snapshot` command has no --css flag. It takes --visible, --out, --find, --up, --context, --limit, --timeout-seconds, --frame.']);
+  expect(await run('snapshot --css')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The `snapshot` command has no --css flag\.\n {2}Usage: /)]);
 
   // Refs reach into a frame and a shadow root, where selectors are
   // suggested for neither; and look-alike buttons get told apart.
@@ -538,23 +538,23 @@ test('snapshot shows each of a selector\'s matches, and --find the elements cont
   };
 
   // The first 5 matches, numbered, and a count of them all.
-  const items = await run('snapshot .item');
+  const items = await run('snapshot --selector .item');
   expect(items.filter((l) => l.startsWith('# Match'))).toHaveLength(5);
   expect(items.at(-1)).toBe('# Showed 5 of 7 matches. --limit 0 shows all.');
-  expect((await run('snapshot .item --limit 0')).filter((l) => l.startsWith('# Match'))).toHaveLength(7);
+  expect((await run('snapshot --selector .item --limit 0')).filter((l) => l.startsWith('# Match'))).toHaveLength(7);
 
   // A match that is only text shows as the element the tree folds it into.
-  expect(await run('snapshot .price')).toEqual(['- paragraph [ref=' + /ref=(\w+)/.exec((await run('snapshot p'))[0])![1] + ']: Total $5 [draft]']);
-  expect(await run('snapshot .gone')).toEqual(['[sm-dev] No selector match is in the accessibility tree, which leaves out hidden elements']);
+  expect(await run('snapshot --selector .price')).toEqual(['- paragraph [ref=' + /ref=(\w+)/.exec((await run('snapshot --selector p'))[0])![1] + ']: Total $5 [draft]']);
+  expect(await run('snapshot --selector .gone')).toEqual(['[sm-dev] No selector match is in the accessibility tree, which leaves out hidden elements']);
 
   // --find: the link containing the text, any case, a [bracketed] name
   // included; within a selector's matches; with its containers.
   const link = await run('snapshot --find \'ITEM 3\'');
   expect(link[0]).toMatch(/^- link "Item 3" \[ref=e\d+\]:$/);
   expect(await run('snapshot --find draft')).toHaveLength(1);
-  expect(await run('snapshot .gone --find item')).toEqual(['[sm-dev] No element in the selector\'s matches contains "item"']);
-  expect((await run('snapshot .item --find item --limit 0')).filter((l) => l.startsWith('# Match'))).toHaveLength(7);
-  const some = await run('snapshot .item --find item --limit 2');
+  expect(await run('snapshot --selector .gone --find item')).toEqual(['[sm-dev] No element in the selector\'s matches contains "item"']);
+  expect((await run('snapshot --selector .item --find item --limit 0')).filter((l) => l.startsWith('# Match'))).toHaveLength(7);
+  const some = await run('snapshot --selector .item --find item --limit 2');
   expect(some.filter((l) => l.startsWith('# Match'))).toHaveLength(2);
   expect(some.at(-1)).toBe('# Showed 2 matches. 5 more selector matches were not searched for find matches. --limit 0 shows all.');
   expect((await run('snapshot --find \'item 3\' --up 1'))[0]).toMatch(/^- listitem \[ref=/);
@@ -564,7 +564,7 @@ test('snapshot shows each of a selector\'s matches, and --find the elements cont
   // Refs from a part work, beside the rest's.
   const ref = /ref=(\w+)/.exec(link[0])![1];
   expect(await run(`probe ${ref}`)).toEqual([`found    ${ref}  (1)`]);
-  expect(await run('snapshot --up 1')).toEqual(['[sm-dev] ERROR: The --up flag goes with a selector or --find']);
+  expect(await run('snapshot --up 1')).toEqual(['[sm-dev] ERROR: The --up flag goes with --selector or --find']);
 });
 
 test('snapshot shows a panel added after <body>, and refs from a snapshot of it work', async ({ page, fixtureServer, host, attachment, loadScript }) => {
@@ -593,11 +593,11 @@ test('snapshot shows a panel added after <body>, and refs from a snapshot of it 
   expect(tree[0]).toMatch(/^- generic \[active\] \[ref=\w+\]:$/);
   expect(tree.some((l) => /^- button "Panel button" \[ref=\w+\]$/.test(l))).toBe(true);
   // Named, it is the same.
-  expect(await run('snapshot html')).toEqual(tree);
+  expect(await run('snapshot --selector html')).toEqual(tree);
 
   // A ref from a snapshot of the panel alone works, and so does one
   // from the whole page's.
-  const panel = refIn(await run('snapshot #panel'), 'Panel button');
+  const panel = refIn(await run('snapshot --selector #panel'), 'Panel button');
   expect(await run(`click ${panel}`)).toEqual([`[sm-dev] Clicked ${panel} (button "Panel button")`]);
   await expect(page.locator('#panel button')).toHaveText('Hit');
   const body = refIn(tree, 'In body');

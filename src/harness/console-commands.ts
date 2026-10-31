@@ -31,7 +31,7 @@ import {
   collectionList, count, managerVerb, noSuchScript, noSuchVerb, scriptList, type ManagerControl, type ManagerRun, type RunView,
 } from './manager-commands.js';
 import { helpRequest, helpSubcommand, parseCommandArgs, splitWords, unquoteWhole, type ParsedArgs } from './command-args.js';
-import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, SAME_COMMANDS, commandHelp, commandSyntax, unsupportedCommand } from './command-list.js';
+import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, SAME_COMMANDS, commandHelp, commandSuggestion, commandSyntax, unsupportedCommand } from './command-list.js';
 import { errorSentence, readJsonFile, writeProblem } from './input-file.js';
 import { CDP_FRAME_ARG, PAGE_COMMANDS, runPageCommand, type EvalIn } from './page-commands.js';
 import { editMultiLine } from './prompt-editor.js';
@@ -40,7 +40,7 @@ import { frameNodes, parseFrameRef } from './frames.js';
 import { defaultPageUrl, explainMatch, NO_DEFAULT_PAGE, preparedNoframes, preparedScriptMatches, preparedScriptName, preparedScriptPath, shownPath, withDefaultScheme, type PreparedScript } from './prepare.js';
 import { representativeMatch } from '../match-targets.js';
 import { RUN_SCRIPT_LABEL } from '../userscript-header.js';
-import { currentTab, dialogKind, dialogWaitingMessage, NO_TABS, pickTab, TAB_ARG, tabName } from './tab-refs.js';
+import { currentTab, dialogKind, dialogWaitingMessage, NO_TABS, pickTab, tabName } from './tab-refs.js';
 import { runLogLabel } from './run-log.js';
 import {
   DEFAULT_LOG_SOURCES, isoTime, linesLost, logsLines, logsUpTo, inSources, noLogLines, nowMicros, parseLogSources, parsePosition, parseTail, streamText, textMatcher, type LogRecord, type RunLog,
@@ -361,7 +361,7 @@ export function runCommandHelp(input: { line: string } | { words: string[] }): {
 
 // The error for a word that names no command a run takes.
 function notACommand(word: string): string {
-  return `${quoted(word)} is not a command. Use ${quoted('help commands')} to list them.`;
+  return `${quoted(word)} is not a command.${commandSuggestion(word, RUN_COMMAND_NAMES)} Use ${quoted('help commands')} to list them.`;
 }
 
 // A run command's name, aliases resolved, and its words after the name;
@@ -957,13 +957,11 @@ export async function runConsoleCommand(
       if (mode === null) return false;
       // A glob stands for the files it matches, of which it takes one.
       const page = args.flatMap((w) => expandPathArg(w, cwd));
-      // `open T2 <page>`: a tab first, as page commands take one.
       let inTab: ControlledTab | undefined;
-      if (page.length === 2 && TAB_ARG.test(page[0])) {
-        const picked = pickTab(ctx, page[0]);
+      if (parsed.tab !== undefined) {
+        const picked = pickTab(ctx, parsed.tab);
         if (!picked) return false;
         inTab = picked;
-        page.shift();
       }
       // Rather than a page at http://all.
       if (page[0] === 'all' && page.length === 1) {
@@ -975,8 +973,8 @@ export async function runConsoleCommand(
         return false;
       }
       const where = page[0] ?? '';
-      // `T2`: the selected script's page, in T2; `T2.3`: script 3's. Only
-      // those shapes, so a host like `t2.example.com` stays a URL.
+      // `T2.3`: script 3's page, in T2. Only that shape, so a host like
+      // `t2.example.com` stays a URL. (A bare `T2` is `--tab T2`.)
       const target = inTab ? { tab: inTab, rest: where } : TAB_REF.test(where) ? tabRef(ctx, where, tab) : { tab, rest: where };
       if (!target) return false;
       const named = target.rest ? await pageFor(ctx, target.rest, cwd) : undefined;
@@ -1031,7 +1029,7 @@ export async function runConsoleCommand(
       if (!dialog) {
         const elsewhere = ctx.tabs().find((t) => t.dialogs?.current);
         ctx.out(elsewhere
-          ? `[sm-dev] No dialog is open on ${tabName(target!)}. ${tabName(elsewhere)} has one; name its tab: ${quoted(`${command} ${tabName(elsewhere)}${text ? ' ...' : ''}`)}.`
+          ? `[sm-dev] No dialog is open on ${tabName(target!)}. ${tabName(elsewhere)} has one; name its tab: ${quoted(`${command}${text ? ' ...' : ''} --tab ${tabName(elsewhere)}`)}.`
           : '[sm-dev] No dialog is open');
         return;
       }
@@ -2426,15 +2424,12 @@ function logsCommand(ctx: ConsoleContext, parsed: ParsedArgs, current: Controlle
     ctx.out('[sm-dev] Internal error: This run keeps no log');
     return false;
   }
-  let all = false;
-  let scriptWord: string | undefined;
-  for (const word of parsed.words) {
-    if (word === 'all' && !all && parsed.tab === undefined && scriptWord === undefined) all = true;
-    else if (scriptWord === undefined) scriptWord = word;
-    else return mistake('The `logs` command takes a tab or all, then a script, e.g. `logs T2 1`');
-  }
+  // `--tab all` as `all`, as the commands about tabs take it.
+  const all = parsed.tab?.toLowerCase() === 'all';
+  const scriptFlag = parsed.flags['--script'];
+  const scriptWord = typeof scriptFlag === 'string' ? scriptFlag : undefined;
   let tab: ControlledTab | undefined;
-  if (parsed.tab !== undefined) {
+  if (parsed.tab !== undefined && !all) {
     const named = pickTab(ctx, parsed.tab);
     if (!named) return false;
     tab = named;
@@ -2918,7 +2913,7 @@ const untracked = new WeakMap<Page, Dialog>();
 const trackedPages = new WeakSet<Page>();
 
 // The trackers of tabs still being set up, by tab name (`T2`), so that
-// `accept T2` can answer a dialog such a tab showed before the run took
+// `accept --tab T2` can answer a dialog such a tab showed before the run took
 // it over: the tab joins the run's list only once that dialog is closed.
 const settingUp = new Map<string, DialogTracker>();
 
@@ -3083,8 +3078,8 @@ export class DialogTracker {
     this.current = dialog;
     this.currentOrdinal = ordinal;
     const tab = this.tabRef();
-    const accept = tab ? `accept ${tab}` : 'accept';
-    const dismiss = tab ? `dismiss ${tab}` : 'dismiss';
+    const accept = tab ? `accept --tab ${tab}` : 'accept';
+    const dismiss = tab ? `dismiss --tab ${tab}` : 'dismiss';
     const answer = dialog.type() === 'beforeunload' ? `use ${quoted(accept)} to leave the page or ${quoted(dismiss)} to stay`
       : `use ${quoted(dialog.type() === 'prompt' ? `${accept} [text]` : accept)} or ${quoted(dismiss)}`;
     const how = !this.visible ? `${answer[0].toUpperCase()}${answer.slice(1)}`

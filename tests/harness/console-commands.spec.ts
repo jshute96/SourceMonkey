@@ -55,7 +55,7 @@ test.describe('sm-dev typed commands', () => {
     ]);
     expect(await run('values 1')).toEqual(['Stored values:', `  1: First (${scriptsDir.path}/first.user.js)`, '    who = "one"']);
     expect(await run('values now')).toEqual(['[sm-dev] No loaded script matches `now`. Use `scripts` to list them.']);
-    expect(await run('status now')).toEqual(['[sm-dev] ERROR: The `status` command takes no arguments']);
+    expect(await run('status now')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The `status` command takes no arguments\.\n {2}Usage: /)]);
     expect(await run('reload now')).toEqual(['[sm-dev] ERROR: `now` is not a tab. Tabs are named T1, T2 and so on; use `tabs` to list them.']);
     // Several lines of JSON, as a {{ block gives them, or from a file,
     // the flag before the key or after it.
@@ -78,7 +78,7 @@ test.describe('sm-dev typed commands', () => {
     // Single quotes around the JSON, as a shell would take them.
     expect(await run('set quoted \'["a"]\'')).toEqual(['[sm-dev] Set quoted (Second)']);
     expect(host.getValue(second.id!, 'quoted')).toEqual(['a']);
-    expect(await run('set prefs --flie x.json')).toEqual(['[sm-dev] ERROR: The `set` command has no --flie flag. It takes --file, --force.']);
+    expect(await run('set prefs --flie x.json')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The `set` command has no --flie flag\.\n {2}Usage: /)]);
     expect(await run('set prefs --file')).toEqual(['[sm-dev] ERROR: The --file flag needs a value: `--file <path>`']);
     expect(await run('set --file prefs.json')).toEqual(['[sm-dev] ERROR: The `set` command takes a key and one file, e.g. `set units --file units.json`']);
     expect(host.getValue(second.id!, 'prefs')).toEqual({ units: 'imperial' });
@@ -218,7 +218,7 @@ test.describe('sm-dev typed commands', () => {
     const blocked = ['[sm-dev] The page is waiting on a prompt dialog. Use `accept` or `dismiss` first.'];
     expect(await run('menu M1')).toEqual(blocked);
     expect(await run('set name "x"')).toEqual(blocked);
-    expect(await run('dismiss now')).toEqual(['[sm-dev] ERROR: The `dismiss` command takes nothing besides a tab']);
+    expect(await run('dismiss now')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The `dismiss` command takes no arguments\.\n {2}Usage: /)]);
     expect(await run('accept Alice')).toEqual(['[sm-dev] Accepted the dialog']);
     await expect.poll(() => host.getValue(script.id!, 'name')).toBe('Alice');
     expect(await run('accept')).toEqual(['[sm-dev] No dialog is open']);
@@ -293,7 +293,7 @@ test.describe('sm-dev typed commands', () => {
         `  T2: ${other} (opened by T1) [targetId=AB12CD99EF56AB12CD34EF56AB12CD34]`, '     1: Menus',
         'Scripts (with status on active tab T1):', row, '     Active on T1, T2', '     1 menu command',
       ]);
-      expect(await run('status T2')).toEqual(['[sm-dev] ERROR: The `status` command takes no arguments']);
+      expect(await run('status T2')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The `status` command takes no arguments\.\n {2}Usage: /)]);
       expect(await run('menu')).toEqual(['Menu commands on T1:', row, '    M1: Hit /target.html']);
       expect(await run('menu all')).toEqual([
         'Menu commands:',
@@ -503,7 +503,7 @@ test.describe('sm-dev typed commands', () => {
     expect(page.url()).toBe(target);
     // A bare tab: the selected script's page, there.
     await page.goto(`${fixtureServer.baseUrl}/other.html`);
-    expect(await run('open T1')).toEqual([]);
+    expect(await run('open --tab T1')).toEqual([]);
     expect(page.url()).toBe(target);
     expect(await run('open 2')).toEqual([noPage]);
     expect(await run('newtab all --offline')).toEqual(['[sm-dev] ERROR: The `newtab` command takes all by itself, to open each script\'s page']);
@@ -585,17 +585,17 @@ test.describe('sm-dev typed commands', () => {
       void page2.evaluate(() => setTimeout(() => alert('Hi'), 0));
       await expect.poll(() => dialogs2.current !== null).toBe(true);
       // With several tabs, the notice names the tab to answer it from.
-      expect(lines).toEqual(['[sm-dev] The page opened an alert dialog: "Hi". Use `accept T2` or `dismiss T2`.']);
+      expect(lines).toEqual(['[sm-dev] The page opened an alert dialog: "Hi". Use `accept --tab T2` or `dismiss --tab T2`.']);
 
       // `set` reaches every tab, so T2's dialog would hold it up.
-      expect(await run('set k 1')).toEqual(['[sm-dev] T2 is waiting on an alert dialog. Use `accept T2` or `dismiss T2` first.']);
-      expect(await run('accept')).toEqual(['[sm-dev] No dialog is open on T1. T2 has one; name its tab: `accept T2`.']);
+      expect(await run('set k 1')).toEqual(['[sm-dev] T2 is waiting on an alert dialog. Use `accept --tab T2` or `dismiss --tab T2` first.']);
+      expect(await run('accept')).toEqual(['[sm-dev] No dialog is open on T1. T2 has one; name its tab: `accept --tab T2`.']);
       expect(await run('tabs')).toEqual([
         'Tabs:', `* T1: ${fixtureServer.baseUrl}/target.html`, '   * 1: Store',
         `  T2: ${fixtureServer.baseUrl}/other.html (opened by T1)`, '    Waiting on an alert dialog: "Hi"', '     1: Store',
       ]);
       // Answered from T1, naming the tab.
-      expect(await run('accept T2')).toEqual(['[sm-dev] Accepted the dialog']);
+      expect(await run('accept --tab T2')).toEqual(['[sm-dev] Accepted the dialog']);
       expect(await run('set k 1')).toEqual(['[sm-dev] Set k']);
     } finally {
       await attachment2.dispose();

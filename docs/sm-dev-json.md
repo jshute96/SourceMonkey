@@ -844,7 +844,7 @@ JSON:
 }
 ```
 
-### `logs [tab|all] [script]`
+### `logs [--tab <tab>|all] [--script <script>]`
 
 ```ts
 interface LogsData {
@@ -917,7 +917,7 @@ JSON:
 }
 ```
 
-### `probe [tab] <selector>...`
+### `probe <selector>...`
 
 ```ts
 interface ProbeData {

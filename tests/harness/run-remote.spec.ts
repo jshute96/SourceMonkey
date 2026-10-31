@@ -263,12 +263,12 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
     expect(await setup.cli('menu', 'T2')).toEqual(['[sm-dev] No menu commands are registered on T2. T1 has some; use `menu all` or `menu T1` to list them.']);
     // An expression with spaces and quotes arrives as the shell gave it,
     // and so does a whole command sent as one word.
-    expect(await setup.cli('eval', 'T2', 'document.title + " " + location.pathname')).toEqual(['"target /target.html"']);
-    expect(await setup.cli('eval T1 document.title')).toEqual(['"target"']);
+    expect(await setup.cli('eval', '--tab', 'T2', 'document.title + " " + location.pathname')).toEqual(['"target /target.html"']);
+    expect(await setup.cli('eval --tab T1 document.title')).toEqual(['"target"']);
     // Commands piped in, with none on the line or after the line's
     // own, each headed by the command.
     expect(await setup.piped('eval 1+1\neval {{\n2+2\n}}\n')).toEqual(['stdin > eval 1+1', '2', 'stdin > eval {{', '... 2+2', '... }}', '4']);
-    expect(await setup.piped('eval 3\n', '--stdin', 'eval', 'T1', '0')).toEqual(['0', 'stdin > eval 3', '3']);
+    expect(await setup.piped('eval 3\n', '--stdin', 'eval', '--tab', 'T1', '0')).toEqual(['0', 'stdin > eval 3', '3']);
 
     // match and validate take the run's scripts and tabs, and a miss
     // is the exit code only when it comes last.
@@ -732,7 +732,7 @@ test('logs reads the run\'s log by source, tab, text, tail and position; streams
     expect(page).toContainEqual(expect.stringMatching(/ T1 \[page log\] page says hi$/));
     expect(page).toContainEqual(expect.stringMatching(/ T1 \[script log\] \[logger\] ran$/));
     expect(page.some((l) => l.includes('[event]'))).toBe(false);
-    expect(await setup.cli('logs', 'all', '1', '--find', '/HELPER/i', '--tail', '1')).toEqual([
+    expect(await setup.cli('logs', '--tab', 'all', '--script', '1', '--find', '/HELPER/i', '--tail', '1')).toEqual([
       expect.stringMatching(/ T1 \[script log\] helper: from menu$/), expect.stringMatching(tail),
     ]);
     // Only what came after a position.
@@ -740,7 +740,7 @@ test('logs reads the run\'s log by source, tab, text, tail and position; streams
     const after = await setup.cli('logs', '--since', position);
     expect(after.filter((l) => !tail.test(l))).toEqual([expect.stringMatching(/ T1 \[script log\] helper: from menu$/)]);
     expect(await setup.cli('logs', '--since', String(Date.now() * 1000 + 60e6))).toEqual(['[sm-dev] No log lines match on tab T1', expect.stringMatching(tail)]);
-    expect((await setup.cli('logs', 'all', '--since', String(Date.now() * 1000 + 60e6)))[0]).toBe('[sm-dev] No log lines match on any tab');
+    expect((await setup.cli('logs', '--tab=all', '--since', String(Date.now() * 1000 + 60e6)))[0]).toBe('[sm-dev] No log lines match on any tab');
     // wait log sees every source, and says where it found the line.
     expect(await setup.cli('wait', 'log', '--find', 'page says', '--since', '0')).toEqual([
       '[sm-dev] Wait matched log line: [page log] page says hi', expect.stringMatching(/^\[sm-dev\] Found at \d{16} /),
@@ -750,7 +750,7 @@ test('logs reads the run\'s log by source, tab, text, tail and position; streams
     // Mistakes.
     expect(await setup.cli('logs', '--log-source', 'pages')).toEqual(['[sm-dev] ERROR: The --log-source flag takes sm, event, script, page or all, or multiple separated by commas, not pages']);
     expect(await setup.cli('logs', '--since', 'soon')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The --since flag takes a log ID, /)]);
-    expect(await setup.cli('wait', '2s', '--find', 'x')).toEqual(['ERROR: The `wait` command has no --find flag. It takes --timeout-seconds. The --find flag is for `wait log`.']);
+    expect((await setup.cli('wait', '2s', '--find', 'x'))[0]).toBe('ERROR: The `wait` command has no --find flag. The --find flag is for `wait log`.');
 
     // A client following the run sees the sources it asked for. Logged
     // later, as eval's own reply would show it either way.

@@ -440,7 +440,7 @@ Command marks:
     lines.
 - The same list gives each command's syntax (`commandSyntax`), the
   names Tab completes, and which commands go to a run.
-  - Its flags come from its options and usage lines (`cdp [tab] --file
+  - Its flags come from its options and usage lines (`cdp --file
     <path>`). One whose term names a value (`--out FILE`) takes one.
   - A subcommand is a form named by a keyword with a `syntax` of its
     own (`script [script] save`, `wait log`). Each takes the flags of
@@ -500,9 +500,53 @@ sm-dev's up-front check runs it too.
     can go anywhere (a selector never starts with `--`).
   - `text`: some words, then the rest of the line as typed, less the
     flags in it. Unquoted as a whole unless it's JavaScript or JSON.
-- Also declared: a leading tab (`tab`) and a `{{` block (`block`).
+- Also declared: how it takes a tab (`tab`) and a `{{` block (`block`).
 - A form named by a keyword has its own syntax (`wait log <text>`).
 - Every command carries sm-dev's directory, for relative paths.
+
+#### Argument shapes
+
+Agents guessed flags for optional positionals (`screenshot <file>
+--selector X`, `eval --tab T2`) often enough that the commands follow
+one rule, so a guess is usually right:
+
+- Required arguments are positional: `click <selector>`, `eval <js>`,
+  `screenshot <file>`.
+- Optional modifiers are flags, where multiple would otherwise sit in a
+  row: `screenshot --selector`, `snapshot --selector`, `logs
+  --script`. A lone optional argument with a shape of its own stays
+  positional (`open [page]`).
+- A tab is `--tab T2` on every command that takes one. `tab` in the
+  syntax says what else it takes:
+  - `flag`: only `--tab`, for commands where the tab says where they
+    act (`click`, `eval`, `wait selector`). A tab given as an
+    argument is refused, naming `--tab`, rather than taken as the
+    selector or code.
+  - `lead`: also leading, for commands about the tab (`reload T2`,
+    `focus T2`, `wait T2`).
+  - `word`: `--tab` is taken as the first argument, for commands whose
+    argument can be a tab among other things (`closetab`, `frames`,
+    `menu`, `values`).
+  - Giving it both ways (`reload T1 --tab T2`) is refused.
+  - `--tab all` (`tabAll` in the syntax) means all tabs where a command
+    takes `all` as its argument (`reload all`), and on `logs`, which
+    reads it itself. Elsewhere it is refused, asking for one tab.
+  - A misplaced tab (`click T2 .x`, `wait T2 selector .x`) is refused
+    once all the words are read, so `--help` on the line still shows
+    help, as for other argument mistakes.
+- The `--tab` common option is listed only for the `flag` commands,
+  without `all`; `logs` lists its own `--tab`, which takes it.
+
+#### Mistake messages
+
+- A mistake in a command's words (an unknown flag, too many arguments,
+  a tab in the wrong place) is followed by the command's usage, its
+  flags with their values, and `help <command>` (`withUsage` in
+  `command-list.ts`). A guess at where something goes then shows the
+  right form in one step.
+- A word that is no command suggests the closest one: a known guess
+  (`goto` for `open`, `dialogs` for `accept`/`dismiss`), or a name one
+  or two edits away (`commandSuggestion`).
 
 ### Lines, blocks and lists (`command-lines.ts`)
 
@@ -968,14 +1012,14 @@ and waits for them.
   (a script's `confirm()` during the tab's first load).
   - The browser-wide listener records it by page, and the tab's
     tracker takes it when it attaches, and handles it as one shown
-    after: reported with `accept T2`, or dismissed in a hidden run
+    after: reported with `accept --tab T2`, or dismissed in a hidden run
     that takes no commands.
   - The page runs no code while the dialog is open, so the takeover
     matches the tab by its URL rather than reading its document, and
     `Page.enable` on a new session doesn't return until the dialog
     closes. The tracker uses that return as the dialog's close.
   - The rest of the tab's setup waits for the dialog to close, so the
-    tab joins the run's list only then. Until it does, `accept T2`
+    tab joins the run's list only then. Until it does, `accept --tab T2`
     reaches its tracker by name (`trackSettingUp`), and a run that
     ends dismisses the dialog.
 - A page stopped on a dialog answers no CDP call until it is answered.
@@ -1870,7 +1914,7 @@ each element a ref, `(f<n>)?e<n>`.
   to `<html>`, after `<body>`. Its `- document` line is left out, and
   the rest shown a level less indented.
 - Playwright resolves refs against the latest snapshot only. So
-  `snapshot <selector>` shows parts of a snapshot of the whole, which
+  `snapshot --selector` shows parts of a snapshot of the whole, which
   keeps the rest's refs working.
   - Each match is found in it by its top refs, from a depth-1 snapshot
     of the match. An element keeps its ref across snapshots, and the

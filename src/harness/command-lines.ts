@@ -5,7 +5,7 @@
 // JSON), `type` (its text) and `cdp` (one call per line) can take
 // several, as a block:
 //
-//   eval T2 --script {{
+//   eval --tab T2 --script {{
 //   const rows = [...document.querySelectorAll('.athing')];
 //   rows.map((r) => r.id)
 //   }}

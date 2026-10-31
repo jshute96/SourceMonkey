@@ -84,6 +84,13 @@ Where to look:
 - **Name tabs by `T<n>` or `targetId`, never by URL.** Two tabs on the
   same page are common, and acting on the wrong one looks like the
   script didn't run.
+- **Required arguments are positional; optional ones are flags.** A
+  page command's tab is `--tab T2`, an element to screenshot or
+  snapshot `--selector`, a log's script `--script`: `screenshot btn.png
+  --selector '.save' --tab T2`. A mistake's error shows the command's
+  usage and flags.
+  - A command's flags go anywhere after its name; global ones
+    (`--run`, `--json`, `--stdin`) go before it.
 - **Read the run's output before theorizing.** It shows whether the
   script started or threw, with file and line. With no `started` line,
   run `match` to find which header rule keeps it off the page.
@@ -288,7 +295,7 @@ $R click e14                        # refs work anywhere a selector does
 ```
 
 - `snapshot` is the accessibility tree: roles, names, and a ref like
-  `e14`, or `f2e6` with a frame number. `snapshot <selector>` shows
+  `e14`, or `f2e6` with a frame number. `snapshot --selector <sel>` shows
   each of its matches (the first 5; `--limit 0` for all); `--out file`
   saves a large one.
 - When you know some text on the page (from a screenshot, the person,
@@ -298,7 +305,7 @@ $R click e14                        # refs work anywhere a selector does
   - `--context` adds the wrapper divs and small containers around each
     match (of `--find` or a selector); `--up N` climbs N levels.
 - Refs only last until the page changes: take a new snapshot after a
-  reload or navigation. Refs from `snapshot <selector>` and from the
+  reload or navigation. Refs from `snapshot --selector` and from the
   whole page both work.
 - `snapshot` includes panels a script adds after `<body>` and inside
   open shadow roots.
@@ -328,6 +335,7 @@ $R hover '.card:first-child'
 $R wait selector '.result'           # when the result comes later than the settle
 $R eval 'document.querySelector(".result")?.textContent'
 $R screenshot shot.png               # then look at the PNG
+$R screenshot btn.png --selector '.save'   # just one element
 ```
 
 - Clicks, hovers and keys are real input (scrolled into view, trusted
@@ -347,12 +355,13 @@ $R screenshot shot.png               # then look at the PNG
 - Keys go to the page, not to Chrome: Chrome's shortcuts (back, reload,
   zoom, Escape leaving fullscreen) don't fire.
 - A command that opens a dialog (`alert`, `confirm`, `prompt`) returns
-  once it's up. Answer with `accept [tab] [text]` or `dismiss [tab]`;
-  until then the page is frozen, and most commands refuse.
+  once it's up. Answer with `accept [text]` or `dismiss` (`--tab T2`
+  for another tab); until then the page is frozen, and most commands
+  refuse.
 - A `*PERMISSION PROMPT*` line needs an answer before that request
   goes on: see [Permission prompts](#permission-prompts).
 - `logs` reads the run's log back for the tab: its script's lines and
-  events, timestamped. `logs all`, `logs 2` (one script),
+  events, timestamped. `logs --tab all`, `logs --script 2` (one script),
   `--log-source all` (the site's own too), `--find <text|/re/>`,
   `--tail 50` or `--tail 30s`.
   - It ends with `Logs up to <log ID>`; pass that to `--since` next
@@ -550,9 +559,10 @@ $R savehtml pages/some-page.html              # the DOM, with the URL recorded
   - Such a tab is set up after its first load, so console lines from
     that load aren't shown. Starts, errors and other reports are.
 - `newtab <url>` opens another controlled tab and makes it current;
-  `tab T1` switches back. Page commands take a tab first:
-  `click T2 '.x'`, `eval T2 location.href`, `open T2 <url>`,
-  `wait T2 selector '.x'`, `menu T2.M1`.
+  `tab T1` switches back. Page commands take another tab with `--tab`:
+  `click '.x' --tab T2`, `eval --tab T2 location.href`,
+  `open <url> --tab T2`, `wait selector '.x' --tab T2`; and
+  `menu T2.M1`.
 - `closetab` closes the current tab; `closetab T2 T3` or `closetab all`
   close others. A page that asks first ("Leave site?") shows its
   dialog, answered with `accept` or `dismiss`; `--force` skips it.
@@ -629,7 +639,7 @@ wrong. To keep output short, filter stdout (`| tail`, `| grep`) or send
 only stdout to `/dev/null`, never `2>/dev/null`.
 
 ```sh
-$R start sites/x/y.user.js https://x.com/ --detach -- click '.open' -- wait selector '#modal' -- snapshot '#modal'
+$R start sites/x/y.user.js https://x.com/ --detach -- click '.open' -- wait selector '#modal' -- snapshot --selector '#modal'
 ```
 
 A longer script, or any command with quotes in its arguments (JSON
@@ -693,13 +703,13 @@ $R --json probe '.result' | jq '.selectors[0].count'
 ### Beyond sm-dev: raw CDP
 
 For what sm-dev has no command for, `cdp` sends a raw CDP call to a
-tab (the current one, or `T2` first), and prints the result as JSON.
+tab (the current one, or the one `--tab T2` names), and prints the result as JSON.
 A `{{` block, or `--file`, holds several calls, one per line, on one
 session:
 
 ```sh
 $R cdp Input.dispatchMouseEvent '{"type":"mouseWheel","x":400,"y":300,"deltaX":0,"deltaY":600}'
-$R cdp T2 Page.getNavigationHistory
+$R cdp --tab T2 Page.getNavigationHistory
 ```
 
 - [references/cdp.md](references/cdp.md) has details and recipes:

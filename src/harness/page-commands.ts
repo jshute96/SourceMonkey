@@ -347,7 +347,8 @@ export async function runPageCommand(
         return;
       }
       case 'snapshot': {
-        const selector = input.text;
+        const flagged = input.flags['--selector'];
+        const selector = typeof flagged === 'string' ? flagged : '';
         const visible = input.flags['--visible'] === true;
         const parts = partOptions(input.flags, !!selector);
         if (typeof parts === 'string') {
@@ -417,17 +418,17 @@ export async function runPageCommand(
         return;
       }
       case 'screenshot': {
-        const rest = [...input.words];
-        const image = rest.pop();
+        const [image] = input.words;
         if (!image) {
-          sayMistake('The `screenshot` command needs a file, and takes one selector before it, e.g. `screenshot \'#comments\' c.png`');
+          sayMistake('The `screenshot` command needs a file, e.g. `screenshot c.png`, or for an element, `screenshot c.png --selector \'#comments\'`');
           return;
         }
         if (!IMAGE_FILE.test(image)) {
-          sayMistake(`The ${quoted('screenshot')} command writes a .png or .jpg file, and ${quoted(image)} is neither. Name the file last.`);
+          sayMistake(`The ${quoted('screenshot')} command writes a .png or .jpg file, and ${quoted(image)} is neither. For an element, give its selector with ${quoted('--selector')}.`);
           return;
         }
-        const selector = rest[0];
+        const flagged = input.flags['--selector'];
+        const selector = typeof flagged === 'string' ? flagged : undefined;
         if (selector) {
           if (input.flags['--full']) {
             sayMistake('The `--full` flag is for the whole page, not an element');
@@ -821,7 +822,7 @@ export function partOptions(flags: Record<string, string | true>, selector: bool
   const text = typeof find === 'string' ? find : undefined;
   if (text === undefined && !selector) {
     const other = ['--up', '--context', '--limit'].find((f) => flags[f] !== undefined);
-    return other ? `The ${quoted(other)} flag goes with a selector or ${quoted('--find')}` : null;
+    return other ? `The ${quoted(other)} flag goes with ${quoted('--selector')} or ${quoted('--find')}` : null;
   }
   const up = count('--up', 0);
   if (typeof up === 'string') return up;
