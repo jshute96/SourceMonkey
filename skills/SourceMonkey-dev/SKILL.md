@@ -566,8 +566,7 @@ $R savehtml pages/some-page.html              # the DOM, with the URL recorded
 - `closetab` closes the current tab; `closetab T2 T3` or `closetab all`
   close others. A page that asks first ("Leave site?") shows its
   dialog, answered with `accept` or `dismiss`; `--force` skips it.
-  - In a temp browser, closing the last tab quits it, which ends the
-    run. Use `stop` there instead of `closetab all`.
+  - Closing the last tab leaves a blank tab open. `stop` ends the run.
 - `tabs` lists them with their `targetId`s, for your own CDP clients.
   In a script: `$R --json tabs | jq -r '.tabs[] | select(.id == "T2") | .targetId'`.
 - `reload all` reloads every tab; `wait all` waits for every tab to

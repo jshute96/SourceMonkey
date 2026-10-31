@@ -6,7 +6,8 @@
 // - Playwright's Chromium, since Google Chrome (137+) ignores
 //   `--load-extension`. Hidden runs use Chrome's new headless mode
 //   (`--headless=new`), the only headless mode that loads extensions,
-//   with a windowed Chrome's user agent (see `windowedUserAgent`).
+//   with a windowed Chrome's user agent (see `windowedUserAgent`) and
+//   a mouse (see `MOUSE_SETTINGS`).
 // - A fresh profile in a temp directory, deleted when the browser is
 //   closed. Its Preferences grant "Allow User Scripts" before launch,
 //   which Chrome otherwise leaves to a click (chrome.userScripts is
@@ -193,6 +194,13 @@ export function fetchedId(dir: string, manager: ManagerName): string {
   return extensionIdFromKey(key);
 }
 
+// Blink's settings for a mouse: a fine pointer that can hover. With no
+// pointing device, new headless matches `(hover: none)` and
+// `(pointer: none)`, so a page hides what it shows on hover (GitHub's
+// tooltips) as on a phone. The values are Blink's bit flags: hover 2,
+// fine pointer 4.
+const MOUSE_SETTINGS = '--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4';
+
 async function launch(
   profile: string, headed: boolean, args: string[] = [], dir = EXTENSION_DIR, backForwardCache = false,
 ): Promise<BrowserContext> {
@@ -222,7 +230,7 @@ async function launch(
       ...(headed ? { viewport: null } : {}),
       ...(backForwardCache ? { ignoreDefaultArgs: ['--disable-back-forward-cache'] } : {}),
       args: [
-        ...(headed ? [] : ['--headless=new']),
+        ...(headed ? [] : ['--headless=new', MOUSE_SETTINGS]),
         ...(userAgent ? [`--user-agent=${userAgent}`] : []),
         ...extensionArgs(dir),
         ...args,

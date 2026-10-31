@@ -196,7 +196,7 @@ asked to.
 | `frames [T2\|F3\|all]` | A tab's iframes (`F1`, ...) as a tree, with the scripts running in each, `(hidden)` ones marked, each one's CDP `frameId`, and the `targetId` of one from another site |
 | `newtab [page...]` | Open a controlled tab (becomes current) |
 | `newtab --noscript <url>` | A tab the scripts stay out of (sticky) |
-| `closetab [T2 T3...\|all]` | Close the current tab, the ones named, or all. A page's "Leave site?" dialog waits for `accept`/`dismiss`; `--force` skips it |
+| `closetab [T2 T3...\|all]` | Close the current tab, the ones named, or all. Closing the last tab leaves a blank tab open. A page's "Leave site?" dialog waits for `accept`/`dismiss`; `--force` skips it |
 | `open [page] [--tab T2]` | Navigate the current tab, or the one named |
 | `reload [T2\|all]` | Reload |
 | `focus [T2]` | Bring to the front |
@@ -224,7 +224,7 @@ asked to.
 | `logs [--tab T2\|all] [--script <script>]` | The run's log for the tab (its scripts' lines and events), timestamped and whole (the stream cuts a line past 1000 characters) |
 | `logs ... --log-source all` | The site's own lines too; or a list, e.g. `sm` for SourceMonkey's Log entries alone |
 | `logs ... --find <text\|/re/>`, `--tail 50`, `--tail 30s` | Only matching lines; the last N, or the last stretch of time |
-| `logs ... --since <position>` | Only lines after a log ID (`Logs up to` gives the last), an ISO 8601 time, or a time of day (`14:05:12`) |
+| `logs ... --since <position>` | Only lines after a log ID (`Logs up to` gives the last), an ISO 8601 time, a time of day (`14:05:12`), or a time ago (`30s`, `5m`) |
 
 ## Driving the page
 

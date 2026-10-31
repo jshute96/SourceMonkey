@@ -148,14 +148,17 @@ export class RunLog {
 
 // ---------- Positions and spans ----------
 
-const SINCE_FORMS = 'a log ID, an ISO 8601 time such as 2026-10-03T14:05:12Z, or a time of day such as 14:05:12';
+const SINCE_FORMS = 'a log ID, an ISO 8601 time such as 2026-10-03T14:05:12Z, a time of day such as 14:05:12, or a time ago such as 30s or 5m';
 
 /**
  * A `--since` value as a log ID: a log ID itself, an ISO 8601 time
- * (local without a zone), or a time of day today, local.
+ * (local without a zone), a time of day today, local, or a span of
+ * time before `now` (`30s`).
  */
 export function parsePosition(text: string, now = new Date()): number | { error: string } {
   if (/^\d+$/.test(text)) return Number(text);
+  const ago = spanMicros(text);
+  if (ago !== null) return now.getTime() * 1000 - ago;
   const time = /^(\d{1,2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?$/.exec(text);
   if (time) {
     const [, h, m, s = '0', frac = ''] = time;
@@ -173,9 +176,15 @@ export function parsePosition(text: string, now = new Date()): number | { error:
 /** A `--tail` value: a number of lines, or a stretch of time (`30s`, `5m`). */
 export function parseTail(text: string): { lines: number } | { micros: number } | { error: string } {
   if (/^\d+$/.test(text) && Number(text) > 0) return { lines: Number(text) };
-  const span = /^(\d+(?:\.\d+)?)(ms|s|m|h)$/.exec(text);
-  if (span) return { micros: Math.round(Number(span[1]) * { ms: 1e3, s: 1e6, m: 6e7, h: 3.6e9 }[span[2] as 'ms' | 's' | 'm' | 'h']) };
+  const micros = spanMicros(text);
+  if (micros !== null) return { micros };
   return { error: `The --tail flag takes a number of lines, or a time such as 500ms, 30s, 5m or 1h, not ${text}` };
+}
+
+// A span of time (`500ms`, `30s`, `5m`, `1h`) in microseconds, or null.
+function spanMicros(text: string): number | null {
+  const span = /^(\d+(?:\.\d+)?)(ms|s|m|h)$/.exec(text);
+  return span ? Math.round(Number(span[1]) * { ms: 1e3, s: 1e6, m: 6e7, h: 3.6e9 }[span[2] as 'ms' | 's' | 'm' | 'h']) : null;
 }
 
 /** A log ID's time of day, local: `14:05:12.678`. */

@@ -250,7 +250,7 @@ export async function runPageCommand(
         }
         const count = await matches(page, selector, say, frame, tab.link.host.frameIds);
         if (count === null) return false;
-        const target = locate(page, selector, frame).first();
+        const { target, which } = await firstVisible(page, selector, frame, count);
         const action = (command === 'click'
           ? target.click({ ...options.click, timeout: actionMs })
           : target.hover({ modifiers: options.click.modifiers, position: options.click.position, timeout: actionMs }))
@@ -264,7 +264,7 @@ export async function runPageCommand(
             throw new Error(await placeProblem(page, target, options.click.position) ?? err.message);
           });
         const how = options.how.length > 0 ? ` with ${options.how.join(', ')}` : '';
-        await act(action, ui`${command === 'click' ? 'Clicked' : 'Hovered over'} ${namedMarked(page, selector)}${inFrame}${count > 1 ? ` (the first of ${count} matches)` : ''}${how}`);
+        await act(action, ui`${command === 'click' ? 'Clicked' : 'Hovered over'} ${namedMarked(page, selector)}${inFrame}${which && ` (${which})`}${how}`);
         return;
       }
       case 'type': {
@@ -309,13 +309,13 @@ export async function runPageCommand(
         }
         const count = await matches(page, selector, say, frame, tab.link.host.frameIds);
         if (count === null) return false;
-        const element = locate(page, selector, frame).first();
+        const { target: element, which } = await firstVisible(page, selector, frame, count);
         const typing = (async () => {
           if (clear) await element.clear({ timeout: actionMs });
           if (text) await element.pressSequentially(text, { timeout: actionMs });
         })();
         const done = !text ? 'Cleared' : clear ? 'Cleared and typed into' : 'Typed into';
-        await act(typing, ui`${done} ${namedMarked(page, selector)}${inFrame}${count > 1 ? ` (the first of ${count} matches)` : ''}`);
+        await act(typing, ui`${done} ${namedMarked(page, selector)}${inFrame}${which && ` (${which})`}`);
         return;
       }
       case 'key': {
@@ -429,13 +429,17 @@ export async function runPageCommand(
         }
         const flagged = input.flags['--selector'];
         const selector = typeof flagged === 'string' ? flagged : undefined;
+        let which = '';
         if (selector) {
           if (input.flags['--full']) {
             sayMistake('The `--full` flag is for the whole page, not an element');
             return;
           }
-          if (await matches(page, selector, say, frame, tab.link.host.frameIds) === null) return false;
-          await write(image, () => locate(page, selector, frame).first().screenshot({ path: file(image), timeout: actionMs }));
+          const count = await matches(page, selector, say, frame, tab.link.host.frameIds);
+          if (count === null) return false;
+          const picked = await firstVisible(page, selector, frame, count);
+          which = picked.which;
+          await write(image, () => picked.target.screenshot({ path: file(image), timeout: actionMs }));
         } else if (frame) {
           // The frame as it shows on the page: its <iframe> element.
           if (input.flags['--full']) {
@@ -452,7 +456,7 @@ export async function runPageCommand(
             return false;
           }
         }
-        say(ui`Wrote ${url(shown(image))}${selector ? ui` (${namedMarked(page, selector)}${inFrame})` : frame ? ui` (in ${frameShown})` : ''} from ${url(page.url())}`);
+        say(ui`Wrote ${url(shown(image))}${selector ? ui` (${namedMarked(page, selector)}${inFrame}${which && `, ${which}`})` : frame ? ui` (in ${frameShown})` : ''} from ${url(page.url())}`);
         return;
       }
       case 'savehtml': {
@@ -1092,6 +1096,25 @@ function snapshotLine(line: string): string {
   if (/^# Match \d+$/.test(line)) return heading(line);
   if (!line.includes('[ref=')) return line;
   return MARKUP + line.split(/\[ref=([^\]\s]+)\]/).map((part, i) => (i % 2 === 1 ? `[ref=${idRole(part)}]` : escapeMarkup(part))).join('');
+}
+
+/**
+ * The element a command acts on among a selector's `count` matches: the
+ * first one that shows, as a person would pick, so a page's hidden copy
+ * (a mobile menu's link) isn't taken for it. With none showing, or one
+ * match, the first, whose action then says if it stays hidden. `which`
+ * says which match it is (`the first of 3 matches`), or is empty for
+ * the only one.
+ */
+async function firstVisible(page: Page, selector: string, within: Frame | undefined, count: number): Promise<{ target: Locator; which: string }> {
+  const all = locate(page, selector, within);
+  if (count < 2) return { target: all.first(), which: '' };
+  // Checked once, before the action, which then waits for its element
+  // to show (a menu still opening). A count that fails, as when the
+  // page navigates, takes the first.
+  const shown = await all.filter({ visible: true }).count().catch(() => count);
+  if (shown > 0 && shown < count) return { target: all.filter({ visible: true }).first(), which: `the first visible of ${count} matches` };
+  return { target: all.first(), which: `the first of ${count} matches` };
 }
 
 // How many elements a selector matches, or null (said why) when none

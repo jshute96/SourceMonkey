@@ -10,8 +10,8 @@ with its script IDs and a run name prefix.
   named runs (`--run <prefix>1`), `--detach`, never `sleep`, `stop` when
   done.
 - `node tests/greasyfork-examples/record-results.mjs show ID` prints the
-  record. Its `file` is the downloaded copy, under
-  `tests/greasyfork-examples/files/`. Test that copy, not a fresh download.
+  record as JSON, and on stderr a `File:` line naming the downloaded
+  copy, under `tests/greasyfork-examples/files/`. Test that copy, not a fresh download.
 - `sm-dev` runs the built `lib/`. If the task is about a recent fix, make
   sure it's built (`pnpm run build`).
 
@@ -97,7 +97,9 @@ Every run runs the script in the real SourceMonkey:
   `stop` removes, so parallel agents don't see each other's scripts.
   Always `stop` your runs.
 - The script's remote `@require`s are fetched live, not from the copies
-  in `files/`.
+  in `files/`. When a `@require` host is down (a 503 or 404 makes the
+  script invalid), give `--local tests/greasyfork-examples/files` before
+  the command to use the downloaded copies.
 - While a run is live, `@run-at document-start` code may run after the
   page's first inline scripts, where SourceMonkey alone would run it
   first. A script that hooks `fetch` or `XMLHttpRequest` early may miss

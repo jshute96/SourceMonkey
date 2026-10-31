@@ -2155,7 +2155,8 @@ const CLOSE_TIMEOUT_MS = 5000;
 
 // `closetab [tab...|all] [--force]`: closes the current tab, the tabs
 // named, or all of them. Each is named before any closes, so a slip
-// closes none. The tabs' own close handlers say each closed.
+// closes none. The tabs' own close handlers say each closed. The
+// browser's last tab is replaced by a blank one, so the browser stays.
 //
 // The page's beforeunload handlers run, as when a person closes a tab,
 // so a page that asks first ("Leave site?") shows its dialog, which the
@@ -2185,7 +2186,13 @@ async function closeTabs(ctx: ConsoleContext, words: string[], force: boolean, c
   for (const t of waiting) {
     ctx.out(`[sm-dev] ${tabName(t)} is waiting on ${dialogKind(t.dialogs!.current!)} dialog, so it was not closed. Answer it, or use ${quoted(`closetab ${tabName(t)} --force`)}.`);
   }
-  await Promise.all(tabs.filter((t) => !waiting.includes(t)).map((t) => closeTab(ctx, t, force, timeoutMs)));
+  const closing = tabs.filter((t) => !waiting.includes(t));
+  // Closing the browser's last tab closes the browser, which ends a run
+  // in a browser of its own, so a blank tab is opened to stay. In a
+  // shared browser, the person's own tabs keep it open.
+  const pages = current.page.context().pages().filter((p) => !p.isClosed());
+  if (ctx.newTab && closing.length > 0 && pages.every((p) => closing.some((t) => t.page === p))) await ctx.newTab();
+  await Promise.all(closing.map((t) => closeTab(ctx, t, force, timeoutMs)));
   // Says where the page commands act now, if their tab closed.
   currentTab(ctx);
 }

@@ -54,12 +54,17 @@ test('the oldest lines go past a cap, and a read from before them says so', () =
   assert.equal(log.lostAfter(first.id), undefined);
 });
 
-test('--since takes a log ID, an ISO 8601 time, or a time of day', () => {
+test('--since takes a log ID, an ISO 8601 time, a time of day, or a time ago', () => {
   assert.equal(parsePosition('1759512345678901'), 1759512345678901);
   assert.equal(parsePosition('2026-10-03T14:05:12.345Z'), Date.parse('2026-10-03T14:05:12.345Z') * 1000);
   const now = new Date(2026, 9, 3, 20, 0, 0);
   assert.equal(parsePosition('14:05:12.5', now), new Date(2026, 9, 3, 14, 5, 12).getTime() * 1000 + 500000);
   assert.equal(parsePosition('14:05', now), new Date(2026, 9, 3, 14, 5, 0).getTime() * 1000);
+  assert.equal(parsePosition('30s', now), now.getTime() * 1000 - 30_000_000);
+  assert.equal(parsePosition('1.5m', now), now.getTime() * 1000 - 90_000_000);
+  assert.equal(parsePosition('500ms', now), now.getTime() * 1000 - 500_000);
+  // A bare number is a log ID, not seconds.
+  assert.equal(parsePosition('30', now), 30);
   assert.match(parsePosition('soon').error, /^The --since flag takes a log ID/);
   assert.match(parsePosition('25:00').error, /^The --since flag takes/);
 });

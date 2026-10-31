@@ -398,6 +398,8 @@ sm-dev --open-browser --browser 9300            # another one, on port 9300
 - Hidden, it still sends a windowed Chrome's user agent, not
   `HeadlessChrome`, which some servers refuse a script's `@require`s
   and requests for.
+- Hidden, it also reports a mouse (`(hover: hover)`, `(pointer: fine)`),
+  so hover styles and tooltips show as in a windowed browser.
 - Given outright, `--temp-browser` needs a `start` on the line (or
   `--interactive` or `--stdin`, where one can come).
 
@@ -1357,7 +1359,7 @@ In a run, not given files, they act on the run's scripts and tabs:
 | `tabs` | Lists the controlled tabs |
 | `tab <tab>` | Picks the current tab, which the page commands act on. `tabs <tab>` works too |
 | `newtab [page...\|all]` | Opens a new tab with the scripts for each page, or a blank tab |
-| `closetab [tab...\|all]` | Closes the current tab, the tabs named, or all of them. Runs the pages' `beforeunload` handlers unless `--force` (see [Page dialogs](#page-dialogs)) |
+| `closetab [tab...\|all]` | Closes the current tab, the tabs named, or all of them. Closing the last tab leaves a blank tab open. Runs the pages' `beforeunload` handlers unless `--force` (see [Page dialogs](#page-dialogs)) |
 | `open [page] [--tab T2]` | Navigates the current tab, or the one named, to a URL or file (a glob matching one), or to a script's default page |
 | `reload [tab\|all]` | Reloads the page, another tab's, or all tabs at once. `--noscript` / `--script` switch the tabs' scripts off or back on first |
 | `focus [T2]` | Brings the tab to the front, un-minimizing its window |
@@ -1551,7 +1553,7 @@ acts on the current tab, or the one `--tab` names (`--tab T2`,
 
 | Run command | What it does |
 | --- | --- |
-| `click <selector>`, `hover <selector>` | A real mouse click or hover, scrolled into view. With several matches, the first |
+| `click <selector>`, `hover <selector>` | A real mouse click or hover, scrolled into view. With multiple matches, the first visible match (or the first, with none showing); `type` and `screenshot --selector` pick the same way |
 | `click <selector> --button right --modifiers Shift --count 2` | A right or middle click, with keys held, or a double (`--count 2`) or triple click |
 | `click <selector> --at 300,12`, `hover <selector> --modifiers Alt --at 4,4` | At a point in the element, in pixels from its top left corner, rather than its center. `hover` takes `--modifiers` too |
 | `type <selector> <text>` | Types into an element, key by key |
@@ -1807,8 +1809,8 @@ sm-dev logs --tab all --log-source all --find /error/i --tail 5m
 - `--tail N` or `--tail 30s`: the last N lines, or those from the last
   stretch of time.
 - `--since <position>`: only lines after it. A position is a log ID,
-  an ISO 8601 time (`2026-10-03T14:05:12Z`; local without a zone), or a
-  time of day today (`14:05:12`).
+  an ISO 8601 time (`2026-10-03T14:05:12Z`; local without a zone), a
+  time of day today (`14:05:12`), or a time ago (`30s`, `5m`).
 - Each line's log ID is when it arrived, in microseconds since the
   epoch. `logs` ends with the newest, `Logs up to ...`, to pass to the
   next `--since`.

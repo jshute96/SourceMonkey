@@ -884,6 +884,9 @@ for commands without a run, the browser they act on.
     run (see Downloads above) and for a suite that asks.
   - Hidden runs use `--headless=new`, the only headless mode that loads
     extensions.
+  - It has no pointing device, so pages see `(hover: none)` and hide
+    what shows on hover (GitHub's tooltips), as on a phone. Blink
+    settings give hidden browsers a mouse that can hover.
 - Window sizes:
   - A visible browser has no emulated viewport, so its windows are sized
     as in a browser a person runs. Playwright's default viewport would
@@ -1043,6 +1046,15 @@ and waits for them.
     leaves it, while the others close.
   - `--force` closes without the handlers. It answers an open dialog
     first (a page stopped on one never finishes closing).
+- When `closetab` would close all of the browser's tabs, it opens a
+  blank tab first.
+  - Closing the last tab closes the browser, which ends a run in a
+    browser of its own. `stop` is how a run ends.
+  - In a shared browser, the person's own tabs keep it open, so nothing
+    extra opens.
+  - The blank tab opens before the closes start, so a tab that stays
+    (its "Leave site?" dialog dismissed, or a close that timed out)
+    leaves it beside that tab.
 
 ### Connection prompts
 
@@ -1811,6 +1823,12 @@ The run commands that drive and read a tab's page (`click`, `type`,
 
 - Real input comes from Playwright's locators and keyboard; the
   accessibility tree from `ariaSnapshot`.
+- A selector with multiple matches acts on the first visible match
+  (`click`, `hover`, `type`, `screenshot --selector`).
+  - Pages often keep hidden copies (a mobile menu's links) ahead of the
+    visible ones, which a person would never pick.
+  - With none showing, or a single match or ref, the first is used, and
+    the action's error says it is hidden.
 - An action whose element never passes Playwright's checks times out.
   The error names the last check its call log says failed (hidden,
   disabled, moving, covered by which element), not the general list.

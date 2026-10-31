@@ -391,6 +391,36 @@ test('click takes a button, modifiers and a count, and says which check its elem
   ]);
 });
 
+test('of multiple matches, click, hover, type and screenshot take the first visible match', async ({ page, fixtureServer, host, attachment, loadScript }, testInfo) => {
+  const script = await loadScript({ relativePath: 'idle.user.js', meta: { name: 'Idle', match: ['*://*/target.html'] }, body: '' });
+  await page.goto(`${fixtureServer.baseUrl}/target.html`);
+  await page.evaluate(() => {
+    // A hidden copy ahead of the shown one, as a mobile menu's.
+    document.body.insertAdjacentHTML('beforeend', '<button class="b" hidden>Hidden</button><button class="b">Shown</button><input class="i" hidden><input class="i">'
+      + '<span class="none" hidden>a</span><span class="none" hidden>b</span>');
+    (window as unknown as { seen: string[] }).seen = [];
+    for (const b of document.querySelectorAll('.b')) b.addEventListener('click', () => (window as unknown as { seen: string[] }).seen.push(b.textContent!));
+  });
+  const lines: string[] = [];
+  const tabs = [{ n: 1, page, link: attachment }];
+  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(plainLine(l)), stop: () => undefined };
+  const run = async (line: string) => {
+    lines.length = 0;
+    await runConsoleCommand(line, ctx);
+    return [...lines];
+  };
+
+  expect(await run('click .b')).toEqual(['[sm-dev] Clicked .b (the first visible of 2 matches)']);
+  expect(await page.evaluate(() => (window as unknown as { seen: string[] }).seen)).toEqual(['Shown']);
+  expect(await run('hover .b')).toEqual(['[sm-dev] Hovered over .b (the first visible of 2 matches)']);
+  expect(await run('type .i hi')).toEqual(['[sm-dev] Typed into .i (the first visible of 2 matches)']);
+  expect(await page.evaluate(() => [...document.querySelectorAll<HTMLInputElement>('.i')].map((i) => i.value))).toEqual(['', 'hi']);
+  const image = testInfo.outputPath('shown.png');
+  expect(await run(`screenshot ${image} --selector .b`)).toEqual([`[sm-dev] Wrote ${path.relative(process.cwd(), image)} (.b, the first visible of 2 matches) from ${page.url()}`]);
+  // With none showing, the first, whose action says it is hidden.
+  expect((await run('hover .none --timeout-seconds 0.5'))[0]).toMatch(/^\[sm-dev\] The hover command failed: The element stayed hidden/);
+});
+
 test('an Escape that leaves the page fullscreen says how to exit', async ({ page, fixtureServer, host, attachment, loadScript }) => {
   const script = await loadScript({
     relativePath: 'full.user.js',

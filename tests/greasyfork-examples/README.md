@@ -348,7 +348,7 @@ R=tests/greasyfork-examples/record-results.mjs
 node $R validate                       # offline-validate every downloaded script, import verdicts
 node $R list --untested --valid ok --limit 20
 node $R list --label awesome-userscripts --untested   # one collection, in its rank order
-node $R show 14178                     # one record, plus its path under files/
+node $R show 14178                     # one record as JSON; its path under files/ on stderr
 node $R set 14178 --test pass --note "Redirect links rewritten on a bing.com search"
 node $R set 14178 --test fail --blame sourcemonkey --note-file /tmp/why.md
 node $R set 14178 --test n/a --reason requires-login --note "Every matched page needs an account"

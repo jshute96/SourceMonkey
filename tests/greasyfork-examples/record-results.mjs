@@ -402,7 +402,8 @@ async function show(opts) {
   console.log(JSON.stringify(record, null, 2));
   await checkRoot(opts.root);
   const file = record.listing && await findExisting(opts.root, record.listing.script_url);
-  console.log(`\nFile: ${file ? path.relative(process.cwd(), file) : '(not downloaded)'}`);
+  // On stderr, so stdout is the record's JSON alone, for a JSON parser.
+  process.stderr.write(`File: ${file ? path.relative(process.cwd(), file) : '(not downloaded)'}\n`);
 }
 
 /** One `list` line: ID and installs right-aligned, the statuses padded, then the name. */

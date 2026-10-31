@@ -391,7 +391,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         usage: 'closetab [T<n>...|all]',
         syntax: { args: 'words', tab: 'word', tabAll: true },
-        about: ['Close this tab, the tabs named, or all tabs.', 'A page that asks first ("Leave site?") shows its dialog, for `accept` or `dismiss`.'],
+        about: ['Close this tab, the tabs named, or all tabs.', 'Closing the last tab leaves a blank tab open.', 'A page that asks first ("Leave site?") shows its dialog, for `accept` or `dismiss`.'],
         options: [{ term: '--force', about: 'Close without running the pages\' `beforeunload` handlers.' }],
         gap: true,
       },
@@ -479,7 +479,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         syntax: { args: 'words', max: 1, tab: 'flag' },
         about: 'Save a PNG or JPEG of what is on screen, or of an element.',
         options: [
-          { term: '--selector <css>', about: 'Capture one element: the first that matches the selector or ref.' },
+          { term: '--selector <css>', about: ['Capture one element, given as a selector or ref.', 'With multiple matches, the first visible match.'] },
           { term: '--full', about: 'The whole page.' },
         ],
         gap: true,
@@ -542,7 +542,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       { term: '--find TEXT', about: 'Only log lines with the text, or matching `/regex/`.', commands: ['logs', 'wait log'] },
       {
         term: '--since POSITION',
-        about: 'Only log lines after a log ID or a time (e.g. `2026-10-03T14:05:12Z` or `14:05:12`).',
+        about: 'Only log lines after a log ID, a time (`2026-10-03T14:05:12Z` or `14:05:12`), or a time ago (`30s`, `5m`).',
         commands: ['logs', 'wait log'],
       },
     ],
@@ -555,7 +555,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         usage: 'click <selector>',
         syntax: { args: 'selector', tab: 'flag' },
-        about: 'Click an element.',
+        about: ['Click an element.', 'With multiple matches, the first visible match.'],
         options: [
           { term: '--button <name>', about: '`left` (the default), `right` or `middle`.' },
           { term: '--modifiers <keys>', about: 'Keys held during the click, e.g. `Shift` or `Control+Alt`.' },
@@ -566,7 +566,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         usage: 'hover <selector>',
         syntax: { args: 'selector', tab: 'flag' },
-        about: 'Move the mouse over an element.',
+        about: ['Move the mouse over an element.', 'With multiple matches, the first visible match.'],
         options: [
           { term: '--modifiers <keys>', about: 'Keys held, e.g. `Alt`.' },
           { term: '--at <x,y>', about: 'Where in the element, in pixels from its top left corner (default: its center).' },
@@ -576,7 +576,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         usage: 'type <selector> <text>',
         syntax: { args: 'text', before: 1, tab: 'flag', block: true, bracesInText: true },
-        about: ['Type text into an element. (Text box, etc.)', '`type <selector> {{` starts multi-line text, ended by `}}`.'],
+        about: ['Type text into an element. (Text box, etc.)', 'With multiple matches, the first visible match.', '`type <selector> {{` starts multi-line text, ended by `}}`.'],
         options: [
           { term: '--file <path>', about: 'Type a file\'s text, in place of `<text>`.' },
           { term: '--clear', about: 'Empty the element first. With no text, only empty it.' },

@@ -145,6 +145,7 @@ epoch.
 | Log ID | `1759512345678901` | Exactly after that line |
 | ISO 8601 | `2026-10-03T14:05:12.345Z`, `2026-10-03T14:05:12+02:00` | That moment. With no zone, local time. |
 | Time of day | `14:05:12`, `14:05:12.345` | That moment today, local time |
+| Time ago | `30s`, `5m`, `500ms`, `1h` | That long before the command |
 
 ### End-of-logs messages
 
