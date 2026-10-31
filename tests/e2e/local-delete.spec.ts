@@ -1,5 +1,5 @@
 // Deleting a local copy from disk (src/extension/delete-dialog.ts,
-// src/extension/local-delete.ts): the trash can beside Local copy… removes the
+// src/extension/local-delete.ts): the trash can beside Make local copy… removes the
 // file the copy was written to, takes the dependency files only that
 // copy uses with it if asked, and leaves the ones another script in the
 // collection is loading.
@@ -47,6 +47,14 @@ async function expectGlyph(
   );
   if (kind === 'file') await expect(btn).toHaveClass(/\bdeletes-file\b/);
   else await expect(btn).not.toHaveClass(/\bdeletes-file\b/);
+}
+
+// After deleting the copy on screen with other copies left: the page
+// shows one of them rather than a not-found state.
+async function expectMovedOff(page: Page, copyId: string): Promise<void> {
+  await expect.poll(() => new URL(page.url()).searchParams.get('script')).not.toBe(copyId);
+  await expect(page.locator('#meta-row')).toBeVisible();
+  await expect(page.locator('#message')).not.toHaveText('This script has been removed');
 }
 
 function scriptWith(opts: { name: string; extra?: string[] }): string {
@@ -109,8 +117,10 @@ test.describe('deleting a local copy', () => {
     await expectGlyph(page.locator(DELETE_BTN), 'file');
     await page.goto(viewerUrl(extensionId, originalId));
     await expect(page.locator('#local-copy-btn')).toBeVisible();
-    // Nothing to delete on the web original: its file is not ours.
-    await expect(page.locator(DELETE_BTN)).toBeHidden();
+    // The web original's file is not ours: its trash can removes only
+    // the record.
+    await expect(page.locator(DELETE_BTN)).toBeVisible();
+    await expectGlyph(page.locator(DELETE_BTN), 'record');
     await page.goto(viewerUrl(extensionId, copyId));
     const copiesDir = path.join(downloadsDir!, 'SourceMonkey');
     const file = path.join(copiesDir, 'hello.user.js');
@@ -135,9 +145,8 @@ test.describe('deleting a local copy', () => {
       .toHaveText('Delete will remove 2 files from disk.\nThis cannot be undone.');
     await page.locator(CONFIRM).click();
 
-    // Both files gone, and the page says what happened rather than
-    // reading as a script the store lost.
-    await expect(page.locator('#message')).toHaveText('This script has been removed');
+    // Both files gone, and the page moves on to the copy that is left.
+    await expect(page).toHaveURL(viewerUrl(extensionId, originalId));
     expect(fs.existsSync(file)).toBe(false);
     expect(fs.existsSync(lib)).toBe(false);
 
@@ -160,14 +169,14 @@ test.describe('deleting a local copy', () => {
 
       const page = await extensionContext.newPage();
       await page.goto(viewerUrl(extensionId, originalId));
-      await copyWithDeps(page, originalId);
+      const copyId = await copyWithDeps(page, originalId);
       const lib = path.join(downloadsDir!, 'SourceMonkey', 'lib', 'helper.js');
       expect(fs.existsSync(lib)).toBe(true);
 
       await page.locator(DELETE_BTN).click();
       await expect(page.locator(GROUP(0)).locator('li')).toHaveText('lib/helper.js');
       await page.locator(CONFIRM).click();
-      await expect(page.locator('#message')).toHaveText('This script has been removed');
+      await expectMovedOff(page, copyId);
       expect(fs.existsSync(lib)).toBe(false);
       // The original's own file is untouched.
       expect(fs.existsSync(path.join(dir.path, 'lib', 'helper.js'))).toBe(true);
@@ -254,7 +263,7 @@ test.describe('deleting a local copy', () => {
       .toHaveText('Delete will remove 1 file from disk.\nThis cannot be undone.');
     await page.locator(CONFIRM).click();
 
-    await expect(page.locator('#message')).toHaveText('This script has been removed');
+    await expectMovedOff(page, copyId);
     expect(fs.existsSync(path.join(copiesDir, 'hello.user.js'))).toBe(false);
     // The library the other copy loads is still there, and so is it.
     expect(fs.existsSync(lib)).toBe(true);
@@ -298,7 +307,7 @@ test.describe('deleting a local copy', () => {
     await expect(page.locator(CONFIRM)).toBeEnabled();
     await page.locator(CONFIRM).click();
 
-    await expect(page.locator('#message')).toHaveText('This script has been removed');
+    await expectMovedOff(page, copyId);
     expect(fs.existsSync(path.join(copiesDir, 'hello.user.js'))).toBe(false);
     expect(fs.existsSync(lib)).toBe(true);
     await page.close();
@@ -361,7 +370,7 @@ test.describe('deleting a local copy', () => {
     );
     await page.locator(CONFIRM).click();
     await expect(page.locator(DIALOG)).toBeHidden();
-    await expect(page.locator('#message')).toHaveText('This script has been removed');
+    await expectMovedOff(page, copyId);
     expect((await sm.getCollectionWithScripts(copies.id))!.scripts.map((x) => x.id)).not.toContain(copyId);
     await page.close();
   });
@@ -404,7 +413,7 @@ test.describe('deleting a local copy', () => {
     await expect(page.locator(GROUP(3))).toBeHidden();
     await page.locator(CONFIRM).click();
     await expect(page.locator(DIALOG)).toBeHidden();
-    await expect(page.locator('#message')).toHaveText('This script has been removed');
+    await expectMovedOff(page, copyId);
     expect(fs.existsSync(path.join(copiesDir, 'hello.user.js'))).toBe(false);
     await page.close();
   });
@@ -530,5 +539,59 @@ test.describe('deleting a local copy', () => {
     await expect(section.locator('tr[data-script-id]')).toHaveCount(0);
     expect(fs.existsSync(path.join(copiesDir, 'hello.user.js'))).toBe(false);
     await page.close();
+  });
+});
+
+// The same trash can on a script that isn't a local copy: it removes
+// the record, as the versions table's does, so even a script's only
+// copy can be removed from its page.
+test.describe('removing a script from its page', () => {
+  let server: UserscriptServer;
+  test.beforeEach(async () => { server = await UserscriptServer.start(); });
+  test.afterEach(async () => { await server.stop(); });
+
+  test('the only copy of a web script can be removed', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    server.setRoute('/hello.user.js', scriptWith({ name: 'Hello' }));
+    const def = await sm.addCollection(`${server.baseUrl}/hello.user.js`);
+    const id = (await sm.getCollectionWithScripts(def!.id))!.scripts[0].id;
+
+    const page = await extensionContext.newPage();
+    await page.goto(viewerUrl(extensionId, id));
+    const btn = page.locator(DELETE_BTN);
+    await expect(btn).toBeEnabled();
+    await expectGlyph(btn, 'record');
+    // The collections page's wording for the same button.
+    await expect(btn).toHaveAttribute('title', 'Remove this script');
+    await btn.click();
+
+    await expect(page.locator('#message')).toHaveText('This script has been removed');
+    expect((await sm.getCollectionWithScripts(def!.id))!.scripts).toHaveLength(0);
+    await page.close();
+  });
+
+  test('a script from a directory collection cannot be removed on its own', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const dir = ScriptsDir.create();
+    try {
+      dir.write({ relativePath: 'a.user.js', meta: { name: 'A', match: ['https://example.com/*'] }, body: '' });
+      const collection = await sm.addCollection(dir.path);
+      const id = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0].id;
+
+      const page = await extensionContext.newPage();
+      await page.goto(viewerUrl(extensionId, id));
+      const btn = page.locator(DELETE_BTN);
+      await expect(btn).toBeVisible();
+      await expect(btn).toBeDisabled();
+      await expectGlyph(btn, 'record');
+      await expect(btn).toHaveAttribute(
+        'title', 'Script from directory collection can only be removed by removing the collection',
+      );
+      await page.close();
+    } finally {
+      dir.cleanup();
+    }
   });
 });

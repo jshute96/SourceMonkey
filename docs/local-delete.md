@@ -5,9 +5,11 @@ the dependency files beside it that nothing else is using.
 
 - Logic and the deletion: [`src/extension/local-delete.ts`](../src/extension/local-delete.ts)
 - Dialog: [`src/extension/delete-dialog.ts`](../src/extension/delete-dialog.ts)
-- Trash cans: `makeDeleteCopyControl` and the panel's `remove` action in
-  [`src/extension/userscript.ts`](../src/extension/userscript.ts), `makeDeleteCopyButton` in
-  [`src/extension/collections.ts`](../src/extension/collections.ts), `removeCell` in
+- Trash cans: `makeRemoveControl` and `removeCopy` (shared with the
+  panel) in [`src/extension/userscript.ts`](../src/extension/userscript.ts),
+  `makeDeleteCopyButton` in
+  [`src/extension/collections.ts`](../src/extension/collections.ts),
+  `removeControl` and `removeCell` in
   [`src/extension/related-versions.ts`](../src/extension/related-versions.ts)
 - Tests: `tests/e2e/local-delete.spec.ts`, `tests/unit/local-delete.test.mjs`
 
@@ -19,8 +21,11 @@ file beside a script is used at all).
 
 - A trash can with a small disk badge appears on a script whose file
   is in the copies directory — in the viewer's controls row beside
-  **Local copy…**, on its row in the "Other versions" panel, and on its
+  **Make local copy…**, on its row in the "Other versions" panel, and on its
   row on the collections page. All three open the one dialog.
+  - On any other script, the viewer's trash can is the plain one,
+    removing only the record, and disabled for a script from a directory
+    or manifest collection (see [script-viewer.md](script-viewer.md)).
   - The badge (and a red resting colour) is what separates this button
     from the plain trash can that only drops SourceMonkey's record of a
     script. Both glyphs come from `src/extension/delete-icon.ts`.

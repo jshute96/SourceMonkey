@@ -25,6 +25,11 @@ import { renderGlyph } from './glyph.js';
 
 export type DeleteIconKind = 'record' | 'file';
 
+// The two trash cans' tooltips, the same wherever one script's button
+// appears: its row on the collections page, and its page's controls row.
+export const REMOVE_SCRIPT_TITLE = 'Remove this script';
+export const DELETE_FILE_TITLE = 'Delete local script file';
+
 const SYMBOL_ID: Record<DeleteIconKind, string> = {
   record: '#sm-trash',
   file: '#sm-trash-file',

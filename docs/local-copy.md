@@ -21,7 +21,7 @@ linked to upstream).
 
 ## What it does
 
-- **Local copy…** in the viewer's controls row opens a dialog; **Copy**
+- **Make local copy…** in the viewer's controls row opens a dialog; **Copy**
   writes the script into `<Downloads>/SourceMonkey/` with no further
   dialog.
 - That directory is the **Scripts copied in Downloads** collection,
@@ -125,7 +125,7 @@ An extension has a few ways to put bytes on disk, and only one fits.
 
 ## The dialog
 
-Opened by **Local copy…**, in the controls row under the heading,
+Opened by **Make local copy…**, in the controls row under the heading,
 between **Enabled** and **Refresh**.
 
 - It appears for every installed script, whether or not its collection

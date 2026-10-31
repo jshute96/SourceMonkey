@@ -62,6 +62,7 @@ import {
 import {
   buildInstallSelect,
   installChoiceBlocked,
+  removeControl,
   renderRelatedVersions,
   selectedInstallChoice,
   type InstallChoice,
@@ -958,6 +959,116 @@ function render(script: StoredScript, snapshot?: StoreSnapshot): void {
   paintScriptMessage(script);
 }
 
+// Remove one copy: the versions table's trash cans, and the one in the
+// controls row for the copy on screen. A local copy's FILE goes too,
+// through the delete dialog; cancelling there leaves it alone.
+//
+// `rows` are the table's rows, in order, which pick the copy to show
+// next when the one on screen goes; none means there is no next copy.
+async function removeCopy(
+  id: string,
+  ctx: { args: RelatedVersionsPaint; rows: readonly RelatedScript[]; snapshot: StoreSnapshot },
+): Promise<void> {
+  const { args, rows, snapshot } = ctx;
+  relatedVersionsMessage = '';
+  const copy = snapshot.scripts.find((s) => s.id === id);
+  const copyCollection = snapshot.collections.find((c) => c.id === copy?.collectionId);
+  // Read here if no panel paint has yet: without it a local copy would
+  // lose its record and keep its file.
+  copiesSetting ??= await readCopiesSetting();
+  const deletesFile = !!copy && deletableCopyPath(copy, copyCollection, copiesSetting) !== null;
+  if (copy && deletesFile) {
+    const result = await openDeleteDialog({ script: copy });
+    if (!result) {
+      await afterPanelAction(args);
+      return;
+    }
+    // Both slots, unconditionally, because either can be where the
+    // user is standing a moment from now: the panel's own line if
+    // this page survives the removal (including a swap to another
+    // copy, whose panel is where the report is still readable), and
+    // the not-found state's detail if it doesn't. Assigned even
+    // when empty, so a previous deletion's report can't outlive it.
+    relatedVersionsMessage = result.dependencyErrors.join(' ');
+    removedHereDetail = result.dependencyErrors;
+  }
+  // Removing the row this page is showing is allowed — it is a copy
+  // like any other, and refusing only where you happen to be
+  // standing would be arbitrary.
+  const isCurrent = id === args.currentScriptId;
+  // Deleting the copy you are standing on moves the page to the
+  // next one in the table rather than stranding it on the
+  // not-found line: the user asked to lose one copy, not to lose
+  // the script. Only for a deletion made HERE — a copy that
+  // vanishes from another tab gets the not-found state, because
+  // silently swapping in some other version would be a page the
+  // user never asked for.
+  //
+  // Both of these are decided BEFORE the removal, because the
+  // removal's own storage event can be delivered while it is still
+  // in flight — anything set afterwards is too late to be seen by
+  // the listener it is meant for.
+  const successor = isCurrent ? await survivingRowAfter(rows, id) : undefined;
+  // Says the not-found state, if one is painted at all, is the
+  // result the user asked for. `render` clears it as soon as a
+  // script is back on screen, so the successor path pays nothing.
+  if (isCurrent) removedHereMessage = REMOVED_HERE;
+  // Holds back the not-found paint on the way to the successor. The
+  // listener sees a `scriptId` that no longer names a stored row
+  // and would tear the whole page down — heading, details, panel,
+  // title — before `swapToScript` builds it back: a full-page flash
+  // that reads as a page load rather than the in-place switch every
+  // other move through this table makes. We already know where the
+  // page is going, so there is nothing for that paint to say.
+  //
+  // Set only where it is owned, and cleared only on the paths that
+  // set it: the other rows' trash cans stay live while this one is
+  // in flight, and a second removal that reset either flag would
+  // re-open the flash for the first.
+  if (isCurrent && successor) swappingAfterRemoval = true;
+  try {
+    await removeScript(id);
+  } catch (err) {
+    if (isCurrent) {
+      removedHereMessage = null;
+      removedHereDetail = [];
+      swappingAfterRemoval = false;
+    }
+    // A local copy's file is already gone by now, so say that much.
+    const message = deletesFile
+      ? `The file was deleted, but its record could not be removed: ${describeError(err)}`
+      : `Could not remove ${describeRelatedScript(snapshot.scripts, id)}: ${describeError(err)}`;
+    // The panel isn't drawn for a script's only copy, so its line
+    // would go unseen: the page's message bar says it instead.
+    if (rows.some((r) => r.script.id !== id)) relatedVersionsMessage = message;
+    else setMessage(message, 'error');
+    await afterPanelAction(args);
+    return;
+  }
+  if (isCurrent) {
+    if (successor) {
+      // The fragment is dropped: it named a tab or line in the file
+      // that just went away.
+      try {
+        await swapToScript(successor, { replace: true });
+      } finally {
+        swappingAfterRemoval = false;
+      }
+      return;
+    }
+    // Nothing left to show. Driven from here rather than left to
+    // the storage listener: `removeScript` writes nothing when the
+    // row was already gone, so there may be no event to wait for —
+    // and waiting for one that never comes would leave the page
+    // sitting on a table of rows it no longer has, with the trash
+    // can stuck disabled. `removedHereMessage` makes the not-found state
+    // read as the result the user asked for.
+    await rehydrateAfterStorageChange();
+    return;
+  }
+  await afterPanelAction(args);
+}
+
 // ---------- The panel is an index, and it holds still ----------
 //
 // The versions panel's two sections are computed from ONE script: rows
@@ -1379,99 +1490,7 @@ async function paintRelatedVersions(args: RelatedVersionsPaint, given?: StoreSna
       timer.done();
       if (failure) throw new Error(relatedVersionsMessage);
     },
-    remove: async (id) => {
-      relatedVersionsMessage = '';
-      // A local copy's row deletes its FILE as well, through the same
-      // dialog the trash can beside Local copy… opens — the panel's
-      // button is a second way to the one action, not a second action.
-      // Cancelling there leaves the row alone.
-      const copy = snapshot.scripts.find((s) => s.id === id);
-      const copyCollection = snapshot.collections.find((c) => c.id === copy?.collectionId);
-      if (copy && deletableCopyPath(copy, copyCollection, copiesSetting)) {
-        const result = await openDeleteDialog({ script: copy });
-        if (!result) {
-          await afterPanelAction(args);
-          return;
-        }
-        // Both slots, unconditionally, because either can be where the
-        // user is standing a moment from now: the panel's own line if
-        // this page survives the removal (including a swap to another
-        // copy, whose panel is where the report is still readable), and
-        // the not-found state's detail if it doesn't. Assigned even
-        // when empty, so a previous deletion's report can't outlive it.
-        relatedVersionsMessage = result.dependencyErrors.join(' ');
-        removedHereDetail = result.dependencyErrors;
-      }
-      // Removing the row this page is showing is allowed — it is a copy
-      // like any other, and refusing only where you happen to be
-      // standing would be arbitrary.
-      const isCurrent = id === args.currentScriptId;
-      // Deleting the copy you are standing on moves the page to the
-      // next one in the table rather than stranding it on the
-      // not-found line: the user asked to lose one copy, not to lose
-      // the script. Only for a deletion made HERE — a copy that
-      // vanishes from another tab gets the not-found state, because
-      // silently swapping in some other version would be a page the
-      // user never asked for.
-      //
-      // Both of these are decided BEFORE the removal, because the
-      // removal's own storage event can be delivered while it is still
-      // in flight — anything set afterwards is too late to be seen by
-      // the listener it is meant for.
-      const successor = isCurrent ? await survivingRowAfter(rows, id) : undefined;
-      // Says the not-found state, if one is painted at all, is the
-      // result the user asked for. `render` clears it as soon as a
-      // script is back on screen, so the successor path pays nothing.
-      if (isCurrent) removedHereMessage = REMOVED_HERE;
-      // Holds back the not-found paint on the way to the successor. The
-      // listener sees a `scriptId` that no longer names a stored row
-      // and would tear the whole page down — heading, details, panel,
-      // title — before `swapToScript` builds it back: a full-page flash
-      // that reads as a page load rather than the in-place switch every
-      // other move through this table makes. We already know where the
-      // page is going, so there is nothing for that paint to say.
-      //
-      // Set only where it is owned, and cleared only on the paths that
-      // set it: the other rows' trash cans stay live while this one is
-      // in flight, and a second removal that reset either flag would
-      // re-open the flash for the first.
-      if (isCurrent && successor) swappingAfterRemoval = true;
-      try {
-        await removeScript(id);
-      } catch (err) {
-        if (isCurrent) {
-          removedHereMessage = null;
-          removedHereDetail = [];
-          swappingAfterRemoval = false;
-        }
-        relatedVersionsMessage =
-          `Could not remove ${describeRelatedScript(snapshot.scripts, id)}: ${describeError(err)}`;
-        await afterPanelAction(args);
-        return;
-      }
-      if (isCurrent) {
-        if (successor) {
-          // The fragment is dropped: it named a tab or line in the file
-          // that just went away.
-          try {
-            await swapToScript(successor, { replace: true });
-          } finally {
-            swappingAfterRemoval = false;
-          }
-          return;
-        }
-        // Nothing left to show. Driven from here rather than left to
-        // the storage listener: `removeScript` writes nothing when the
-        // row was already gone, so there may be no event to wait for —
-        // and waiting for one that never comes would leave the page
-        // sitting on a table of rows it no longer has, with the trash
-        // can stuck disabled. `removedHereMessage` makes the not-found state
-        // read as the result the user asked for.
-        await rehydrateAfterStorageChange();
-        return;
-      }
-      await afterPanelAction(args);
-    },
+    remove: (id) => removeCopy(id, { args, rows, snapshot }),
     update: async (ids) => {
       relatedVersionsMessage = '';
       const failures: string[] = [];
@@ -3028,79 +3047,80 @@ let moveTargetContext: {
 // relative to its collection root, so it has no absolute spelling to
 // carry into a container. `moveScript` refuses those too.
 // The controls in the row under the heading, between the Enabled box
-// and Refresh: Local copy… for every script, and the trash can for a
-// script that IS a local copy. They act on the script the page is
-// showing, which is what the rest of that row is about — the Collection
-// row below keeps only Move…, which acts on the collection membership.
-//
-// A collection row we couldn't read costs the trash can, not the whole
-// group: without it there is no way to tell a local copy from any other
-// script.
+// and Refresh: Make local copy… and the trash can. They act on the
+// script the page is showing, which is what the rest of that row is
+// about — the Collection row below keeps only Move…, which acts on the
+// collection membership.
 function makeScriptActions(
   script: StoredScript,
   collection: StoredCollection | null,
 ): HTMLElement[] {
-  const actions = [makeLocalCopyControl(script)];
-  if (collection) actions.push(makeDeleteCopyControl(script, collection));
-  return actions;
+  return [makeLocalCopyControl(script), makeRemoveControl(script, collection)];
 }
 
-// The trash can beside Local copy…, for a script that IS a local copy:
-// its file sits in the Downloads copies directory, which is the one
-// place SourceMonkey can delete a file from. Everything it does happens
-// in the delete dialog (src/extension/delete-dialog.ts); this is the affordance,
-// and the record removal that follows the file's.
+// The trash can beside Refresh: removes the copy on screen, exactly as
+// its row's trash can in the versions table does (`removeCopy`). Here
+// for every script, so the only copy of one can be removed too.
+//   - A local copy's deletes its file as well, through the delete
+//     dialog (src/extension/delete-dialog.ts).
+//   - A script from a directory or manifest collection can't be removed
+//     on its own, so the button is disabled, with the table's tooltip.
 //
-// Hidden until the setting says the file qualifies. The row is painted
-// synchronously and the answer needs a storage read, so the button is
-// built off-screen and revealed rather than the whole row waiting on
-// it — a script that isn't a copy never shows one at all.
-function makeDeleteCopyControl(
+// Hidden until the copies setting is read, which decides between the
+// two trash cans: the row is painted synchronously, so the button is
+// built off-screen and revealed rather than the whole row waiting.
+function makeRemoveControl(
   script: StoredScript,
-  collection: StoredCollection,
-): HTMLButtonElement {
+  collection: StoredCollection | null,
+): HTMLElement {
+  // A disabled button shows no tooltip of its own on hover, so the
+  // explanation also goes on a wrapper.
+  const wrap = document.createElement('span');
+  wrap.className = 'remove-wrap';
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.id = 'delete-copy-btn';
   btn.className = 'remove-script';
-  setDeleteIcon(btn, 'file');
-  btn.hidden = true;
-  // Not the plain "Remove this script record" of the other trash cans:
-  // this one takes the file off the disk as well. The badged glyph
-  // above says that at a glance; the tooltip spells it out.
-  btn.title = 'Delete local script file';
-  btn.setAttribute('aria-label', 'Delete local script file');
+  wrap.appendChild(btn);
+  wrap.hidden = true;
   void readCopiesSetting().then((setting) => {
-    btn.hidden = deletableCopyPath(script, collection, setting) === null;
+    const deletesFile = deletableCopyPath(script, collection, setting) !== null;
+    const { removable, title } = removeControl(collection, deletesFile);
+    setDeleteIcon(btn, deletesFile ? 'file' : 'record');
+    btn.title = title;
+    btn.setAttribute('aria-label', title);
+    btn.disabled = !removable;
+    wrap.title = removable ? '' : title;
+    wrap.hidden = false;
   });
   btn.onclick = async () => {
-    const result = await openDeleteDialog({ script });
-    if (!result) return;
-    // The record goes with the file, explicitly. A refresh would find
-    // the file gone and drop the row too, but it would cost a scan of
-    // the directory, and we already know the answer.
-    //
-    // Both flags are set BEFORE the removal, not before the rehydrate:
-    // the removal's own storage event can be delivered while the write
-    // is still in flight, and a not-found state painted by that
-    // listener has to read as the result the user asked for — see
-    // `removedHereMessage` and the panel's own `remove`.
-    removedHereMessage = REMOVED_HERE;
-    removedHereDetail = result.dependencyErrors;
+    btn.disabled = true;
     try {
-      await removeScript(result.scriptId);
-    } catch (err) {
-      removedHereMessage = null;
-      removedHereDetail = [];
-      setMessage(`The file was deleted, but its record could not be removed: ${describeError(err)}`, 'error');
-      return;
+      // The panel's last paint, when it is of this script and its rows
+      // have landed: they pick the copy to show next.
+      const paint = lastRelatedPaint?.currentScriptId === script.id
+        && lastRelatedRows.some((r) => r.script.id === script.id)
+        ? lastRelatedPaint
+        : null;
+      await removeCopy(script.id, {
+        args: paint ?? {
+          location: script.fileUrl,
+          header: script.header,
+          anchorScriptId: panelAnchorId || script.id,
+          mode: 'installed',
+          currentScriptId: script.id,
+        },
+        rows: paint ? lastRelatedRows : [],
+        snapshot: await readStoreSnapshot(),
+      });
+    } finally {
+      btn.disabled = false;
     }
-    await rehydrateAfterStorageChange();
   };
-  return btn;
+  return wrap;
 }
 
-// Local copy…: write an editable copy of this script into the
+// Make local copy…: write an editable copy of this script into the
 // Downloads collection, switch every other copy off, and show the new
 // one. The dialog owns the write and its failures — see
 // `src/extension/copy-dialog.ts` and docs/local-copy.md.
@@ -3108,7 +3128,7 @@ function makeLocalCopyControl(script: StoredScript): HTMLButtonElement {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.id = 'local-copy-btn';
-  btn.textContent = 'Local copy…';
+  btn.textContent = 'Make local copy…';
   // An `invalid` row has no usable header — often no metadata block at
   // all — so a copy of it would be written with none of the header
   // edits the dialog offers and would land invalid in its turn.

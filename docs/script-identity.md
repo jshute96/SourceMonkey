@@ -375,8 +375,10 @@ the *other* rows.
     - **The successor lookup and both flags happen before the removal**,
       not after it: its storage event can be delivered while the write
       is still in flight, so anything set afterwards is too late for the
-      listener it is meant for. The same ordering applies to the
-      Collection row's own "Delete local script file" trash can.
+      listener it is meant for.
+  - **The controls row's trash can is the same action** (`removeCopy`)
+    for the copy on screen, so it moves to a surviving copy the same
+    way.
   - **With no surviving row, the viewer reports "This script has been
     removed"** rather than its generic not-found message, and clears the
     panel along with the rest of the page — its heading has nothing left

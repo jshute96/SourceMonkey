@@ -37,7 +37,7 @@ import {
 import { openExtensionTab, wireNamedTabLink } from './page-links.js';
 import { getValue } from '../userscript-header.js';
 import { guardSelectOpeningClick } from './select-open-guard.js';
-import { setDeleteIcon } from './delete-icon.js';
+import { DELETE_FILE_TITLE, REMOVE_SCRIPT_TITLE, setDeleteIcon } from './delete-icon.js';
 import { setGlyphButton } from './glyph.js';
 import { markFileChanges, scriptFileTag, tagLocalFile } from './file-changes.js';
 import { enableTitle, watchSoloModifier } from './solo-click.js';
@@ -1073,6 +1073,32 @@ function collectionNoun(collection: StoredCollection | null): string {
   return collection && collectionHasManifest(collection.path) ? 'manifest' : 'directory';
 }
 
+// Whether one copy's trash can acts, and what it says. Shared by the
+// table's rows and the viewer's controls row, so the two agree. The
+// table says "version" (`inTable`), since it lists more than one; the
+// controls row uses the collections page's wording.
+export function removeControl(
+  collection: StoredCollection | null,
+  deletesFile: boolean,
+  inTable = false,
+): { removable: boolean; title: string } {
+  // A copy whose collection dangles is an orphan — the thing a user
+  // would most want to clear out, and nothing will scan it back in — so
+  // it gets the live button rather than a tooltip about a collection
+  // that isn't there.
+  const removable = deletesFile
+    || (collection ? isContainerCollection(collection.path) : true);
+  // A local copy's button says what makes it different — in the glyph
+  // and here again in words: it takes the file off the disk as well.
+  const title = deletesFile
+    ? DELETE_FILE_TITLE
+    : removable
+      ? (inTable ? 'Remove this version of the script' : REMOVE_SCRIPT_TITLE)
+      : `Script from ${collectionNoun(collection)} collection `
+        + 'can only be removed by removing the collection';
+  return { removable, title };
+}
+
 function removeCell(
   rel: RelatedScript,
   actions: RelatedVersionsActions,
@@ -1080,27 +1106,13 @@ function removeCell(
 ): HTMLTableCellElement {
   const td = cell('col-remove');
   if (!actions.remove) return td;
-  // A row whose collection dangles is an orphan — the thing a user
-  // would most want to clear out, and nothing will scan it back in — so
-  // it gets the live button rather than a tooltip about a collection
-  // that isn't there.
-  const removable = deletesFile
-    || (rel.collection ? isContainerCollection(rel.collection.path) : true);
+  const { removable, title } = removeControl(rel.collection, deletesFile, true);
   const b = document.createElement('button');
   b.type = 'button';
   b.className = 'versions-remove';  // `.icon-btn` is added by setDeleteIcon
   // The badged can only on the row whose button takes the file with
   // it; every other copy here is just a record.
   setDeleteIcon(b, deletesFile ? 'file' : 'record');
-  // A local copy's button says what makes it different — in the glyph
-  // above and here again in words: it takes the file off the disk as
-  // well, which is why this row has one at all.
-  const title = deletesFile
-    ? 'Delete local script file'
-    : removable
-      ? 'Remove this copy of the script'
-      : `Script from ${collectionNoun(rel.collection)} collection `
-        + 'can only be removed by removing the collection';
   b.title = title;
   b.setAttribute('aria-label', title);
   if (removable) {

@@ -27,7 +27,7 @@
 
 import { scriptRowBytes } from './script-blobs.js';
 import { openDeleteDialog } from './delete-dialog.js';
-import { setDeleteIcon } from './delete-icon.js';
+import { DELETE_FILE_TITLE, REMOVE_SCRIPT_TITLE, setDeleteIcon } from './delete-icon.js';
 import { setGlyphButton, setGlyphButtonBusy } from './glyph.js';
 import type { DownloadsCopiesSetting } from './local-copy.js';
 import { deletableCopyPath, readCopiesSetting } from './local-delete.js';
@@ -1887,8 +1887,8 @@ function renderScriptRow(
       removeBtn.type = 'button';
       removeBtn.className = 'remove-script';
       setDeleteIcon(removeBtn, 'record');
-      removeBtn.title = 'Remove this script';
-      removeBtn.setAttribute('aria-label', 'Remove this script');
+      removeBtn.title = REMOVE_SCRIPT_TITLE;
+      removeBtn.setAttribute('aria-label', REMOVE_SCRIPT_TITLE);
       removeBtn.addEventListener('click', () => {
         void onRemoveScript(script.id, script.collectionId, removeBtn);
       });
@@ -2052,8 +2052,8 @@ function makeDeleteCopyButton(script: ScriptMeta): HTMLButtonElement {
   btn.type = 'button';
   btn.className = 'remove-script';
   setDeleteIcon(btn, 'file');
-  btn.title = 'Delete local script file';
-  btn.setAttribute('aria-label', 'Delete local script file');
+  btn.title = DELETE_FILE_TITLE;
+  btn.setAttribute('aria-label', DELETE_FILE_TITLE);
   btn.addEventListener('click', () => void onDeleteCopy(script, btn));
   return btn;
 }

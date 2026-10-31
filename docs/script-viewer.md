@@ -206,8 +206,8 @@ Both name the script the same way, pivoted for where they're read.
    - Full behaviour in [script-identity.md](script-identity.md).
 3. **Controls row** (`#meta-row`) — everything that acts on the
    script itself, left to right: the post-install note and **Open on
-   `<site>`** (below), a blank space, then the `Enabled` toggle, **Local copy…**,
-   the delete trash can (a local copy only), and the **Refresh**
+   `<site>`** (below), a blank space, then the `Enabled` toggle, **Make local copy…**,
+   the trash can, and the **Refresh**
    circular arrow → `refreshScript(scriptId)`. Installed mode only; preview shows the
    banner + action row in its place (see
    [Preview mode](#preview-mode)).
@@ -527,8 +527,8 @@ what keeps a wrapping name from dragging it onto the last wrapped line.
 
 - **Why this row and not the controls row above.** Move… is about where
   the script is *filed*, which is what the Collection row says. The
-  controls that act on the script itself — Enabled, Local copy…, the
-  delete trash can, the Refresh arrow — are in the row under the
+  controls that act on the script itself — Enabled, Make local copy…, the
+  trash can, the Refresh arrow — are in the row under the
   heading.
 
 - No button at all for a directory or manifest script. Its
@@ -572,16 +572,25 @@ failure in its own error slot.
 
 ### Making a local copy
 
-**Local copy…** sits in the controls row under the heading, between the
+**Make local copy…** sits in the controls row under the heading, between the
 **Enabled** box and **Refresh**, and appears for every installed
 script. It opens the copy dialog (`src/extension/copy-dialog.ts`), which writes an
 editable copy into the *Scripts copied in Downloads* collection under
 the browser's Downloads folder.
 
-- The delete trash can (for a script that IS a local copy) sits beside
-  it. Neither sizes itself: every button in the extension takes one
-  height and one glyph size from `styles.css`, so the row lines up by
-  construction rather than by a padding that happens to match.
+- The trash can sits beside it. Neither sizes itself: every button in
+  the extension takes one height and one glyph size from `styles.css`,
+  so the row lines up by construction rather than by a padding that
+  happens to match.
+- The trash can removes the copy on screen, the same action as its
+  row's trash can in the versions panel (`removeCopy`), so even a
+  script's only copy can be removed from its page.
+  - A local copy's deletes its file too, through the
+    [delete dialog](local-delete.md).
+  - A script from a directory or manifest collection can't be removed
+    on its own: the button is disabled, with the panel's tooltip.
+  - With other copies left, the page moves to the next one; with none,
+    it shows the not-found state.
 
 - The dialog owns the write and its refusals; the caller then runs the
   exclusive-enable sweep for the new row and switches the page to it
@@ -612,8 +621,8 @@ re-renders when:
 
 If the re-read finds the script gone (its collection was removed), the
 viewer drops into the not-found state — including when another tab
-deleted this copy. Only a deletion made *here*, from the versions
-panel's trash can, moves the page to another copy instead, and that
+deleted this copy. Only a deletion made *here*, from a trash can on
+this page, moves the page to another copy instead, and that
 path suppresses this listener's not-found paint so the switch stays a
 single in-place render; see
 [script-identity.md](script-identity.md). Session-storage changes

@@ -213,7 +213,7 @@ A script that lives in a scripts collection can be moved to another one
 from the viewer's **Collection** row, keeping its log and its stored
 `GM_setValue` data.
 
-**Local copy…** on the same row writes an editable copy of any installed
+**Make local copy…**, in the row of buttons under the heading, writes an editable copy of any installed
 script into `SourceMonkey/` under the browser's Downloads folder, which
 becomes the **Scripts copied in Downloads** collection. The copy takes
 over as the running version, and edits made to it in any editor are
@@ -226,7 +226,10 @@ reserved for deleting a file rather than just a record) deletes such a
 copy: the file on disk and its record in SourceMonkey, after a
 confirmation naming the path and every dependency file the copy loads,
 saying which of them go with it. Copies are the one thing SourceMonkey
-can delete from disk, since the browser downloaded them.
+can delete from disk, since the browser downloaded them. On any other
+script, a plain trash can in the same place removes just its record
+(disabled for a script from a directory or manifest collection, which
+is removed with its collection).
 
 The **⋯** menus, in the header and on each collection, have commands to
 export all collections or one collection to a zip file: a backup, or a
