@@ -44,6 +44,7 @@
     "test:e2e:vm": "node scripts/clean-stale-test-profiles.mjs && node scripts/build.mjs && playwright test --project=violentmonkey",
     "test:e2e:vm:headed": "node scripts/clean-stale-test-profiles.mjs && node scripts/build.mjs && VM_HEADED=1 playwright test --project=violentmonkey --workers=1",
     "test:headed": "node scripts/clean-stale-test-profiles.mjs && node scripts/build.mjs && playwright test --project=sourcemonkey --headed --workers=1",
+    "test:all-managers": "node scripts/clean-stale-test-profiles.mjs && node scripts/build.mjs && playwright test --project=all-managers",
     "test:vm-api": "node scripts/build.mjs && playwright test --project=vm-api",
     "test:tm-api": "node scripts/build.mjs && playwright test --project=tm-api",
     "test:unit": "node scripts/build.mjs && node --test 'tests/unit/**/*.test.mjs'",

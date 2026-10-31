@@ -1,42 +1,67 @@
-// Shared waits for the `.user.js` link capture, used by both capture
+// Shared helpers for the `.user.js` link capture, used by both capture
 // specs (`install-capture.spec.ts` for http(s), `install-capture-file.spec.ts`
-// for `file://`). They drive the same two-leg navigation, so the waits
-// live here rather than being written twice.
+// for `file://`). The capture opens its preview in a tab of its own,
+// beside the tab that navigated.
 
-import { expect, type Page } from '@playwright/test';
+import { expect, type BrowserContext, type Page } from '@playwright/test';
 
-// How long we are willing to sit in the aborted first leg. See
+// How long we wait on the tab's own navigation. See
 // `startCapturedNavigation` for why this is bounded well under the
 // 30s test timeout.
 const CAPTURED_GOTO_TIMEOUT = 10_000;
 
 // Point a tab at a captured `.user.js` URL.
 //
-// The first leg never completes normally: the capture aborts it and the
-// tab is sent to the viewer's preview instead, so `goto` rejects with
-// ERR_ABORTED. Callers only
-// want the navigation *started* — the assertion is always about where
-// the tab ends up, which `waitForInstallPrompt` covers.
+// The tab's own navigation may not complete normally: the tab can be
+// sent back or closed, or another manager can rewrite it, so `goto`'s
+// result is ignored. Callers only want the navigation *started*; the
+// assertion is about where the tabs end up.
 //
 // The bounded timeout is the point. An unbounded `goto` inherits the
-// test timeout, so a first leg that hangs eats the whole budget and the
-// test reports a bare "Test timeout of 30000ms exceeded" — no failing
-// step, no expected-vs-actual. Capping it leaves room for the wait
-// below to fail with something a reader can act on. Abandoning the
-// `goto` does not cancel the navigation; the tab keeps going and the
-// poll still sees it arrive.
+// test timeout, so a navigation that hangs eats the whole budget and
+// the test reports a bare "Test timeout of 30000ms exceeded", with no
+// failing step. Capping it leaves room for the waits after it to fail
+// with something a reader can act on. Abandoning the `goto` does not
+// cancel the navigation.
 export async function startCapturedNavigation(page: Page, url: string): Promise<void> {
   await page.goto(url, { timeout: CAPTURED_GOTO_TIMEOUT }).catch(() => {});
 }
 
-// Wait for the tab to land on the preview and become interactive.
-//
-// `page.waitForURL` rejects here: the captured navigation ends in
-// net::ERR_ABORTED (the tab was pointed elsewhere mid-flight), and
-// Playwright surfaces that as the navigation's result
-// even though the tab goes on to load the preview. Poll the tab's URL
-// instead, then wait for the preview itself.
+// Wait for a tab to show the preview and become interactive. Polls the
+// URL rather than `waitForURL`, which can report an earlier navigation's
+// failure in that tab.
 export async function waitForInstallPrompt(page: Page): Promise<void> {
   await expect.poll(() => page.url(), { timeout: 15_000 }).toContain('userscript.html?preview=');
   await expect(page.locator('#preview-actions')).toBeVisible();
+}
+
+// Point `page` at a captured `.user.js` URL and return the tab the
+// preview opens in, beside `page`, once the preview is ready.
+export async function openCaptured(page: Page, url: string): Promise<Page> {
+  const [preview] = await Promise.all([
+    page.context().waitForEvent('page', { timeout: 15_000 }),
+    startCapturedNavigation(page, url),
+  ]);
+  await waitForInstallPrompt(preview);
+  return preview;
+}
+
+const isPreviewUrl = (url: string) => url.includes('userscript.html?preview=');
+
+// Counts the preview tabs opened in `context` from now on. With
+// `expectNoNewPreview`, checks a navigation the capture should stand
+// down for (a bypass, or capture off).
+export function trackNewPreviews(context: BrowserContext): () => number {
+  const before = new Set(context.pages());
+  return () => context.pages().filter((p) => !before.has(p) && isPreviewUrl(p.url())).length;
+}
+
+// The capture opens its preview in a tab of its own and leaves the tab
+// that navigated alone for a second before sending it back, so standing
+// down shows only after that: no preview opened, and `page` still on
+// `url` (when given; a missing file lands on Chrome's error page).
+export async function expectNoNewPreview(newPreviews: () => number, page: Page, url?: string): Promise<void> {
+  await page.waitForTimeout(1500);
+  expect(newPreviews()).toBe(0);
+  if (url !== undefined) expect(page.url()).toBe(url);
 }

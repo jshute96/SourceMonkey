@@ -32,6 +32,11 @@ real-browser end-to-end suite for everything that touches the
   Tampermonkey still answers each call sm-dev makes. See
   [sm-dev-violentmonkey.md](sm-dev-violentmonkey.md#checking-a-vm-version)
   and [sm-dev-tampermonkey.md](sm-dev-tampermonkey.md#how-stable-these-calls-are).
+- `tests/all-managers/install-capture.spec.ts` — the `all-managers`
+  project, run on demand (`pnpm run test:all-managers`): the `.user.js`
+  capture in a browser with Tampermonkey, Violentmonkey or both loaded
+  beside SourceMonkey. See
+  [install-capture.md](install-capture.md#when-other-script-managers-are-installed).
 - `tests/greasyfork-examples/` — not a test suite: tooling that builds a
   corpus of real-world GreasyFork scripts (the top 2000 and more),
   analyses it, and records per-script validation and test results in

@@ -22,8 +22,8 @@ import path from 'node:path';
 // - browser-launch.spec.ts's dirs. Its config dirs hold an
 //   --open-browser profile one level down, which `liveNestedProfile`
 //   checks, since a killed test leaves that browser running.
-const PROFILE_PREFIXES = ['sm-dev-extension-', 'sourcemonkey-test-'];
-const DATA_PREFIXES = ['sourcemonkey-scripts-', 'sm-parent-', 'sm-test-runs-', 'sm-dev-launch-'];
+const PROFILE_PREFIXES = ['sm-dev-extension-', 'sourcemonkey-test-', 'sm-all-managers-profile-'];
+const DATA_PREFIXES = ['sourcemonkey-scripts-', 'sm-parent-', 'sm-test-runs-', 'sm-dev-launch-', 'sm-all-managers-vm-', 'sm-all-managers-files-'];
 
 // Long enough that a dir belonging to a run starting right now in
 // another checkout is never a candidate, short enough to keep /tmp from

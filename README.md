@@ -302,8 +302,8 @@ Details: [docs/file-access.md](docs/file-access.md),
 ### Installing scripts from a `.user.js` link
 
 Click a `.user.js` raw file link anywhere (Greasy Fork, GitHub, a file on your
-own disk, etc.) and SourceMonkey previews it instead of letting Chrome show
-the bare source.
+own disk, etc.) and SourceMonkey previews it in a new tab instead of letting
+Chrome show the bare source. Close the preview to get back to the page.
 
 The preview shows the script's source code and some summary information,
 and validates the script and its `@require` libraries, reporting errors for
@@ -685,6 +685,7 @@ pnpm run test:headed   # e2e with a visible browser
 pnpm run test:sm-dev   # sm-dev and the harness fixture's own specs
 pnpm run test:vm-api   # whether the fetched Violentmonkey still answers sm-dev's calls
 pnpm run test:tm-api   # whether the fetched Tampermonkey still answers sm-dev's calls
+pnpm run test:all-managers  # .user.js capture with Tampermonkey and Violentmonkey installed too
 ```
 
 To narrow a run to one file:

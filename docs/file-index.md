@@ -152,7 +152,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/offscreen.ts` | Offscreen-document relay: the DOM the service worker lacks, hosting a sandboxed parse frame |
 | `src/extension/background.ts` | Service worker entrypoint; per-tab badge, toolbar click / double click / right-click items and the popup's view + requests, sm:* listener, the pages' `sm:op` worker-ops port, focus-triggered local refresh, the pages' http-read and log-write relays, injector + match-index bootstrap, first-run collections-page open |
 | `src/extension/deep-link.ts` | `webNavigation` listener: rewrites the GitHub `redirect-page.md` URL to the matching `chrome-extension://…` page |
-| `src/extension/install-capture.ts` | Captures http(s) + file:// navigations to `*.user.js` and redirects them to the viewer's preview mode |
+| `src/extension/install-capture.ts` | Captures http(s) + file:// navigations to `*.user.js` and opens the viewer's preview mode, in a new tab beside a page |
 | `src/extension/collections.ts` | Collections page controller — Add-field routing into the dialog, options gear, render, membership repair, in-place updates, refresh highlights + dropped-row ghosts, repaint-from-storage on change, `?refresh`/`?refresh_local`/`?refresh_file`/`?add`/`?first_run` triggers |
 | `src/extension/collection-dialog.ts` | The create / edit collection dialog shared by the collections page and the install page: name / location / local-overrides fields, an inferred Type row, live validation, pre-create readability probe, create/install/move wording |
 | `src/extension/refresh-targets.ts` | Picks the collections/scripts a `?refresh_local` or `?refresh_file=<path>` trigger should refresh |
@@ -328,6 +328,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/fixtures/userscript-files.mjs` | Finds `*.user.js` files on disk and reads their `@name`/`@version`, shared by both manager drivers |
 | `tests/fixtures/sourcemonkey-launch.ts` | Launch (through sm-dev's launcher), SW-handle and HTTP-fixture-server helpers shared by `extension.ts` and `manager.ts` |
 | `tests/fixtures/manager-launch.ts` | Launches a new browser and temp profile with TM or VM from sm-dev's cache, with its grants pre-written |
+| `tests/fixtures/all-managers-launch.ts` | Launches a browser with SourceMonkey plus TM, VM or both, and VM's file-access and help-page modes |
 | `tests/fixtures/slow-route.mjs` | `/__slow/?ms=N` delay route, static content-types, and the shared static-file server used by the fixture server and `scripts/serve-examples.mjs` |
 | `tests/fixtures/tampermonkey-driver.mjs` | TM dashboard driver: lists installed scripts, installs via import-from-file, auto-OKs TM permission prompts |
 | `tests/fixtures/violentmonkey-driver.mjs` | VM driver: lists and installs scripts through VM's own background commands, installing from a fixture-server URL |
@@ -340,7 +341,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/fixtures/backup-dialogs.ts` | Drives the collections page's export and import dialogs for the export, import and cross-manager specs |
 | `tests/fixtures/userscript-server.ts` | Per-test HTTP server with mutable userscript / manifest routes, conditional-GET handling, and a request-arrival wait |
 | `tests/fixtures/sw-api.ts` | Typed wrapper over the `self.SourceMonkey` SW test surface plus the shared `waitFor` / tab-id / badge-colour / all-scripts helpers |
-| `tests/fixtures/capture-nav.ts` | Shared `.user.js` capture waits: start the aborted navigation, then wait for the preview |
+| `tests/fixtures/capture-nav.ts` | Shared `.user.js` capture helpers: start the navigation, wait for the preview, open one in its tab |
 | `tests/fixtures/pages/blank.html` | Minimal fixture page served by the in-test HTTP server |
 | `tests/fixtures/pages/target.html` | Fixture page with a known `#target` element for injection assertions |
 | `tests/fixtures/pages/other.html` | Fixture page used to verify scripts skip non-matching URLs |
@@ -410,7 +411,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/rejected-registration.spec.ts` | REJECTED state end to end: a `@match` Chrome refuses stays `ok` but never runs, and every retry re-reports until it's fixed |
 | `tests/e2e/log-level-reset.spec.ts` | A refresh that loads new content resets the WARNING / ERROR badge, keeps the log, and lets the new version's parse diagnostics re-badge it |
 | `tests/e2e/refresh-failed.spec.ts` | Refresh failures (markup response, soft 200-not-a-script, hard 404) keep the prior good copy running with `refreshError`, and land in the script's Log once |
-| `tests/e2e/install-capture.spec.ts` | E2E for the `.user.js` capture: redirect to the preview, Install registers the collection, already-installed + non-userscript cases, web-page auto-continue, View raw source, option off |
+| `tests/e2e/install-capture.spec.ts` | E2E for the `.user.js` capture: preview in a new tab, middle-click, attachments, another manager's page, Install, web pages, option off |
 | `tests/e2e/install-capture-file.spec.ts` | E2E for the `file://` half of the capture: preview takeover, bare-path install + refresh, dedup, bypass paths |
 | `tests/e2e/refresh-triggers.spec.ts` | The collections page's `?refresh_local` / `?refresh_file=<path>` triggers, incl. the no-match and bad-shape messages |
 | `tests/e2e/refresh-error.spec.ts` | A refresh that reads fine but can't be saved: the recorded reason, untouched scripts, the rolled-back install, and the page's message + banner |
@@ -657,6 +658,7 @@ built extension loaded; fixtures in `tests/fixtures/harness.ts`.
 | `tests/harness/tampermonkey.spec.ts` | sm-dev under the fetched Tampermonkey: the collection and script commands, a run's scripts, and their stack lines |
 | `tests/vm-api/vm-api.spec.ts` | `test:vm-api`: whether the fetched Violentmonkey still answers each call sm-dev makes |
 | `tests/tm-api/tm-api.spec.ts` | `test:tm-api`: whether the fetched Tampermonkey still answers each call sm-dev makes |
+| `tests/all-managers/install-capture.spec.ts` | `test:all-managers`: the capture beside TM and VM, across ways of opening, server speeds and VM file modes |
 | `tests/harness/fixture.spec.ts` | The consumer fixture from `lib/`: a script against a served page, `gm` and `reports`, the up-front URL check, the explained miss |
 
 ## GreasyFork Corpus Tooling (`tests/greasyfork-examples/`)

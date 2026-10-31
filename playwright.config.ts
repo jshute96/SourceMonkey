@@ -83,6 +83,17 @@ export default defineConfig({
       testMatch: ['tm-api/**/*.spec.ts'],
     },
     {
+      // SourceMonkey, Tampermonkey and Violentmonkey loaded together, for
+      // how their `.user.js` captures get along. Run on demand
+      // (`pnpm run test:all-managers`). See docs/install-capture.md.
+      name: 'all-managers',
+      testMatch: ['all-managers/**/*.spec.ts'],
+      // A describe group's tests share one browser with the managers
+      // loaded, rather than each worker launching its own: less load,
+      // so less noise in timing-sensitive tests.
+      fullyParallel: false,
+    },
+    {
       name: 'tampermonkey',
       testMatch: ['examples/**/*.spec.ts'],
       metadata: { manager: 'tampermonkey' },

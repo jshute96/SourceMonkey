@@ -178,7 +178,7 @@ import {
   installGithubAuthListener,
   loadGithubAuthToken,
 } from '../github-auth.js';
-import { CAPTURED_PARAM, markInstallBypass } from './install-capture.js';
+import { BESIDE_PARAM, CAPTURED_PARAM, markInstallBypass } from './install-capture.js';
 import { isFileSchemeAccessAllowed, renderFileAccessBanner } from './file-access.js';
 import { checkScriptParses } from './parse-check-client.js';
 import {
@@ -2184,19 +2184,23 @@ async function loadPreview(): Promise<void> {
   } catch (err) {
     // The URL answered with a web page, and we only came here because
     // the capture guessed it was a script. That guess is wrong, so
-    // undo it: continue to the page the user was heading for, without
-    // asking. A banner offering "Continue to page" for a navigation
-    // the user never asked us to intercept is a dialog about our own
-    // mistake.
+    // undo it without asking. A banner offering "Continue to page" for
+    // a navigation the user never asked us to intercept is a dialog
+    // about our own mistake.
+    //   - Opened beside the tab that navigated (the usual case): that
+    //     tab went on to the page itself, so close this one.
+    //   - In that tab itself (Chrome refused a new tab): continue to
+    //     the page here.
     //
     // Only for a captured navigation: `?preview=` reached from the
     // collections page is a question the user asked, and it gets an
     // answer instead.
-    if (
-      previewWasCaptured && err instanceof MarkupResponseError &&
-      continueToPage('This location is a web page, not a script. Continuing to it.')
-    ) {
-      return;
+    if (previewWasCaptured && err instanceof MarkupResponseError) {
+      if (params.get(BESIDE_PARAM) === '1') {
+        const tab = await chrome.tabs.getCurrent().catch(() => undefined);
+        if (tab?.id != null && await chrome.tabs.remove(tab.id).then(() => true, () => false)) return;
+      }
+      if (continueToPage('This location is a web page, not a script. Continuing to it.')) return;
     }
     // Keep the heading and the action row: the location is still worth
     // showing, and "View raw source" is a real retry — that navigation
@@ -3251,10 +3255,9 @@ function navigateRaw(url: string): void {
   withBypass(url, (target) => chrome.tabs.create({ url: target }).then(() => undefined));
 }
 
-// Cancel: back to wherever the click came from. A captured navigation
-// never committed, so the previous entry is the referring page. A tab
-// opened straight into the preview (target=_blank from a site's install
-// button) has no history to go back to, so close it — via
+// Cancel: back to wherever the click came from. A preview with no
+// history (the new tab the capture opens it in) is closed instead, and
+// Chrome returns to the tab the click came from. Closed via
 // `chrome.tabs.remove`, because Chrome refuses `window.close()` for a
 // tab that wasn't opened by script.
 function leavePage(): void {

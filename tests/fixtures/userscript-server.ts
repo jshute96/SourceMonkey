@@ -31,6 +31,9 @@ interface Route {
   // When set, the route answers with JSON describing the request: its
   // method, headers and body (base64). For checking request bodies.
   echo?: boolean;
+  // When set, sent as `Content-Disposition`, so a navigation to the
+  // route becomes a download.
+  contentDisposition?: string;
 }
 
 // Per-route record of how each incoming GET was answered. Tests use
@@ -100,7 +103,10 @@ export class UserscriptServer {
   setRoute(
     path: string,
     body: string | Buffer,
-    opts: { etag?: string; lastModified?: string; contentType?: string; delayMs?: number } = {},
+    opts: {
+      etag?: string; lastModified?: string; contentType?: string; delayMs?: number;
+      contentDisposition?: string;
+    } = {},
   ): void {
     const route: Route = {
       body,
@@ -109,6 +115,7 @@ export class UserscriptServer {
     if (opts.etag) route.etag = opts.etag;
     if (opts.lastModified) route.lastModified = opts.lastModified;
     if (opts.delayMs) route.delayMs = opts.delayMs;
+    if (opts.contentDisposition) route.contentDisposition = opts.contentDisposition;
     this.routes.set(this.normalize(path), route);
   }
 
@@ -239,6 +246,7 @@ export class UserscriptServer {
       entry.status = 200;
       res.statusCode = 200;
       res.setHeader('Content-Type', route.contentType);
+      if (route.contentDisposition) res.setHeader('Content-Disposition', route.contentDisposition);
       if (route.etag) res.setHeader('ETag', route.etag);
       if (route.lastModified) res.setHeader('Last-Modified', route.lastModified);
       res.end(route.body);

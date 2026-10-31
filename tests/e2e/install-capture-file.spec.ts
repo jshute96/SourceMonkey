@@ -21,7 +21,7 @@
 import fs from 'node:fs';
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
-import { startCapturedNavigation, waitForInstallPrompt } from '../fixtures/capture-nav';
+import { expectNoNewPreview, openCaptured, startCapturedNavigation, trackNewPreviews } from '../fixtures/capture-nav';
 import { LOCATION_ROW } from '../fixtures/viewer-selectors';
 
 const CAPTURE_KEY = 'smCaptureUserJsLinks';
@@ -51,9 +51,9 @@ test.describe('.user.js capture for local files', () => {
   test('opening a local .user.js lands on the preview', async ({ extensionContext, sm }) => {
     const { url } = writeScript('hello.user.js', 'Hello From Disk');
 
-    const page = await extensionContext.newPage();
-    await startCapturedNavigation(page, url);
-    await waitForInstallPrompt(page);
+    const source = await extensionContext.newPage();
+    const page = await openCaptured(source, url);
+    await source.close();
 
     // The clicked URL travels verbatim in `?preview=` — a bypass has to
     // be keyed on the URL the browser would actually navigate to.
@@ -74,9 +74,9 @@ test.describe('.user.js capture for local files', () => {
   }) => {
     const { path, url } = writeScript('hello.user.js', 'Hello From Disk');
 
-    const page = await extensionContext.newPage();
-    await startCapturedNavigation(page, url);
-    await waitForInstallPrompt(page);
+    const source = await extensionContext.newPage();
+    const page = await openCaptured(source, url);
+    await source.close();
     await page.locator('#install-btn').click();
     await page.waitForURL(INSTALLED_VIEWER_URL);
 
@@ -113,9 +113,9 @@ test.describe('.user.js capture for local files', () => {
     await sm.addCollection(path);
     await sm.syncNow();
 
-    const page = await extensionContext.newPage();
-    await startCapturedNavigation(page, url);
-    await waitForInstallPrompt(page);
+    const source = await extensionContext.newPage();
+    const page = await openCaptured(source, url);
+    await source.close();
 
     await expect(page.locator('#banner-slot')).toContainText('already installed');
     // The table carries the copy's Update and its viewer link; the
@@ -132,20 +132,21 @@ test.describe('.user.js capture for local files', () => {
   }) => {
     const { url } = writeScript('hello.user.js', 'Hello From Disk');
 
-    const page = await extensionContext.newPage();
-    await startCapturedNavigation(page, url);
-    await waitForInstallPrompt(page);
+    const source = await extensionContext.newPage();
+    const page = await openCaptured(source, url);
+    await source.close();
 
+    const newPreviews = trackNewPreviews(extensionContext);
     const [rawPage] = await Promise.all([
       extensionContext.waitForEvent('page'),
       page.locator('#view-source-btn').click(),
     ]);
 
     // A real navigation to the `file://` URL, same as the http half of
-    // this feature — which also proves the bypass held and the capture
-    // didn't pull the new tab into a second preview. Chrome renders it
-    // line-for-line as source text.
+    // this feature. Chrome renders it line-for-line as source text. The
+    // bypass held: no second preview, and the tab stays on the file.
     await rawPage.waitForURL(url);
+    await expectNoNewPreview(newPreviews, rawPage, url);
     const text = await rawPage.locator('body').innerText();
     expect(text).toContain('==UserScript==');
     expect(text.split('\n').length).toBeGreaterThan(3);
@@ -165,17 +166,19 @@ test.describe('.user.js capture for local files', () => {
     fs.writeFileSync(path, 'not a userscript at all\n');
     const url = `file://${path}`;
 
-    const page = await extensionContext.newPage();
-    await startCapturedNavigation(page, url);
-    await waitForInstallPrompt(page);
+    const source = await extensionContext.newPage();
+    const page = await openCaptured(source, url);
+    await source.close();
     await expect(page.locator('#banner-slot')).toContainText('No // ==UserScript== metadata block');
     await expect(page.locator('#install-btn')).toBeHidden();
     await expect(page.locator('#continue-btn')).toHaveText('Continue to file');
+    const newPreviews = trackNewPreviews(extensionContext);
     await page.locator('#continue-btn').click();
 
-    // The browser renders the file as text, so the tab really lands on
-    // it — proof enough that the capture stood down.
+    // The browser renders the file as text, and the capture stood down:
+    // no second preview, and the tab stays on the file.
     await page.waitForURL(url);
+    await expectNoNewPreview(newPreviews, page, url);
     expect(await page.locator('body').innerText()).toContain('not a userscript');
     await page.close();
   });
@@ -203,9 +206,9 @@ test.describe('.user.js capture for local files', () => {
       await (self as unknown as { SourceMonkey: { seedStorage(items: Record<string, unknown>): Promise<void> } }).SourceMonkey.seedStorage({ [key]: got[key] });
     }, [before!.scripts[0].id, url]);
 
-    const page = await extensionContext.newPage();
-    await startCapturedNavigation(page, url);
-    await waitForInstallPrompt(page);
+    const source = await extensionContext.newPage();
+    const page = await openCaptured(source, url);
+    await source.close();
 
     await expect(page.locator('#banner-slot')).toContainText('already installed');
     await expect(page.locator('#install-btn')).toBeHidden();
@@ -235,20 +238,16 @@ test.describe('.user.js capture for local files', () => {
     // turn the grant off.)
     await expect(page.locator('#banner-slot')).not.toContainText('File access is disabled');
 
+    const newPreviews = trackNewPreviews(extensionContext);
     const [rawPage] = await Promise.all([
       extensionContext.waitForEvent('page'),
       page.locator('#view-source-btn').click(),
     ]);
-    // Chrome can't render the missing file either, but the tab must be
-    // pointed at it rather than yanked back to a preview.
-    // Give a lost bypass time to pull the tab back — without the
-    // bypass this URL becomes `userscript.html?preview=…` within a
-    // second (checked against a deliberately broken build). With it,
-    // the tab is left wherever the browser lands on a missing file
-    // (`chrome-error://chromewebdata/` today) — the point is only that
-    // it was not yanked into a second preview.
-    await page.waitForTimeout(1500);
-    expect(rawPage.url()).not.toContain('userscript.html');
+    // Chrome can't render the missing file either, but the navigation
+    // must carry a bypass: no second preview opens. The tab is left
+    // wherever the browser lands on a missing file
+    // (`chrome-error://chromewebdata/` today).
+    await expectNoNewPreview(newPreviews, rawPage);
     await rawPage.close();
     await page.close();
   });
@@ -269,12 +268,13 @@ test.describe('.user.js capture for local files', () => {
     await page.goto(
       `chrome-extension://${extensionId}/userscript.html?script=${withScripts!.scripts[0].id}`,
     );
+    const newPreviews = trackNewPreviews(extensionContext);
     const [opened] = await Promise.all([
       extensionContext.waitForEvent('page'),
       page.locator(LOCATION_ROW).click(),
     ]);
-    await page.waitForTimeout(1000);
-    expect(opened.url()).not.toContain('userscript.html');
+    await opened.waitForURL(url);
+    await expectNoNewPreview(newPreviews, opened, url);
     await opened.close();
     await page.close();
   });
@@ -294,9 +294,9 @@ test.describe('.user.js capture for local files', () => {
     // Poll the mirror itself before navigating.
     await expect.poll(() => sm.isCaptureEnabled()).toBe(false);
 
+    const newPreviews = trackNewPreviews(extensionContext);
     await startCapturedNavigation(page, url);
-    await page.waitForTimeout(500);
-    expect(page.url()).not.toContain('userscript.html');
+    await expectNoNewPreview(newPreviews, page, url);
     await page.close();
   });
 });

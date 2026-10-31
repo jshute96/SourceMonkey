@@ -867,7 +867,8 @@ Banner (`#banner-slot`) states what this file is; the action row
   [script-identity.md](script-identity.md#what-the-header-offers).
 - **Cancel** goes back, or closes the tab (via `chrome.tabs.remove`,
   since Chrome refuses `window.close()` for a tab it didn't open by
-  script) when the preview was opened into a fresh one.
+  script) when the preview has no history, as in the new tab the
+  capture opens it in.
 - **View raw source** navigates a **new tab** to the file itself,
   leaving the preview open behind it. See
   [install-capture.md](install-capture.md#view-raw-source).

@@ -50,7 +50,7 @@ const STALE_LOCK_MS = 5 * 60_000;
 // Fetches the manager when sm-dev's cache has none. Workers start
 // together, so the first takes a lock and the others wait for its
 // copy rather than downloading over it.
-async function ensureFetched(name: ExternalManagerName): Promise<void> {
+export async function ensureFetched(name: ExternalManagerName): Promise<void> {
   if (fetchedVersion(name)) return;
   fs.mkdirSync(managerCacheDir(), { recursive: true });
   const lock = path.join(managerCacheDir(), `.${name}.fetching`);
