@@ -58,6 +58,7 @@ import { installDeepLinkRedirect } from './deep-link.js';
 import { REJECTIONS_KEY, readRejections, type RejectionMap } from './script-rejection.js';
 import { readRefreshErrors, type RefreshErrorMap } from './refresh-error.js';
 import { installUserJsCapture, isCaptureEnabled } from './install-capture.js';
+import { installStallMonitor } from './stall-monitor.js';
 import {
   HTTP_READ_MESSAGE,
   handleHttpReadRequest,
@@ -471,6 +472,9 @@ interface SourceMonkeyApi {
   // Whether the tab's toolbar icon has the sm-dev marker drawn on it.
   // Chrome can't read an action's icon back, so tests ask this.
   isSmDevMarked: (tabId: number) => boolean;
+  // Forget the marked tabs in memory, as a worker that just started
+  // knows only what session storage holds.
+  forgetSmDevMarksInMemory: () => void;
   moveScript: (scriptId: string, target: InstallTarget) => Promise<ScriptMeta | null>;
   // Remove one installed script row (a container copy), as the viewer's
   // trash can does.
@@ -956,6 +960,7 @@ const api: SourceMonkeyApi = {
   scriptNumbers: async () => (await assignAllNumbers()).scripts.byId,
   collectionNumbers: async () => (await assignAllNumbers()).collections.byId,
   isSmDevMarked: (tabId) => markedTabs.has(tabId),
+  forgetSmDevMarksInMemory: forgetMarkedTabs,
   tabDocument: async (tabId) => {
     try {
       const [frame] = await chrome.scripting.executeScript({
@@ -1053,6 +1058,9 @@ const api: SourceMonkeyApi = {
     // left from a test minutes ago would have its run's collection swept
     // from under a later test that reuses the run id.
     resetSmDevLinkForTests();
+    // The marked tabs live in memory beside the session storage cleared
+    // above; left there, the next save would write them back.
+    forgetMarkedTabs();
     realSweepsPaused = false;
     await chrome.alarms.clear(RUN_SWEEP_ALARM);
     await chrome.alarms.clear(BLOB_SWEEP_ALARM);
@@ -1805,40 +1813,80 @@ async function renderBadge(tabId: number, state: TabMatchState | null): Promise<
 // the badge at the bottom right. Chrome gives a tab one badge, so the
 // marker is drawn into a per-tab icon instead.
 
-// Tabs given the marked icon, so only they are set back.
+// Tabs given the marked icon, so only they are set back. Kept in
+// session storage too: a worker that restarted would otherwise not know
+// which tabs an earlier one marked. An update or reload clears both
+// that and Chrome's per-tab icons, so the two stay in step.
+//
+// Only marked tabs ever get an icon call. Setting the icon is slow in
+// some Chrome builds (a few hundred ms of the worker's thread per call),
+// and doing it for every open tab after an update held the worker for
+// seconds.
 const markedTabs = new Set<number>();
-// Tabs rendered since this worker started: a worker that restarted
-// doesn't know which tabs an earlier one marked, so each tab's first
-// render sets its icon back if it isn't marked.
-const markCheckedTabs = new Set<number>();
-let markedIcon: Promise<Record<string, ImageData>> | null = null;
+const MARKED_TABS_KEY = 'smDevMarkedTabs';
+let markedTabsLoaded: Promise<void> | null = null;
 
-// The default icon with the marker, at the sizes the toolbar uses.
-function drawMarkedIcon(): Promise<Record<string, ImageData>> {
-  markedIcon ??= (async () => {
-    const out: Record<string, ImageData> = {};
-    for (const [size, file] of [[16, 'icons/icon-16.png'], [32, 'icons/icon-48.png']] as const) {
-      const blob = await (await fetch(chrome.runtime.getURL(file))).blob();
-      const bitmap = await createImageBitmap(blob);
-      const canvas = new OffscreenCanvas(size, size);
-      const g = canvas.getContext('2d')!;
-      g.drawImage(bitmap, 0, 0, size, size);
-      const box = Math.round(size * 0.5);
-      g.fillStyle = SM_DEV_MARKER_CYAN;
-      g.beginPath();
-      g.roundRect(0, 0, box, box, Math.max(1, size / 16));
-      g.fill();
-      g.fillStyle = '#ffffff';
-      g.font = `bold ${Math.round(box * 0.85)}px sans-serif`;
-      g.textAlign = 'center';
-      g.textBaseline = 'middle';
-      g.fillText('T', box / 2, box / 2 + size / 32);
+function loadMarkedTabs(): Promise<void> {
+  markedTabsLoaded ??= chrome.storage.session.get(MARKED_TABS_KEY).then((got) => {
+    const saved = got[MARKED_TABS_KEY];
+    if (Array.isArray(saved)) for (const id of saved) if (typeof id === 'number') markedTabs.add(id);
+  }, (err) => {
+    console.info('[SourceMonkey] could not read the tabs with the sm-dev marker:', describeError(err));
+  });
+  return markedTabsLoaded;
+}
+
+// As a new worker starts: nothing in memory, read from session storage
+// on next use.
+function forgetMarkedTabs(): void {
+  markedTabs.clear();
+  markedTabsLoaded = null;
+}
+
+function saveMarkedTabs(): void {
+  chrome.storage.session.set({ [MARKED_TABS_KEY]: [...markedTabs] }).catch(() => {});
+}
+
+type IconImages = Record<string, ImageData>;
+let icons: Promise<{ marked: IconImages; plain: IconImages }> | null = null;
+
+// The default icon, with the marker and without, at the sizes the
+// toolbar uses (not the manifest's). Decoded once and passed as image
+// data: given a path, Chrome decodes the files again on every call.
+// One promise for both, so calls awaiting it resume in the order they
+// were made, and a tab's icon calls go out in the order its marked
+// state changed.
+function drawIcons(): Promise<{ marked: IconImages; plain: IconImages }> {
+  icons ??= Promise.all([drawIcon(true), drawIcon(false)]).then(([marked, plain]) => ({ marked, plain }));
+  icons.catch(() => { icons = null; });
+  return icons;
+}
+
+async function drawIcon(marked: boolean): Promise<Record<string, ImageData>> {
+  const out: Record<string, ImageData> = {};
+  for (const [size, file] of [[16, 'icons/icon-16.png'], [32, 'icons/icon-48.png']] as const) {
+    const blob = await (await fetch(chrome.runtime.getURL(file))).blob();
+    const bitmap = await createImageBitmap(blob);
+    const canvas = new OffscreenCanvas(size, size);
+    const g = canvas.getContext('2d')!;
+    g.drawImage(bitmap, 0, 0, size, size);
+    if (!marked) {
       out[String(size)] = g.getImageData(0, 0, size, size);
+      continue;
     }
-    return out;
-  })();
-  markedIcon.catch(() => { markedIcon = null; });
-  return markedIcon;
+    const box = Math.round(size * 0.5);
+    g.fillStyle = SM_DEV_MARKER_CYAN;
+    g.beginPath();
+    g.roundRect(0, 0, box, box, Math.max(1, size / 16));
+    g.fill();
+    g.fillStyle = '#ffffff';
+    g.font = `bold ${Math.round(box * 0.85)}px sans-serif`;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText('T', box / 2, box / 2 + size / 32);
+    out[String(size)] = g.getImageData(0, 0, size, size);
+  }
+  return out;
 }
 
 // `chrome.action.setIcon`, rejecting when it fails. Its promise form
@@ -1856,25 +1904,25 @@ function setActionIcon(details: chrome.action.TabIconDetails): Promise<void> {
 }
 
 async function markSmDevTab(tabId: number, on: boolean): Promise<void> {
-  const firstCheck = !markCheckedTabs.has(tabId);
-  markCheckedTabs.add(tabId);
+  await loadMarkedTabs();
+  if (on === markedTabs.has(tabId)) return;
+  // The set first, so a render that follows before the icon call lands
+  // sees where this one left the tab.
+  if (on) markedTabs.add(tabId);
+  else markedTabs.delete(tabId);
+  saveMarkedTabs();
   try {
-    if (on) {
-      await setActionIcon({ tabId, imageData: await drawMarkedIcon() });
-      markedTabs.add(tabId);
-    } else if (markedTabs.has(tabId) || firstCheck) {
-      markedTabs.delete(tabId);
-      const icons = chrome.runtime.getManifest().action?.default_icon;
-      // Absolute: the manifest's paths are from the extension's root,
-      // and this worker runs from extension/, not the root.
-      if (icons) {
-        const path = Object.fromEntries(Object.entries(icons as Record<string, string>)
-          .map(([size, file]) => [size, chrome.runtime.getURL(file)]));
-        await setActionIcon({ tabId, path });
-      }
-    }
+    const drawn = await drawIcons();
+    await setActionIcon({ tabId, imageData: on ? drawn.marked : drawn.plain });
   } catch (err) {
-    // The tab closed meanwhile, or the icon couldn't be drawn.
+    // The tab closed meanwhile, or the icon couldn't be drawn. Undone,
+    // so the next render tries again, unless a newer one has changed the
+    // tab since.
+    if (markedTabs.has(tabId) === on) {
+      if (on) markedTabs.delete(tabId);
+      else markedTabs.add(tabId);
+      saveMarkedTabs();
+    }
     console.info('[SourceMonkey] could not set the sm-dev marker:', describeError(err));
   }
 }
@@ -3055,8 +3103,8 @@ async function logMissingScripts(tabId: number, documentId: string): Promise<voi
 chrome.windows.onRemoved.addListener((windowId) => onConnectPromptWindowRemoved(windowId));
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  markedTabs.delete(tabId);
-  markCheckedTabs.delete(tabId);
+  // After the load, which could otherwise add the closed tab back.
+  void loadMarkedTabs().then(() => { if (markedTabs.delete(tabId)) saveMarkedTabs(); });
   enqueueTabWork(tabId, () => clearTabState(tabId));
   clearSkipScripts(tabId);
   dropClaim(tabId);
@@ -6099,6 +6147,7 @@ installFocusRefresh();
 installNavigationListeners();
 installDeepLinkRedirect();
 installUserJsCapture();
+installStallMonitor();
 // Sweep header rules stranded by a worker that died mid-request. The
 // event that woke this worker may itself be an XHR, so the sweep isn't
 // alone here — `installHeaderRule` waits on it rather than racing it.

@@ -235,9 +235,56 @@ test.describe('sm-dev tab claims', () => {
     await sm.claimTab(tabId, 'R1', 60_000);
     await page.reload();
     await expect.poll(() => sm.isSmDevMarked(tabId)).toBe(true);
+    // Saved for a worker that restarts, so it knows to set the icon back.
+    const sw = await getServiceWorker();
+    const saved = () => sw.evaluate(async () => (await chrome.storage.session.get('smDevMarkedTabs')).smDevMarkedTabs ?? []);
+    await expect.poll(saved).toEqual([tabId]);
     await sm.releaseRun('R1');
     await page.reload();
     await expect.poll(() => sm.isSmDevMarked(tabId)).toBe(false);
+    await expect.poll(saved).toEqual([]);
+  });
+
+  test('a restarted worker sets a marked tab\'s icon back, and only that tab\'s', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    // The marked tabs come back from session storage, so a worker that
+    // didn't mark the tab still knows to unmark it.
+    await twoScripts(sm, fixtureServer.baseUrl);
+    const other = await extensionContext.newPage();
+    await other.goto(`${fixtureServer.baseUrl}/target.html?other`);
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    const tabId = await activeTabId(getServiceWorker);
+    await sm.claimTab(tabId, 'R1', 60_000);
+    await page.reload();
+    await expect.poll(() => sm.isSmDevMarked(tabId)).toBe(true);
+
+    await sm.forgetSmDevMarksInMemory();
+    const sw = await getServiceWorker();
+    type Counted = { smSetIconTabs: number[]; smSetIcon?: typeof chrome.action.setIcon };
+    await sw.evaluate(() => {
+      const g = self as unknown as Counted;
+      g.smSetIconTabs = [];
+      g.smSetIcon = chrome.action.setIcon;
+      chrome.action.setIcon = ((details: chrome.action.TabIconDetails, ...rest: unknown[]) => {
+        g.smSetIconTabs.push(details.tabId!);
+        return (g.smSetIcon as (...a: unknown[]) => unknown)(details, ...rest);
+      }) as typeof chrome.action.setIcon;
+    });
+    try {
+      await sm.releaseRun('R1');
+      await page.reload();
+      await other.reload();
+      await expect.poll(() => sw.evaluate(() => (self as unknown as Counted).smSetIconTabs)).toEqual([tabId]);
+      await expect.poll(() => sw.evaluate(async () => (await chrome.storage.session.get('smDevMarkedTabs')).smDevMarkedTabs ?? [])).toEqual([]);
+    } finally {
+      await sw.evaluate(() => {
+        const g = self as unknown as Counted;
+        if (g.smSetIcon) chrome.action.setIcon = g.smSetIcon;
+      });
+      await other.close();
+    }
   });
 
   test('a report relayed by the page bridge for a script SourceMonkey doesn\'t have is ignored', async ({

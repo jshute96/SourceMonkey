@@ -40,6 +40,8 @@ export interface SmApi {
   // sm-dev's tab claims (src/extension/sm-dev-link.ts).
   claimTab(tabId: number, runId: string, ttlMs: number): Promise<void>;
   isSmDevMarked(tabId: number): Promise<boolean>;
+  // Forget the marked tabs in memory, as a worker that just started.
+  forgetSmDevMarksInMemory(): Promise<void>;
   renewRun(runId: string, ttlMs: number, tabs?: { tabId: number; scriptsOff?: boolean }[]): Promise<number>;
   releaseRun(runId: string): Promise<void>;
   sweepRunCollections(now: number): Promise<void>;

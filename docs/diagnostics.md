@@ -586,9 +586,9 @@ The `registration sync` line that follows has these steps:
     still come from storage.
   - The labels use the script numbers the worker assigned just before
     the sync.
-  - A full sync reads rows and bodies under `read`. Its note says how
-    many specs Chrome already held exactly (no call), how many more went
-    without their code, and how many registrations it dropped.
+  - A full sync splits that into `read rows` and `read bodies`. Its note
+    says how many specs Chrome already held exactly (no call), how many
+    more went without their code, and how many registrations it dropped.
   - An incremental sync's note says how many specs it rebuilt the same
     as it last placed them (`in place`, no call).
 - **list** (full syncs only): asking Chrome which registrations it
@@ -804,6 +804,68 @@ The lesson worth keeping:
   you are looking at.
 - So pair a phase with a measurement of the operation *inside* it
   before concluding anything about that operation.
+
+## Measuring a slow start
+
+After an extension update, the first few seconds can be slow: a
+captured script or the collections page can wait seconds. These lines
+show whether SourceMonkey's own code was holding the worker's thread,
+or it was waiting on Chrome.
+
+### Where to look
+
+All but the capture line need debug logging on.
+
+| Console | Line |
+|---|---|
+| Service worker | `worker thread blocked for <n>ms` |
+| Service worker | `registration sync` (`read rows`, `read bodies`, `list`) |
+| Service worker | `captured .user.js navigation` (always logged) |
+| Collections page | `collections page startup, since the page began loading` |
+
+### Reading it
+
+- **`worker thread blocked`**: a timer due every 100 ms fired that much
+  later. Something held the worker's thread for that long, and every
+  await and event in the meantime waited too. Where the line lands
+  among the others shows what was running.
+  - A debugger paused in the worker, or a long garbage-collection
+    pause, shows up the same way.
+- **No blocked lines while a step's await took seconds**, with debug
+  logging on, means the worker was idle, waiting on Chrome. `list` in `registration sync` is a
+  single `chrome.userScripts.getScripts` call, so a slow `list` with no
+  blocked line is Chrome itself.
+- **The collections page's own wait** shows in its console (open
+  DevTools on the page; messages from before it opened are kept).
+- **`collections page startup`** gives each step of the first render as
+  a time since the page began loading: the GitHub token, the local file
+  roots, then each read `render` waits on, the user scripts check, the
+  collections, and the first paint. The step after the biggest jump is
+  the one it waited on.
+- **The capture line** gives `listener <n>ms after the navigation
+  began`: how long Chrome took to hand the navigation to the worker.
+
+### Finding what held the thread
+
+The blocked lines say the thread was busy, not with what. A CPU profile
+of the worker says that, and Chrome's tracing keeps recording across an
+extension update, where the worker's DevTools window closes.
+
+- Install the **Perfetto Tracing** extension, without which Perfetto
+  records nothing from Chrome.
+- On `ui.perfetto.dev`: **Record new trace** → **Chrome browser**, then
+  in **Manual Category Selection** check `v8.cpu_profiler`,
+  `cpu_profiler`, `v8`, `devtools.timeline` and `toplevel`. Set about
+  60 s and a 64 MB buffer under **Buffers and duration**.
+- Record across the slow moment, then **Download** the trace.
+- The worker's samples are in `ProfileChunk` events (JSON
+  `cpuProfile` nodes and samples, grouped by the packet's sequence id
+  and the event's profile id).
+
+What one found: Chrome's own `extensions::setIcon` code, a few hundred
+ms of the worker's thread per call, run once for every open tab after
+an update. Only tabs with the sm-dev marker get an icon call now (see
+[sm-dev-design.md](sm-dev-design.md)).
 
 ## Testing
 

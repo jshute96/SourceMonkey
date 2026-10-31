@@ -274,6 +274,55 @@ test.describe('badge', () => {
     await page.close();
   });
 
+  test('drawing the badges of pages open before the extension started sets no icon', async ({
+    extensionContext, fixtureServer, sm, getServiceWorker,
+  }) => {
+    // Setting the icon can take a few hundred ms of the worker's thread
+    // per call, so doing it for every open tab after an update held the
+    // worker for seconds. Only a tab with the sm-dev marker gets a call.
+    scriptsDir.write({
+      relativePath: 'early.user.js',
+      meta: { name: 'Early', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end' },
+      body: `void 0;`,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+    const pages = [];
+    for (let i = 0; i < 3; i++) {
+      const page = await extensionContext.newPage();
+      await page.goto(`${fixtureServer.baseUrl}/target.html?tab=${i}`);
+      pages.push(page);
+    }
+    const sw = await getServiceWorker();
+    const tabIds = await sw.evaluate(async (url) => (await chrome.tabs.query({ url: `${url}/target.html*` })).map((t) => t.id!), fixtureServer.baseUrl);
+    expect(tabIds).toHaveLength(3);
+    for (const id of tabIds) await waitForTabState(sm, id, (s) => hasBadgeColor(s, GREEN), 'green before');
+    // As a worker that just started: it hasn't drawn these tabs yet.
+    await sm.forgetSmDevMarksInMemory();
+
+    type Counted = { smSetIconCalls: number; smSetIcon?: typeof chrome.action.setIcon };
+    await sw.evaluate(() => {
+      const g = self as unknown as Counted;
+      g.smSetIconCalls = 0;
+      g.smSetIcon = chrome.action.setIcon;
+      chrome.action.setIcon = ((...args: Parameters<typeof chrome.action.setIcon>) => {
+        g.smSetIconCalls++;
+        return g.smSetIcon!(...args);
+      }) as typeof chrome.action.setIcon;
+    });
+    try {
+      await sm.simulateExtensionStart();
+      for (const id of tabIds) await waitForTabState(sm, id, (s) => hasBadgeColor(s, PURPLE), 'purple after the start');
+      expect(await sw.evaluate(() => (self as unknown as Counted).smSetIconCalls)).toBe(0);
+    } finally {
+      await sw.evaluate(() => {
+        const g = self as unknown as Counted;
+        if (g.smSetIcon) chrome.action.setIcon = g.smSetIcon;
+      });
+      for (const page of pages) await page.close();
+    }
+  });
+
   test('a page open before the extension started turns purple and asks for a reload', async ({
     extensionContext, fixtureServer, sm, getServiceWorker,
   }) => {

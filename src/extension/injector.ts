@@ -2578,11 +2578,12 @@ async function runSync(scope: SyncScope | undefined): Promise<void> {
 async function runFullSync(assigned: ReadonlyMap<string, number> | null): Promise<RegistrationState> {
   const timer = startPhaseTimer('registration sync');
   const all = await readAll();
+  timer.mark('read rows');
   const { scripts, collections } = all;
   // As in `runIncrementalSync`: the numbers just assigned, when there are.
   const numbers = assigned ?? all.numbers;
   const candidates = await withBodies(scripts, collections);
-  timer.mark('read');
+  timer.mark('read bodies');
   const handlerVersion = chrome.runtime.getManifest().version;
   const effective = await revalidateCandidates(candidates, collections);
   const logIds = computeLogIds(scripts.map((s): LogIdInput => ({

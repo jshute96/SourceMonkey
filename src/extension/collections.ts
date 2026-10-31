@@ -80,7 +80,7 @@ import {
 } from './page-links.js';
 import { getValue } from '../userscript-header.js';
 import { describeDiagnostic } from '../diagnostic-location.js';
-import { installDebugLoggingListener, isDebugLoggingEnabled, loadDebugLoggingFlag } from '../debug-log.js';
+import { debugLoggingSettled, installDebugLoggingListener, isDebugLoggingEnabled, loadDebugLoggingFlag } from '../debug-log.js';
 import { startPhaseTimer, type PhaseTimer } from '../phase-timing.js';
 import {
   appendWithSlashBreaks,
@@ -239,6 +239,28 @@ const initialRenderDone = new Promise<void>((resolve) => {
 onNamedTabFocus('collections', (hash) => { void focusHashTarget(hash); });
 
 installLocalRootsListener();
+// The page's startup steps, for the debug log: each step's time since
+// the page began loading (`performance.now()`), so a slow open shows
+// which wait it spent its time in. Recorded unconditionally (one clock
+// read per step) because the debug-logging flag isn't known yet when
+// they run; printed once, after the first render, only when it's on.
+// Null once printed, so later renders record nothing. Declared above
+// the `bootstrap()` call, which records the first step before this
+// module's later declarations exist.
+let startupSteps: string[] | null = [];
+
+function startupStep(name: string): void {
+  startupSteps?.push(`${name} at ${Math.round(performance.now())}ms`);
+}
+
+async function logStartupSteps(): Promise<void> {
+  const steps = startupSteps;
+  startupSteps = null;
+  if (steps && await debugLoggingSettled()) {
+    console.log(`[SourceMonkey] timing: collections page startup, since the page began loading: ${steps.join(', ')}`);
+  }
+}
+
 void bootstrap().catch((err: unknown) => {
   console.info('[SourceMonkey] collections page failed to start', err);
 });
@@ -1184,15 +1206,20 @@ async function bootstrap(): Promise<void> {
   // short of a reload. A repaint is the recovery from a half-built page,
   // so it must never be the thing left waiting.
   try {
+    startupStep('script start');
     await githubTokenReady;
+    startupStep('GitHub token');
     // Same reasoning for the configured local-file roots: the icon
     // slots resolve stand-ins synchronously during render, so the
     // setting has to be in hand before the first paint.
     await localRootsReady();
-    await render();
+    startupStep('local file roots');
+    await render(true);
+    startupStep('first paint');
   } finally {
     resolveInitialRender();
   }
+  void logStartupSteps();
   // Re-trigger any `#collection-<id>` hash scroll after the async
   // render. The browser's initial jump fires immediately on page load,
   // before our render() finishes building the sections, so it finds no
@@ -1399,7 +1426,10 @@ let currentCopiesSetting: DownloadsCopiesSetting | null = null;
 
 // ---------- Initial render ----------
 
-async function render(): Promise<void> {
+// `startup`: the page's first render, whose steps go in the startup
+// timing line. A repaint running alongside it records none.
+async function render(startup = false): Promise<void> {
+  const step = startup ? startupStep : () => {};
   bannerSlot.textContent = '';
   collectionsEl.textContent = '';
 
@@ -1410,19 +1440,24 @@ async function render(): Promise<void> {
   // WARNING / ERROR / REJECTED promotion until an unrelated session
   // event happened along.
   currentLogLevels = await getAllMaxLogLevels();
+  step('log levels');
   currentRejections = await readRejections();
+  step('rejections');
   currentRefreshErrors = await readRefreshErrors();
+  step('refresh errors');
   // Which directory holds the local copies, so every script row can be
   // asked — synchronously, while it is drawn — whether its file is one
   // SourceMonkey can delete. Re-read on every render, since a copy made
   // in another tab can be what created the setting.
   currentCopiesSetting = await readCopiesSetting();
+  step('copies setting');
 
   // Surface the file:// access state up-front. Without the toggle on
   // chrome://extensions, every fetch we try will fail.
   if (!(await isFileSchemeAccessAllowed())) {
     bannerSlot.appendChild(renderFileAccessBanner());
   }
+  step('file access');
 
   // The User Scripts API requires the user to flip the "Allow User
   // Scripts" toggle on chrome://extensions. Until they do, every
@@ -1430,8 +1465,10 @@ async function render(): Promise<void> {
   // though the badge still counts matches. Other failures (revoked permission, etc.)
   // surface their raw message so the user has something to grep for.
   await syncUserScriptsBanner();
+  step('user scripts check');
 
   let collections = await getCollections();
+  step('collections');
   // One-shot backfill so older collection rows (pre-displayName) pick
   // up an inferred label on first view after upgrade. Asked of the
   // worker only when a row has none.

@@ -1747,9 +1747,14 @@ Terms used below:
   - `chrome.action.setIcon({ tabId, imageData })` sets a per-tab icon.
     The SW draws it with `OffscreenCanvas`: the normal icon with the
     marker in the top-left corner, clear of the badge at bottom-right.
-  - It's set back on the tab's first page load with no claim. A worker
-    that restarted doesn't know which tabs an earlier one marked, so
-    it sets each tab's icon back on its first render.
+  - It's set back on the tab's first page load with no claim, also as
+    image data decoded once. Given a path instead, Chrome decodes the
+    files on every call, which takes a few hundred ms of the worker's
+    thread in some builds.
+  - Only marked tabs get an icon call. The marked set is kept in
+    session storage (`smDevMarkedTabs`), so a worker that restarted
+    still knows them. An update or reload clears that along with
+    Chrome's per-tab icons.
 
 ## Page commands
 

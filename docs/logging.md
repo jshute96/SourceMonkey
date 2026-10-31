@@ -69,6 +69,10 @@ Gated through `dlog` / `dwarn` in `src/debug-log.ts`.
   from DevTools to flip without the UI.
 - Live update: the SW listens via `storage.onChanged` so the change
   takes effect without reloading the extension.
+- Also gates the phase timings (`src/phase-timing.ts`) and the
+  worker's stall monitor (`src/extension/stall-monitor.ts`), which runs
+  only while the setting is on. See
+  [diagnostics.md](diagnostics.md#measuring-a-slow-start).
 
 ## GitHub-token suffix
 
