@@ -601,7 +601,7 @@ the browser's Downloads folder.
   - A script from a directory or manifest collection can't be removed
     on its own: the button is disabled, with the panel's tooltip.
   - With other copies left, the page moves to the next one; with none,
-    it shows the not-found state.
+    it shows the [removed page](#removed-page).
 
 - The dialog owns the write and its refusals; the caller then runs the
   exclusive-enable sweep for the new row and switches the page to it
@@ -631,8 +631,8 @@ re-renders when:
     otherwise re-render every viewer open on it, on every retry.
 
 If the re-read finds the script gone (its collection was removed), the
-viewer drops into the not-found state — including when another tab
-deleted this copy. Only a deletion made *here*, from a trash can on
+viewer shows the [removed page](#removed-page) — including when another
+tab deleted this copy. Only a deletion made *here*, from a trash can on
 this page, moves the page to another copy instead, and that
 path suppresses this listener's not-found paint so the switch stays a
 single in-place render; see
@@ -640,27 +640,55 @@ single in-place render; see
 (`loglevel:` / `log:`) drive the Status-row promotion and Log-pane
 repaint separately, as described above.
 
+### Removed page
+
+When the script on screen is removed and no other copy is left to move
+to, the page keeps what it last showed of it (`showRemoved`) rather
+than going blank. Whoever removed it: this page, another tab, the
+collections page, or a refresh that dropped it.
+
+- **The heading** keeps the script's name and site icon.
+- **A row in place of the controls** says what happened, with
+  **Reinstall…** on the right, which opens the install page for the
+  old location:
+  - *This script has been uninstalled*: Reinstall from its location.
+  - *This script has been deleted*: an imported or scratch script. No
+    Reinstall, since its stored text was its only copy.
+  - *This script's file has been deleted* (a local copy deleted here),
+    or *This script has been removed because its file was deleted*
+    (Refresh found the file gone). Reinstall only from the header's
+    `@downloadURL`, when it names a `.user.js` on the web.
+- **The details panel** keeps Name, *Was in* (its collection), Location,
+  the hosting site's page and Homepage, each left out when there is
+  nothing for it (`renderRemovedDetails` in `script-details.ts`).
+- Anything a deletion could not finish shows in the message bar.
+- **A reload, or Back / Forward**, shows it again: the record is kept in
+  the tab's `history.state`.
+- Reinstalling elsewhere doesn't change this page: the new install has a
+  new ID. The install page Reinstall opens shows any copy installed
+  since.
+
+- **Which note** comes from `removedHereMessage`, set by this page's
+  own removals. A removal from elsewhere reads as uninstalled; for a
+  local file, Reinstall shows only once a probe finds the file still
+  there.
+- **Refresh on a deleted local file** drops the row itself
+  ([file-changes.md](file-changes.md)) and, like the panel's trash
+  can, moves to the next copy when there is one.
+  - The wording and the successor are decided before the check runs:
+    the removal's storage event reaches the listener first.
+  - A check that returns a row clears them again.
+- **Painted once.** Later storage changes to other scripts leave the
+  page alone.
+- The heading keeps the script's own `@icon` when it has one.
+
 ### Not-found
 
 If the URL has neither a `script` nor a `preview` param, or the ID
-doesn't resolve in the store, the viewer renders a "not available"
-message instead of crashing. The Refresh button is hidden.
-
-The wording depends on who made the row go (`removedHere`):
-
-- Someone else (another tab, a background refresh): *Script not found
-  in storage. Open it from the collections page.*
-- One of this page's own trash cans: *This script has been removed*,
-  plus anything the removal could not finish.
-- This page's Refresh, on a local script whose file had been deleted:
-  the check drops such a row itself ([file-changes.md](file-changes.md)),
-  and the page moves to the next copy in the versions table, exactly
-  as the panel's trash can does. Only when there is no other copy does
-  it land on the not-found state, saying *This script has been removed
-  because its file was deleted*. Both the wording and the successor
-  are decided before the check runs, because the removal's storage
-  event reaches the listener first; a check that returns a row clears
-  them again.
+doesn't resolve in the store and the tab has no record of it (a tab
+opened on an ID removed earlier), the viewer renders a "not available"
+message instead of crashing: *This script is not installed*. The
+Refresh button is hidden.
 
 ### Switching copies in place
 

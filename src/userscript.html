@@ -121,6 +121,10 @@
          box, so it is exactly the button's height rather than a line box
          that would nudge it off its neighbours' centre line. */
       .meta-row .remove-wrap:not([hidden]) { display: inline-flex; }
+      /* The removed page's note: pushes Reinstall to the row's right,
+         where the controls row keeps its own buttons. */
+      .meta-row .removed-note { font-weight: 600; color: #444; margin-right: auto; }
+      .meta-row #reinstall-btn { font-weight: 600; }
       /* The Open on <site> link, drawn as a button: the same surface,
          height and hover as the buttons beside it (styles.css). With no
          target it has no href and is greyed out like a disabled button. */
@@ -1095,6 +1099,13 @@
            mode can raise when a local read fails. -->
       <div id="banner-slot"></div>
       <div id="other-versions"></div>
+    </div>
+    <!-- In place of the controls row once the script on screen is
+         uninstalled (`showRemoved`): what happened, and Reinstall when
+         there is a source to install it from again. -->
+    <div id="removed-row" class="meta-row" hidden>
+      <span id="removed-note" class="removed-note"></span>
+      <button id="reinstall-btn" type="button" class="primary" hidden>Reinstall…</button>
     </div>
     <div id="meta-row" class="meta-row" hidden>
       <!-- Left of the row's blank space, before the toggle's

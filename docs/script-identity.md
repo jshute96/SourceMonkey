@@ -365,7 +365,7 @@ the *other* rows.
       names a script that no longer exists, so keeping it would give
       Back a not-found page.
     - **Only for a removal made here.** A copy that disappears because
-      another tab deleted it drops to the not-found state as before —
+      another tab deleted it shows the removed page —
       swapping in some other version would be a page the user never
       asked for.
     - **The swap is the only paint the user sees.** The removal's own

@@ -182,7 +182,7 @@ export function renderDetails(container: HTMLElement, model: DetailsModel): void
   }
   if (model.location) {
     appendRow(dl, 'Location', locationCell(model.location));
-    addSitePage(dl, model.location.href, h);
+    addSitePage(dl, model.location.href, h ? declaredHomepage(h) : undefined);
   }
   // Straight after the hosting-site row: both name a page about this
   // script, one derived from where it lives and one claimed by the file
@@ -337,6 +337,36 @@ function probeTitleText(probe: VersionProbe, relation: VersionRelation): string 
     : probe.url;
 }
 
+// What the page keeps of a script that was uninstalled while it was
+// open, for `renderRemovedDetails`. Plain data: it is saved in
+// `history.state` so a reload still has it.
+export interface RemovedDetails {
+  name: string;
+  collection?: StoredCollection;
+  location?: LocationRow;
+  homepage?: string;
+}
+
+// The details panel for a removed script: who it was and where to find
+// it again. The same rows, built the same way, as the installed panel's
+// — Name, the collection it was in, Location, the hosting site's page,
+// Homepage — and each left out when there is nothing to put in it.
+export function renderRemovedDetails(container: HTMLElement, model: RemovedDetails): void {
+  currentMode = 'installed';
+  container.replaceChildren();
+  const dl = document.createElement('dl');
+  const b = document.createElement('b');
+  b.textContent = model.name;
+  appendRow(dl, 'Name', b);
+  if (model.collection) appendRow(dl, 'Was in', collectionCell(model.collection));
+  if (model.location) {
+    appendRow(dl, 'Location', locationCell(model.location));
+    addSitePage(dl, model.location.href, model.homepage);
+  }
+  addLink(dl, 'Homepage', model.homepage);
+  container.appendChild(dl);
+}
+
 // The publishing site's page for the script, derived from the Location
 // URL — the location is a raw-code URL, this is the page a person can
 // read. `sitePageRow` owns which sites are recognised and when the row
@@ -347,8 +377,8 @@ function probeTitleText(probe: VersionProbe, relation: VersionRelation): string 
 // generic "Home page": the panel already has a Homepage row fed by the
 // script's `@homepage`, and two rows with the same label saying
 // different things would be worse than either alone.
-function addSitePage(dl: HTMLDListElement, locationUrl: string, h: ParsedHeader | null): void {
-  const row = sitePageRow(locationUrl, h ? declaredHomepage(h) : undefined);
+function addSitePage(dl: HTMLDListElement, locationUrl: string, homepage: string | undefined): void {
+  const row = sitePageRow(locationUrl, homepage);
   if (!row) return;
   appendRow(dl, row.label, openInNewTabAnchor(row.url, row.url));
 }

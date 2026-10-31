@@ -345,8 +345,6 @@ One capitalization convention, with carve-outs:
     it as INVALID.`
   - **A statement plus a fix is two sentences**, not one joined by a
     dash: `This location is a manifest. Choose Manifest as the type.`
-    Same for `Script not found in storage. Open it from the
-    collections page.`
   - The subject-plus-shapes messages (`Location must be a URL or
     absolute file path`) stay one sentence with no period.
   - **No em-dashes in any user-visible text** (messages, Log rows,

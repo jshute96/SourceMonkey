@@ -241,7 +241,8 @@ row with it.
 2. Then each dependency under the first heading. A failure here is
    reported but does not undo anything: the script is gone, which is what was asked, and a
    leftover library file is a smaller problem than a half-deleted state.
-   The caller shows those messages beside "This script has been removed".
+   The caller shows those messages on the page left behind (see
+   [script-viewer.md](script-viewer.md#removed-page)).
 3. Then `removeScript`, which takes the row and its logs.
 
 ### Why not a refresh

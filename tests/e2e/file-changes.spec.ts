@@ -309,12 +309,14 @@ test.describe('file-change chips', () => {
     scriptsDir.remove('only.user.js');
     await page.reload();
     await expect(page.locator('.filename-cell ' + CHIP)).toHaveText('deleted');
-    // No other copy to move to: the not-found state, with the reason —
-    // not the generic "not found in storage" wording.
+    // No other copy to move to: the removed page, with the reason, and
+    // no Reinstall from a file that is gone.
     await page.locator('#refresh-btn').click();
-    await expect(page.locator('#message')).toHaveText(
+    await expect(page.locator('#removed-note')).toHaveText(
       'This script has been removed because its file was deleted',
     );
+    await expect(page.locator('h1#filename')).toContainText('Only');
+    await expect(page.locator('#reinstall-btn')).toBeHidden();
     await page.close();
   });
 

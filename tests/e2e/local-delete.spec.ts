@@ -49,12 +49,24 @@ async function expectGlyph(
   else await expect(btn).not.toHaveClass(/\bdeletes-file\b/);
 }
 
+// The page left behind when the script on screen is removed.
+async function expectRemovedPage(
+  page: Page,
+  want: { note: string; name: string; location: string },
+): Promise<void> {
+  await expect(page.locator('#removed-note')).toHaveText(want.note);
+  await expect(page.locator('h1#filename')).toContainText(want.name);
+  const panel = page.locator('#header-summary');
+  await expect(panel.locator('dt', { hasText: 'Name' }).locator('+ dd')).toHaveText(want.name);
+  await expect(panel.locator('dt', { hasText: 'Location' }).locator('+ dd a')).toHaveAttribute('href', want.location);
+}
+
 // After deleting the copy on screen with other copies left: the page
 // shows one of them rather than a not-found state.
 async function expectMovedOff(page: Page, copyId: string): Promise<void> {
   await expect.poll(() => new URL(page.url()).searchParams.get('script')).not.toBe(copyId);
   await expect(page.locator('#meta-row')).toBeVisible();
-  await expect(page.locator('#message')).not.toHaveText('This script has been removed');
+  await expect(page.locator('#removed-row')).toBeHidden();
 }
 
 function scriptWith(opts: { name: string; extra?: string[] }): string {
@@ -581,8 +593,72 @@ test.describe('removing a script from its page', () => {
     await btn.click();
     await dialog.locator('#confirm-ok-btn').click();
 
-    await expect(page.locator('#message')).toHaveText('This script has been removed');
+    // The page keeps what was here: the name, where it came from, and
+    // a way back.
     expect((await sm.getCollectionWithScripts(def!.id))!.scripts).toHaveLength(0);
+    await expectRemovedPage(page, {
+      note: 'This script has been uninstalled',
+      name: 'Hello',
+      location: `${server.baseUrl}/hello.user.js`,
+    });
+    await expect(page.locator('#meta-row')).toBeHidden();
+    await expect(page.locator('#tabs')).toBeHidden();
+
+    // A reload still shows it, from the tab's history entry.
+    await page.reload();
+    await expectRemovedPage(page, {
+      note: 'This script has been uninstalled',
+      name: 'Hello',
+      location: `${server.baseUrl}/hello.user.js`,
+    });
+
+    // Reinstall… opens the install page for the old location.
+    await page.locator('#reinstall-btn').click();
+    await page.waitForURL(/userscript\.html\?preview=/);
+    expect(new URL(page.url()).searchParams.get('preview')).toBe(`${server.baseUrl}/hello.user.js`);
+    await expect(page.locator('#install-btn')).toBeVisible();
+    await page.close();
+  });
+
+  test('a script removed from another tab leaves the same page', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    server.setRoute('/hello.user.js', scriptWith({ name: 'Hello' }));
+    const def = await sm.addCollection(`${server.baseUrl}/hello.user.js`);
+    const id = (await sm.getCollectionWithScripts(def!.id))!.scripts[0].id;
+    const page = await extensionContext.newPage();
+    await page.goto(viewerUrl(extensionId, id));
+    await expect(page.locator(DELETE_BTN)).toBeEnabled();
+
+    await sm.removeScript(id);
+    await expectRemovedPage(page, {
+      note: 'This script has been uninstalled',
+      name: 'Hello',
+      location: `${server.baseUrl}/hello.user.js`,
+    });
+
+    // Back and Forward: the removed entry keeps its page, and a live
+    // script after it gets its controls and code back.
+    server.setRoute('/other.user.js', scriptWith({ name: 'Other' }));
+    const other = await sm.addCollection(`${server.baseUrl}/other.user.js`);
+    const otherId = (await sm.getCollectionWithScripts(other!.id))!.scripts
+      .find((s) => s.relativePath.endsWith('/other.user.js'))!.id;
+    await page.goto(viewerUrl(extensionId, otherId));
+    await expect(page.locator('#meta-row')).toBeVisible();
+    await page.goBack();
+    await expect(page.locator('#removed-note')).toHaveText('This script has been uninstalled');
+    await expect(page.locator('#code-pane')).toBeHidden();
+    await page.goForward();
+    await expect(page.locator('#meta-row')).toBeVisible();
+    await expect(page.locator('#removed-row')).toBeHidden();
+    await expect(page.locator('#code-pane')).toBeVisible();
+
+    // A tab opened on the ID afterwards has nothing to go on.
+    const fresh = await extensionContext.newPage();
+    await fresh.goto(viewerUrl(extensionId, id));
+    await expect(fresh.locator('#message')).toHaveText('This script is not installed');
+    await expect(fresh.locator('#removed-row')).toBeHidden();
+    await fresh.close();
     await page.close();
   });
 

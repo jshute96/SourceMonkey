@@ -171,7 +171,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/page-heading.ts` | Import-free module holding the viewer heading's vocabulary and DOM, and the early paint that names the header bar before the page's first paint |
 | `src/extension/page-links.ts` | Cross-page links between extension pages: the named Collections / Options tabs, the header bar's home link and buttons |
 | `src/extension/user-scripts-access.ts` | "Allow User Scripts" probe plus the shared heading and fix line for the collections page and popup |
-| `src/extension/userscript.ts` | Userscript viewer controller — installed mode (`?script=`), preview mode (`?preview=`), in-page switching between copies, the Collection row's Move button, the controls row's Open site link, Make local copy and remove buttons, live `storage` watchers, log pane |
+| `src/extension/userscript.ts` | Userscript viewer controller — installed mode (`?script=`), preview mode (`?preview=`), in-page switching between copies, the Collection row's Move button, the controls row's Open site link, Make local copy and remove buttons, the removed-script page, live `storage` watchers, log pane |
 | `src/extension/compare.ts` | Compare page controller — loads two copies (stored, a preview's download, or an import's backup copy), the fields table with its swap, per-file tabs, unified / side-by-side diff rendering, change-block arrows |
 | `src/extension/debug/icons.ts` | Debug icons controller — lists all cached icons with scope, expiry, per-row refresh/delete, and Delete All |
 | `src/extension/debug/storage.ts` | Debug storage controller: renders the By script, By file and Stored values views, sortable headings, live repaint |
@@ -194,7 +194,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/import-compare.ts` | Hands a backup's copy of a script from the import dialog to the compare page, over a BroadcastChannel |
 | `src/extension/import-plan.ts` | Matches a backup's scripts and collections to what's here, compares them, and turns the import dialog's choices into a request |
 | `src/vendor/fflate.d.ts` | Types for fflate, which the build copies to `dist/vendor/fflate.js` |
-| `src/extension/script-details.ts` | Builds the viewer's curated details `<dl>` — chosen header fields, the resolved provenance rows, and the Collection row's trailing slot — for both modes; lends the compare page its Collection cell |
+| `src/extension/script-details.ts` | Builds the viewer's curated details `<dl>` — chosen header fields, the resolved provenance rows, and the Collection row's trailing slot — for both modes, plus the removed page's short panel; lends the compare page its Collection cell |
 | `src/extension/details-tooltips.ts` | The one table of tooltip text for the details panel's row labels, plus the mode/site-name lookups |
 | `src/extension/copy-button.ts` | The square copy-to-clipboard button beside a path (viewer rows, delete dialog): sprite glyphs, per-button "Copied" flash, text read at click time |
 | `src/extension/script-identity.ts` | Finds other installed copies of a script — match by absolute `fileUrl`, and by `@namespace`+`@name`; the content fingerprint behind the panel's Compare column; the exclusive-enable rule and sweep; the install / move target options |

@@ -512,7 +512,9 @@ export class CodeTabsView {
     if (location.hash === desired) return;
     // Empty fragment → drop the `#` from the URL entirely.
     const next = desired || location.pathname + location.search;
-    history.replaceState(null, '', next);
+    // Keeps the entry's state: the viewer stores what it knows of a
+    // removed script there (see `showRemoved` in userscript.ts).
+    history.replaceState(history.state, '', next);
   }
 
   // Resolve a raw hash string against the current tab list. Falls back

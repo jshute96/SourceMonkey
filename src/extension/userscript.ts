@@ -125,6 +125,7 @@ import {
   requireBasename,
   scriptBasename,
   scriptStatusView,
+  previewUrl,
   stripSriFragment,
   viewerUrl,
   type ScriptStatusView,
@@ -146,6 +147,7 @@ import {
   isStoredTextUrl,
   isHttpUrl,
   LOCATION_SHAPES,
+  locationFsPath,
   normalizeCollectionInput,
   scriptAbsolutePath,
   collectionCanonicalUrl,
@@ -206,7 +208,7 @@ import {
 import { CodeTabsView, type CodeTab } from './code-tabs.js';
 import { makeCopyButton } from './copy-button.js';
 import { markFileChanges, missingFiles, scriptFileTag } from './file-changes.js';
-import { renderDetails } from './script-details.js';
+import { declaredHomepage, renderDetails, renderRemovedDetails, type RemovedDetails } from './script-details.js';
 import {
   connectGrantsKey,
   getConnectGrants,
@@ -253,6 +255,9 @@ const enableCheckboxEl = document.getElementById('enable-checkbox') as HTMLInput
 const metaActionsEl = document.getElementById('meta-actions')!;
 const refreshBtn = document.getElementById('refresh-btn') as HTMLButtonElement;
 const installedNoteEl = document.getElementById('installed-note')!;
+const removedRowEl = document.getElementById('removed-row')!;
+const removedNoteEl = document.getElementById('removed-note')!;
+const reinstallBtn = document.getElementById('reinstall-btn') as HTMLButtonElement;
 const openTargetEl = document.getElementById('open-target-btn') as HTMLAnchorElement;
 document.getElementById('close-tab-btn')!.addEventListener('click', closeTab);
 // Built once with the idle label and restored to it after every
@@ -464,7 +469,7 @@ function repaintStatusRow(script: StoredScript): void {
 // because two surfaces reach it — the initial load and the storage
 // watcher — and a message that drifted between them would read as two
 // different problems.
-const SCRIPT_NOT_IN_STORAGE = 'Script not found in storage. Open it from the collections page.';
+const SCRIPT_NOT_IN_STORAGE = 'This script is not installed';
 
 async function rehydrateAfterStorageChange(): Promise<void> {
   if (!scriptId) return;
@@ -477,6 +482,15 @@ async function rehydrateAfterStorageChange(): Promise<void> {
   if (!script) {
     // A removal made here that is already on its way to another copy.
     if (swappingAfterRemoval) return;
+    // Already painted: the removal's second pass, or any later change
+    // to another script, has nothing new to say about this one.
+    if (removedScript?.scriptId === wanted && !removedRowEl.hidden) return;
+    // What was here, from the script last shown — whoever removed it.
+    const removed = removedScriptFor(wanted);
+    if (removed) {
+      showRemoved(removed);
+      return;
+    }
     // Not consumed here: this path can run more than once for a single
     // removal (our own call, then the storage event), and the second
     // pass must not downgrade the wording. `render` clears the flag
@@ -592,7 +606,11 @@ async function loadStored(): Promise<void> {
   const script = await getScript(wanted);
   if (scriptId !== wanted) return;
   if (!script) {
-    showMissing(SCRIPT_NOT_IN_STORAGE);
+    // A reload, or Back / Forward, onto a script removed while this tab
+    // showed it: `history.state` still has what was here.
+    const removed = removedScriptFromHistory(wanted);
+    if (removed) showRemoved(removed);
+    else showMissing(SCRIPT_NOT_IN_STORAGE);
     return;
   }
   const collection = await getCollection(script.collectionId);
@@ -843,6 +861,7 @@ function render(script: StoredScript, snapshot?: StoreSnapshot): void {
   removedHereMessage = null;
   removedHereDetail = [];
   controlsRowEl.hidden = false;
+  removedRowEl.hidden = true;
   // A missing collection row reads as ENABLED, matching
   // `cacheCollection`'s `collectionEnabled` default and
   // `renderHeading`'s own — three spellings of the same "row not found"
@@ -902,6 +921,13 @@ function render(script: StoredScript, snapshot?: StoreSnapshot): void {
   // else display = href, so the user clicks the same URL they'd copy
   // from the row.
   const locationHref = isFileUrl(script.fileUrl) ? script.fileUrl : currentFilenamePath;
+  shownLocation = currentFilenamePath
+    ? {
+        text: displayLocation(currentFilenamePath),
+        href: locationHref,
+        unopenable: isStoredTextUrl(script.fileUrl),
+      }
+    : undefined;
   renderDetails(summaryEl, {
     header: script.header,
     files: { requires: script.requires, resources: script.resources, pushed: isScratchUrl(script.fileUrl) },
@@ -1030,7 +1056,7 @@ async function removeCopy(
   // Says the not-found state, if one is painted at all, is the
   // result the user asked for. `render` clears it as soon as a
   // script is back on screen, so the successor path pays nothing.
-  if (isCurrent) removedHereMessage = REMOVED_HERE;
+  if (isCurrent) removedHereMessage = deletesFile ? REMOVED_FILE_HERE : REMOVED_HERE;
   // Holds back the not-found paint on the way to the successor. The
   // listener sees a `scriptId` that no longer names a stored row
   // and would tear the whole page down — heading, details, panel,
@@ -1853,7 +1879,8 @@ function panelStatusChanged(changes: Record<string, unknown>): boolean {
 // anyway.
 let copiesSetting: DownloadsCopiesSetting | null = null;
 
-const REMOVED_HERE = 'This script has been removed';
+const REMOVED_HERE = 'This script has been uninstalled';
+const REMOVED_FILE_HERE = 'This script\'s file has been deleted';
 const REMOVED_FILE_GONE = 'This script has been removed because its file was deleted';
 
 // Set while this page is the one making the script it shows go away —
@@ -3651,6 +3678,134 @@ function setDiagnosticMessage(
   appendDiagnostic(messageEl, message, location);
 }
 
+// ---------- A script removed while on screen ----------
+//
+// Instead of a bare not-found page, the page keeps what it knew of the
+// script it was showing: its name, the collection it was in, where it
+// came from, and a way to install it again. Whoever removed it — this
+// page, another tab, a collection refresh — the page still holds the
+// last row it painted. Kept in `history.state` as well, so a reload or
+// Back / Forward in this tab shows it again; a tab opened on the ID
+// afterwards has nothing to go on and gets the plain not-found page.
+
+interface RemovedScript extends RemovedDetails {
+  scriptId: string;
+  // What happened, for the row in place of the controls.
+  note: string;
+  // Where Reinstall… opens the install page for, when there is one.
+  reinstall?: string;
+  // For the heading's icons: the script's own `@icon` (from the
+  // header) or its sites'.
+  matching: StoredScript['matching'];
+  header: StoredScript['header'];
+  fileUrl: string;
+}
+
+// The last removed script painted, so a second pass for the same
+// removal (our own re-read, then the storage event) paints it again.
+let removedScript: RemovedScript | null = null;
+
+// The Location row as the last render drew it, kept for the removed page.
+let shownLocation: { text: string; href: string; unopenable: boolean } | undefined;
+
+function removedScriptFor(id: string): RemovedScript | null {
+  if (currentScript?.id === id) return describeRemoved(currentScript, collectionRow);
+  if (removedScript?.scriptId === id) return removedScript;
+  return removedScriptFromHistory(id);
+}
+
+function removedScriptFromHistory(id: string): RemovedScript | null {
+  const saved = (history.state as { removed?: RemovedScript } | null)?.removed;
+  return saved?.scriptId === id ? saved : null;
+}
+
+function describeRemoved(script: StoredScript, collection: StoredCollection | null): RemovedScript {
+  const header = script.header;
+  const homepage = header ? declaredHomepage(header) : undefined;
+  const storedText = isStoredTextUrl(script.fileUrl);
+  // A file that was deleted can't be fetched again; a local copy's
+  // header may still name the original it came from.
+  const fileGone = removedHereMessage === REMOVED_FILE_GONE || removedHereMessage === REMOVED_FILE_HERE;
+  const downloadUrl = header ? getValue(header, 'downloadURL') : undefined;
+  let reinstall: string | undefined;
+  if (fileGone) {
+    if (downloadUrl && isHttpUrl(downloadUrl) && isSingleFileInput(downloadUrl)) reinstall = downloadUrl;
+  } else if (!storedText && isSingleFileInput(script.fileUrl)) {
+    reinstall = script.fileUrl;
+  }
+  let note: string;
+  if (removedHereMessage === REMOVED_FILE_GONE || removedHereMessage === REMOVED_FILE_HERE) {
+    note = removedHereMessage;
+  } else {
+    note = storedText ? 'This script has been deleted' : REMOVED_HERE;
+  }
+  return {
+    scriptId: script.id,
+    name: scriptLabel(header, script.relativePath),
+    ...(collection ? { collection } : {}),
+    ...(shownLocation ? { location: shownLocation } : {}),
+    ...(homepage ? { homepage } : {}),
+    note,
+    ...(reinstall ? { reinstall } : {}),
+    matching: script.matching,
+    header: script.header,
+    fileUrl: script.fileUrl,
+  };
+}
+
+function showRemoved(removed: RemovedScript): void {
+  // The not-found teardown first: every control, tab and panel of the
+  // script that went. Then paint what is left to say about it.
+  showMissing('');
+  removedScript = removed;
+  try {
+    history.replaceState({ ...(history.state ?? {}), removed }, '', location.href);
+  } catch {
+    // Only a reload loses it.
+  }
+  renderHeading(INSTALLED_HEADING, removed.name, removed.location?.text ?? removed.name, {
+    matching: removed.matching,
+    header: removed.header,
+    fileUrl: removed.fileUrl,
+  }, removed.collection ? localFileScope(removed.collection) : { enabled: true });
+  setPageTitle(INSTALLED_TITLE, removed.name);
+  removedNoteEl.textContent = removed.note;
+  // The trash can that started it is gone with the controls row; give
+  // the focus somewhere better than the page itself.
+  const focusLost = document.activeElement === document.body || document.activeElement === null;
+  const target = removed.reinstall;
+  reinstallBtn.hidden = !target;
+  reinstallBtn.title = target ? `Open the install page for ${displayLocation(target)}` : '';
+  reinstallBtn.onclick = target ? () => { location.href = previewUrl(target); } : null;
+  removedRowEl.hidden = false;
+  // A local file can be gone without this page knowing (a refresh run
+  // elsewhere dropped the row): the install page would only fail to
+  // read it, so no Reinstall then.
+  if (target && isFileUrl(target)) {
+    const path = locationFsPath(target);
+    void missingFiles([path]).then((gone) => {
+      if (!gone.has(path) || removedScript !== removed) return;
+      const hadFocus = document.activeElement === reinstallBtn;
+      reinstallBtn.hidden = true;
+      if (hadFocus) filenameEl.focus();
+    });
+  }
+  if (focusLost) (target ? reinstallBtn : filenameEl).focus();
+  // No code to show: drop the empty box `tabsView.clear()` leaves. The
+  // next `setTabs`, when a script is on screen again, shows it.
+  codePaneEl.hidden = true;
+  const loc = removed.location;
+  renderRemovedDetails(summaryEl, {
+    ...removed,
+    // As in the installed panel: a `.user.js` link would be captured
+    // into the install page, so it opens the raw file instead.
+    ...(loc ? { location: loc.unopenable ? loc : { ...loc, onActivate: () => navigateRaw(loc.href) } } : {}),
+  });
+  // Anything the removal could not finish.
+  const detail = removedHereDetail.join(' ');
+  setMessage(detail, detail ? 'error' : '');
+}
+
 function showMissing(message: string): void {
   currentScript = null;
   // Focus standing in the panel is about to be destroyed with it, and
@@ -3659,6 +3814,7 @@ function showMissing(message: string): void {
   // row it was going to.
   const focusInPanel = versionsEl.contains(document.activeElement);
   controlsRowEl.hidden = true;
+  removedRowEl.hidden = true;
   actionsEl.hidden = true;
   // With the rest: both controls close over the row that has gone, and
   // the row they sit in is only hidden, not emptied.

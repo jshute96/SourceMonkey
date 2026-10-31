@@ -48,8 +48,8 @@ SourceMonkey), [local-file-overrides.md](local-file-overrides.md)
   button on the row for the copy on screen, Refresh all included —
   when it is the one to drop the row, moves the page to the next copy
   in the versions table (as the panel's trash can does); with no other
-  copy it says *This script has been removed because its file was
-  deleted*, in place of the generic not-found wording
+  copy the [removed page](script-viewer.md#removed-page) says *This
+  script has been removed because its file was deleted*
   (`refreshShownScript` in `userscript.ts`).
 
 ## The `deleted` and `modified` chips
