@@ -65732,7 +65732,7 @@
         {
           "date": "2026-10-14",
           "version": "2.0.11",
-          "text": "Ran signed out on `https://x.com/NASA` and a NASA status page; its main features need a signed-in X.\n- Script: started cleanly with no errors. Its CSS applied (`html` overflow `auto` against `visible` in a `--noscript` tab), and Settings (menu command) opened the GM_config frame (500x360); unticking a box and saving stored `twitter_view_more_replies` with GM_setValue.\n- Signed out, X shows no tweet analytics links, no \"show additional replies\" button, no trends column and no left nav, so the reply expansion and section hiding had nothing to act on.\n- sm-dev: the `openuserjs.org` GM_config `@require` returned 503 / timed out today; the run used the local copy via `--local tests/greasyfork-examples/files`."
+          "text": "Ran signed out on `https://x.com/NASA` and a NASA status page; its main features need a signed-in X.\n- Script: started cleanly with no errors. Its CSS applied (`html` overflow `auto` against `visible` in a `--noscript` tab), and Settings (menu command) opened the GM_config frame (500x360); unticking a box and saving stored `twitter_view_more_replies` with GM_setValue.\n- Signed out, X shows no tweet analytics links, no \"show additional replies\" button, no trends column and no left nav, so the reply expansion and section hiding had nothing to act on.\n- sm-dev: the `openuserjs.org` GM_config `@require` returned 503 / timed out today; the run used the local copy via `--local greasyfork-testing/files`."
         }
       ]
     },
@@ -83572,7 +83572,7 @@
         {
           "date": "2026-09-29",
           "version": "1.0.1",
-          "text": "Tested on greasyfork.org (headless).\n- Its @require (GM_config from a github.com release) now 404s live, so SourceMonkey (like any manager) refuses to install it from the network. Tested with the corpus's local copy (sm-dev `--local tests/greasyfork-examples/files/github.com/PRO-2684`).\n- Script page: 8 heading anchors (`a.anchor`), an outline list in an aside, a \"Short link\" paragraph with Copy link, and 4 config menu commands registered.\n- Script list: searching `youtube sort:total` navigated to `?q=youtube&sort=total_installs` (search syntax works).\n- Code toolbar: only for `pre > code` blocks; the /code page's `pre` has none, so no toolbar there (expected)."
+          "text": "Tested on greasyfork.org (headless).\n- Its @require (GM_config from a github.com release) now 404s live, so SourceMonkey (like any manager) refuses to install it from the network. Tested with the corpus's local copy (sm-dev `--local greasyfork-testing/files/github.com/PRO-2684`).\n- Script page: 8 heading anchors (`a.anchor`), an outline list in an aside, a \"Short link\" paragraph with Copy link, and 4 config menu commands registered.\n- Script list: searching `youtube sort:total` navigated to `?q=youtube&sort=total_installs` (search syntax works).\n- Code toolbar: only for `pre > code` blocks; the /code page's `pre` has none, so no toolbar there (expected)."
         }
       ]
     },
@@ -108048,7 +108048,7 @@
         {
           "date": "2026-10-25",
           "version": "2.0.1",
-          "text": "Signed out, headless temp browser:\n\n- Direct load of `userscripts/examples/index.html`: a Preview item comes first in the Preview / Code / Blame switch, selected by default. The code section is hidden and a sandboxed iframe shows the page with the repo's stylesheet inlined.\n- Code and Preview switch the view back and forth.\n- In-app navigation (no reload): the file tree to `tests/greasyfork-examples/`, then `results.html` gets the Preview tab and preview. That page's body is drawn by its own script, so only its static heading shows, as the script intends.\n- Navigating in-app on to `corpus.mjs` removes the tab and pane and shows the code.\n- No errors in the run's logs."
+          "text": "Signed out, headless temp browser:\n\n- Direct load of `userscripts/examples/index.html`: a Preview item comes first in the Preview / Code / Blame switch, selected by default. The code section is hidden and a sandboxed iframe shows the page with the repo's stylesheet inlined.\n- Code and Preview switch the view back and forth.\n- In-app navigation (no reload): the file tree to `greasyfork-testing/`, then `results.html` gets the Preview tab and preview. That page's body is drawn by its own script, so only its static heading shows, as the script intends.\n- Navigating in-app on to `corpus.mjs` removes the tab and pane and shows the code.\n- No errors in the run's logs."
         }
       ]
     },

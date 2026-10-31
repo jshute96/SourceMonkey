@@ -3,11 +3,11 @@
 // self-contained HTML page of tables.
 //
 // Usage:
-//   node tests/greasyfork-examples/render-analysis.mjs [options]
+//   node greasyfork-testing/render-analysis.mjs [options]
 //
-//   --db PATH   database to query (default tests/greasyfork-examples/corpus.db)
-//   --sql PATH  query file (default tests/greasyfork-examples/analysis.sql)
-//   --out PATH  HTML to write (default tests/greasyfork-examples/analysis.html)
+//   --db PATH   database to query (default greasyfork-testing/corpus.db)
+//   --sql PATH  query file (default greasyfork-testing/analysis.sql)
+//   --out PATH  HTML to write (default greasyfork-testing/analysis.html)
 
 import { DatabaseSync } from 'node:sqlite';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -15,11 +15,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { printHelp } from './corpus.mjs';
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULTS = {
-  db: path.join(REPO_ROOT, 'tests/greasyfork-examples/corpus.db'),
-  sql: path.join(REPO_ROOT, 'tests/greasyfork-examples/analysis.sql'),
-  out: path.join(REPO_ROOT, 'tests/greasyfork-examples/analysis.html'),
+  db: path.join(REPO_ROOT, 'greasyfork-testing/corpus.db'),
+  sql: path.join(REPO_ROOT, 'greasyfork-testing/analysis.sql'),
+  out: path.join(REPO_ROOT, 'greasyfork-testing/analysis.html'),
 };
 
 function parseArgs(argv) {

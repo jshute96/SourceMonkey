@@ -57,7 +57,7 @@ export const SUGGESTIONS: readonly Suggestion[] = [
     description: 'On Greasy Fork script pages, for scripts that have been tested with SourceMonkey, show the test results.',
     kind: 'script',
     // No page of its own yet: the corpus folder, whose README describes it.
-    infoUrl: `${REPO}/tests/greasyfork-examples`,
+    infoUrl: `${REPO}/greasyfork-testing`,
     location: `${PAGES}/userscripts/greasyfork/show-test-results.user.js`,
     // Its @name before 0.8.1 too, for copies installed then.
     scriptIdentity: {

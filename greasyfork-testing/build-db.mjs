@@ -5,11 +5,11 @@
 // file sizes).
 //
 // Usage:
-//   node tests/greasyfork-examples/build-db.mjs [options]
+//   node greasyfork-testing/build-db.mjs [options]
 //
-//   --corpus PATH  script list and findings (default tests/greasyfork-examples/corpus.json)
-//   --root PATH  download root (default tests/greasyfork-examples/files)
-//   --db PATH    database to write (default tests/greasyfork-examples/corpus.db)
+//   --corpus PATH  script list and findings (default greasyfork-testing/corpus.json)
+//   --root PATH  download root (default greasyfork-testing/files)
+//   --db PATH    database to write (default greasyfork-testing/corpus.db)
 //
 // The database is rebuilt from scratch each run — it's derived data, and both
 // inputs (corpus.json and the file tree) are cheap to re-read.
@@ -22,17 +22,17 @@ import { DatabaseSync } from 'node:sqlite';
 import { rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseHeader } from '../../dist/userscript-header.js';
+import { parseHeader } from '../dist/userscript-header.js';
 import {
   CORPUS_JSON, classifyPattern, checkRoot, findExisting, listingRows, parseResourceValue, readCorpus, readDownloaded, resolveDependencyUrl,
   printHelp,
 } from './corpus.mjs';
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULTS = {
   corpus: CORPUS_JSON,
-  root: path.join(REPO_ROOT, 'tests/greasyfork-examples/files'),
-  db: path.join(REPO_ROOT, 'tests/greasyfork-examples/corpus.db'),
+  root: path.join(REPO_ROOT, 'greasyfork-testing/files'),
+  db: path.join(REPO_ROOT, 'greasyfork-testing/corpus.db'),
 };
 
 function parseArgs(argv) {

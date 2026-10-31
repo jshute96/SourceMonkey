@@ -645,29 +645,29 @@ built extension loaded; fixtures in `tests/fixtures/harness.ts`.
 | `tests/all-managers/install-capture.spec.ts` | `test:all-managers`: the capture beside TM and VM, across ways of opening, server speeds and VM file modes |
 | `tests/harness/fixture.spec.ts` | The consumer fixture from `lib/`: a script against a served page, `gm` and `reports`, the up-front URL check, the explained miss |
 
-## GreasyFork Corpus Tooling (`tests/greasyfork-examples/`)
+## GreasyFork Corpus Tooling (`greasyfork-testing/`)
 
 Standalone tooling, not a test suite — see `docs/testing.md`.
 
 | File | Description |
 |------|-------------|
-| `tests/greasyfork-examples/README.md` | Full pipeline docs: adding scripts and labels, downloading, the database schema, and the reports |
-| `tests/greasyfork-examples/add-scripts.mjs` | CLI that finds GreasyFork script IDs from IDs, URLs or linking pages, and compares or adds them to `corpus.json` |
-| `tests/greasyfork-examples/corpus.json` | Corpus GreasyFork scripts with their listing data, labels, and validation and test findings, plus hand-added tag definitions; the source of truth |
-| `tests/greasyfork-examples/validate-corpus.mjs` | CLI that runs the install-time checks over the corpus offline and groups failures, with JSON output |
-| `tests/greasyfork-examples/record-results.mjs` | CLI that records findings in `corpus.json`: imports offline validation, sets test results, tags and notes, defines hand-added tags |
-| `tests/greasyfork-examples/serve-results.mjs` | Serves `results.html`, `corpus.json`, `corpus-help.js` and the downloaded scripts on localhost, for the results page |
-| `tests/greasyfork-examples/corpus-help.js` | One-sentence descriptions of corpus test statuses, reasons and built-in tags, the tooltips in `results.html` and the Greasy Fork userscript |
-| `tests/greasyfork-examples/results.html` | Static page that reads `corpus.json` into a sortable, filterable table of findings, a summary of counts, and a code viewer |
-| `tests/greasyfork-examples/download-scripts.mjs` | CLI that downloads the corpus's userscripts plus their `@require` / `@resource` dependencies into a URL-shaped tree |
-| `tests/greasyfork-examples/files/` | Downloaded userscripts, `@require` libraries, and `@resource` assets at `<host>/<url-path>`, plus `_location.json` (gitignored) |
-| `tests/greasyfork-examples/download-report.json` | Last download run's counts, dead links, and failed URLs (gitignored) |
-| `tests/greasyfork-examples/corpus.mjs` | Shared corpus helpers: locked atomic `corpus.json` updates, labels, URL↔on-disk-path mapping, `@match` parsing |
-| `tests/greasyfork-examples/build-db.mjs` | Loads `corpus.json` and downloaded files into `corpus.db` (scripts, headers, match patterns, deps, findings) |
-| `tests/greasyfork-examples/corpus.db` | SQLite database built from the corpus by `build-db.mjs` (gitignored) |
-| `tests/greasyfork-examples/analysis.sql` | Annotated analysis queries over `corpus.db`, one `-- @report` block per table |
-| `tests/greasyfork-examples/render-analysis.mjs` | Runs `analysis.sql` and renders the results as `analysis.html` |
-| `tests/greasyfork-examples/analysis.html` | Generated HTML report of corpus statistics, rendered from `analysis.sql` |
+| `greasyfork-testing/README.md` | Full pipeline docs: adding scripts and labels, downloading, the database schema, and the reports |
+| `greasyfork-testing/add-scripts.mjs` | CLI that finds GreasyFork script IDs from IDs, URLs or linking pages, and compares or adds them to `corpus.json` |
+| `greasyfork-testing/corpus.json` | Corpus GreasyFork scripts with their listing data, labels, and validation and test findings, plus hand-added tag definitions; the source of truth |
+| `greasyfork-testing/validate-corpus.mjs` | CLI that runs the install-time checks over the corpus offline and groups failures, with JSON output |
+| `greasyfork-testing/record-results.mjs` | CLI that records findings in `corpus.json`: imports offline validation, sets test results, tags and notes, defines hand-added tags |
+| `greasyfork-testing/serve-results.mjs` | Serves `results.html`, `corpus.json`, `corpus-help.js` and the downloaded scripts on localhost, for the results page |
+| `greasyfork-testing/corpus-help.js` | One-sentence descriptions of corpus test statuses, reasons and built-in tags, the tooltips in `results.html` and the Greasy Fork userscript |
+| `greasyfork-testing/results.html` | Static page that reads `corpus.json` into a sortable, filterable table of findings, a summary of counts, and a code viewer |
+| `greasyfork-testing/download-scripts.mjs` | CLI that downloads the corpus's userscripts plus their `@require` / `@resource` dependencies into a URL-shaped tree |
+| `greasyfork-testing/files/` | Downloaded userscripts, `@require` libraries, and `@resource` assets at `<host>/<url-path>`, plus `_location.json` (gitignored) |
+| `greasyfork-testing/download-report.json` | Last download run's counts, dead links, and failed URLs (gitignored) |
+| `greasyfork-testing/corpus.mjs` | Shared corpus helpers: locked atomic `corpus.json` updates, labels, URL↔on-disk-path mapping, `@match` parsing |
+| `greasyfork-testing/build-db.mjs` | Loads `corpus.json` and downloaded files into `corpus.db` (scripts, headers, match patterns, deps, findings) |
+| `greasyfork-testing/corpus.db` | SQLite database built from the corpus by `build-db.mjs` (gitignored) |
+| `greasyfork-testing/analysis.sql` | Annotated analysis queries over `corpus.db`, one `-- @report` block per table |
+| `greasyfork-testing/render-analysis.mjs` | Runs `analysis.sql` and renders the results as `analysis.html` |
+| `greasyfork-testing/analysis.html` | Generated HTML report of corpus statistics, rendered from `analysis.sql` |
 
 ## Agent skills (`skills/`)
 

@@ -14,7 +14,7 @@ Userscripts kept in this repo, by directory:
   - [`show-test-results.user.js`](https://jshute96.github.io/SourceMonkey/userscripts/greasyfork/show-test-results.user.js):
     On Greasy Fork script pages and listings, shows the results of testing
     each script with SourceMonkey. See the
-    [GreasyFork corpus README](../tests/greasyfork-examples/README.md#on-greasy-fork-pages).
+    [GreasyFork corpus README](../greasyfork-testing/README.md#on-greasy-fork-pages).
 - [`debugging/`](debugging/): Helpers for manual testing. They aren't
   installed or kept enabled by default; enable them when needed.
   - [`no-click-nav.user.js`](debugging/no-click-nav.user.js): Navigates

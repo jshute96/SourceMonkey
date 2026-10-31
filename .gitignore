@@ -36,12 +36,12 @@ lib/
 
 # GreasyFork corpus: bulky or machine-specific inputs and derived data.
 # The checked-in corpus.json is the artifact these reproduce from.
-tests/greasyfork-examples/greasyfork-dump
-tests/greasyfork-examples/files
-tests/greasyfork-examples/greasyfork-dump/
-tests/greasyfork-examples/files/
-tests/greasyfork-examples/corpus.db*
-tests/greasyfork-examples/download-report.json
+greasyfork-testing/greasyfork-dump
+greasyfork-testing/files
+greasyfork-testing/greasyfork-dump/
+greasyfork-testing/files/
+greasyfork-testing/corpus.db*
+greasyfork-testing/download-report.json
 # record-results.mjs's lock and in-flight temp files.
-tests/greasyfork-examples/corpus.json.lock
-tests/greasyfork-examples/corpus.json.tmp-*
+greasyfork-testing/corpus.json.lock
+greasyfork-testing/corpus.json.tmp-*

@@ -5,7 +5,7 @@ scripts we have: the repo's own example suites, then the top-2000
 GreasyFork scripts.
 
 See [corpus-validation.md](corpus-validation.md) for the tool, and
-[tests/greasyfork-examples/README.md](../tests/greasyfork-examples/README.md)
+[greasyfork-testing/README.md](../greasyfork-testing/README.md)
 for how the corpus is built.
 
 ## The example suites
@@ -40,8 +40,8 @@ Command, Node 22.22 (V8's verdict is the tool's verdict, so the version
 is part of the result):
 
 ```sh
-node tests/greasyfork-examples/validate-corpus.mjs \
-  --offline-root tests/greasyfork-examples/files tests/greasyfork-examples/files
+node greasyfork-testing/validate-corpus.mjs \
+  --offline-root greasyfork-testing/files greasyfork-testing/files
 ```
 
 These numbers predate the user program moving into its own nested

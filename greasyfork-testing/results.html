@@ -4,7 +4,7 @@
   validation verdict, test status, tags and notes. Static; it reads corpus.json
   when it loads, so it never needs regenerating.
 
-  - Served (node tests/greasyfork-examples/serve-results.mjs, or GitHub
+  - Served (node greasyfork-testing/serve-results.mjs, or GitHub
     Pages), it fetches corpus.json from beside itself.
   - Opened as a file:// page, Chrome won't let it fetch, so it asks you to pick
     corpus.json once and remembers the choice (see pickCorpus below).
@@ -114,7 +114,7 @@ code { font-size:.9em; background:var(--head); padding:0 .25rem; border-radius:3
 
 <div id="loader" hidden>
   <p>This page was opened as a local file, so it can't read <code>corpus.json</code> by itself.
-     Either serve it (<code>node tests/greasyfork-examples/serve-results.mjs</code>), or choose the file:</p>
+     Either serve it (<code>node greasyfork-testing/serve-results.mjs</code>), or choose the file:</p>
   <button id="reopen" hidden></button>
   <button id="pick">Choose corpus.json…</button>
   <input id="file-input" type="file" accept=".json,application/json" hidden>
@@ -292,7 +292,7 @@ function rowData(id, record) {
 // disk, it's beside this page. Served, it's in files/_location.json, which the
 // corpus tools write (checkRoot in corpus.mjs); until one has run, paths are
 // copied from the repo root.
-const REPO_FILES_DIR = 'tests/greasyfork-examples/files';
+const REPO_FILES_DIR = 'greasyfork-testing/files';
 let filesDir = location.protocol === 'file:'
   ? decodeURIComponent(location.pathname.replace(/\/[^/]*$/, '')) + '/files'
   : REPO_FILES_DIR;
@@ -827,7 +827,7 @@ async function readFromDisk(dir, file) {
     showSource(await readUnder(dir, file));
   } catch (err) {
     if (err.name !== 'NotFoundError') throw err;
-    throw new Error('The chosen folder has no ' + file + '. Choose tests/greasyfork-examples/files.');
+    throw new Error('The chosen folder has no ' + file + '. Choose greasyfork-testing/files.');
   }
 }
 
@@ -852,7 +852,7 @@ async function viewFile(params) {
     return;
   }
   if (!window.showDirectoryPicker) {
-    throw new Error('This browser can\'t read local folders. Serve the page instead (node tests/greasyfork-examples/serve-results.mjs).');
+    throw new Error('This browser can\'t read local folders. Serve the page instead (node greasyfork-testing/serve-results.mjs).');
   }
   let dir = await savedHandle('files');
   // After a failure, the button picks a folder afresh: the saved one may be

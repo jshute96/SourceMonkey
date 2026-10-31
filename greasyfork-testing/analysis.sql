@@ -3,7 +3,7 @@
 -- Each report is one statement introduced by `-- @report <title>`, optionally
 -- followed by `-- @note <text>`. render-analysis.mjs runs them in order and renders each
 -- result as an HTML table, so the two files stay in sync by construction.
--- Run them ad hoc with:  sqlite3 tests/greasyfork-examples/corpus.db < analysis.sql
+-- Run them ad hoc with:  sqlite3 greasyfork-testing/corpus.db < analysis.sql
 
 -- @report Corpus totals
 -- @note One row per kind of file. "On disk" counts what was actually downloaded; sizes cover only those.

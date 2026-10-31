@@ -5,7 +5,7 @@
 // pick the files.
 //
 // Usage:
-//   node tests/greasyfork-examples/serve-results.mjs [--port N]
+//   node greasyfork-testing/serve-results.mjs [--port N]
 //
 //   --port N   port to listen on (default 8765)
 //

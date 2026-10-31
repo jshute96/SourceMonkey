@@ -1,11 +1,11 @@
 ---
 name: corpus-testing
-description: Test GreasyFork corpus scripts (tests/greasyfork-examples/) on their live sites and record the results in corpus.json. Covers testing one script, running a batch with parallel agents, pulling their results together, and re-testing earlier failures after a fix. Use when asked to test corpus scripts, re-test failures, or tidy corpus test results.
+description: Test GreasyFork corpus scripts (greasyfork-testing/) on their live sites and record the results in corpus.json. Covers testing one script, running a batch with parallel agents, pulling their results together, and re-testing earlier failures after a fix. Use when asked to test corpus scripts, re-test failures, or tidy corpus test results.
 ---
 
 # Testing the GreasyFork corpus
 
-The corpus (`tests/greasyfork-examples/`) is the 2000 most-installed
+The corpus (`greasyfork-testing/`) is the 2000 most-installed
 GreasyFork scripts plus others added since, downloaded, with a record per
 script in `corpus.json`.
 Testing a script means running the downloaded copy on its target site with
@@ -13,7 +13,7 @@ Testing a script means running the downloaded copy on its target site with
 
 Where things are:
 
-- `tests/greasyfork-examples/README.md`: the tools and data. Downloading,
+- `greasyfork-testing/README.md`: the tools and data. Downloading,
   validation, the record format, statuses and blames, the results page. Read
   its "Test results" section once, and its "Adding scripts" section before
   adding any.
@@ -47,11 +47,11 @@ them first. The README's "Adding scripts" section has the source types and
 options.
 
 ```sh
-A=tests/greasyfork-examples/add-scripts.mjs
+A=greasyfork-testing/add-scripts.mjs
 node $A --compare <sources>                # which are new, and how the rest were tested
 node $A --add --label-new L <sources>      # label the new ones, to pick them out later
-node tests/greasyfork-examples/download-scripts.mjs
-node tests/greasyfork-examples/record-results.mjs validate
+node greasyfork-testing/download-scripts.mjs
+node greasyfork-testing/record-results.mjs validate
 ```
 
 - Choose a label for the collection (`--label-new L`), or `--label-all L`
@@ -63,7 +63,7 @@ node tests/greasyfork-examples/record-results.mjs validate
 ## Picking scripts to test
 
 ```sh
-R=tests/greasyfork-examples/record-results.mjs
+R=greasyfork-testing/record-results.mjs
 node $R list --untested --valid ok          # candidates, in top2000 rank order
 node $R list --label L --untested --valid ok  # one collection, in its rank order
 ```
@@ -154,8 +154,8 @@ Find them by tag or blame:
 ```sh
 node $R list --tag setclipboard-callback           # a tag names the gap
 node $R list --test fail                           # all failures
-node tests/greasyfork-examples/build-db.mjs        # or query by blame:
-sqlite3 tests/greasyfork-examples/corpus.db \
+node greasyfork-testing/build-db.mjs        # or query by blame:
+sqlite3 greasyfork-testing/corpus.db \
   "SELECT script_id, test_status, test_blame FROM ScriptResults WHERE test_blame = 'sourcemonkey'"
 ```
 

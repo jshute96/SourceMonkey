@@ -16,7 +16,7 @@
 //     validate` imports into corpus.json.
 //
 // Usage:
-//   node tests/greasyfork-examples/validate-corpus.mjs [options] <path>...
+//   node greasyfork-testing/validate-corpus.mjs [options] <path>...
 //
 //   <path>   a `*.user.js` file, or a directory scanned recursively
 //            for them.
@@ -36,24 +36,24 @@ import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { NO_MATCH_OR_INCLUDE, NO_NAME, SYNTAX_ERROR_PREFIX } from '../../lib/script-build.js';
-import { resolveScriptResource } from '../../lib/file-loader.js';
+import { NO_MATCH_OR_INCLUDE, NO_NAME, SYNTAX_ERROR_PREFIX } from '../lib/script-build.js';
+import { resolveScriptResource } from '../lib/file-loader.js';
 import {
   DATA_URL_NOT_SUPPORTED,
   describeFetchFailure,
   distillRequires,
   distillResources,
   isFetchFailureMessage,
-} from '../../lib/external-files.js';
-import { isMarkupResponseMessage } from '../../lib/markup-response.js';
+} from '../lib/external-files.js';
+import { isMarkupResponseMessage } from '../lib/markup-response.js';
 import {
   getValue,
   NO_METADATA_BLOCK,
   UNTERMINATED_METADATA_BLOCK,
   USERSTYLE_NOT_SUPPORTED,
-} from '../../lib/userscript-header.js';
-import { unusableMatchGroupKey } from '../../lib/url-match.js';
-import { prepareScript } from '../../lib/harness/prepare.js';
+} from '../lib/userscript-header.js';
+import { unusableMatchGroupKey } from '../lib/url-match.js';
+import { prepareScript } from '../lib/harness/prepare.js';
 // The offline tree's layout (percent-encoded segments, truncated long
 // names, `<path>/index` for a path that is also a directory prefix) is
 // defined by the downloader, so the lookup comes from there rather

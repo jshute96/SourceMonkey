@@ -317,7 +317,7 @@ gates, or the emitted wrap — the rate is the regression signal.
 ## Corpus test findings — compatibility gaps
 
 Gaps that made corpus scripts fail on their live sites (see
-`tests/greasyfork-examples/`; `record-results.mjs list --tag T` finds
+`greasyfork-testing/`; `record-results.mjs list --tag T` finds
 the scripts). Comparisons are against Violentmonkey's source; Tampermonkey
 wasn't checked.
 

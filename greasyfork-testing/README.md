@@ -7,13 +7,13 @@ testing each one found.
 
 The most recent results are published on GitHub Pages:
 
-- [Test results](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/results.html): every script's validation and test status.
-- [Corpus analysis](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/analysis.html): statistics on the scripts and what they use.
+- [Test results](https://jshute96.github.io/SourceMonkey/greasyfork-testing/results.html): every script's validation and test status.
+- [Corpus analysis](https://jshute96.github.io/SourceMonkey/greasyfork-testing/analysis.html): statistics on the scripts and what they use.
 - [Show SourceMonkey test status on Greasy Fork](https://jshute96.github.io/SourceMonkey/userscripts/greasyfork/show-test-results.user.js): a userscript that shows each script's results beside its stats on Greasy Fork's pages (see [On Greasy Fork pages](#on-greasy-fork-pages)).
 
 This README covers the tools and data. For how to test scripts on their
 live sites and record results (also for agents), see the `corpus-testing`
-skill in [`.claude/skills/corpus-testing/`](../../.claude/skills/corpus-testing/SKILL.md).
+skill in [`.claude/skills/corpus-testing/`](../.claude/skills/corpus-testing/SKILL.md).
 
 ## Overview
 
@@ -44,7 +44,7 @@ from it.
 | `validate-corpus.mjs` | `files/` | stdout, `--json` file | [Validates](#validating-the-corpus) every downloaded script offline; `record-results.mjs validate` runs it |
 | `render-analysis.mjs` | `corpus.db`, `analysis.sql` | `analysis.html` | Renders the statistics report |
 | `serve-results.mjs` | `results.html`, `corpus.json`, `corpus-help.js` | | [Serves the results page](#viewing-results) on localhost |
-| [`show-test-results.user.js`](../../userscripts/greasyfork/show-test-results.user.js) | `corpus.json`, `corpus-help.js`, from GitHub Pages or `serve-results.mjs` | | Userscript that shows each script's validation and test status on Greasy Fork's script pages and listings |
+| [`show-test-results.user.js`](../userscripts/greasyfork/show-test-results.user.js) | `corpus.json`, `corpus-help.js`, from GitHub Pages or `serve-results.mjs` | | Userscript that shows each script's validation and test status on Greasy Fork's script pages and listings |
 | `corpus.mjs` | | | Shared helpers: locked `corpus.json` updates, URL to `files/` path mapping |
 
 Each script takes `--help`, which prints its usage.
@@ -56,15 +56,15 @@ The tools that parse headers import the extension's compiled code from
 
 ```sh
 pnpm run build
-node tests/greasyfork-examples/download-scripts.mjs  # corpus.json → files/ (~20 min)
-node tests/greasyfork-examples/build-db.mjs          # → corpus.db
-node tests/greasyfork-examples/render-analysis.mjs   # → analysis.html
+node greasyfork-testing/download-scripts.mjs  # corpus.json → files/ (~20 min)
+node greasyfork-testing/build-db.mjs          # → corpus.db
+node greasyfork-testing/render-analysis.mjs   # → analysis.html
 ```
 
 ## Adding scripts
 
 ```sh
-A=tests/greasyfork-examples/add-scripts.mjs
+A=greasyfork-testing/add-scripts.mjs
 node $A 14178 https://greasyfork.org/en/scripts/4391-name   # IDs and script URLs
 node $A "https://greasyfork.org/en/scripts?q=youtube&sort=total_installs" --pages 3
 node $A https://github.com/someone/awesome-userscripts      # every GreasyFork script link on the page
@@ -105,13 +105,13 @@ From sources to test results, for a new collection labeled L:
 ```sh
 node $A --compare <sources>                      # what's new, and what's already tested
 node $A --add --label-new L <sources>            # or --label-all L, plus --label-with-rank
-node tests/greasyfork-examples/download-scripts.mjs
-node tests/greasyfork-examples/record-results.mjs validate
-node tests/greasyfork-examples/record-results.mjs list --label L --untested --valid ok
+node greasyfork-testing/download-scripts.mjs
+node greasyfork-testing/record-results.mjs validate
+node greasyfork-testing/record-results.mjs list --label L --untested --valid ok
 ```
 
 Then test them as the `corpus-testing` skill
-([`.claude/skills/corpus-testing/`](../../.claude/skills/corpus-testing/SKILL.md)) describes.
+([`.claude/skills/corpus-testing/`](../.claude/skills/corpus-testing/SKILL.md)) describes.
 
 Where the data comes from:
 
@@ -178,7 +178,7 @@ Notes:
 The raw `.user.js` URLs fetch normally:
 
 ```sh
-node tests/greasyfork-examples/download-scripts.mjs [--count N]
+node greasyfork-testing/download-scripts.mjs [--count N]
 ```
 
 Four phases: every `script_url` from `corpus.json`, then every unique `@require`
@@ -203,7 +203,7 @@ only as an oddly long "no metadata block" list.
 
 ### On-disk layout
 
-Files land under `tests/greasyfork-examples/files/<host>/<url-path>`, with the
+Files land under `greasyfork-testing/files/<host>/<url-path>`, with the
 URL's percent-encoding kept verbatim in the filename:
 
 ```
@@ -262,23 +262,23 @@ Once the scripts are downloaded, SourceMonkey's install-time checks
 run over all of them without a browser:
 
 ```sh
-node tests/greasyfork-examples/validate-corpus.mjs \
-  --offline-root tests/greasyfork-examples/files tests/greasyfork-examples/files
+node greasyfork-testing/validate-corpus.mjs \
+  --offline-root greasyfork-testing/files greasyfork-testing/files
 ```
 
 `--offline-root` serves every dependency URL out of `files/` instead of
 the network, so the run is reproducible and makes no requests.
 `record-results.mjs validate` runs the same check and records each verdict in
 `corpus.json` (see [Test results](#test-results)). See
-[docs/corpus-validation.md](../../docs/corpus-validation.md) for the
-tool and [docs/corpus-validation-results.md](../../docs/corpus-validation-results.md)
+[docs/corpus-validation.md](../docs/corpus-validation.md) for the
+tool and [docs/corpus-validation-results.md](../docs/corpus-validation-results.md)
 for the last run's findings.
 
 ## Analysis database
 
 ```sh
-node tests/greasyfork-examples/build-db.mjs          # corpus.json + downloaded files → corpus.db
-node tests/greasyfork-examples/render-analysis.mjs   # analysis.sql → analysis.html
+node greasyfork-testing/build-db.mjs          # corpus.json + downloaded files → corpus.db
+node greasyfork-testing/render-analysis.mjs   # analysis.sql → analysis.html
 ```
 
 `build-db.mjs` rebuilds `corpus.db` from scratch each run — it is derived data,
@@ -325,7 +325,7 @@ order and renders each result as a table in `analysis.html`, so adding a report
 means adding a query — nothing else. The file is also plain SQL:
 
 ```sh
-sqlite3 tests/greasyfork-examples/corpus.db < tests/greasyfork-examples/analysis.sql
+sqlite3 greasyfork-testing/corpus.db < greasyfork-testing/analysis.sql
 ```
 
 ## Test results
@@ -336,7 +336,7 @@ site. `record-results.mjs` is the only tool that writes these findings.
 
 How to test scripts (the method, blame rules, tags, running batches with
 agents, and re-testing after a fix) is in the `corpus-testing` skill,
-[`.claude/skills/corpus-testing/`](../../.claude/skills/corpus-testing/SKILL.md).
+[`.claude/skills/corpus-testing/`](../.claude/skills/corpus-testing/SKILL.md).
 
 **`record-results.mjs` records individual facts into the corpus**: one
 script's test result, tag or note, as you (or an agent) learn it. It doesn't
@@ -344,7 +344,7 @@ compute anything over the corpus. The exception is `validate`, which checks
 every downloaded script and records each verdict.
 
 ```sh
-R=tests/greasyfork-examples/record-results.mjs
+R=greasyfork-testing/record-results.mjs
 node $R validate                       # offline-validate every downloaded script, import verdicts
 node $R list --untested --valid ok --limit 20
 node $R list --label awesome-userscripts --untested   # one collection, in its rank order
@@ -365,7 +365,7 @@ downloaded `@require`s so a dead or flaky host doesn't stop the run.
 Give the run an ID of your own, since other agents may be testing too:
 
 ```sh
-scripts/sm-dev --run D<yours> --local tests/greasyfork-examples/files start "<file from show>" <url> --detach
+scripts/sm-dev --run D<yours> --local greasyfork-testing/files start "<file from show>" <url> --detach
 ```
 
 - It records a verdict for every downloaded script, `tool error` included.
@@ -420,14 +420,14 @@ Beside `listing`, a record can hold:
 `results.html` reads `corpus.json` when it loads, so it's always current and
 never needs regenerating.
 
-- [On GitHub Pages](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/results.html), it shows the results as last pushed.
+- [On GitHub Pages](https://jshute96.github.io/SourceMonkey/greasyfork-testing/results.html), it shows the results as last pushed.
   - There, "Code" opens the script's code on Greasy Fork, since the
     downloaded copies aren't in git, and there's no "Copy filename".
 - Served locally, it shows results not pushed yet, and its code viewer
   shows the downloaded copies:
 
   ```sh
-  node tests/greasyfork-examples/serve-results.mjs   # then open http://localhost:8765/
+  node greasyfork-testing/serve-results.mjs   # then open http://localhost:8765/
   ```
 
 - Served, the page fetches `corpus.json` itself. Its Reload button re-reads it
@@ -497,7 +497,7 @@ Any script also gets tags for features it uses that SourceMonkey doesn't
 support but that don't make it invalid:
 
 - `unsupported-grant:<name>`: an API-shaped `@grant` not in the catalog
-  ([supported-GM-APIs.md](../../docs/supported-GM-APIs.md)).
+  ([supported-GM-APIs.md](../docs/supported-GM-APIs.md)).
 - `malformed-grant`: a `@grant` line that isn't an API name at all (some
   scripts use them as comments).
 - `ignored-match`: a `@match` Chrome would refuse, which SourceMonkey drops.
@@ -506,7 +506,7 @@ support but that don't make it invalid:
 - `icon-dead-link`, `icon-too-large`: an `@icon` that won't download, or is
   over the icon size limit.
 - `ignored-header:@<tag>`: a header another manager acts on and SourceMonkey
-  ignores ([supported-headers.md](../../docs/supported-headers.md)).
+  ignores ([supported-headers.md](../docs/supported-headers.md)).
 
 ### Hand-added tags
 

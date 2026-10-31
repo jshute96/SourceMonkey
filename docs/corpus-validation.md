@@ -1,11 +1,11 @@
 # Corpus validation
 
-`tests/greasyfork-examples/validate-corpus.mjs` runs SourceMonkey's
+`greasyfork-testing/validate-corpus.mjs` runs SourceMonkey's
 install-time checks over the downloaded GreasyFork corpus, with no
 browser and no network, and groups the failures into a survey.
 
 ```sh
-node tests/greasyfork-examples/validate-corpus.mjs [options] <path>...
+node greasyfork-testing/validate-corpus.mjs [options] <path>...
 ```
 
 For checking your own scripts, use `sm-dev validate` instead; this tool
@@ -131,11 +131,11 @@ diagnostics as its warnings (an `info` note, like a missing
 ## Running it
 
 ```sh
-node tests/greasyfork-examples/validate-corpus.mjs \
-  --offline-root tests/greasyfork-examples/files tests/greasyfork-examples/files
+node greasyfork-testing/validate-corpus.mjs \
+  --offline-root greasyfork-testing/files greasyfork-testing/files
 ```
 
-See [tests/greasyfork-examples/README.md](../tests/greasyfork-examples/README.md)
+See [greasyfork-testing/README.md](../greasyfork-testing/README.md)
 for downloading the corpus, and
 [corpus-validation-results.md](corpus-validation-results.md) for what
 the last run found.

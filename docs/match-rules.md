@@ -66,7 +66,7 @@ scripts are full of them. SM reads them this way:
 
 Why read them at all:
 
-- Over the Greasy Fork corpus (`tests/greasyfork-examples/`), the
+- Over the Greasy Fork corpus (`greasyfork-testing/`), the
   scheme shapes alone are nearly every `@match` Chrome refuses: 710
   scheme-less and 202 globbed, out of 1,035. Reading them makes 877
   usable; the rest fail for a second reason as well.

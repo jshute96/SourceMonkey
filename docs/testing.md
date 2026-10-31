@@ -37,11 +37,10 @@ real-browser end-to-end suite for everything that touches the
   capture in a browser with Tampermonkey, Violentmonkey or both loaded
   beside SourceMonkey. See
   [install-capture.md](install-capture.md#when-other-script-managers-are-installed).
-- `tests/greasyfork-examples/` — not a test suite: tooling that builds a
+- `greasyfork-testing/` — not a test suite: tooling that builds a
   corpus of real-world GreasyFork scripts (the top 2000 and more),
   analyses it, and records per-script validation and test results in
-  `corpus.json` (see its own `README.md`). Playwright's `testMatch` covers only
-  `tests/e2e/**` and `userscripts/examples/**`, so nothing here runs as a test.
+  `corpus.json` (see its own `README.md`).
 
 `sm-dev validate` runs the install-time pipeline over files on disk
 with no browser. `tests/unit/harness/validate.test.mjs` spawns it over

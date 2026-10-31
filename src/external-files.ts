@@ -157,7 +157,7 @@ const FETCH_FAILURE_REASONS: Record<FetchFailure['reason'], true> = {
 // Did this text come out of `describeFetchFailure`?
 //
 // Exists for the corpus validator
-// (`tests/greasyfork-examples/validate-corpus.mjs`), which substitutes
+// (`greasyfork-testing/validate-corpus.mjs`), which substitutes
 // its own wording when the offline mirror's 404 is an artifact of the
 // mirror rather than a real server answer — it has to recognize a
 // fetch-layer failure to know when that substitution applies.

@@ -3,7 +3,7 @@
 // compare them against corpus.json or add the new ones to it.
 //
 // Usage:
-//   node tests/greasyfork-examples/add-scripts.mjs [mode] SOURCE... [options]
+//   node greasyfork-testing/add-scripts.mjs [mode] SOURCE... [options]
 //
 // Each SOURCE is one of:
 //   - a script ID: 12345
@@ -35,7 +35,7 @@
 //                  stops early at an empty page)
 //   --all-pages    for a listing URL, read every page from page 1, taking the
 //                  page count from the page links at the bottom of its HTML
-//   --corpus PATH  corpus file (default tests/greasyfork-examples/corpus.json)
+//   --corpus PATH  corpus file (default greasyfork-testing/corpus.json)
 //
 // Labels, used by --add and --show (other modes ignore them):
 //   --label-new L      give the newly added scripts label L

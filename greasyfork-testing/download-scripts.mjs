@@ -6,16 +6,16 @@
 // Layout: every file lands at <root>/<host>/<path>, keeping the URL's
 // percent-encoding verbatim in the filename, e.g.
 //   https://update.greasyfork.org/scripts/25253/ZOOM%20HACK%20for%20Blobleio%21.user.js
-//   → tests/greasyfork-examples/files/update.greasyfork.org/scripts/25253/ZOOM%20HACK%20for%20Blobleio%21.user.js
+//   → greasyfork-testing/files/update.greasyfork.org/scripts/25253/ZOOM%20HACK%20for%20Blobleio%21.user.js
 //
 // The raw `.user.js` URLs aren't behind GreasyFork's Cloudflare bot check
 // (see README.md), so a plain fetch works.
 //
 // Usage:
-//   node tests/greasyfork-examples/download-scripts.mjs [options]
+//   node greasyfork-testing/download-scripts.mjs [options]
 //
-//   --corpus PATH      script list (default tests/greasyfork-examples/corpus.json)
-//   --root PATH        download root (default tests/greasyfork-examples/files)
+//   --corpus PATH      script list (default greasyfork-testing/corpus.json)
+//   --root PATH        download root (default greasyfork-testing/files)
 //   --count N          only the first N scripts, in listing order (default: all)
 //   --delay MS         pause between requests (default 200)
 //   --concurrency N    parallel requests (default 1 — be polite)
@@ -38,16 +38,16 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseHeader, getValues } from '../../dist/userscript-header.js';
-import { iconRefFromHeader } from '../../dist/script-icon.js';
+import { parseHeader, getValues } from '../dist/userscript-header.js';
+import { iconRefFromHeader } from '../dist/script-icon.js';
 import {
   CORPUS_JSON, dependencyUrlFor, checkRoot, exists, listingRows, readCorpus, readDownloaded, resolveTarget, urlToPath,
   printHelp,
 } from './corpus.mjs';
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const DEFAULT_ROOT = path.join(REPO_ROOT, 'tests/greasyfork-examples/files');
-const REPORT_PATH = path.join(REPO_ROOT, 'tests/greasyfork-examples/download-report.json');
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const DEFAULT_ROOT = path.join(REPO_ROOT, 'greasyfork-testing/files');
+const REPORT_PATH = path.join(REPO_ROOT, 'greasyfork-testing/download-report.json');
 
 // Sent on every request: some hosts serving @require libraries reject the
 // default Node UA outright.

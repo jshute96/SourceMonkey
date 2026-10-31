@@ -610,7 +610,7 @@ extension would show, plus any warnings.
 
 ### Greasy Fork test corpus
 
-The Greasy Fork corpus (`tests/greasyfork-examples/`) has test results from a
+The Greasy Fork corpus (`greasyfork-testing/`) has test results from a
 sample of real-world userscripts: the 2000 most-installed scripts on Greasy
 Fork, plus others added since.
 
@@ -622,10 +622,10 @@ Fork, plus others added since.
 
 Results:
 
-- [Test results](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/results.html):
+- [Test results](https://jshute96.github.io/SourceMonkey/greasyfork-testing/results.html):
   a sortable, filterable table of every script's validation and test
   status, with notes.
-- [Analysis](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/analysis.html):
+- [Analysis](https://jshute96.github.io/SourceMonkey/greasyfork-testing/analysis.html):
   statistics on which headers and `GM_*` APIs the scripts use most.
 - [Show SourceMonkey test status on Greasy Fork](https://jshute96.github.io/SourceMonkey/userscripts/greasyfork/show-test-results.user.js):
   a userscript that shows test results inline on Greasy Fork, next to the
@@ -634,7 +634,7 @@ Results:
 
 More detail:
 
-- [tests/greasyfork-examples/README.md](tests/greasyfork-examples/README.md):
+- [greasyfork-testing/README.md](greasyfork-testing/README.md):
   the tools, the record format and what each test status means.
 - [docs/corpus-validation.md](docs/corpus-validation.md): the bulk validator,
   and [docs/corpus-validation-results.md](docs/corpus-validation-results.md)
@@ -733,9 +733,9 @@ for known per-manager divergences.
 - `tests/`: tests and test data. See [docs/testing.md](docs/testing.md).
   - `tests/unit/`: unit tests.
   - `tests/e2e/`: Playwright tests that load the unpacked extension.
-  - `tests/greasyfork-examples/`: [results](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/results.html) and
-    [analysis](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/analysis.html) from testing SourceMonkey on a selection
-    of top scripts from Greasy Fork.
+- `greasyfork-testing/`: [results](https://jshute96.github.io/SourceMonkey/greasyfork-testing/results.html) and
+  [analysis](https://jshute96.github.io/SourceMonkey/greasyfork-testing/analysis.html)
+  from testing SourceMonkey on a selection of top scripts from Greasy Fork.
 - `userscripts/`: userscripts, including examples and test helpers. See
   [userscripts/README.md](userscripts/README.md).
   - `userscripts/examples/`: interactive userscript example pages with paired

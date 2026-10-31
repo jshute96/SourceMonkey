@@ -9,9 +9,9 @@ with its script IDs and a run name prefix.
 - Work from the repo root. Load the `SourceMonkey-dev` skill and follow it:
   named runs (`--run <prefix>1`), `--detach`, never `sleep`, `stop` when
   done.
-- `node tests/greasyfork-examples/record-results.mjs show ID` prints the
+- `node greasyfork-testing/record-results.mjs show ID` prints the
   record as JSON, and on stderr a `File:` line naming the downloaded
-  copy, under `tests/greasyfork-examples/files/`. Test that copy, not a fresh download.
+  copy, under `greasyfork-testing/files/`. Test that copy, not a fresh download.
 - `sm-dev` runs the built `lib/`. If the task is about a recent fix, make
   sure it's built (`pnpm run build`).
 
@@ -98,7 +98,7 @@ Every run runs the script in the real SourceMonkey:
   Always `stop` your runs.
 - The script's remote `@require`s are fetched live, not from the copies
   in `files/`. When a `@require` host is down (a 503 or 404 makes the
-  script invalid), give `--local tests/greasyfork-examples/files` before
+  script invalid), give `--local greasyfork-testing/files` before
   the command to use the downloaded copies.
 - While a run is live, `@run-at document-start` code may run after the
   page's first inline scripts, where SourceMonkey alone would run it
@@ -136,7 +136,7 @@ Blame follows the outcome, not the intent:
 ## Recording
 
 ```sh
-R=tests/greasyfork-examples/record-results.mjs
+R=greasyfork-testing/record-results.mjs
 node $R set ID --test pass --note-file note.md
 node $R set ID --test fail --blame script --tag trusted-types --note-file note.md
 node $R set ID --test inconclusive --note-file note.md

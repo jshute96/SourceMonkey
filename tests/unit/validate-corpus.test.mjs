@@ -1,4 +1,4 @@
-// The corpus validator (`tests/greasyfork-examples/validate-corpus.mjs`),
+// The corpus validator (`greasyfork-testing/validate-corpus.mjs`),
 // driven the way it's used: as a subprocess, over a hand-built offline
 // tree, with its own `--json` output read back.
 //
@@ -26,7 +26,7 @@ const execFileAsync = promisify(execFile);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
-const CLI = path.join(REPO_ROOT, 'tests', 'greasyfork-examples', 'validate-corpus.mjs');
+const CLI = path.join(REPO_ROOT, 'greasyfork-testing', 'validate-corpus.mjs');
 
 /**
  * Run the CLI and return its parsed `--json` records. Paths in the
@@ -58,7 +58,7 @@ function byBasename(records) {
 // The flag that makes a corpus run reproducible: dependencies resolve
 // out of a downloaded tree and nothing touches the network. The tree
 // here is built by hand rather than borrowed from
-// `tests/greasyfork-examples/files/` — that directory is gitignored and
+// `greasyfork-testing/files/` — that directory is gitignored and
 // 270 MB, so a test that needed it would be skipped on every fresh
 // checkout, which is the same as not having one.
 

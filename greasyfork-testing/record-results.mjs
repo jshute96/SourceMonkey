@@ -9,7 +9,7 @@
 // updateCorpus(), so parallel agents can record results at once.
 //
 // Usage:
-//   node tests/greasyfork-examples/record-results.mjs <command> [args]
+//   node greasyfork-testing/record-results.mjs <command> [args]
 //
 //   validate                 run the corpus validator over every downloaded
 //                            script and import the verdicts (needs `pnpm run build`)
@@ -60,17 +60,17 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getValue, getValues, parseHeader, unsupportedRunAt } from '../../dist/userscript-header.js';
-import { resolveGrants } from '../../dist/gm-api-catalog.js';
-import { describeDiagnostic } from '../../dist/diagnostic-location.js';
-import { matchPatternProblem } from '../../dist/url-match.js';
+import { getValue, getValues, parseHeader, unsupportedRunAt } from '../dist/userscript-header.js';
+import { resolveGrants } from '../dist/gm-api-catalog.js';
+import { describeDiagnostic } from '../dist/diagnostic-location.js';
+import { matchPatternProblem } from '../dist/url-match.js';
 import {
   CORPUS_JSON, builtinTagEntry, checkRoot, findExisting, isBuiltinTag, labelRank, listingRows, patternTarget, printHelp, readCorpus,
   readCorpusHelp, updateCorpus,
 } from './corpus.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(HERE, '../..');
+const REPO_ROOT = path.resolve(HERE, '..');
 
 const TEST_STATUSES = ['pass', 'fail', 'inconclusive', 'n/a'];
 // Why a script couldn't be meaningfully tried. Kept to a fixed set so the
@@ -286,7 +286,7 @@ async function runValidator(opts) {
   const dir = await mkdtemp(path.join(tmpdir(), 'sm-validate-'));
   const json = path.join(dir, 'results.json');
   try {
-    const args = ['tests/greasyfork-examples/validate-corpus.mjs', '--offline-root', opts.root, '--json', json, '--quiet', ...byFile.keys()];
+    const args = ['greasyfork-testing/validate-corpus.mjs', '--offline-root', opts.root, '--json', json, '--quiet', ...byFile.keys()];
     const code = await new Promise((resolve, reject) => {
       const child = spawn(process.execPath, args, { cwd: REPO_ROOT, stdio: 'inherit' });
       child.on('error', reject);

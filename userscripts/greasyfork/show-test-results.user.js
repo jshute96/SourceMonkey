@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Show SourceMonkey test status on Greasy Fork
 // @namespace    https://github.com/jshute96/SourceMonkey
-// @version      0.8.2
+// @version      0.8.3
 // @description  On Greasy Fork script pages, for scripts that have been tested with SourceMonkey, show the test results
 // @match        https://greasyfork.org/*
 // @grant        GM_xmlhttpRequest
@@ -22,7 +22,7 @@
 // - Local: a server on localhost:8765, for results not pushed yet. Run this
 //   from the SourceMonkey repo to start it:
 //
-//     tests/greasyfork-examples/serve-results.mjs
+//     greasyfork-testing/serve-results.mjs
 //
 // The script's menu has an item for each, and shows the selected one checked. Choosing
 // the other switches to it and reloads the page.
@@ -36,7 +36,7 @@
 
   // Where the results are read from, chosen with the menu command.
   const SOURCES = {
-    published: 'https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/',
+    published: 'https://jshute96.github.io/SourceMonkey/greasyfork-testing/',
     local: 'http://localhost:8765/',
   };
   const sourceKey = GM_getValue('source', 'published') === 'local' ? 'local' : 'published';
@@ -319,7 +319,7 @@
       line(body, 'Could not load test results.');
       line(body, result.error.message);
       if (result.error.unreachable && sourceKey === 'local') {
-        line(body, 'Run ').append(el('code', 'smts-code', 'tests/greasyfork-examples/serve-results.mjs'));
+        line(body, 'Run ').append(el('code', 'smts-code', 'greasyfork-testing/serve-results.mjs'));
       }
       return panel;
     }
