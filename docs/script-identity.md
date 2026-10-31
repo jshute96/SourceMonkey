@@ -183,7 +183,6 @@ the *other* rows.
     panel's offer section.
   - And so does the collections page's **Add** field, which previews any
     single-file location the user types rather than adding it directly.
-    (First-run seeding bypasses the preview, so it never sweeps.)
   - **Single-file installs only.** The preview keeps an Install button
     for other shapes too, and those add a whole collection — no one
     script for the rule to be about.

@@ -9,7 +9,7 @@ The most recent results are published on GitHub Pages:
 
 - [Test results](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/results.html): every script's validation and test status.
 - [Corpus analysis](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/analysis.html): statistics on the scripts and what they use.
-- [SourceMonkey test status on Greasy Fork](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/show-on-GreasyFork.user.js): a userscript that shows each script's results beside its stats on Greasy Fork's pages (see [On Greasy Fork pages](#on-greasy-fork-pages)).
+- [Show SourceMonkey test status on Greasy Fork](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/show-on-GreasyFork.user.js): a userscript that shows each script's results beside its stats on Greasy Fork's pages (see [On Greasy Fork pages](#on-greasy-fork-pages)).
 
 This README covers the tools and data. For how to test scripts on their
 live sites and record results (also for agents), see the `corpus-testing`

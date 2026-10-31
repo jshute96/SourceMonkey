@@ -32,7 +32,6 @@ import { setGlyphButton, setGlyphButtonBusy } from './glyph.js';
 import type { DownloadsCopiesSetting } from './local-copy.js';
 import { deletableCopyPath, readCopiesSetting } from './local-delete.js';
 import {
-  DEFAULT_COLLECTIONS,
   describeError,
   needsDisplayName,
   getAllScriptMetas,
@@ -40,7 +39,6 @@ import {
   getScriptMetas,
   getCollectionsById,
   getCollections,
-  isFirstRunComplete,
   isScriptEnabled,
   isCollectionEnabled,
   readLocalStorageUsage,
@@ -50,12 +48,16 @@ import {
   type StoredCollection,
 } from './script-store.js';
 import {
-  addCollection, updateAllCollections, updateCollection, updateScript,
-  backfillCollectionDisplayNames, markFirstRunComplete, moveCollection, reconcileScriptMembership, removeCollection, syncAfterUserScriptsAllowed,
+  createCollection, updateAllCollections, updateCollection, updateScript,
+  backfillCollectionDisplayNames, moveCollection, reconcileScriptMembership, removeCollection, syncAfterUserScriptsAllowed,
   removeScript, setAllScriptsEnabled, setCollectionEnabledExclusive, setScriptEnabledExclusive,
+  writeSetting,
 } from './worker-client.js';
 import { identityKey } from './script-identity.js';
 import { watchSoloModifier } from './solo-click.js';
+import {
+  pendingSuggestions, SHOW_SUGGESTIONS_KEY, type Suggestion,
+} from '../suggestions.js';
 import {
   installLocalRootsListener,
   localRootsReady,
@@ -133,13 +135,11 @@ import {
   type RefreshTargets,
 } from './refresh-targets.js';
 import {
-  canonicalCollectionInput,
   isContainerCollection,
   isSmDevCollection,
   isValidLocationShape,
   LOCATION_SHAPES,
   isSingleFileInput,
-  normalizeCollectionInput,
 } from './directories.js';
 import {
   markFileChanges,
@@ -174,6 +174,7 @@ const addButton = addForm.querySelector('button[type="submit"]') as HTMLButtonEl
 const refreshAllBtn = document.getElementById('refresh-all') as HTMLButtonElement;
 const openOptionsBtn = document.getElementById('open-options') as HTMLButtonElement;
 const addErrorEl = document.getElementById('add-error') as HTMLParagraphElement;
+const suggestionsSlot = document.getElementById('suggestions-slot')!;
 
 addForm.addEventListener('submit', (event) => {
   event.preventDefault();
@@ -219,7 +220,7 @@ wireOpenButton(document.getElementById('open-help')!, HELP_URL, () => openTabBes
 // own copy.
 //
 // Deliberately the RENDER, not all of `bootstrap()`. Bootstrap goes on
-// to run first-run seeding, `?refresh` and `?add`, all of which
+// to run `?refresh` and `?add`, both of which
 // go through handlers that repaint — waiting for bootstrap here would
 // have those handlers waiting on themselves.
 let resolveInitialRender!: () => void;
@@ -332,6 +333,8 @@ if (chrome.storage?.local?.onChanged) {
     // ride along in the same event.
     const keys = Object.keys(changes).filter((key) => touchesStructuralRows([key]));
     if (keys.length > 0) void repaintPage(keys);
+    // Closed here, in another tab, or from the Options checkbox.
+    if (SHOW_SUGGESTIONS_KEY in changes) void paintSuggestions();
   });
 }
 
@@ -724,6 +727,7 @@ async function repaintSections(timer: PhaseTimer): Promise<void> {
   // between collections isn't forgotten by its old section after its
   // new one has already recorded it.
   forgetScriptsExcept(new Set(allScripts.map((s) => s.id)));
+  syncSuggestions(collections, allScripts);
 
   const wanted = new Set(collections.map((s) => s.id));
   for (const section of [
@@ -1229,17 +1233,6 @@ async function bootstrap(): Promise<void> {
   scrollToHashCollectionIfPresent();
   if (location.hash.startsWith(`#${EDIT_COLLECTION_HASH_PREFIX}`)) void focusHashTarget(location.hash.slice(1));
   const params = new URLSearchParams(location.search);
-  // First-run seeding. The SW opens this page with `?first_run` once on
-  // install (see background.ts); only that auto-opened page seeds, so an
-  // ordinary visit never adds the defaults. The flag is re-checked here
-  // so a manual reload of the same URL can't seed twice.
-  if (params.has('first_run')) {
-    const done = await isFirstRunComplete();
-    console.log(`[SourceMonkey] collections page opened with ?first_run (firstRunComplete=${done})`);
-    if (!done) await seedDefaultCollectionsViaUi();
-    else console.log('[SourceMonkey] first run already complete; skipping seed');
-    scrubQueryParams(['first_run']);
-  }
   if (params.has('refresh')) {
     await onRefreshAll();
     scrubQueryParams(['refresh']);
@@ -1258,54 +1251,6 @@ async function bootstrap(): Promise<void> {
   const refreshFileArg = params.get('refresh_file');
   if (refreshFileArg !== null) {
     if (await handleRefreshFileParam(refreshFileArg)) scrubQueryParams(['refresh_file']);
-  }
-}
-
-// First-run seeding, driven from the page so the user watches the
-// familiar flow: each default collection's section appears, populated,
-// as it loads. `addCollection` fetches each collection's scripts as
-// part of the add, so no follow-up Refresh is needed. Marks first-run
-// complete at the end (even if a collection failed) so it never repeats.
-async function seedDefaultCollectionsViaUi(): Promise<void> {
-  // Best-effort + run-once: mark complete in a finally so a failure on
-  // one default (network down, bad URL) neither aborts the others nor
-  // leaves the flag unset (which can't auto-retry — onInstalled fires
-  // only once, so a re-open wouldn't carry ?first_run). A failed
-  // collection still leaves a section with its Refresh button for
-  // manual recovery.
-  console.log('[SourceMonkey] first run: seeding default collections', [...DEFAULT_COLLECTIONS]);
-  try {
-    // Skip exact-repeat entries up front; addCollection also dedupes by
-    // canonical collection path (so two spellings of the same
-    // collection still yield one), this just avoids a pointless
-    // duplicate-add round-trip for a byte-identical repeat. `jump:
-    // false` so adding several in a row doesn't scroll-dance through
-    // each new section.
-    const seen = new Set<string>();
-    for (const raw of DEFAULT_COLLECTIONS) {
-      const path = raw.trim();
-      if (!path || seen.has(path)) continue;
-      seen.add(path);
-      console.log('[SourceMonkey] first run: adding collection', path);
-      addInput.value = path;
-      try {
-        await seedCollection(path);
-      } catch (err) {
-        console.info('[SourceMonkey] first-run add failed', path, err);
-      }
-    }
-  } finally {
-    // Clear the Add field — seedCollection clears it on success, but a
-    // failed add leaves the last attempted path sitting there.
-    addInput.value = '';
-    console.log('[SourceMonkey] first run: seeding complete; marking firstRunComplete=true');
-    // Caught here so a failure can't replace the outcome of the seeding
-    // above. With the flag unset, a later install event opens the page
-    // with `?first_run` again, and the add dedupes what is already
-    // there.
-    await markFirstRunComplete().catch((err: unknown) => {
-      console.info('[SourceMonkey] could not record that first-run seeding is done:', describeError(err));
-    });
   }
 }
 
@@ -1500,6 +1445,10 @@ async function render(startup = false): Promise<void> {
   reconcileScriptMembership().catch((err: unknown) => {
     console.info('[SourceMonkey] membership reconcile failed', err);
   });
+  // The scripts a collection lists, as the repaint passes, so an
+  // unlisted row can't make the box differ between the two.
+  const listed = new Set(collections.flatMap((c) => c.scriptIds));
+  syncSuggestions(collections, allScripts.filter((s) => listed.has(s.id)));
   if (collections.length === 0) {
     collectionsEl.appendChild(emptyPlaceholder());
     return;
@@ -1518,6 +1467,118 @@ function emptyPlaceholder(): HTMLElement {
   p.className = 'placeholder empty-placeholder';
   p.textContent = 'No collections yet. Add one above.';
   return p;
+}
+
+// ---------- Suggestion box ----------
+//
+// Collections and scripts to install, above the collections, until each
+// is installed or the box is closed (suggestions.ts). Drawn from what
+// the last render or repaint read, while the setting is on.
+
+let installedPaths: string[] = [];
+let installedHeaders: ScriptMeta['header'][] = [];
+// Only the newest paint may draw, so a slow settings read finishing
+// last can't put back a box that was just closed.
+let suggestionsPaints = 0;
+// Set by the close button until its write lands, so a repaint that
+// read storage before the write doesn't draw the box again meanwhile.
+let suggestionsClosing = false;
+
+function syncSuggestions(collections: readonly StoredCollection[], scripts: readonly ScriptMeta[]): void {
+  installedPaths = collections.map((c) => c.path);
+  installedHeaders = scripts.map((s) => s.header);
+  void paintSuggestions();
+}
+
+async function paintSuggestions(): Promise<void> {
+  const mine = ++suggestionsPaints;
+  let on: boolean;
+  try {
+    on = (await chrome.storage.local.get(SHOW_SUGGESTIONS_KEY))[SHOW_SUGGESTIONS_KEY] !== false;
+  } catch (err) {
+    console.info('[SourceMonkey] could not read the suggestion setting:', describeError(err));
+    return;
+  }
+  if (mine !== suggestionsPaints || suggestionsClosing) return;
+  const pending = on ? pendingSuggestions(installedPaths, installedHeaders) : [];
+  // Left alone when the list is the same, so a repaint mid-add doesn't
+  // re-enable the Add collection button.
+  const ids = pending.map((s) => s.id).join(' ');
+  const box = suggestionsSlot.querySelector<HTMLElement>('.suggestions');
+  if ((box?.dataset.ids ?? '') === ids) return;
+  suggestionsSlot.replaceChildren(...(pending.length > 0 ? [renderSuggestionBox(pending)] : []));
+}
+
+function renderSuggestionBox(pending: readonly Suggestion[]): HTMLElement {
+  const box = document.createElement('section');
+  box.className = 'suggestions';
+  box.dataset.ids = pending.map((s) => s.id).join(' ');
+  const header = document.createElement('div');
+  header.className = 'suggestions-header';
+  const h2 = document.createElement('h2');
+  h2.textContent = 'Suggested scripts';
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'suggestions-close';
+  close.textContent = '×';
+  close.title = 'Close suggested scripts (Re-enable from Options)';
+  close.setAttribute('aria-label', 'Close suggested scripts');
+  close.addEventListener('click', () => {
+    suggestionsSlot.replaceChildren();
+    suggestionsClosing = true;
+    writeSetting(SHOW_SUGGESTIONS_KEY, false).catch((err: unknown) => {
+      showPageError(`Could not close the suggestions: ${describeError(err)}`);
+    }).finally(() => {
+      suggestionsClosing = false;
+      void paintSuggestions();
+    });
+  });
+  header.append(h2, close);
+
+  const list = document.createElement('ul');
+  list.className = 'suggestion-list';
+  for (const suggestion of pending) list.appendChild(renderSuggestion(suggestion));
+  box.append(header, list);
+  return box;
+}
+
+function renderSuggestion(suggestion: Suggestion): HTMLElement {
+  const li = document.createElement('li');
+  li.className = 'suggestion';
+  li.dataset.suggestionId = suggestion.id;
+  const text = document.createElement('div');
+  text.className = 'suggestion-text';
+  const title = document.createElement('a');
+  title.className = 'suggestion-title';
+  title.textContent = suggestion.title;
+  title.href = suggestion.infoUrl;
+  title.target = '_blank';
+  title.rel = 'noopener';
+  const desc = document.createElement('span');
+  desc.className = 'suggestion-description';
+  desc.textContent = suggestion.description;
+  text.append(title, desc);
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  if (suggestion.kind === 'script') {
+    // Its install page, in a tab beside this one, as from a link.
+    btn.textContent = 'Install…';
+    btn.title = 'Open the install page for this script';
+    const url = chrome.runtime.getURL(previewUrl(suggestion.location));
+    wireOpenButton(btn, url, () => openTabBeside(url));
+  } else {
+    btn.textContent = 'Add collection';
+    btn.title = 'Add this collection';
+    btn.addEventListener('click', () => {
+      btn.disabled = true;
+      // The repaint the add starts takes this row away; on a failure,
+      // the page's error line says why and the button comes back.
+      void addSuggestedCollection(suggestion.location, suggestion.title).finally(() => { btn.disabled = false; });
+    });
+  }
+  li.append(text, btn);
+  return li;
 }
 
 // ---------- Per-section build ----------
@@ -2031,17 +2092,16 @@ async function onRemoveScript(scriptId: string, _collectionId: string, btn: HTML
 
 // ---------- Flow handlers ----------
 
-// First-run seeding's add path: the `DEFAULT_COLLECTIONS` locations,
-// added without asking. Everything a user types goes through
+// The suggestion box's add path: a suggested collection, added
+// without asking. Everything a user types goes through
 // `onAddViaDialog` instead — the dialog is where a location gets a
 // name, an options choice, and a readability check — so this is
 // deliberately the plainer route: no dialog, no preview hand-off, no
-// scroll (several land in a row and would scroll-dance through each).
+// scroll.
 //
-// The caller reports failures from its own `catch`, so nothing is
-// returned; the shape checks here are belt and braces over a hardcoded
-// list.
-async function seedCollection(rawPath: string): Promise<void> {
+// Failures show on the page's error line, so nothing is returned; the
+// shape checks here are belt and braces over a hardcoded list.
+async function addSuggestedCollection(rawPath: string, name: string): Promise<void> {
   const path = rawPath.trim();
   if (!path) return;
   if (!isValidLocationShape(path)) {
@@ -2052,20 +2112,7 @@ async function seedCollection(rawPath: string): Promise<void> {
 
   setAddFormBusy(true);
   try {
-    // Normalize once up front so any failure (rate limit, private repo,
-    // network down) surfaces here with a user-visible message instead
-    // of dead-ending in the page console. `addCollection` re-normalizes
-    // internally, but the second call is a no-op on already-canonical
-    // inputs (idempotent for non-github and for already-resolved github
-    // `/tree/<ref>/...` URLs).
-    let stored;
-    try {
-      stored = canonicalCollectionInput(await normalizeCollectionInput(path));
-    } catch (err) {
-      showPageError(err instanceof Error ? err.message : String(err));
-      return;
-    }
-    // `addCollection` seeds the collection row inside its write lock and
+    // `createCollection` seeds the collection row inside its write lock and
     // then refreshes it, so a storage failure surfaces here as a throw
     // with the seeded row already committed. Without this the add would
     // dead-end: the form un-busies and nothing says why no section
@@ -2077,16 +2124,15 @@ async function seedCollection(rawPath: string): Promise<void> {
     // could-not-be-saved message explaining what to fix first.
     let result;
     try {
-      result = await addCollection(stored);
+      result = await createCollection({ kind: 'location', path, name });
     } catch (err) {
       showPageError(describeError(err));
       await repaintPage();
       return;
     }
-    addInput.value = '';
-    // A null result is a repeat of a location already seeded (two
-    // DEFAULT_COLLECTIONS entries spelling one collection): nothing to
-    // add, and the section is already on screen.
+    // A null result is a location already added (from another tab
+    // since this one painted): nothing to add, and the section is
+    // already on screen.
     if (!result) return;
     // The add wrote storage; a repaint builds the new section and puts
     // everything in index order.

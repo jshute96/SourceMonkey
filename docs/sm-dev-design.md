@@ -859,9 +859,10 @@ for commands without a run, the browser they act on.
     taken first, and the run would connect to whatever took it.
   - Playwright's own signal handlers are off, so on Ctrl-C or `stop` the
     run closes the browser itself and ends quietly.
-- Two launches: a first one sets the extension's `firstRunComplete` and
-  removes any default collections it started adding, so the run's own
-  launch has none.
+- Two launches: a first one sets the extension's `firstRunComplete`, so
+  the run's own launch doesn't open a collections tab.
+  - It also turns off "Show suggested scripts", so the collections page
+    shows the run's scripts without the suggestion box.
 - Before the run opens its tab, a placeholder script is pushed and
   cleared. In a fresh profile, a tab opened before the first script
   install can't message the extension (see TODO.md).

@@ -130,8 +130,8 @@ functionality.
 To try them:
 
 1. Add the examples as a collection: on the collections page, add
-   `https://github.com/jshute96/SourceMonkey/tree/main/tests/examples`.
-   - A new install adds this collection on its first run.
+   `https://jshute96.github.io/SourceMonkey/tests/examples/script_manifest.json`.
+   - On a new install, the collections page's suggestion box offers this collection.
 2. Open the [examples index page](https://jshute96.github.io/SourceMonkey/tests/examples/index.html).
    Each example's page runs its scripts and shows what they did.
 
@@ -172,7 +172,7 @@ The [jshute96/userscripts](https://github.com/jshute96/userscripts) GitHub repo 
      local disk.
 
 3. Double-click the SourceMonkey toolbar icon to open the **collections page**.
-   - On the first run, it adds a default collection of examples so the page isn't empty.  You can remove that if you want.
+   - It opens on the first run, with a box of suggested scripts to install, such as the example scripts. Closing the box hides it (the Options page can show it again).
    - Use the **Add** box to add scripts or collections, from URLs or file paths. Adding a directory creates a collection with all scripts under that directory.
    - Opening userscripts (`*.user.js` URLs) in Chrome will redirect to SourceMonkey's script install page.  (You can disable this on the Options page.)
 
@@ -622,7 +622,7 @@ Results:
   status, with notes.
 - [Analysis](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/analysis.html):
   statistics on which headers and `GM_*` APIs the scripts use most.
-- [SourceMonkey test status on Greasy Fork](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/show-on-GreasyFork.user.js):
+- [Show SourceMonkey test status on Greasy Fork](https://jshute96.github.io/SourceMonkey/tests/greasyfork-examples/show-on-GreasyFork.user.js):
   a userscript that shows test results inline on Greasy Fork, next to the
   stats on script pages and search pages. Open the link with a userscript
   manager to install it.

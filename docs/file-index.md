@@ -106,6 +106,7 @@ and `lib/`.
 | `src/http-read.ts` | One http(s) read, made in the service worker when a page asks — a document fetch acts on the response's `Link: rel=preload` headers |
 | `src/external-files.ts` | `@require` + `@resource` orchestrator: resolve, fetch, dedup (cross-script + cross-kind), attach typed entries, word the failures; the `@icon` check |
 | `src/local-file-overrides.ts` | Local stand-ins for `@require` / `@resource` / `@icon` declared by absolute URL: search roots (script folder, collection root, configured), host/path suffix candidates, listing-gated probing, containment |
+| `src/suggestions.ts` | The collections page's suggested collections and scripts, the setting that shows them, and which to show; the harness turns it off |
 | `src/menu-captions.ts` | Which menu commands show: one per script and caption in a tab; shared by the popup and sm-dev |
 | `src/gm-api-catalog.ts` | Catalog of supported `GM_*` / `GM.*` APIs: name, async/sync kind, subsystem; helpers for resolving `@grant` lines |
 | `src/source-map.ts` | Source Map v3 generator for the concatenated injection entry, plus the reverse lookup the Log tab maps stack refs with |
@@ -154,7 +155,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/deep-link.ts` | `webNavigation` listener: rewrites the GitHub `redirect-page.md` URL to the matching `chrome-extension://…` page |
 | `src/extension/stall-monitor.ts` | Under debug logging, logs each time the service worker's thread was blocked for over 200 ms |
 | `src/extension/install-capture.ts` | Captures http(s) + file:// navigations to `*.user.js` and opens the viewer's preview mode, in a new tab beside a page |
-| `src/extension/collections.ts` | Collections page controller — Add-field routing into the dialog, options gear, render, membership repair, in-place updates, refresh highlights + dropped-row ghosts, repaint-from-storage on change, `?refresh`/`?refresh_local`/`?refresh_file`/`?add`/`?first_run` triggers |
+| `src/extension/collections.ts` | Collections page controller — Add-field routing into the dialog, options gear, render, membership repair, in-place updates, refresh highlights + dropped-row ghosts, repaint-from-storage on change, suggestion box, `?refresh`/`?refresh_local`/`?refresh_file`/`?add` triggers |
 | `src/extension/collection-dialog.ts` | The create / edit collection dialog shared by the collections page and the install page: name / location / local-overrides fields, an inferred Type row, live validation, pre-create readability probe, create/install/move wording |
 | `src/extension/refresh-targets.ts` | Picks the collections/scripts a `?refresh_local` or `?refresh_file=<path>` trigger should refresh |
 | `src/extension/popup.ts` | Toolbar popup controller: renders the worker's view, toggles scripts and collections, menus, menu commands, reloads |
@@ -206,7 +207,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/file-access.ts` | "Allow access to file URLs" probe plus the shared "File access is disabled." banner and its chrome://extensions link |
 | `src/extension/github-provider.ts` | GitHub-only provider integration: URL parsing, default-branch resolution, blob→raw rewrite, Contents-API recursive dir scanner, per-script raw/display URL builders |
 | `src/extension/structural-keys.ts` | Storage key layout of the collection index, collection and script rows, `touchesStructuralRows`, the active-times key |
-| `src/extension/script-store.ts` | Persistent userscript store (chrome.storage.local) plus load/refresh pipeline, addCollection / createCollection / installScript / moveScript / setCollectionOptions / probeCollectionLocation, refreshAllCollections, the enable write that stamps active times, membership reconcile, first-run flag + DEFAULT_COLLECTIONS, legacy `source:*` key migration, the storage format gate |
+| `src/extension/script-store.ts` | Persistent userscript store (chrome.storage.local) plus load/refresh pipeline, addCollection / createCollection / installScript / moveScript / setCollectionOptions / probeCollectionLocation, refreshAllCollections, the enable write that stamps active times, membership reconcile, first-run flag, legacy `source:*` key migration, the storage format gate |
 | `src/extension/script-updater.ts` | Single entry point for refresh; rate-limits opportunistic background checks, and mirrors every load/refresh outcome into the per-script Log |
 | `src/extension/version-probe-fetch.ts` | Fetching half of update probes — reads a probe URL's `@version`, with bounded size, timeout, and fan-out |
 | `src/extension/collection-display.ts` | Collection-display helpers: bubble key (kind + scheme) and its tooltip, per-row scheme chip, display-name inference, name-in-use + reserved-name checks, free-name numbering, manifest flag, anchor id, disabled-collection tooltip |
@@ -400,6 +401,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/script-log-relay.spec.ts` | The viewer's Clear log is performed by the worker, through its `sm:op` `clearScriptLog` request |
 | `tests/e2e/membership.spec.ts` | Collection membership vs. the script rows: moves and removals that land mid-refresh, and the repair sweep |
 | `tests/e2e/manifest.spec.ts` | Manifest collection refresh: vanished-entry deletion, unreadable-manifest preservation |
+| `tests/e2e/suggestions.spec.ts` | The collections page's suggestion box: what it lists, its install buttons, closing it and the Options checkbox |
 | `tests/e2e/options.spec.ts` | Options-page UI flows: add-directory form, collection removal, per-script toggle |
 | `tests/e2e/page-links.spec.ts` | E2E for cross-page links: new-tab-ness, named-tab reuse, and the header bar's home link |
 | `tests/e2e/site-icons.spec.ts` | E2E tests for the favicon slot: DOM contract, one icon per site + collapse + column fit, cached icons drawn at once, `@icon` override and its load-time warning, relative paths, two-tier cache, blob-URL de-dup, cross-host redirect rejection, schema self-heal, Chrome `_favicon` DB |
@@ -491,6 +493,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/injector.test.mjs` | Unit tests for the injector: spec build, active-spec collection, refusal logging, retry limits, sync serialization and scoping |
 | `tests/unit/generated-wrappers.test.mjs` | Guard test: each minified wrapper (`WRAPPER_*`) is valid JS with load-bearing tokens intact |
 | `tests/unit/source-layout.test.mjs` | Checks the `src/` split: what `lib/` and `dist/` compile, and that shared modules are shared |
+| `tests/unit/suggestions.test.mjs` | Which suggestions count as installed, by collection path and by `@namespace` + `@name` |
 | `tests/unit/page-writes.test.mjs` | No page-only module imports a store writer directly or writes storage itself |
 | `tests/unit/examples.test.mjs` | Example pages keep the footer, scripts are named `SourceMonkey example: <dir>: …`, each dir is listed in README and index |
 | `tests/unit/eval-hook.test.mjs` | Where the eval hook goes in a program, and the keys it's kept under |
@@ -707,6 +710,7 @@ For userscript repos to install, so their coding agents know how to use `sm-dev`
 |------|-------------|
 | `docs/file-index.md` | This file |
 | `docs/architecture.md` | High-level component map and pointers to topic-specific docs |
+| `docs/suggestions.md` | The collections page's suggestion box: what it lists, closing it, and the Options checkbox |
 | `docs/storage.md` | `chrome.storage.local` schema, status model, load/refresh pipeline, collections-page render |
 | `docs/updates.md` | How scripts update from their install source, the focus-triggered local check, and why `@updateURL`/`@downloadURL` are probed but never followed |
 | `docs/file-access.md` | `file://` access, FSA rationale, directory enumeration, listing-format caveat |

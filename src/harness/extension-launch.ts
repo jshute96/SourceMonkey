@@ -32,6 +32,7 @@ import { MANAGERS, managerFlag, type ManagerName } from './managers.js';
 import { loadPlaywright, missingChromium } from './playwright-chromium.js';
 import { rebuildAdvice } from './rebuild-advice.js';
 import { quoted } from './output-style.js';
+import { SHOW_SUGGESTIONS_KEY } from '../suggestions.js';
 
 // dist/, beside lib/: in the checkout, and in an installed package,
 // which ships both.
@@ -262,9 +263,9 @@ interface WarmUpApi {
 }
 
 /**
- * Readies a new profile for SourceMonkey (Preferences, first run done),
- * for a browser started with `extensionArgs`. Also for a test's own
- * browser, launched outside Playwright.
+ * Readies a new profile for SourceMonkey (Preferences, first run done,
+ * suggestions off), for a browser started with `extensionArgs`. Also
+ * for a test's own browser, launched outside Playwright.
  */
 export async function prepareProfile(profile: string, downloadsDir?: string): Promise<void> {
   writePreferences(profile, await sourceMonkeyExtensionId(), downloadsDir);
@@ -323,29 +324,21 @@ async function chromeDownloads(context: BrowserContext): Promise<void> {
  * Marks the extension's first run done, in a launch of its own before
  * the run's.
  *
- * - On a first run, the extension opens its collections page, which adds
- *   the default collections from GitHub. Their scripts would then run
- *   alongside the one being tried.
+ * - On a first run, the extension opens its collections page, which
+ *   would be a stray tab in the run.
  * - That starts while the browser is still starting, so the flag can't
  *   be set in time in the run's own launch. Set here, it's in storage
  *   for the next launch, whose first-run check then does nothing.
- * - This launch may still have started the page's adds, so it closes the
- *   page and removes what they added.
+ * - Also turns off "Show suggested scripts".
  */
 async function primeFirstRun(profile: string): Promise<void> {
   const context = await launch(profile, false);
   try {
     const worker = await findExtensionWorker(context);
     // Key mirrors FIRST_RUN_DONE_KEY in src/extension/script-store.ts.
-    await worker.evaluate(() => chrome.storage.local.set({ firstRunComplete: true }));
-    for (const page of context.pages()) {
-      if (page.url().includes('/collections.html')) await page.close().catch(() => undefined);
-    }
-    await worker.evaluate(async () => {
-      type Surface = { getCollections(): Promise<{ id: string }[]>; removeCollection(id: string): Promise<void> };
-      const sm = (self as unknown as { SourceMonkey: Surface }).SourceMonkey;
-      for (const c of await sm.getCollections()) await sm.removeCollection(c.id);
-    });
+    // Suggestions off too, so the collections page shows the run's
+    // own scripts without a box of suggestions above them.
+    await worker.evaluate((key) => chrome.storage.local.set({ firstRunComplete: true, [key]: false }), SHOW_SUGGESTIONS_KEY);
   } finally {
     // A clean close is what writes the storage to disk.
     await context.close();

@@ -183,7 +183,7 @@ production writes those rows, so it needs no change-event safety net
 | Connect grants | viewer revoke / forget | Request |
 | Settings | Options booleans, local roots, GitHub token, downloads folder | Request; low risk, moved for one rule |
 | Refresh | collections Refresh, Refresh All, subsets, `?refresh_file`; viewer Refresh and versions update; Options local-roots Save | Port. Includes version probes and the rejection retry |
-| Add / install | collections Add field, first-run seeding, `?add=`, collection dialog; viewer preview Install | Port. Without the rejection retry; a single-script install probes, a whole-collection add doesn't (see [Open](#open)) |
+| Add / install | collections Add field, the suggestion box, `?add=`, collection dialog; viewer preview Install | Port. Without the rejection retry; a single-script install probes, a whole-collection add doesn't (see [Open](#open)) |
 | Local copy | viewer Make a copy | Page does the downloads (blob URLs), then `registerLocalCopy`: create or find the collection, refresh, enable |
 | Repairs on load | collections `render`: display-name backfill, membership repair | Request: the backfill only when a row lacks a name, the repair without waiting |
 | Legacy key migration | first store read in any context | A page that finds the old index asks the worker, and waits |

@@ -1003,21 +1003,9 @@ function mutate<T>(fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
-// Set to `true` the first time the SW seeds the default collections, so
-// the seeding never runs again even after the user removes those
-// collections.
+// Set to `true` the first time the SW opens the collections page on
+// install, so it never opens it again on its own.
 const FIRST_RUN_DONE_KEY = 'firstRunComplete';
-
-// Collections seeded on the very first run (by the collections page —
-// see `seedDefaultCollectionsViaUi` in collections.ts). Each is fed
-// through the normal add → Refresh flow, so any input shape
-// `addCollection` accepts (github-dir / http(s) `.user.js` / manifest
-// URL, or an absolute directory path) works here. `addCollection`
-// dedupes by canonical collection path, so any accidental repeat
-// collapses to one collection.
-export const DEFAULT_COLLECTIONS: readonly string[] = [
-  'https://github.com/jshute96/SourceMonkey/tree/main/tests/examples',
-];
 
 // ---------- Legacy key migration (temporary — see TODO.md) ----------
 //
@@ -1622,19 +1610,15 @@ async function createLocationCollection(
   return { kind: 'newCollection', collection: refreshed?.collection ?? seed };
 }
 
-// First-run gate. Seeding the default collections is driven from the
-// collections page (so the user watches the normal add → Refresh flow,
-// rather than scripts appearing silently from the SW); the SW only
-// opens that page on install. These two helpers are the persisted flag
-// the page and SW share.
+// First-run gate: whether the SW has opened the collections page on
+// install yet.
 export async function isFirstRunComplete(): Promise<boolean> {
   return (await getRaw<boolean>(FIRST_RUN_DONE_KEY)) === true;
 }
 
 // Record that first-run handling is done so the SW stops opening the
-// seeding page and the collections page stops re-seeding — including
-// after the user deletes the seeded collections. Also called by the
-// test-surface reset so a cleared store isn't re-seeded.
+// collections page on install events (unpacked reloads fire them too).
+// Also called by the test-surface reset.
 export async function markFirstRunComplete(): Promise<void> {
   await writeLocal({ [FIRST_RUN_DONE_KEY]: true });
 }

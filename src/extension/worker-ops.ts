@@ -8,7 +8,7 @@
 // bodies).
 
 import {
-  addCollection, backfillCollectionDisplayNames, createCollection, describeError, importScripts, installScript, markFirstRunComplete, migrateCollectionKeysForPage, withoutBodies,
+  addCollection, backfillCollectionDisplayNames, createCollection, describeError, importScripts, installScript, migrateCollectionKeysForPage, withoutBodies,
   type AddCollectionResult, type InstallTarget, type ScriptMeta, type StoredScript,
   moveCollection, moveScript, reconcileScriptMembership, removeCollection, removeScript, setCollectionOptions,
   setScriptsEnabled,
@@ -30,15 +30,18 @@ import { GITHUB_AUTH_TOKEN_KEY, setGithubAuthToken } from '../github-auth.js';
 import { LOCAL_ROOTS_KEY, readRootsSetting, setConfiguredLocalRoots } from '../local-file-overrides.js';
 import { INSTALL_CAPTURE_KEY } from './install-capture.js';
 import { DOWNLOADS_COPIES_KEY, registerLocalCopy } from './local-copy.js';
+import { SHOW_SUGGESTIONS_KEY } from '../suggestions.js';
 import { deleteAllCachedIcons, deleteCachedIcon, ensureCachedIcon, refreshCachedIcon } from './site-icon.js';
 import { startPhaseTimer } from '../phase-timing.js';
 import { WORKER_OP_PORT, type WorkerOpReply, type WorkerOpRequest } from './worker-client.js';
 
-// The settings a page may change: Options, and the local copy's
-// Downloads folder. Each a whole value, not a read-modify-write, so
-// writing it is all the worker does.
+// The settings a page may change: Options, the local copy's Downloads
+// folder, and whether the collections page shows its suggestion box.
+// Each a whole value, not a read-modify-write, so writing it is all
+// the worker does.
 const SETTING_KEYS: readonly string[] = [
   INSTALL_CAPTURE_KEY, DEBUG_LOGGING_KEY, LOCAL_ROOTS_KEY, GITHUB_AUTH_TOKEN_KEY, DOWNLOADS_COPIES_KEY,
+  SHOW_SUGGESTIONS_KEY,
 ];
 
 const WORKER_OPS = {
@@ -73,7 +76,6 @@ const WORKER_OPS = {
   revokeConnectHost,
   forgetDeniedHost,
   clearScriptLog,
-  markFirstRunComplete,
   // `null` removes the setting.
   async writeSetting(key: string, value: unknown): Promise<void> {
     if (!SETTING_KEYS.includes(key)) throw new Error(`Internal error: ${key} is not a setting a page may change`);

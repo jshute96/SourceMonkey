@@ -52,10 +52,11 @@ details live in the topic-specific docs linked below.
   one of the built-in per-scheme defaults) and inspect per-script
   status. Collections are created and edited through the shared
   **collection dialog** (`src/extension/collection-dialog.ts`). See
-  [storage.md](storage.md).
+  [storage.md](storage.md). A box above the collections suggests
+  collections and scripts to install ([suggestions.md](suggestions.md)).
 - **Options page** (`src/options.html` + `src/extension/options.ts`) — small
-  settings page: `.user.js` link-capture toggle, debug-logging toggle,
-  local-file-override search roots, Downloads folder, GitHub auth token
+  settings page: `.user.js` link-capture toggle, suggested-scripts toggle,
+  debug-logging toggle, local-file-override search roots, Downloads folder, GitHub auth token
   entry, and a read-only table of storage used, by kind, against Chrome's quota.
   Reached via the Options link at the top of the collections page.
 - **Debug icons page** (`src/debug/icons.html` + `src/extension/debug/icons.ts`) —

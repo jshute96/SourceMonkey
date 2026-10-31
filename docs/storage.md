@@ -26,7 +26,8 @@ Key spaces in `chrome.storage.local`:
 | `"pathIcon:<pageUrl>"` | `SiteIconEntry`     | Per-page-URL favicon hit (deep-page HTML discovery; see [site-icons.md](site-icons.md)). |
 | `"siteIcon:<orig>"`    | `SiteIconEntry`     | Origin-level favicon fallback for an `https://host` (see [site-icons.md](site-icons.md)). |
 | `"iconUrl:<url>"`      | `SiteIconEntry`     | Cached `@icon`-declared icon, keyed by header URL (see [site-icons.md](site-icons.md)). |
-| `"firstRunComplete"`   | `boolean`           | Set once the SW has seeded the default collections; gates first-run seeding (see [First-run seeding](#first-run-seeding)). |
+| `"firstRunComplete"`   | `boolean`           | Set once the SW has opened the collections page on install (see [First run](#first-run)). |
+| `"smShowSuggestions"`  | `boolean`           | Whether the collections page's suggestion box shows; absent means on (see [suggestions.md](suggestions.md)). |
 | `"smLocalFileRoots"`   | `string[]`          | Canonical `file://` directory URLs searched for local stand-ins, in order (see [local-file-overrides.md](local-file-overrides.md)). |
 | `"scratch:<url>"`      | `string`            | The text of a scratch or imported script, keyed by its `scratch:///…` or `imported:///…` location (see [Container collections](#container-collections)). |
 | `"scratchFiles:<url>"` | `Record<ref, PushedFile>` | The `@require` / `@resource` bodies sm-dev pushed with a scratch script, or a backup held for an imported one, by ref; absent when there were none. |
@@ -759,7 +760,7 @@ Where a single script lands:
   `raw.githubusercontent.com/*` are `github`, anything else http(s) is
   `http`, raw paths / `file://` are `file`).
 - `addCollection(input)` — the Add field's one-string entry point,
-  `?add=`, first-run seeding, and the test surface — sends a single-file
+  `?add=`, the suggestion box, and the test surface — sends a single-file
   input to the scheme default. Everything else becomes a directory /
   manifest / github-dir collection.
 - The install page's dropdown lists every container and lets the user
@@ -1375,42 +1376,24 @@ means to represent. Two kinds:
   there is nowhere to put such a row back. (`script-identity.md` calls
   that shape an orphan too — same word, different failure.)
 
-## First-run seeding
+## First run
 
-So a freshly-installed extension isn't empty, SourceMonkey seeds the
-`DEFAULT_COLLECTIONS` (`script-store.ts`) on the very first run. Seeding is
-**driven by the collections page**, not the SW, so the user watches the
-normal Add flow (each section appears, populated) instead of scripts
-materialising silently.
+A fresh install opens the collections page, whose
+[suggestion box](suggestions.md) offers the example scripts and other
+things to install. Nothing is installed without the user asking.
 
 - **Open trigger.** On `chrome.runtime.onInstalled` with reason
-  `install`, and only while `"firstRunComplete"` is unset, the SW opens
-  `collections.html?first_run=1`. The flag check matters because unpacked
-  reloads re-fire `onInstalled('install')`.
-- **Seed trigger.** `seedDefaultCollectionsViaUi()` (`collections.ts`) runs only
-  when the page loads with `?first_run` AND the flag is unset — so an
-  ordinary collections-page visit never seeds. It adds each default via
-  `seedCollection()`, which calls `addCollection` directly; that fetches
-  the collection's scripts as part of the add, so no follow-up Refresh
-  is needed.
-  - **Deliberately not the Add field's path.** Typing a location opens
-    the [collection dialog](#the-collection-dialog), which is right for
-    a user naming a collection and wrong for seeding: a fresh install
-    would put up a modal per default and wait. `seedCollection` is the
-    plain route — no dialog, no preview hand-off, no scroll.
-- **Run-once.** The page asks the worker to set `"firstRunComplete"` after seeding;
-  once set, neither the SW open nor the page seed fires again —
-  including after the user deletes the seeded collections.
+  `install`, and only while `"firstRunComplete"` is unset, the SW sets
+  the flag and opens `collections.html`. The flag check matters because
+  unpacked reloads re-fire `onInstalled('install')`.
 - **Reset behavior.** The test-surface `resetAllState()` sets
-  `"firstRunComplete"` after clearing storage, so the network seed never
-  runs during tests.
+  `"firstRunComplete"` after clearing storage, so a later install event
+  doesn't open a tab the tests don't expect.
   - The e2e launch fixture also sets the flag in a throwaway browser
     before the real one starts (`tests/fixtures/sourcemonkey-launch.ts`).
     Setting it after launch would race `onInstalled`, and a lost race
     leaves a stray collections tab open for the rest of the worker's
-    life: the first-run page scrubs `?first_run` from its URL, so what
-    remains looks like an ordinary collections tab to the named-tab
-    tests.
+    life, which the named-tab tests would find.
 
 ## Updater
 

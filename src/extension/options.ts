@@ -11,6 +11,7 @@ import {
 } from '../debug-log.js';
 import { GITHUB_AUTH_TOKEN_KEY } from '../github-auth.js';
 import { INSTALL_CAPTURE_KEY } from './install-capture.js';
+import { SHOW_SUGGESTIONS_KEY } from '../suggestions.js';
 import {
   LOCAL_ROOTS_KEY,
   parseLocalRootLines,
@@ -59,7 +60,7 @@ onNamedTabFocus('options', () => {
   scrollTo({ top: 0, behavior: 'smooth' });
 });
 
-// Both boolean settings differ only in their storage key and what an
+// The boolean settings differ only in their storage key and what an
 // absent value means, so they share one binder. `defaultValue` is what
 // an unset key reads back as — capture is opt-out, debug logging is
 // opt-in.
@@ -72,6 +73,8 @@ installDebugLoggingListener();
 void loadDebugLoggingFlag();
 
 initBooleanSetting('debug-logging', DEBUG_LOGGING_KEY, false);
+// The same setting the collections page's suggestion box turns off.
+initBooleanSetting('show-suggestions', SHOW_SUGGESTIONS_KEY, true);
 initGithubTokenControls();
 initLocalRootControls();
 initDownloadsDirControls();

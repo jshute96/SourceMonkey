@@ -1077,13 +1077,8 @@ const api: SourceMonkeyApi = {
     // call. Drop them synchronously so a reset is a clean slate the
     // moment it returns.
     _setLocalRootsForTests([]);
-    // Mark first-run seeding as already done so a later SW restart
-    // doesn't repopulate the deliberately-emptied store with the default
-    // collections. A reset is meant to leave a clean slate, and re-seeding
-    // would contradict that. (This stops future seed runs from starting;
-    // a seed already in flight from the boot before this reset isn't
-    // cancelled — the in-loop flag re-check narrows but can't fully
-    // close that window.) Tests that want the defaults seed explicitly.
+    // Mark first run as already done so a later install event doesn't
+    // open a collections tab the tests don't expect.
     await markFirstRunComplete();
     // Tear down whatever Chrome currently has registered so the next
     // test doesn't inherit injections from the previous one. The
@@ -1245,11 +1240,8 @@ async function openCollectionsPage(windowId: number | null): Promise<void> {
 }
 
 // First run: open the collections page so the user lands somewhere
-// useful instead of an empty toolbar, and so the page can seed the
-// default collections through the normal add → Refresh flow (see
-// `seedDefaultCollectionsViaUi` in collections.ts). The `?first_run`
-// param is the seeding trigger — only this auto-opened page carries it,
-// so an ordinary collections-page visit never re-seeds. Gated by the
+// useful instead of an empty toolbar. Its suggestion box offers
+// collections and scripts to install (suggestions.ts). Gated by the
 // persisted flag (not just the install reason) because
 // unpacked-extension reloads re-fire onInstalled with reason 'install';
 // without the flag check every dev reload would reopen the tab.
@@ -1296,18 +1288,16 @@ chrome.runtime.onInstalled.addListener((details) => {
     if (await isFirstRunComplete()) {
       console.log(
         '[SourceMonkey] first run already complete (firstRunComplete=true); ' +
-        'not opening the collections page. Clear that storage key to re-seed.',
+        'not opening the collections page. Clear that storage key to open it again.',
       );
       return;
     }
-    console.log(
-      '[SourceMonkey] first run detected: opening collections.html?first_run=1 ' +
-      'so the page can seed the default collections',
-    );
+    console.log('[SourceMonkey] first run detected: opening the collections page');
     try {
-      await chrome.tabs.create({
-        url: chrome.runtime.getURL('collections.html?first_run=1'),
-      });
+      // Marked first, so a dev reload while the tab opens can't open a
+      // second one.
+      await markFirstRunComplete();
+      await chrome.tabs.create({ url: chrome.runtime.getURL('collections.html') });
     } catch (err) {
       console.info('[SourceMonkey] failed to open first-run collections page:', err);
     }

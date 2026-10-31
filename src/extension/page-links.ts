@@ -137,7 +137,7 @@ async function findNamedTab(
 }
 
 // Whether a document URL is this page, with or without a query string
-// and a fragment — `?first_run=1` and `#collection-…` variants are the
+// and a fragment — `?refresh=1` and `#collection-…` variants are the
 // same tab. The delimiter check is what keeps a prefix match from
 // claiming a future `collections-archive.html`.
 function isPageUrl(documentUrl: string, base: string): boolean {

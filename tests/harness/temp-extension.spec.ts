@@ -13,7 +13,7 @@ import { launchExtensionBrowser } from '../../lib/harness/extension-launch.js';
 import { run } from '../../lib/harness/run.js';
 import { UserscriptServer } from '../fixtures/userscript-server.js';
 
-test('the launch leaves no default collections and one blank tab, and close deletes its profile', async () => {
+test('the launch has no collections, suggestions off and one blank tab, and close deletes its profile', async () => {
   const launched = await launchExtensionBrowser({ connectedElsewhere: true });
   try {
     const browser = await chromium.connectOverCDP(launched.endpoint);
@@ -23,6 +23,10 @@ test('the launch leaves no default collections and one blank tab, and close dele
     const collections = await worker.evaluate(() =>
       (self as unknown as { SourceMonkey: { getCollections(): Promise<unknown[]> } }).SourceMonkey.getCollections());
     expect(collections).toEqual([]);
+    // "Show suggested scripts" is off, so the collections page has no box.
+    const show = await worker.evaluate(() =>
+      chrome.storage.local.get('smShowSuggestions').then((got) => got.smShowSuggestions));
+    expect(show).toBe(false);
     await browser.close();
   } finally {
     await launched.close();
