@@ -276,6 +276,17 @@ defines and TM does for all of them (VM only for some):
 
 - Most wrap the legacy `GM_x` call's result in a Promise, and turn a
   throw into a rejection.
+  - The Promise is guarded like the runtime's own, so a page that
+    replaced `Promise.prototype.then` doesn't see what it resolves to.
+  - Resolving with an object reads its `then`, which would reach a
+    getter a page put on `Object.prototype` (and hand it, say, the
+    live value `GM.getValue` returns). So an object result with no
+    `then` of its own gets one, undefined and non-enumerable; JSON,
+    `Object.keys` and spread skip it. It stays on the object, the
+    cached value included.
+  - A Promise `GM_x` returns (`GM_getTabs`, `GM_notification`,
+    `GM_setClipboard`) comes back itself, made guarded: in the content
+    world the transport's are plain Promises.
 - `GM.xmlHttpRequest` and `GM.download` settle when the request or
   download does, with `abort` on the Promise. A failed download
   resolves rather than rejects when the script gave the callback for

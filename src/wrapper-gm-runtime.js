@@ -3889,18 +3889,33 @@
     },
     /* The `GM.` form of most APIs (see `emitGmObject` in
        gm-bindings.ts): calls `GM_x` and hands back a guarded Promise of
-       what it returns, a throw rejecting it. A guarded Promise that
-       `GM_x` returned (GM_getTab, GM_notification) comes back as is,
-       and so does any value with `passThrough` (the thenable values
-       GM_addStyle, GM_addElement and GM_openInTab return). Guarded, so
+       what it returns, a throw rejecting it. A Promise that `GM_x`
+       returned comes back itself, guarded. With `passThrough`, the
+       value comes back as is (the thenable values GM_addStyle,
+       GM_addElement and GM_openInTab return). Guarded, so
        a page that replaced `Promise.prototype.then` doesn't see what a
-       script's `.then` on it is given. */
+       script's `.then` on it is given.
+
+       Resolving with an object reads its `then`, which without an own
+       one reaches a getter a page put on `Object.prototype`, handing it
+       the object (for GM.getValue, the live cached value). So an object
+       with no `then` of its own gets one, undefined and non-enumerable,
+       which JSON, `Object.keys` and spread all skip. A frozen object
+       can't take it, and resolves as before. */
     promised: function (fn, args, passThrough) {
       var v;
       try { v = _ReflectApply(fn, null, args); }
       catch (e) { return guarded(new _Promise(function (_ok, fail) { fail(e); })); }
       if (passThrough) return v;
-      if (v !== null && typeof v === "object" && _ReflectApply(_hasOwn, v, ["then"]) && v.then === guardedThen) return v;
+      if (v !== null && typeof v === "object") {
+        /* A Promise GM_x returned (GM_getTabs, GM_setClipboard,
+           GM_notification) comes back guarded: in the content world
+           the transport's are plain ones. */
+        if (_ObjectGetPrototypeOf(v) === _Promise.prototype) return guarded(v);
+        if (!_ReflectApply(_hasOwn, v, ["then"])) {
+          try { setOwnBare(v, "then", undefined); } catch (_e) {}
+        }
+      }
       return guarded(new _Promise(function (resolve) { resolve(v); }));
     },
     storage: storage,

@@ -458,11 +458,15 @@ test.describe('collections page', () => {
         await openScrolledCollections(extensionContext, extensionId, sm, dirs);
       const up = moved.locator('.move-up');
       await up.focus();
-      for (const expectedIndex of [3, 2]) {
+      for (const expectedIndex of [3, 2, 1]) {
         await page.keyboard.press('Enter');
         await expect(sections.nth(expectedIndex)).toHaveAttribute('data-collection-id', ids[4]);
         await expect(up).toBeFocused();
       }
+      // At the top, Up is disabled, so its Down arrow takes focus.
+      await page.keyboard.press('Enter');
+      await expect(sections.nth(0)).toHaveAttribute('data-collection-id', ids[4]);
+      await expect(moved.locator('.move-down')).toBeFocused();
       await page.close();
     } finally {
       for (const dir of dirs) dir.cleanup();

@@ -2301,6 +2301,12 @@ async function onMoveCollection(
       ? section.previousElementSibling
       : section.nextElementSibling;
     if (!(sibling instanceof HTMLElement) || !sibling.classList.contains('collection')) return;
+    // Disabling the arrows below takes focus off the one a keyboard user
+    // pressed (Chrome moves focus to <body> from a disabled control at
+    // its next rendering step), so a write slower than a frame would
+    // lose their place. It gets focus back once the arrows are
+    // re-enabled.
+    const focused = document.activeElement;
     setMoveButtonsBusy(true);
     try {
       // Measured before the write: its storage echo can repaint the
@@ -2315,6 +2321,19 @@ async function onMoveCollection(
       // for its new index.
       setMoveButtonsBusy(false);
       refreshMoveButtons();
+      // Only when focus fell to <body>, or is still on the pressed arrow
+      // (Chrome hasn't moved it yet): a user who moved on to another
+      // control meanwhile keeps it. At the top or bottom the pressed
+      // arrow is now disabled, so its section's other arrow takes it.
+      const active = document.activeElement;
+      const lost = active === null || active === document.body || active === focused;
+      if (lost && focused instanceof HTMLButtonElement && focused.classList.contains('move-collection')
+        && focused.isConnected) {
+        const other = focused.parentElement?.querySelector<HTMLButtonElement>(
+          focused.classList.contains('move-up') ? '.move-down' : '.move-up');
+        const target = !focused.disabled ? focused : other && !other.disabled ? other : null;
+        target?.focus({ preventScroll: true });
+      }
     }
   };
   // Chain onto the prior in-flight move so the read-modify-write of

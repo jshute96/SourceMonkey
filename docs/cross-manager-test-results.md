@@ -21,8 +21,8 @@ Update this doc when a result changes.
 
 ## Status
 
-- **TM**: 44 passed, 0 failed, 6 skipped (TM 5.5.1).
-- **VM**: 38 passed, 0 failed, 12 skipped (VM 2.49.0).
+- **TM**: 48 passed, 0 failed, 6 skipped (TM 5.5.1).
+- **VM**: 42 passed, 0 failed, 12 skipped (VM 2.49.0).
 
 ## Intentional skips
 

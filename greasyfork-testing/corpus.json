@@ -59356,9 +59356,8 @@
         "version": "v3.2"
       },
       "test": {
-        "status": "fail",
-        "blame": "sourcemonkey",
-        "date": "2026-10-07",
+        "status": "pass",
+        "date": "2026-10-31",
         "version": "v3.2"
       },
       "tags": [
@@ -59369,6 +59368,11 @@
           "date": "2026-10-07",
           "version": "v3.2",
           "text": "On `https://mtsl.dk/csgo/` (Case Clicker, guest play) the script throws on its first line and adds nothing.\n- SourceMonkey: `GM.registerMenuCommand(\"=== START ===\")` with no callback (a separator label) throws `GM_registerMenuCommand: callback must be a function` (`src/wrapper-gm-runtime.js`), so the whole script stops.\n- Tampermonkey (`--manager tm`) runs the same file past those calls: the Discord confirm comes up and `#menu_Hack` is added.\n- A copy with `function(){}` added to the two separator calls works in SourceMonkey: the menu commands register, the HardCore Hack panel (`#menu_Hack`) appears, and clicking \"Infinite Money\" sets `userdata.money` from 2.4 to Infinity and the button to \"[ON]\".\n- Script: it asks on load to join a Discord server (confirm) and fetches its version from raw.githubusercontent.com."
+        },
+        {
+          "date": "2026-10-31",
+          "version": "v3.2",
+          "text": "Re-tested after commit 7d7873e (every GM.* returns a Promise): now passes. On `https://mtsl.dk/csgo/` the script gets past its first line: the Discord confirm comes up, the two real menu commands register, and the HardCore Hack panel (`#menu_Hack`) is added. Clicking \"Infinite Money\" set `userdata.money` from 2.4 to Infinity and the button to \"[ON]\".\n- SourceMonkey: `GM.registerMenuCommand` with no callback still fails (the `menu-no-callback` gap), but now as a rejected Promise the script ignores, so only the two divider labels are missing from the menu. The run logs it as `threw: GM_registerMenuCommand: callback must be a function`."
         }
       ]
     },
@@ -81377,7 +81381,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-03",
+        "date": "2026-10-31",
         "version": "2026.03"
       },
       "notes": [
@@ -81385,6 +81389,11 @@
           "date": "2026-10-03",
           "version": "2026.03",
           "text": "Headless, MrBeast `watch?v=0e3GPea1Tyg`, which has 11 SponsorBlock segments (a self-promotion one at 791.187 to 798.526 s).\n\n- It saved its default settings, fetched `sponsor.ajay.app/api/skipSegments/46cb...` (hashed lookup) with `GM.xmlHttpRequest` (200), and notified \"Skippable segments found!\" and \"Point of interest found!\".\n- Started at `&t=786s`: on reaching 791 s it logged `Skipping selfpromo segment (1 out of 11) from 791.187 to 798.526`. The video was then at 798.526 s and playing, with a \"Skipped self-promotion segment\" notification.\n- sm-dev: seeking the headless player straight to 788 s by setting `currentTime` broke playback (\"Something went wrong\"); loading with `&t=` worked."
+        },
+        {
+          "date": "2026-10-31",
+          "version": "2026.03",
+          "text": "Re-tested after commit 7d7873e (every GM.* returns a Promise): still passes.\n- On `watch?v=0e3GPea1Tyg#s3config` its settings page, built from `GM.addElement(...)` return values, showed the full form (category checkboxes, upvotes, instance, theme, Save and Close). Ticking \"Skip filler segments\" and clicking Save stored `filler` in `s3settings`.\n- Loaded with `&t=786s`, it logged `Skipping selfpromo segment (7 out of 17) from 791.187 to 798.526` and the video was then at 798.55 s (17 segments now, with filler on).\n- No errors or unhandled rejections logged."
         }
       ]
     },
@@ -88380,7 +88389,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-14",
+        "date": "2026-10-31",
         "version": "3"
       },
       "notes": [
@@ -88388,6 +88397,11 @@
           "date": "2026-10-14",
           "version": "3",
           "text": "A double-click on the image at `upload.wikimedia.org/.../Camponotus_flavomarginatus_ant.jpg` (1800px wide) saved it through `GM.download` as `Camponotus_flavomarginatus_ant.jpg`, 758559 bytes. On a Wikimedia error page, a double-click on its logo saved `wmf-logo.png` the same way.\n- Not tried: the `content-disposition` lookup for image URLs with no file extension."
+        },
+        {
+          "date": "2026-10-31",
+          "version": "3",
+          "text": "Re-tested after commit 7d7873e (every GM.* returns a Promise): still passes. A double-click on `upload.wikimedia.org/.../a/a7/Camponotus_flavomarginatus_ant.jpg` saved it through `GM.download` as `Camponotus_flavomarginatus_ant.jpg`, 758559 bytes, with no errors or unhandled rejections logged."
         }
       ]
     },
@@ -96182,6 +96196,11 @@
           "date": "2026-10-31",
           "version": "7.7.0",
           "text": "On AnimeHeaven (`/anime.php?2upvy`, 12 episodes), the script added \"Generate Download Links\" and an \"Extract Episodes\" menu command. Clicking the button fetched the 12 episode pages through `GM_xmlhttpRequest` (all 200), and its overlay showed \"Extraction Complete in 1.72 seconds\" with two servers of 12 direct `video.mp4` links each.\n\n- A HEAD request for episode 1's link returned 200.\n- No video was downloaded."
+        },
+        {
+          "date": "2026-10-31",
+          "version": "7.7.0",
+          "text": "Re-tested after commit 7d7873e (every GM.* returns a Promise): still passes. On AnimeHeaven (`/anime.php?2upvy`), \"Generate Download Links\" fetched the 12 episode pages (all 200) and showed \"Extraction Complete in 1.85 seconds\", now with four servers of 12 links each.\n- Its Download Center (episode range 1 to 1) could not check the `GM.download` save: the video host `cc.animeheaven.me` was unreachable (the TLS handshake hangs for `curl` from the same machine too), so the script reported \"GM request failed ... (network error)\" before saving anything.\n- The script's `#saveBlob` code (a `GM.download` of a blob URL, awaited through its `onload` callback), run in the script's scope with a small blob, saved `anilink-test2.txt` and resolved, so the save step works with the new Promise-returning `GM.download`."
         }
       ]
     },
