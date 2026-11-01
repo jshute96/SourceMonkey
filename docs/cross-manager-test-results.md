@@ -86,6 +86,11 @@ stays enforced in an SM-only spec.
     checks the scheme per manager and fetches the URL under all three.
   - `GM_getResourceURL(name, false)` gives a `data:` URL under all
     three.
+  - A `@resource` given as a `data:` URL: all three serve a base64
+    one. VM 2.49.0 decodes every `data:` resource as base64, so
+    `GM_getResourceText` on a percent-encoded one throws
+    `InvalidCharacterError` from `atob`, where SM and TM return the
+    text.
 - **`gm-return-values/`** (what the `GM_` and `GM.` form of each API
   returns) — measured under TM 5.5.1 and VM 2.49.0. The spec holds a TM
   baseline and lists each manager's differences from it:

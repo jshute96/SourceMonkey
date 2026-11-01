@@ -2101,7 +2101,8 @@ function storedTabs(script: StoredScript): CodeTab[] {
       // is what lets the Log tab linkify to this tab.
       fileUrl: r.url,
       sourceUrl: requireSourceUrls[i],
-      ...codeTabProvenance(r, isScratchUrl(script.fileUrl)),
+      // A `data:` require's URL is its whole payload: no tooltip.
+      ...(/^data:/i.test(r.url) ? {} : codeTabProvenance(r, isScratchUrl(script.fileUrl))),
     });
   }
   tabs.push({ kind: 'log', label: 'Log' });
@@ -2730,7 +2731,7 @@ function previewTabs(text: string, header: ParsedHeader | null): CodeTab[] {
     const url = resolved && resolved.kind !== 'data' ? resolved.url : '';
     tabs.push({
       kind: 'code',
-      label: url ? requireBasename(url, ref) : ref,
+      label: resolved ? requireBasename(resolved.url, ref) : ref,
       body: () => loadPreviewRequire(ref, fileUrl),
       fileUrl: url || fileUrl,
       sourceUrl: '',

@@ -192,10 +192,28 @@ export const GM_RUNTIME_SOURCE_URL = `${ROOT}/__gm-runtime.js`;
 // `file` so they land under `<folder>/file/<path>` rather than
 // dropping out of the tree.
 //
+// A `data:` require has no host or path, only its payload, so it lands
+// at `<folder>/data/require-<hash>` rather than spilling the payload
+// into the devtools tree. The hash of the URL keeps two `data:`
+// requires in one script apart (requires are deduped by URL, so equal
+// URLs are one require).
+//
 // On a URL we can't parse (shouldn't happen — the file-loader
 // validates before storage) we fall back to `<folder>/require` so we
 // still emit *something* parseable.
+// 32-bit FNV-1a of a string, as 8 hex digits. Synchronous, for the
+// `data:` require names above; not for anything security-related.
+function shortHash(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
 export function buildRequireSourceUrl(logLabel: string, requireUrl: string): string {
+  if (/^data:/i.test(requireUrl)) return `${scriptRoot(logLabel)}/data/require-${shortHash(requireUrl)}`;
   let host: string;
   let path: string;
   try {

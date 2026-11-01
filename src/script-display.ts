@@ -450,7 +450,14 @@ export function fullSource(script: StoredScript): string {
 // the fallback keeps a future shape change from breaking the tab UI.
 // Not `scriptBasename`: that one falls back to the whole URL, and a
 // require tab labeled with a full CDN URL would wreck the tab strip.
+//
+// A `data:` require has no file name, only its payload, so it is
+// labeled with its MIME type (`data:application/javascript`).
 export function requireBasename(url: string, ref: string): string {
+  if (/^data:/i.test(url)) {
+    const meta = url.slice(5, Math.max(5, url.indexOf(',')));
+    return `data:${meta.split(';')[0].trim()}`;
+  }
   let name: string;
   try {
     name = leafName(new URL(url).pathname);

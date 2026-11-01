@@ -58705,14 +58705,23 @@
         "live.bilibili.com"
       ],
       "valid": {
-        "status": "invalid",
-        "error": "@require data:application/javascript,%3Bwindow.Vue%3DVue%3Bwindow.VueDemi%3DVue%3B: URLs with the data: scheme are not supported (in the script, line 35)",
-        "tags": [
-          "invalid:require-data-url"
-        ],
-        "date": "2026-10-13",
+        "status": "ok",
+        "date": "2026-10-31",
         "version": "7.3.3"
-      }
+      },
+      "test": {
+        "status": "n/a",
+        "reason": "requires-login",
+        "date": "2026-10-31",
+        "version": "7.3.3"
+      },
+      "notes": [
+        {
+          "date": "2026-10-31",
+          "version": "7.3.3",
+          "text": "Re-tested after adding `data:` URL support for `@require` / `@resource` (it was invalid for its `@require data:application/javascript,...` shim that sets `window.Vue` for element-plus).\n\n- On `live.bilibili.com/1` the script starts and draws its element-plus panel (menu: 每日任务, 主站任务, 直播任务, 其它任务, 体验优化, 移除元素, 设置), so the `data:` shim worked.\n- Its tasks need a logged-in account: the nav API reports 账号未登录 (not logged in) and the script logs a timeout waiting for the `bili_jct` cookie.\n- The no-login features (移除元素, element removal) are off by default, and a geetest captcha popup covered the page before one could be turned on."
+        }
+      ]
     },
     "406060": {
       "listing": {
@@ -64218,14 +64227,23 @@
         "net"
       ],
       "valid": {
-        "status": "invalid",
-        "error": "@resource link:vcv-inject-node-env (data:,unsafeWindow.process=%7Benv:%7BNODE_ENV:%22production%22%7D%7D): URLs with the data: scheme are not supported (in the script, line 48)",
-        "tags": [
-          "invalid:resource-data-url"
-        ],
+        "status": "ok",
         "date": "2026-10-31",
         "version": "260610160822"
-      }
+      },
+      "test": {
+        "status": "n/a",
+        "reason": "other",
+        "date": "2026-10-31",
+        "version": "260610160822"
+      },
+      "notes": [
+        {
+          "date": "2026-10-31",
+          "version": "260610160822",
+          "text": "Not run on its target sites: they are rotating-domain manga reader sites (뉴토끼 / newtoki and similar). Re-checked after adding `data:` URL support for `@resource` (it was invalid for `@resource link:vcv-inject-node-env data:,unsafeWindow.process=...`).\n\n- On `https://example.com/bbs/test` (matched by `https://*.com/bbs/*`) the script starts with no errors, and every `link:` module loads through its RequireJS `define` calls: `require.defined` is true for `main`, `vim_comic_viewer` (script 417893, loaded as a `@resource`), `react` and `vcv-inject-node-env`.\n- The `data:` resource's body ran: `unsafeWindow.process` is `{\"env\":{\"NODE_ENV\":\"production\"}}`.\n- The viewer itself only opens on the target sites (it checks the page title for 뉴토끼), so it wasn't judged."
+        }
+      ]
     },
     "418101": {
       "listing": {

@@ -19,8 +19,11 @@ same rules as `@icon`:
   - From a **local** (`file://`) script it must stay at or under the
     script's own folder — see
     [local-file-overrides.md](local-file-overrides.md#relative-paths-and-containment).
-- **Not accepted:** absolute `file://`, `data:`,
-  `tampermonkey://vendor/`.
+- `data:` URL — the payload is the file, decoded in place of a fetch
+  (base64 or percent-encoded). TM and VM run both forms too (checked
+  with `sm-dev --manager tm|vm` on 2026-10-31). It has no local
+  stand-in, and its devtools file is `<script>/data/require-<hash>`.
+- **Not accepted:** absolute `file://`, `tampermonkey://vendor/`.
 
 Extension over TM/GM: relative paths at all — neither resolves one,
 from a local script or a remote one, so a script that relies on them
@@ -142,7 +145,7 @@ Any of these is a dependency failure, named by the offending URL:
 - An HTML response — see [below](#markup-gate). Checked after the
   fetch, not as part of it, and by two tests: the `Content-Type` and
   the bytes.
-- `data:` URLs (resolution accepts them; the require gate rejects).
+- A `data:` URL whose payload doesn't decode (no comma, bad base64).
 - **Non-UTF-8 response body** (strict decode fails). A URL that
   serves binary slips past the content-type predicate but gets caught
   here, so the user sees "not valid UTF-8"
@@ -353,6 +356,8 @@ buys most of it back:
 - Empty bodies are rejected (the fetcher treats them as failure). A
   future `@require` of a 0-byte JS file would need to distinguish
   "file missing" from "file is empty" — see TODO.
+- A `data:` require isn't fetched, so neither limit applies: its size
+  is bounded by the script's own, and `data:,` gives an empty require.
 
 ## SRI hash fragments
 

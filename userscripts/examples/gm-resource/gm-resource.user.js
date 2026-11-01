@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        SourceMonkey example: gm-resource: GM_getResourceText / GM_getResourceURL
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.7
+// @version     1.0.8
 // @description Read prefetched @resource files as text and as URLs.
 // @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
 // @match       https://jshute96.github.io/SourceMonkey/userscripts/examples/gm-resource/gm-resource.html
@@ -11,6 +11,8 @@
 // @resource    styleSheet https://jshute96.github.io/SourceMonkey/userscripts/examples/gm-resource/resource.css
 // @resource    config     https://jshute96.github.io/SourceMonkey/userscripts/examples/gm-resource/resource.json
 // @resource    logo       https://jshute96.github.io/SourceMonkey/userscripts/examples/gm-resource/logo.svg
+// @resource    note       data:text/plain;base64,SGVsbG8gZnJvbSBhIGJhc2U2NCBkYXRhOiBVUkwsIGNhZsOp
+// @resource    plainNote  data:text/plain;charset=utf-8,Hello%20from%20a%20plain%20data%3A%20URL%2C%20caf%C3%A9
 // @grant       GM_addStyle
 // @grant       GM_getResourceText
 // @grant       GM_getResourceURL
@@ -83,6 +85,18 @@
   // `false` asks for a data: URL rather than a blob: one.
   document.getElementById('btn-img-data').addEventListener('click', () => {
     showImage(GM_getResourceURL('logo', false), 'GM_getResourceURL("logo", false)');
+  });
+
+  // Resources given inline as data: URLs, one base64 and one
+  // percent-encoded; each payload is the body.
+  document.getElementById('btn-data').addEventListener('click', () => {
+    for (const name of ['note', 'plainNote']) {
+      try {
+        append(`GM_getResourceText("${name}") -> ${JSON.stringify(GM_getResourceText(name))}`);
+      } catch (err) {
+        append(`GM_getResourceText("${name}") threw ${err}`);
+      }
+    }
   });
 
   document.getElementById('btn-missing').addEventListener('click', () => {

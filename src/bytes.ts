@@ -36,3 +36,40 @@ export function bytesToBase64(bytes: Uint8Array): string {
   }
   return btoa(binary);
 }
+
+// Decode a `data:[<mime>][;base64],<payload>` URL into its bytes and
+// MIME type, or null when it isn't well-formed (no comma, bad base64).
+//
+// A plain payload is percent-decoded to bytes, not through
+// `decodeURIComponent`, so `%FF` and other non-UTF-8 bytes survive. A
+// missing MIME type means `text/plain`, as RFC 2397 (the `data:` URL
+// spec) gives. Parameters such as `;charset=` are dropped.
+export function decodeDataUrl(dataUrl: string): { contentType: string; bytes: Uint8Array<ArrayBuffer> } | null {
+  const comma = dataUrl.indexOf(',');
+  if (!/^data:/i.test(dataUrl) || comma < 0) return null;
+  const meta = dataUrl.slice(5, comma);          // e.g. "image/png;base64"
+  const payload = dataUrl.slice(comma + 1);
+  const isBase64 = /;base64$/i.test(meta);
+  const contentType = (isBase64 ? meta.slice(0, -7) : meta).split(';')[0].trim() || 'text/plain';
+  if (isBase64) {
+    try {
+      return { contentType, bytes: new Uint8Array(base64ToBytes(payload.replace(/\s+/g, ''))) };
+    } catch {
+      return null;
+    }
+  }
+  const raw = new TextEncoder().encode(payload);
+  const out = new Uint8Array(raw.length);
+  let n = 0;
+  for (let i = 0; i < raw.length; i++) {
+    const hex = raw[i] === 0x25 /* % */ && i + 2 < raw.length
+      ? String.fromCharCode(raw[i + 1], raw[i + 2]) : '';
+    if (/^[0-9a-f]{2}$/i.test(hex)) {
+      out[n++] = parseInt(hex, 16);
+      i += 2;
+    } else {
+      out[n++] = raw[i];
+    }
+  }
+  return { contentType, bytes: out.slice(0, n) };
+}

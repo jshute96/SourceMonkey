@@ -39,7 +39,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { NO_MATCH_OR_INCLUDE, NO_NAME, SYNTAX_ERROR_PREFIX } from '../lib/script-build.js';
 import { resolveScriptResource } from '../lib/file-loader.js';
 import {
-  DATA_URL_NOT_SUPPORTED,
+  BAD_DATA_URL,
   describeFetchFailure,
   distillRequires,
   distillResources,
@@ -289,7 +289,7 @@ function dependencyReason(reason) {
   // An HTML page where a script was expected is almost always a dead
   // link that now serves an error or login page.
   if (isMarkupResponseMessage(reason)) return 'dead-link';
-  if (reason === DATA_URL_NOT_SUPPORTED) return 'data-url';
+  if (reason === BAD_DATA_URL) return 'bad-data-url';
   return 'other';
 }
 

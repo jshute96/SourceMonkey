@@ -4,6 +4,7 @@
 //     time and concatenated before the body when chrome.userScripts
 //     registers the script. The DOM mutation is the proof: it only
 //     runs if the require's exported function survived the prepend.
+//   - A `data:` URL `@require` is decoded in place of a fetch.
 //   - Relative `@require` paths resolve against the script's parent
 //     dir (the same file-loader rule `@icon` uses) — works for both
 //     file:// and HTTP collections.
@@ -273,6 +274,37 @@ test.describe('@require', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page.locator('#target')).toHaveText('from-require:ok');
+    await page.close();
+  });
+
+  test('a data: URL @require is decoded and runs ahead of the body', async ({
+    extensionContext, fixtureServer, sm,
+  }) => {
+    // Plain and base64 payloads; the base64 one reads the plain one's
+    // binding, so order and shared scope are checked too.
+    const b64 = Buffer.from('const second = first + ":b64";').toString('base64');
+    scriptsDir.write({
+      relativePath: 'main.user.js',
+      meta: {
+        name: 'DataRequire',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        extra: [
+          '// @require     data:application/javascript,const%20first%20%3D%20%22plain%22%3B',
+          `// @require     data:application/javascript;base64,${b64}`,
+        ],
+      },
+      body: `
+        const el = document.getElementById('target');
+        if (el) el.textContent = second;
+      `,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('#target')).toHaveText('plain:b64');
     await page.close();
   });
 

@@ -49,7 +49,7 @@ import {
 } from './local-file-overrides.js';
 import { type DirectoryListingCache } from './file-locations.js';
 import { splitResourceValue } from './script-links.js';
-import { sha256Hex, bytesToBase64, base64ToBytes } from './bytes.js';
+import { sha256Hex, bytesToBase64, base64ToBytes, decodeDataUrl } from './bytes.js';
 import { timePhase } from './phase-timing.js';
 import { getValues, type ParsedHeader } from './userscript-header.js';
 import { iconDeclFromHeader, isIconContentType, MAX_ICON_BYTES } from './script-icon.js';
@@ -74,9 +74,10 @@ function byteLimitText(maxBytes: number): string {
     : `${Math.round(maxBytes / 1024)} KB`;
 }
 
-// Why a `data:` URL dependency won't load. Exported so the corpus
-// validator can recognize it without matching the wording.
-export const DATA_URL_NOT_SUPPORTED = 'URLs with the data: scheme are not supported';
+// Why a `data:` URL dependency won't load: its payload didn't decode
+// (no comma, or bad base64). Exported so the corpus validator can
+// recognize it without matching the wording.
+export const BAD_DATA_URL = 'The data: URL could not be decoded';
 
 // Split out so `isFetchFailureMessage` can recognize the one message
 // whose text isn't fixed at module load, without either side spelling
@@ -847,11 +848,23 @@ export function prefetchKnownStandIns(
 // Where a ref resolves: the pushed body's URL when there is one, which
 // the pusher already resolved and checked, else the ref resolved
 // against the script.
-function resolveRef(ref: string, scriptFileUrl: string, pushed: PushedFile | undefined): { url: string } | { failure: string } {
+//
+// A `data:` ref carries its own body, decoded here into `inline` in
+// place of a fetch. It has no local stand-in, and its URL (the whole
+// `data:` string) is what the stored entry and the prior lookup key on.
+function resolveRef(
+  ref: string,
+  scriptFileUrl: string,
+  pushed: PushedFile | undefined,
+): { url: string; inline?: LoadedBytes } | { failure: string } {
   if (pushed) return { url: pushed.url };
   const resolved = resolveScriptResourceDetailed(ref, scriptFileUrl);
   if ('failed' in resolved) return { failure: describeResolveFailure(resolved) };
-  if (resolved.kind === 'data') return { failure: DATA_URL_NOT_SUPPORTED };
+  if (resolved.kind === 'data') {
+    const decoded = decodeDataUrl(resolved.url);
+    if (!decoded) return { failure: BAD_DATA_URL };
+    return { url: resolved.url, inline: { got: { bytes: decoded.bytes.buffer, contentType: decoded.contentType } } };
+  }
   return { url: resolved.url };
 }
 
@@ -869,7 +882,7 @@ async function loadRequire(args: LoadRequireArgs): Promise<LoadResult<StoredRequ
   // `readLocalStandIn` for why an overridden file is never cached past
   // a refresh. A pushed body is read every time for the same reason.
   const local = args.pushed ? pushedBytes(args.pushed)
-    : await timePhase('local-standin', () => readLocalStandIn(
+    : resolved.inline ?? await timePhase('local-standin', () => readLocalStandIn(
       resolved.url, args.localRoots, args.fetchCache, lastLookup(args.localLookup, prior)));
   if (!local && !args.pushed && args.recheck === 'preserve' && prior && !prior.localUrl) {
     return { entry: prior };
@@ -1065,7 +1078,7 @@ async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredRe
   // Local stand-in first, and before the preserve shortcut — same rule
   // and same reasoning as `@require`; see `readLocalStandIn`.
   const local = args.pushed ? pushedBytes(args.pushed)
-    : await timePhase('local-standin', () => readLocalStandIn(
+    : resolved.inline ?? await timePhase('local-standin', () => readLocalStandIn(
       resolved.url, args.localRoots, args.fetchCache, lastLookup(args.localLookup, prior)));
   if (
     !local && args.recheck === 'preserve' &&

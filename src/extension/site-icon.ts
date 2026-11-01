@@ -1,4 +1,4 @@
-import { base64ToBytes, bytesToBase64 } from '../bytes.js';
+import { bytesToBase64, decodeDataUrl } from '../bytes.js';
 import type { IconSource } from '../sm-dev-protocol.js';
 import { fetchResourceBytes, isNotModified, resolveScriptResource } from '../file-loader.js';
 import { presentLocalFileCandidates } from '../local-file-overrides.js';
@@ -1117,34 +1117,18 @@ function iconImgSrc(dataUrl: string): string {
   return url;
 }
 
-// Decode a `data:[<mime>][;base64],<payload>` URL into a Blob
-// synchronously (no fetch round-trip) so the caller can swap `src`
-// without an extra await. Handles base64 and plain (percent-encoded)
-// payloads; returns null on anything it can't parse. The non-base64
-// branch assumes a TEXT payload (it round-trips through a JS string, so
-// raw binary would be UTF-8-mangled) — fine here because real binary
-// icon data URLs are always `;base64`; the only non-base64 icons we
-// see are inline SVG/text.
+// Decode a `data:` URL into a Blob synchronously (no fetch round-trip)
+// so the caller can swap `src` without an extra await. Null on anything
+// it can't parse.
 export function dataUrlToBlob(dataUrl: string): Blob | null {
-  const content = dataUrlContent(dataUrl);
-  return content ? new Blob([base64ToBytes(content.base64)], { type: content.contentType }) : null;
+  const decoded = decodeDataUrl(dataUrl);
+  return decoded ? new Blob([decoded.bytes], { type: decoded.contentType }) : null;
 }
 
 /** A `data:` URL's type and bytes, as base64; null for one that isn't well-formed. */
 export function dataUrlContent(dataUrl: string): { contentType: string; base64: string } | null {
-  const comma = dataUrl.indexOf(',');
-  if (!dataUrl.startsWith('data:') || comma < 0) return null;
-  const meta = dataUrl.slice(5, comma);          // e.g. "image/png;base64"
-  const payload = dataUrl.slice(comma + 1);
-  const isBase64 = /;base64$/i.test(meta);
-  const contentType = (isBase64 ? meta.slice(0, -7) : meta).split(';')[0] || 'application/octet-stream';
-  try {
-    // Checked as base64 by decoding it.
-    if (isBase64) return { contentType, base64: bytesToBase64(new Uint8Array(base64ToBytes(payload.trim()))) };
-    return { contentType, base64: bytesToBase64(new TextEncoder().encode(decodeURIComponent(payload))) };
-  } catch {
-    return null;
-  }
+  const decoded = decodeDataUrl(dataUrl);
+  return decoded ? { contentType: decoded.contentType, base64: bytesToBase64(decoded.bytes) } : null;
 }
 
 // The globe placeholder shown until a favicon loads (and the permanent

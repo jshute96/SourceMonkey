@@ -24,7 +24,9 @@ Same rules as `@require` / `@icon` — see
 - Relative path — resolved against the host script's own URL. May
   climb out of the script's directory from an HTTP-loaded script;
   confined to it from a local one.
-- **Not accepted:** absolute `file://`, `data:`.
+- `data:` URL — decoded in place of a fetch, as for `@require`. Its
+  MIME type is the URL's own (`text/plain` when it names none).
+- **Not accepted:** absolute `file://`.
 
 A resource declared by absolute URL can still be served from a file on
 disk next to the script — same rule and same gate as `@require`; see
@@ -67,7 +69,8 @@ Per-entry fields:
 Storage cost:
 
 - Base64 encoding adds ~33% to the raw byte size.
-- Per-file cap: 2 MB. `chrome.storage.local` quota: 10 MB.
+- Per-file cap: 2 MB, for fetched files. A `data:` resource is bounded
+  by the script's own size instead. `chrome.storage.local` quota: 10 MB.
 - SourceMonkey doesn't declare `unlimitedStorage`, so users who push
   past 10 MB total stored will see refresh failures.
 
@@ -119,7 +122,7 @@ script to `status: 'invalid'` with a message naming the resource name:
 - Fetch failure, naming which one — see
   [requires.md](requires.md#failure-handling); both kinds share
   `describeFetchFailure` / `describeResolveFailure`.
-- `data:` URLs.
+- A `data:` URL whose payload doesn't decode.
 
 A partial resource list isn't useful — if one resource is broken the
 whole script is rolled back to its prior-known-good state (same

@@ -34,10 +34,12 @@
         refresh time and stored alongside the userscript &mdash; no
         runtime fetch happens when the userscript calls
         <code>GM_getResource*</code>.</li>
-      <li>This userscript declares three <code>@resource</code>
-        entries pointing at sibling files in the example directory:
-        a CSS, a JSON, and an SVG. Click the buttons to load each
-        back via the GM API.</li>
+      <li>This userscript declares <code>@resource</code> entries
+        pointing at sibling files in the example directory (a CSS, a
+        JSON, and an SVG), plus two given inline as
+        <code>data:</code> URLs, one base64 and one percent-encoded
+        (Violentmonkey throws on the percent-encoded one). Click the
+        buttons to load each back via the GM API.</li>
       <li>The same name in two different calls returns the same
         value &mdash; a blob URL is minted once per name and cached
         for the document&rsquo;s lifetime.</li>
@@ -52,6 +54,7 @@
       <button id="btn-json"    type="button">GM_getResourceText: parse JSON</button>
       <button id="btn-img"     type="button">GM_getResourceURL: render SVG as &lt;img&gt;</button>
       <button id="btn-img-data" type="button">GM_getResourceURL(name, false): render as a data: URL</button>
+      <button id="btn-data"    type="button">GM_getResourceText: read a data: URL resource</button>
       <button id="btn-missing" type="button">Look up a missing name</button>
     </div>
 

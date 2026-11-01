@@ -17,6 +17,7 @@ import {
   leafName,
   logIdScriptNumber,
   logIdSuffix,
+  requireBasename,
   scriptBasename,
   scriptDisplayName,
   scriptOutdatedProbe,
@@ -376,4 +377,13 @@ test('logIdScriptNumber: the number after #E, or null', () => {
   assert.equal(logIdScriptNumber('foo.user.js#E4'), 4);
   assert.equal(logIdScriptNumber('foo.user.js#2'), null);
   assert.equal(logIdScriptNumber('foo.user.js'), null);
+});
+
+test('requireBasename: a file URL gives its leaf, a data: URL its MIME type', () => {
+  assert.equal(requireBasename('https://cdn.example.com/lib/jquery.min.js', 'x'), 'jquery.min.js');
+  assert.equal(
+    requireBasename('data:application/javascript;base64,O3dpbmRvdy5WdWU9VnVlOw==', 'x'),
+    'data:application/javascript',
+  );
+  assert.equal(requireBasename('data:,alert(1)', 'x'), 'data:');
 });

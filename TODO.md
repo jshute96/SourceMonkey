@@ -308,11 +308,6 @@ gates, or the emitted wrap — the rate is the regression signal.
 - **Wrap-identifier collisions are real, not theoretical.** Every
   parse failure in the corpus was one — see the item under "Injection
   payload" above, which now has a measured rate behind it.
-- **`data:` URL `@require`.** Rejected outright today. One corpus
-  script inlines a shim that way
-  (`data:application/javascript,%3Bwindow.Vue%3DVue%3B…`). Cheap to
-  support for the `application/javascript` form, since the bytes are
-  in the ref and no fetch is involved.
 
 ## Corpus test findings — compatibility gaps
 
@@ -1460,14 +1455,6 @@ with a trade-off worth recording:
 
 ## `@require` follow-ups
 
-- **`data:` URLs in `@resource` are refused.** `@resource note
-  data:text/plain;base64,aGVsbG8=` makes the script invalid
-  (`DATA_URL_NOT_SUPPORTED` in `src/external-files.ts`), while TM and
-  VM both install it and serve the body (seen 2026-10-31 under
-  `--manager tm|vm` with `userscripts/examples/gm-return-values/`).
-  Decoding the URL in place of a fetch would cover `@resource`;
-  check what TM and VM do for a `data:` `@require` before allowing
-  that too.
 - **Storage format 2 follow-ups.** Bodies live in shared
   `blob:<sha256>` rows ([storage.md](docs/storage.md#content-blobs)),
   and readers that need only the rows skip them. Still open:

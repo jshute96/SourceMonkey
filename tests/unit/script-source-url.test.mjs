@@ -232,3 +232,11 @@ test('mainBaseForLabel: a `#N` that is part of the name survives', () => {
     'sourcemonkey://SourceMonkey/Chapter%20%232%233/Chapter%20%232.user.js',
   );
 });
+
+test('buildRequireSourceUrl: a data: URL maps to <folder>/data/require-<hash>, one per URL', () => {
+  const a = buildRequireSourceUrl('hello.user.js', 'data:application/javascript,%3Bwindow.Vue%3DVue%3B');
+  const b = buildRequireSourceUrl('hello.user.js', 'data:application/javascript,%3Bwindow.X%3D1%3B');
+  assert.match(a, /^sourcemonkey:\/\/SourceMonkey\/hello\/data\/require-[0-9a-f]{8}$/);
+  assert.notEqual(a, b);
+  assert.equal(a, buildRequireSourceUrl('hello.user.js', 'data:application/javascript,%3Bwindow.Vue%3DVue%3B'));
+});

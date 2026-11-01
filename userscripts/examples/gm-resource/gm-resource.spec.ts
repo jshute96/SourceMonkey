@@ -1,7 +1,8 @@
 // E2E coverage for the gm-resource userscript example.
 //
 // Exercises both reads (GM_getResourceText, GM_getResourceURL) against
-// three @resource entries (CSS, JSON, SVG) plus the missing-name case.
+// @resource entries (CSS, JSON, SVG, and an inline data: URL) plus the
+// missing-name case.
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -92,6 +93,27 @@ test.describe('examples / gm-resource', () => {
     const src = await page.locator('#imgSlot img').getAttribute('src');
     expect(src).toMatch(/^data:image\/svg\+xml;base64,/);
     expect(atob(src!.slice(src!.indexOf(',') + 1))).toContain('<svg');
+
+    await page.close();
+  });
+
+  test('GM_getResourceText reads resources given as data: URLs', async ({
+    extensionContext, fixtureServer, setup,
+  }) => {
+    await setup.installScriptsFrom(__dirname);
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/gm-resource/gm-resource.html`);
+    await expect(page.locator('#runStatus')).toHaveText(/Userscript ran/);
+
+    await page.locator('#btn-data').click();
+    const log = page.locator('#log');
+    await expect(log).toContainText('GM_getResourceText("note") -> "Hello from a base64 data: URL, caf\u00e9"');
+    // VM decodes every data: resource as base64, so a percent-encoded
+    // one makes its atob throw.
+    await expect(log).toContainText(setup.manager === 'violentmonkey'
+      ? 'GM_getResourceText("plainNote") threw InvalidCharacterError'
+      : 'GM_getResourceText("plainNote") -> "Hello from a plain data: URL, caf\u00e9"');
 
     await page.close();
   });

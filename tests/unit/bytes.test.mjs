@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { bytesToBase64, base64ToBytes } from '../../dist/bytes.js';
+import { bytesToBase64, base64ToBytes, decodeDataUrl } from '../../dist/bytes.js';
 
 test('round-trips every byte value', () => {
   const original = new Uint8Array(256);
@@ -30,4 +30,24 @@ test('round-trips past the 32 KiB chunk boundary', () => {
   assert.equal(back.length, size);
   assert.deepEqual([...back.slice(0, 64)], [...original.slice(0, 64)]);
   assert.deepEqual([...back.slice(-64)], [...original.slice(-64)]);
+});
+
+test('decodeDataUrl: base64 and plain payloads, type defaults and parameters', () => {
+  const b64 = decodeDataUrl('data:image/png;base64,AAEC/w==');
+  assert.equal(b64.contentType, 'image/png');
+  assert.deepEqual([...b64.bytes], [0, 1, 2, 255]);
+  // Percent escapes become bytes, even ones that aren't UTF-8.
+  const plain = decodeDataUrl('data:text/plain;charset=utf-8,a%20b%FF%2');
+  assert.equal(plain.contentType, 'text/plain');
+  assert.deepEqual([...plain.bytes], [0x61, 0x20, 0x62, 0xff, 0x25, 0x32]);
+  // No type means text/plain; non-ASCII text is kept as UTF-8.
+  const bare = decodeDataUrl('data:,hé');
+  assert.equal(bare.contentType, 'text/plain');
+  assert.equal(new TextDecoder().decode(bare.bytes), 'hé');
+});
+
+test('decodeDataUrl: null for malformed URLs', () => {
+  assert.equal(decodeDataUrl('data:text/plain'), null);
+  assert.equal(decodeDataUrl('data:;base64,@@@'), null);
+  assert.equal(decodeDataUrl('https://example.com/,x'), null);
 });

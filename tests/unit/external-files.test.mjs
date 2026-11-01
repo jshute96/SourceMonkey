@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 
 import {
   attachFiles,
+  BAD_DATA_URL,
   checkScriptIcon,
   describeFetchFailure,
   describeResolveFailure,
@@ -237,17 +238,58 @@ test('attachFiles: rejects @require absolute file:// ref', async () => {
   assert.match(r.errorMessage, /That URL scheme \(file:\) is not supported/);
 });
 
-test('attachFiles: rejects @require data: ref', async () => {
+test('attachFiles: @require data: ref is decoded in place of a fetch', async () => {
+  const ref = 'data:application/javascript,%3Bwindow.Vue%3DVue%3B';
   const r = await attachFiles({
     scriptFileUrl: SCRIPT_URL,
-    header: header(['require', 'data:text/javascript,alert(1)']),
+    header: header(['require', ref]),
+    priorRequires: new Map(),
+    priorResources: new Map(),
+    recheck: 'all',
+    // Empty cache: a fetch attempt would fail.
+    fetchCache: new Map(),
+    now: 2000,
+  });
+  assert.equal(r.errorMessage, undefined);
+  assert.equal(r.requires.length, 1);
+  assert.equal(r.requires[0].url, ref);
+  assert.equal(r.requires[0].source, ';window.Vue=Vue;');
+  assert.equal(r.requires[0].contentType, 'application/javascript');
+});
+
+test('attachFiles: @resource data: refs decode base64 and plain payloads', async () => {
+  const r = await attachFiles({
+    scriptFileUrl: SCRIPT_URL,
+    header: header(
+      ['resource', 'b64 data:text/plain;base64,aGVsbG8='],
+      ['resource', 'plain data:,unsafeWindow.process=%7Benv:%7BNODE_ENV:%22production%22%7D%7D'],
+    ),
     priorRequires: new Map(),
     priorResources: new Map(),
     recheck: 'all',
     fetchCache: new Map(),
     now: 2000,
   });
-  assert.match(r.errorMessage, /URLs with the data: scheme are not supported/);
+  assert.equal(r.errorMessage, undefined);
+  const [b64, plain] = r.resources;
+  assert.equal(b64.contentType, 'text/plain');
+  assert.equal(b64.bytesBase64, 'aGVsbG8=');
+  assert.equal(plain.contentType, 'text/plain');
+  assert.equal(Buffer.from(plain.bytesBase64, 'base64').toString(),
+    'unsafeWindow.process={env:{NODE_ENV:"production"}}');
+});
+
+test('attachFiles: a data: ref that does not decode names the problem', async () => {
+  const r = await attachFiles({
+    scriptFileUrl: SCRIPT_URL,
+    header: header(['resource', 'bad data:text/plain;base64,@@@']),
+    priorRequires: new Map(),
+    priorResources: new Map(),
+    recheck: 'all',
+    fetchCache: new Map(),
+    now: 2000,
+  });
+  assert.equal(r.errorMessage, `@resource bad (data:text/plain;base64,@@@): ${BAD_DATA_URL}`);
 });
 
 test('attachFiles: @require relative resolves against script URL', async () => {
