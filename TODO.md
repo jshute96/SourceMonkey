@@ -465,6 +465,43 @@ scripts, checked against Tampermonkey 5.5.1 with `sm-dev --manager tm`
   - If it repeats: measure the wait with a clock that excludes stalls,
     or recheck for a late answer before giving up.
 
+The next items came from the 2026-10-31 batch (the `top-rated` and
+`top-daily20261031` labels), checked against Tampermonkey with
+`sm-dev --manager tm` where noted.
+
+- **`GM.getResourceUrl` returns a string, not a Promise**
+  (`gm-resource-url-sync`: 16111).
+  - 16111 calls `GM.getResourceUrl(name).then(...)`, which throws
+    "GM.getResourceUrl(...).then is not a function", so the page stays
+    unformatted.
+  - Under `--manager tm` the unchanged script works (same 1320 lines
+    and 2442 highlight spans as a copy wrapped in `Promise.resolve`).
+    Violentmonkey's `GM.*` aliases are async too.
+  - Likely fix: `gmDotPromised: true` on the `GM_getResourceURL`
+    entry in `src/gm-api-catalog.ts`. Check `GM_getResourceText`'s
+    `GM.` form too, and update docs/supported-GM-APIs.md.
+- **Granting one storage API doesn't give the rest of its group**
+  (`grant-by-group`: 473912, 568618).
+  - A probe granting only `GM_setValue` gets `GM_getValue`,
+    `GM_listValues`, `GM_deleteValue`, `GM_addValueChangeListener`,
+    `GM.listValues` and `GM.getValue` under `--manager tm`. In
+    SourceMonkey every one of them is undefined.
+  - 473912 grants `GM_getValue`/`GM_setValue` and calls
+    `GM.listValues` from its reset command, which throws. 568618
+    grants only `GM_setValue` and calls `GM_getValue` at startup.
+  - Fix: when a script grants any storage API, provide the whole
+    group (both the `GM_` and `GM.` forms). Check whether
+    Tampermonkey groups other APIs the same way before generalizing.
+- **`GM_getResourceURL` always returns a `blob:` URL**
+  (`resource-url-blob-csp`: 7596).
+  - DuckDuckGo Lite's CSP allows `data:` images but not `blob:`, so
+    7596's popup icon is blank. A `data:` URL of the same PNG shows.
+  - Tampermonkey returns `data:` URLs
+    (docs/cross-manager-test-results.md); Violentmonkey does when the
+    second argument is `false`.
+  - Possible fix: return a `data:` URL, at least for `(name, false)`,
+    or for small resources.
+
 ## Cross-manager coverage
 
 - **VM doesn't inject into `file://` pages in the test profile**, so
