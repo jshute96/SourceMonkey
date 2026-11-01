@@ -27,13 +27,14 @@ test('collections page loads', async ({
   await page.close();
 });
 
-test('options page renders', async ({
+test('options page renders, with the version in its heading', async ({
   extensionContext,
   extensionId,
 }) => {
   const page = await extensionContext.newPage();
   await page.goto(`chrome-extension://${extensionId}/options.html`);
-  await expect(page.locator('h1')).toHaveText('SourceMonkey | Options');
+  const version = await page.evaluate(() => chrome.runtime.getManifest().version);
+  await expect(page.locator('h1')).toHaveText(`SourceMonkey | Options (version ${version})`);
   await page.close();
 });
 

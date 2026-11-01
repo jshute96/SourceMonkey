@@ -126,7 +126,7 @@ stay directly in `src/` so the extension's URLs have no folder in them.
 | `src/offscreen.html` | Offscreen document markup — hosts the sandboxed parse iframe |
 | `src/collections.html` | Collections page markup: header bar with Help / Options / Refresh All, Add field, file-access banner slot, collection list |
 | `src/popup.html` | Toolbar popup markup ("Active scripts"): header bar with Open and a ⋯ menu, banners (sm-dev, reload), script area |
-| `src/options.html` | Options page markup: header bar with Help / Collections, settings list (link-capture toggle, debug-logging toggle), local search-roots box + file-access banner slot, Downloads-folder field, GitHub auth token, storage-usage table with links to the debug pages |
+| `src/options.html` | Options page markup: header bar with the version and Help / Collections, settings list (link-capture toggle, debug-logging toggle), local search-roots box + file-access banner slot, Downloads-folder field, GitHub auth token, storage-usage table with links to the debug pages |
 | `src/userscript.html` | Userscript viewer markup: header bar, status box (banner + versions panel), controls row, install callout + preview actions, details panel, tab strip, code box, log pane |
 | `src/compare.html` | Compare page markup: header bar, the fields table slot, view controls, tab strip, diff box |
 | `src/connect-prompt.html` | Connection prompt window markup: the standard header bar, the script and site, and the one-time and kept choices |
@@ -318,7 +318,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/tab-refs.ts` | Naming and picking a run's tabs (`T2`, target ids), the current tab, the dialog message |
 | `src/harness/wait.ts` | The `wait` command, when a tab has settled (loaded, scripts started, quiet), and when a load is done |
 | `src/harness/runs.ts` | The runs on this machine: record files, control sockets, and the client connection (`RunClient`) to one |
-| `src/harness/cli.ts` | The `sm-dev` client: global options, `start`, `attach`, `stop`, `exit`, `validate`, `match`, `clear`, `list`, `--stdin`, `--interactive` |
+| `src/harness/cli.ts` | The `sm-dev` client: global options, `start`, `attach`, `stop`, `exit`, `validate`, `match`, `clear`, `list`, `--stdin`, `--interactive`, `--version` |
 
 ## Userscripts (`userscripts/`)
 

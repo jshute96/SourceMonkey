@@ -532,6 +532,9 @@ ln -s ../../node_modules/sourcemonkey/skills/SourceMonkey-dev .claude/skills/
 ln -s ../../node_modules/sourcemonkey/skills/SourceMonkey-friction .claude/skills/
 ```
 
+`sm-dev --version` shows the version and the directory `sm-dev` is
+installed in. `skills/` is a subdirectory under that.
+
 ### Starting test browsers and running scripts with `sm-dev`
 
 `sm-dev` starts a browser with a userscript manager loaded. Use

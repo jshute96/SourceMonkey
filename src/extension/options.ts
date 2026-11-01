@@ -53,6 +53,9 @@ wireOpenButton(document.getElementById('open-help')!, HELP_URL, () => openTabBes
 // The header bar's icon and product name are the same link.
 installHomeLinkHandler();
 
+// The extension's version, from its manifest, after the page name.
+document.getElementById('extension-version')!.textContent = `(version ${chrome.runtime.getManifest().version})`;
+
 // A link elsewhere focusing this tab rather than opening a second one.
 // This page has no anchors of its own to land on, so the whole of it is
 // the target: back to the top. See src/extension/page-links.ts.

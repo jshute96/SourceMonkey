@@ -982,6 +982,10 @@ export const HELP_SECTIONS: HelpSection[] = [
             title: 'Output',
             options: [
               {
+                term: '--version',
+                about: 'Print sm-dev\'s version and its package directory.',
+              },
+              {
                 term: '--json[=single|multi]',
                 about: [
                   'Print results as JSON. (Supported for most commands.)',
@@ -1611,7 +1615,7 @@ export function commandSyntax(name: string): CommandSyntax {
 }
 
 // The flags for the whole line, which go before any command.
-export const GLOBAL_FLAGS = ['--run', '--root', '--local', '--stdin', '--interactive', '--temp-browser', '--open-browser', '--existing-browser', '--browser', '--manager', '--profile', '--headed', '--headless', '--mute', '--nomute', '--json'];
+export const GLOBAL_FLAGS = ['--run', '--root', '--local', '--stdin', '--interactive', '--temp-browser', '--open-browser', '--existing-browser', '--browser', '--manager', '--profile', '--headed', '--headless', '--mute', '--nomute', '--json', '--version'];
 
 // Those of them that take a value.
 export const VALUE_GLOBALS = new Set(['--run', '--root', '--local', '--browser', '--manager', '--profile']);

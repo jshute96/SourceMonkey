@@ -20,7 +20,7 @@
 // no script threw, every selector was found), 1 when one didn't or the
 // command failed, 2 for a usage error (a `UsageError`).
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
@@ -39,7 +39,7 @@ import { readJsonFile } from './input-file.js';
 import { echoLine, err as errorLine, ERROR_PREFIX, paintOutput, quoted, SM_DEV_PREFIX, streamHasColor } from './output-style.js';
 // The roles for marked-up output, as S.id(...): their names are common locals here.
 import * as S from './output-style.js';
-import { isJsonLine, jsonLayoutMistake, jsonResult, jsonResultData, STDERR_LINE, withLayout, type JsonLayout, type BrowserStatus, type ListData, type MatchData, type RunConnection, type StatusData, type StatusRunsData } from './json-output.js';
+import { isJsonLine, jsonLayoutMistake, jsonResult, jsonResultData, STDERR_LINE, withLayout, type JsonLayout, type BrowserStatus, type ListData, type MatchData, type RunConnection, type StatusData, type StatusRunsData, type VersionData } from './json-output.js';
 // Node built-ins only, so as cheap to load as the rest here.
 import { runIdOf, type CommandSource, type RunClient, type RunRecord } from './runs.js';
 import { parseLogSources, type LogSource } from './run-logs.js';
@@ -1634,6 +1634,27 @@ async function attachCommand(opts: Opts, client: Client): Promise<number> {
   return 0;
 }
 
+// The `sourcemonkey` package sm-dev runs from: the checkout, or the
+// copy installed in a repo. lib/harness/ holds this module.
+const PACKAGE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+// `--version`: the package's version and directory, where `skills/` and
+// the built extension (`dist/`) are.
+function printVersion(): void {
+  let version = 'unknown';
+  try {
+    version = (JSON.parse(readFileSync(path.join(PACKAGE_DIR, 'package.json'), 'utf8')) as { version?: string }).version ?? version;
+  } catch {
+    // Left as unknown.
+  }
+  const skills = path.join(PACKAGE_DIR, 'skills');
+  if (lineJson) {
+    print(jsonResult('version', { version, dir: PACKAGE_DIR, skills_dir: skills } satisfies VersionData));
+    return;
+  }
+  print(S.ui`sm-dev ${version} from ${S.url(PACKAGE_DIR)}`);
+}
+
 const HELP_FLAGS = new Set(['--help', '-h']);
 
 // The `help` command's words (a topic, or a command and subcommand),
@@ -1757,6 +1778,8 @@ let lineManager: ManagerName | undefined;
 interface GlobalFlags {
   stdin: boolean;
   interactive: boolean;
+  /** `--version`: print the version and where sm-dev runs from. */
+  version: boolean;
   /** The words after the flags: the commands. */
   rest: string[];
 }
@@ -1772,13 +1795,14 @@ interface GlobalFlags {
 function takeGlobalFlags(argv: string[]): GlobalFlags {
   let collectionRoot = process.cwd();
   const localRoots: string[] = [];
-  const flags: GlobalFlags = { stdin: false, interactive: false, rest: [] };
+  const flags: GlobalFlags = { stdin: false, interactive: false, version: false, rest: [] };
   let i = 0;
   for (; i < argv.length; i++) {
     const [word, inline] = splitInline(argv[i]);
     if (!GLOBAL_FLAGS.includes(word)) break;
     if (word === '--stdin') flags.stdin = true;
     else if (word === '--interactive') flags.interactive = true;
+    else if (word === '--version') flags.version = true;
     else if (word === '--open-browser') lineOpenBrowser = true;
     else if (word === '--existing-browser') lineExistingBrowser = true;
     else if (word === '--temp-browser') lineTempBrowser = true;
@@ -1868,6 +1892,20 @@ function globalWords(runId: string | undefined): string[] {
     ...(tempBrowserLine() && launchHeaded() ? ['--headed'] : []),
     ...(tempBrowserLine() && lineMuted !== undefined ? [lineMuted ? '--mute' : '--nomute'] : []),
   ];
+}
+
+// The flag given for the browser a `start` launches (`--headed`, ...),
+// or null. `--open-browser` uses them for its own browser.
+function shapingFlag(): string | null {
+  return lineTempBrowser ? '--temp-browser'
+    : lineOpenBrowser ? null
+    : lineHeaded !== undefined ? (lineHeaded ? '--headed' : '--headless')
+    : lineMuted !== undefined ? (lineMuted ? '--mute' : '--nomute')
+    : null;
+}
+
+function noStartMistake(flag: string): string {
+  return `The ${flag} flag only applies to a run that ${quoted('start')} begins, and no ${quoted('start')} command was given`;
 }
 
 // Whether runs the line starts launch a temp browser: the default mode.
@@ -2068,6 +2106,20 @@ async function main(): Promise<void> {
     return;
   }
   const commands = splitCommands(flags.rest);
+  if (flags.version) {
+    // With no commands, exit after printing it, without opening the
+    // prompt or reading stdin, unless --stdin or --interactive asks for
+    // it. A flag for the browser a `start` launches is then refused, as
+    // it is whenever no `start` is given.
+    const alone = commands.length === 0 && !flags.stdin && !flags.interactive && !lineOpenBrowser;
+    const shaping = alone ? shapingFlag() : null;
+    if (shaping) {
+      process.exitCode = printMistake(new UsageError(noStartMistake(shaping)));
+      return;
+    }
+    printVersion();
+    if (alone) return;
+  }
   // No commands, with stdin and stdout both a terminal: the prompt, as
   // with --interactive. Not with --stdin, in a detached run, or after
   // `--open-browser` alone, which is a whole line: start a browser.
@@ -2123,13 +2175,9 @@ async function main(): Promise<void> {
   // runs this line starts (or --open-browser's browser); with no start
   // to use them, they'd be silently ignored.
   const starts = commands.some((words) => parseCommand(words).kind === 'cli' && parseArgs(words).command === 'start');
-  const shaping = lineTempBrowser ? '--temp-browser'
-    : lineOpenBrowser ? null
-    : lineHeaded !== undefined ? (lineHeaded ? '--headed' : '--headless')
-    : lineMuted !== undefined ? (lineMuted ? '--mute' : '--nomute')
-    : null;
+  const shaping = shapingFlag();
   if (shaping && !starts && !stdin && !flags.interactive) {
-    process.exitCode = printMistake(new UsageError(`The ${shaping} flag is for the runs a start begins, and this line has no start`));
+    process.exitCode = printMistake(new UsageError(noStartMistake(shaping)));
     return;
   }
   // The lasting browser first, for the commands to connect to.

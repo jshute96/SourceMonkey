@@ -16,7 +16,9 @@ sm-dev [global options] <command> [args] [-- <command> ...]
   `--open-browser`, `--existing-browser`, `--browser URL|PORT`,
   `--manager sm|tm|vm`, `--headed`, `--headless`, `--mute`, `--nomute`,
   `--stdin`, `--interactive`,
-  `--root DIR`, `--local DIR`, `--json`.
+  `--root DIR`, `--local DIR`, `--json`, `--version`.
+- `sm-dev --version` prints the version and the package directory,
+  which holds `skills/`.
 - Read the text output by default: it's shorter, and says what an
   empty answer means and where to look next.
 - Add `--json` when you'll parse the output, with `jq` or a script:

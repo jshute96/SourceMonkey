@@ -7,7 +7,7 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { closeSync, mkdtempSync, openSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +26,29 @@ function cliLine(...args) {
   const r = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8' });
   return { code: r.status, out: (r.stdout + r.stderr).trim().split('\n')[0] };
 }
+
+test('--version alone prints the version and package directory, and reads no stdin', () => {
+  const root = fileURLToPath(new URL('../../../', import.meta.url)).replace(/\/$/, '');
+  const { version } = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+  // Piped stdin with commands in it, which --version alone leaves unread.
+  const r = spawnSync(process.execPath, [CLI, '--version'], { encoding: 'utf8', input: 'status\n' });
+  assert.equal(r.status, 0);
+  const skills = path.join(root, 'skills');
+  assert.equal(r.stdout, `sm-dev ${version} from ${root}\n`);
+  const json = spawnSync(process.execPath, [CLI, '--json=single', '--version'], { encoding: 'utf8' });
+  assert.equal(json.status, 0);
+  assert.deepEqual(JSON.parse(json.stdout), { command: 'version', version, dir: root, skills_dir: skills });
+  // Commands after it run once it has printed; so does --stdin's input.
+  const listed = spawnSync(process.execPath, [CLI, '--version', 'help', 'flags'], { encoding: 'utf8' });
+  assert.equal(listed.status, 0);
+  assert.match(listed.stdout, new RegExp(`^sm-dev ${version} from .*\\n.*Global options`, 's'));
+  const piped = spawnSync(process.execPath, [CLI, '--version', '--stdin'], { encoding: 'utf8', input: 'help flags\n' });
+  assert.match(piped.stdout, /Global options/);
+  // A flag for a start's browser does nothing alone, so it is refused.
+  const headed = spawnSync(process.execPath, [CLI, '--version', '--headed'], { encoding: 'utf8' });
+  assert.equal(headed.status, 2);
+  assert.match(headed.stderr, /The --headed flag only applies to a run that `start` begins/);
+});
 
 test('match lists every rule that excluded or matched each URL', () => {
   const script = fileURLToPath(new URL('../../../userscripts/examples/headers-match-hash/exclude-hash.user.js', import.meta.url));
@@ -792,9 +815,9 @@ test('the browser options are global, and only one browser is chosen', () => {
   assert.deepEqual(cliLine('--browser', 'example.com:9222', 'start', SCRIPT, '--detach'), { code: 2, out: 'ERROR: A temp browser starts on this machine, so --browser must be a local port, not example.com:9222' });
   assert.deepEqual(cliLine('--temp-browser', 'start', SCRIPT, '--browser', 'example.com:9222', '--detach'), { code: 2, out: 'ERROR: A temp browser starts on this machine, so --browser must be a local port, not example.com:9222' });
   // Given on a line with no start, they'd do nothing.
-  assert.deepEqual(cliLine('--temp-browser', 'eval', '1'), { code: 2, out: 'ERROR: The --temp-browser flag is for the runs a start begins, and this line has no start' });
-  assert.deepEqual(cliLine('--headless', 'eval', '1'), { code: 2, out: 'ERROR: The --headless flag is for the runs a start begins, and this line has no start' });
-  assert.deepEqual(cliLine('--mute', 'eval', '1'), { code: 2, out: 'ERROR: The --mute flag is for the runs a start begins, and this line has no start' });
+  assert.deepEqual(cliLine('--temp-browser', 'eval', '1'), { code: 2, out: 'ERROR: The --temp-browser flag only applies to a run that `start` begins, and no `start` command was given' });
+  assert.deepEqual(cliLine('--headless', 'eval', '1'), { code: 2, out: 'ERROR: The --headless flag only applies to a run that `start` begins, and no `start` command was given' });
+  assert.deepEqual(cliLine('--mute', 'eval', '1'), { code: 2, out: 'ERROR: The --mute flag only applies to a run that `start` begins, and no `start` command was given' });
   // start's own --browser would go elsewhere than the browser --open-browser starts.
   assert.deepEqual(cliLine('--open-browser', 'start', SCRIPT, '--browser', '9300', '--detach'), { code: 2, out: 'ERROR: The `start` command connects to the browser --open-browser starts, so give --browser once, first: `sm-dev --open-browser --browser ... start ...`' });
   // A value in the same word, and not the next option taken for one.

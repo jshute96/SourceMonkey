@@ -289,6 +289,15 @@ export interface ListData {
  */
 export type RunConnection = 'started' | 'attached' | 'selected' | 'other';
 
+/** `--version`: the package's version and the directory sm-dev runs from. */
+export interface VersionData {
+  version: string;
+  /** The `sourcemonkey` package directory. */
+  dir: string;
+  /** Its `skills/` directory. */
+  skills_dir: string;
+}
+
 export interface StatusData {
   run?: RunSummary & {
     connection?: RunConnection;

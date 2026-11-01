@@ -382,6 +382,16 @@ JSON, with `--run D1` (without it: `{"command": "status", "browser":
 }
 ```
 
+### `--version`
+
+```ts
+interface VersionData {
+  version: string;    // the sourcemonkey package's version
+  dir: string;        // the package directory sm-dev runs from
+  skills_dir: string; // its skills/ directory
+}
+```
+
 ### `list`
 
 ```ts

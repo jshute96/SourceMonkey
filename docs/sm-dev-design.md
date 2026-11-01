@@ -369,7 +369,7 @@ Command marks:
   `--run`, `--root`, `--local`, `--stdin`, `--interactive`, and the
   browser's `--temp-browser`, `--open-browser`, `--existing-browser`,
   `--browser`, `--manager`, `--profile`, `--headed`, `--headless`,
-  `--mute`, `--nomute`.
+  `--mute`, `--nomute`, `--json`, `--version`.
   - One later on the line is refused, and said to go first.
   - `--browser`, which `start` also takes, is excepted.
 - The rest of the line holds one or more commands, split on `--`.
@@ -377,6 +377,12 @@ Command marks:
   block, which stays one command.
 - With no commands, input comes from stdin when it's piped, and the
   `--interactive` prompt when stdin and stdout are a terminal.
+- `--version` prints sm-dev's version and the package directory it runs
+  from (the checkout, or `node_modules/sourcemonkey`).
+  `skills/` is a subdirectory of that. Its JSON form gives the `skills/`
+  path too, as `skills_dir`.
+  - Without other commands or flags, `sm-dev --version` exits after printing
+    the version.
 - Every command is checked before any runs.
   - A lone `start` with no `--detach`, `--stop-after-seconds`, `--stdin`,
     `--interactive`, or commands after it would stop its run at once.
