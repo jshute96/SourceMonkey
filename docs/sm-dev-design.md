@@ -1880,6 +1880,19 @@ The run commands that drive and read a tab's page (`click`, `type`,
     which runs nothing), and code with either runs in an async arrow:
     as its expression when it is one, so `await x` gives x, else as
     its body.
+  - As a body, its last statement becomes a `return` when it's an
+    expression, so `await f(); x` gives x as the console would
+    (`returningLastExpression` in eval-completion.ts).
+    - sm-dev has no JavaScript parser, so Node's V8 finds the
+      statement: the `AsyncFunction` constructor syntax-checks a body
+      without running it. Each place a statement can end (a `;` or a
+      line break) is tried, earliest first, until the rest parses as
+      one expression.
+    - A cut also needs what's before it to parse alone, and not to end
+      inside a `//` comment, so a loop's unbraced body or a `;` in a
+      comment isn't taken for the end of a statement.
+    - A trailing function or class declaration stays one (it's
+      hoisted), and past 500 places to cut, the code runs as written.
   - A page-world script's hook `eval`s under the page's Content
     Security Policy, but within a CDP evaluation, which Chrome exempts
     from it.

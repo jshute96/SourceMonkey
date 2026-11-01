@@ -266,6 +266,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 
 | File | Description |
 |------|-------------|
+| `src/harness/eval-completion.ts` | Makes the last expression statement of `eval` code the `return` of its async wrapper |
 | `src/harness/index.ts` | Public entry of the harness package: re-exports the install pipeline, hosts, page watcher, and Playwright fixture |
 | `src/harness/page-output.ts` | Whose a page's console lines and errors are (a run script's or the page's), and how logged DOM nodes read |
 | `src/harness/run-logs.ts` | A run's log: the sources, the run-wide buffer, `--log-source` / `--since` / `--tail` parsing, how lines read, and folding the stream's repeats |
@@ -596,6 +597,7 @@ unit tests.
 | File | Description |
 |------|-------------|
 | `tests/unit/harness/cdp-endpoint.test.mjs` | Unit tests for `cdpEndpoint`: the forms `sm-dev --browser` accepts |
+| `tests/unit/harness/eval-completion.test.mjs` | Unit tests for which statement of `eval` code becomes its `return` |
 | `tests/unit/harness/run-log.test.mjs` | Unit tests for a run's log files: the timestamp format and unique names |
 | `tests/unit/harness/wait.test.mjs` | Unit tests for `wait`'s delays and the message when a tab doesn't settle |
 | `tests/unit/harness/path-args.test.mjs` | Unit tests for sm-dev's glob matching and file argument expansion |

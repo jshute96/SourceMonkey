@@ -68,6 +68,8 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('eval --script await 0; return input.getAttribute("aria-label")')).toEqual(['"Note"']);
   // An awaited expression is the value, as in the console.
   expect(await run('eval --script await Promise.resolve(button.localName)')).toEqual(['"button"']);
+  // So is the last statement after an `await`.
+  expect(await run('eval --script const n = await Promise.resolve(2); n + widget.clicks')).toEqual(['2']);
   expect(await run('eval --script missing')).toEqual(['[sm-dev] The expression threw: ReferenceError: missing is not defined']);
   expect(await run('eval --script=nope 1')).toEqual(['[sm-dev] No loaded script matches `nope`. Use `scripts` to list them.']);
   expect(await run('eval --script= 1')).toEqual(['[sm-dev] ERROR: The --script flag needs a value: --script=<script>']);

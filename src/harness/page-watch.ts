@@ -12,6 +12,7 @@
 
 import type { CDPSession, Frame, Page, Request } from '@playwright/test';
 
+import { returningLastExpression } from './eval-completion.js';
 import { FrameSessions, type ContextInfo } from './frame-sessions.js';
 import type { HarnessHost, PageLink } from './host.js';
 import type { PreparedScript } from './prepare.js';
@@ -497,7 +498,9 @@ export class PageAttachment implements PageLink {
   // errors there. So the code is compiled first (which runs nothing),
   // and code that needs it runs in an async arrow: as its expression
   // when it is one (`await x` gives x, as in the console), else as its
-  // body, whose `return` is the value.
+  // body, whose `return` is the value. A body whose last statement is an
+  // expression returns that, as the console prints it
+  // (`returningLastExpression`).
   //
   // A page-world script's hook `eval`s under the page's Content Security
   // Policy, but within a CDP evaluation, which Chrome exempts from it.
@@ -530,7 +533,9 @@ export class PageAttachment implements PageLink {
       const { exceptionDetails: notExpression } = await cdp.send('Runtime.compileScript', {
         expression: asExpression, sourceURL: '', persistScript: false, executionContextId: contextId,
       });
-      code = notExpression ? `(async () => {\n${expression}\n})()` : asExpression;
+      code = notExpression
+        ? `(async () => {\n${returningLastExpression(expression) ?? expression}\n})()`
+        : asExpression;
     }
     const { result, exceptionDetails } = await cdp.send('Runtime.evaluate', {
       // Called detached, so its stack frame isn't named `[as <script id>]`.
