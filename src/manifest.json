@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqXQa9FWfBzP8EUxjcUDofdECH+A5rpR13/mlhF/jmlhYDRNEUvU9TaQlgCMdAfJqBdpiCJ6qjOgmySkfp7wmab1KV/F1G6Sn8aYM+GWTdj3z33OwRKwv5B7QdTZoAEkGe99LoGPMqPkGb+eY3TxkV/UlMQ3diaIrivkcPtYcLRAgAKQ7GwuPua3FDg+Lq5XreaMvK5X9mhOtRukRfis/7I/kqt0prIOqVES3TboNsgc4WtlGFaREdzyscUUorsA/Rb4Z6twRotaz4m6HROWD5cQ1MF2YJP1Q2QCPhE8gcAlii6uLClSj1wL/Z/McYeXOlCyOd30W/qGXAqSQJMjS8wIDAQAB",
   "name": "SourceMonkey",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "A userscript manager that treats userscripts like source code, built and managed with real developer tools, including coding agents",
   "homepage_url": "https://github.com/jshute96/SourceMonkey",
   "minimum_chrome_version": "152",
