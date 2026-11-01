@@ -5,6 +5,7 @@
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
+import type { BrowserContext } from '@playwright/test';
 
 test.describe('collections page', () => {
   let scriptsDir: ScriptsDir;
@@ -354,6 +355,117 @@ test.describe('collections page', () => {
     } finally {
       dirA.cleanup();
       dirB.cleanup();
+    }
+  });
+
+  // Six collections in a short window, so the page scrolls, with the
+  // fifth one centered on screen. Returns that fifth section.
+  async function openScrolledCollections(
+    extensionContext: BrowserContext,
+    extensionId: string,
+    sm: { addCollection: (path: string) => Promise<{ id: string } | null | undefined> },
+    dirs: ScriptsDir[],
+  ) {
+    const ids: string[] = [];
+    for (const [i, dir] of dirs.entries()) {
+      dir.write({
+        relativePath: `s${i}.user.js`,
+        meta: { name: `S${i}`, match: ['https://example.com/*'] },
+        body: '',
+      });
+      ids.push((await sm.addCollection(dir.path))!.id);
+    }
+    const page = await extensionContext.newPage();
+    await page.setViewportSize({ width: 800, height: 300 });
+    await page.goto(`chrome-extension://${extensionId}/collections.html`);
+    const sections = page.locator('section.collection');
+    await expect(sections).toHaveCount(6);
+    // Chrome's scroll anchoring often holds the section still by
+    // itself; turn it off so this checks the page's own scrolling.
+    await page.addStyleTag({ content: 'html, body { overflow-anchor: none; }' });
+    const moved = page.locator(`section.collection[data-collection-id="${ids[4]}"]`);
+    await moved.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+    return { page, ids, sections, moved };
+  }
+
+  test('Up/Down keeps the moved collection at the same spot on screen', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const dirs = Array.from({ length: 6 }, () => ScriptsDir.create());
+    try {
+      const { page, ids, sections, moved } =
+        await openScrolledCollections(extensionContext, extensionId, sm, dirs);
+      // Where it rests: an in-flight slide draws it at its old spot.
+      const top = async (): Promise<number> => moved.evaluate((el) => {
+        for (const a of el.getAnimations()) a.finish();
+        return el.getBoundingClientRect().top;
+      });
+      const before = await top();
+
+      for (const expectedIndex of [3, 2]) {
+        await moved.locator('.move-up').click();
+        await expect(sections.nth(expectedIndex)).toHaveAttribute('data-collection-id', ids[4]);
+        expect(Math.abs((await top()) - before)).toBeLessThan(1);
+      }
+      await page.close();
+    } finally {
+      for (const dir of dirs) dir.cleanup();
+    }
+  });
+
+  test('Up/Down slides everything it shifts, starting from where it was', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const dirs = Array.from({ length: 6 }, () => ScriptsDir.create());
+    try {
+      const { page, ids, sections, moved } =
+        await openScrolledCollections(extensionContext, extensionId, sm, dirs);
+      // Every collection plus the header and add form above the list.
+      const drawnTops = (): Promise<number[]> => page.evaluate(() =>
+        [...document.querySelectorAll('.page-header, #add-form, section.collection')]
+          .map((el) => el.getBoundingClientRect().top));
+      const before = await drawnTops();
+
+      await moved.locator('.move-up').click();
+      await expect(sections.nth(3)).toHaveAttribute('data-collection-id', ids[4]);
+      // At its first frame, each slide draws its element where it was,
+      // so nothing jumps.
+      const atStart = await page.evaluate(() => {
+        for (const a of document.getAnimations()) { a.pause(); a.currentTime = 0; }
+        return [...document.querySelectorAll('.page-header, #add-form, section.collection')]
+          .map((el) => el.getBoundingClientRect().top);
+      });
+      // The list reads header, form, then sections in page order, and
+      // the swap traded sections 3 and 4 (entries 5 and 6).
+      const expected = [...before];
+      [expected[5], expected[6]] = [before[6], before[5]];
+      expect(atStart.map(Math.round)).toEqual(expected.map(Math.round));
+
+      // And the moved section is drawn in front while it happens.
+      await expect(moved).toHaveClass(/\bmoving\b/);
+      await page.close();
+    } finally {
+      for (const dir of dirs) dir.cleanup();
+    }
+  });
+
+  test('Up/Down keeps keyboard focus on the arrow', async ({
+    extensionContext, extensionId, sm,
+  }) => {
+    const dirs = Array.from({ length: 6 }, () => ScriptsDir.create());
+    try {
+      const { page, ids, sections, moved } =
+        await openScrolledCollections(extensionContext, extensionId, sm, dirs);
+      const up = moved.locator('.move-up');
+      await up.focus();
+      for (const expectedIndex of [3, 2]) {
+        await page.keyboard.press('Enter');
+        await expect(sections.nth(expectedIndex)).toHaveAttribute('data-collection-id', ids[4]);
+        await expect(up).toBeFocused();
+      }
+      await page.close();
+    } finally {
+      for (const dir of dirs) dir.cleanup();
     }
   });
 

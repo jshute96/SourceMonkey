@@ -48,6 +48,9 @@
       .suggestion-description { color: #555; font-size: 0.9em; }
       .suggestion button { flex: 0 0 auto; }
       .collection { border: 1px solid #ddd; border-radius: 6px; padding: 11px 14px; margin-bottom: 11px; }
+      /* The collection whose Up/Down arrow was clicked, drawn in front
+         while its neighbor slides behind it (swapCollectionSections). */
+      .collection.moving { position: relative; z-index: 1; background: #fff; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15); }
       .collection-header { display: flex; justify-content: flex-start; align-items: center; gap: 0.6em; margin-bottom: 7px; }
       .collection-header h2 { flex: 1 1 auto; min-width: 0; }
       .collection-toggle { flex: 0 0 auto; }

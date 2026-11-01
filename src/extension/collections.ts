@@ -2303,12 +2303,11 @@ async function onMoveCollection(
     if (!(sibling instanceof HTMLElement) || !sibling.classList.contains('collection')) return;
     setMoveButtonsBusy(true);
     try {
+      // Measured before the write: its storage echo can repaint the
+      // list into the new order before the call returns.
+      const before = measureForMove(section);
       await moveCollection(id, direction);
-      if (direction === 'up') {
-        collectionsEl.insertBefore(section, sibling);
-      } else {
-        collectionsEl.insertBefore(sibling, section);
-      }
+      swapCollectionSections(section, sibling, direction, before);
     } finally {
       // Clearing the busy flag first lets refreshMoveButtons run: it
       // recomputes per-position disabled state, which is what undoes
@@ -2324,6 +2323,101 @@ async function onMoveCollection(
   // its own errors via the finally above.
   moveInFlight = moveInFlight.then(run, run);
   await moveInFlight;
+}
+
+const MOVE_ANIMATION_BASE_MS = 300;
+const MOVE_ANIMATION_MS_PER_PX = 0.8;
+const MOVE_ANIMATION_MAX_MS = 1000;
+// Bumped by each animated swap, so only the latest one clears `.moving`.
+let moveAnimationToken = 0;
+
+// Where things were on screen before a collection swap.
+interface MoveSnapshot {
+  // Where each is drawn, mid-animation included, so a quick second
+  // click continues from what's on screen rather than jumping.
+  drawnTops: Map<HTMLElement, number>;
+  // The clicked section's top without any running slide.
+  layoutTop: number;
+}
+
+function measureForMove(section: HTMLElement): MoveSnapshot {
+  const drawnTops = new Map(moveAnimatedElements().map((el) => [el, el.getBoundingClientRect().top]));
+  const slide = new DOMMatrixReadOnly(getComputedStyle(section).transform).m42;
+  return { drawnTops, layoutTop: section.getBoundingClientRect().top - slide };
+}
+
+// Swap `section` past its neighbor `sibling` in the DOM, keeping
+// `section` at the same spot on screen and animating the change from
+// `before` (taken before the index write).
+// - Sticky: the page scrolls by however far `section` moved, so it
+//   stays under the pointer and repeated clicks keep moving the same
+//   collection. Near the top or bottom of the page the scroll clamps,
+//   and `section` then slides the part it couldn't stay put for.
+// - Animated (FLIP): the swap plus that scroll shifts other content
+//   too (the other collections, the header and form above the list).
+//   Everything that shifted starts drawn where it was and slides to
+//   its new place together, so no gap opens or closes in one jump.
+// - `section` gets `.moving`, which draws it in front with an opaque
+//   background, so `sibling` slides behind it.
+// - The DOM change moves `sibling`, never `section`: detaching the
+//   section that holds the clicked arrow would drop its focus.
+// - A storage repaint may already have put them in the new order; the
+//   DOM move is then skipped, and the scroll and slides still run.
+function swapCollectionSections(
+  section: HTMLElement,
+  sibling: HTMLElement,
+  direction: 'up' | 'down',
+  before: MoveSnapshot,
+): void {
+  const els = [...before.drawnTops.keys()].filter((el) => el.isConnected);
+  for (const el of els) for (const a of el.getAnimations()) a.cancel();
+
+  if (direction === 'up' && section.nextElementSibling !== sibling) {
+    collectionsEl.insertBefore(sibling, section.nextSibling);
+  } else if (direction === 'down' && section.previousElementSibling !== sibling) {
+    collectionsEl.insertBefore(sibling, section);
+  }
+  window.scrollBy(0, section.getBoundingClientRect().top - before.layoutTop);
+
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const dys = els.map((el) => before.drawnTops.get(el)! - el.getBoundingClientRect().top);
+  const distance = Math.max(0, ...dys.map(Math.abs));
+  if (distance < 0.5) return;
+  // Longer slides get more time, so a tall collection doesn't blur
+  // past; capped so a very tall one doesn't drag. One duration for
+  // everything, so it all moves in step.
+  const duration = Math.min(MOVE_ANIMATION_MAX_MS, MOVE_ANIMATION_BASE_MS + distance * MOVE_ANIMATION_MS_PER_PX);
+  const anims: Animation[] = [];
+  els.forEach((el, i) => {
+    if (Math.abs(dys[i]) < 0.5) return;
+    anims.push(el.animate(
+      [{ transform: `translateY(${dys[i]}px)` }, { transform: 'none' }],
+      { duration, easing: 'ease-in-out' },
+    ));
+  });
+  for (const el of collectionsEl.querySelectorAll('.collection.moving')) el.classList.remove('moving');
+  section.classList.add('moving');
+  const token = ++moveAnimationToken;
+  void Promise.allSettled(anims.map((a) => a.finished)).then(() => {
+    if (token === moveAnimationToken) section.classList.remove('moving');
+  });
+}
+
+// What a collection swap can shift on screen: every collection
+// section, plus the page content around the list (each sibling of
+// `collectionsEl` and of its ancestors up to <body>), skipping what
+// has no box.
+function moveAnimatedElements(): HTMLElement[] {
+  const els: HTMLElement[] = [...collectionsEl.querySelectorAll<HTMLElement>('section.collection')];
+  for (let el: HTMLElement | null = collectionsEl; el && el !== document.body; el = el.parentElement) {
+    for (const sib of el.parentElement?.children ?? []) {
+      if (sib !== el && sib instanceof HTMLElement && !(sib instanceof HTMLScriptElement)
+        && sib.getBoundingClientRect().height > 0) {
+        els.push(sib);
+      }
+    }
+  }
+  return els;
 }
 
 // Disable every move arrow on the page while a move is in flight. The

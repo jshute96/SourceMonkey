@@ -1475,6 +1475,11 @@ collection**:
   section; Down is disabled on the last. The DOM moves the two
   sibling sections directly instead of re-rendering, so per-section
   state (highlights, scroll) is preserved.
+  - The page scrolls so the moved collection stays at the same spot on
+    screen, and repeated clicks keep moving it.
+  - The neighbor it swapped with slides behind it, while the
+    rest of the page slides to make or close the space (a short
+    animation, skipped under `prefers-reduced-motion`).
 - **Remove** trash can → `removeCollection`. If the collection owns ≥ 1 script,
   a `confirm()` dialog prompts "Remove collection with N scripts?" first;
   cancel aborts the remove. An empty collection removes silently.
