@@ -71,6 +71,19 @@ What about interactive testing?
 SourceMonkey provides `sm-dev`, a client-side command-line tool that lets you start a browser, load scripts, load web pages, and then inspect or drive the page and the script.
 You can see status and logs, read and write stored values, drive script menus, and even run JavaScript inside the script to inspect or update state.
 
+This command starts SourceMonkey's [example userscripts](#example-userscripts) in a test browser (Chromium) using [`sm-dev`](#starting-test-browsers-and-running-scripts-with-sm-dev):
+
+```sh
+# Start a test browser running listed userscripts, on a target page.
+# This works without installing anything except Node (for npx).
+# sm-dev prints the command to install Chromium, if needed.
+npx sm-dev@latest start \
+  https://jshute96.github.io/SourceMonkey/userscripts/examples/script_manifest.json \
+  https://jshute96.github.io/SourceMonkey/userscripts/examples/index.html
+```
+- This starts SourceMonkey in the test browser by default. Use `--manager=tm` or `--manager=vm` to launch a browser with Tampermonkey or Violentmonkey instead.
+- `sm-dev start` takes script paths (`*.user.js`) and opens a browser with those scripts. [More below](#starting-test-browsers-and-running-scripts-with-sm-dev).
+
 ### Agentic userscript development
 
 **SourceMonkey and the `sm-dev` tools are optimized to work well with coding agents like Claude Code.**
@@ -133,14 +146,10 @@ To try them:
 2. Open the [examples index page](https://jshute96.github.io/SourceMonkey/userscripts/examples/index.html).
    Each example's page runs its scripts and shows what they did.
 
-Or open them in a fresh browser with [`sm-dev`](#starting-test-browsers-and-running-scripts-with-sm-dev):
+You can also launch them in a test browser using [`sm-dev`](#starting-test-browsers-and-running-scripts-with-sm-dev),
+without installing SourceMonkey. See [testing userscripts](#testing-userscripts) above.
 
-```sh
-npx sm-dev start https://jshute96.github.io/SourceMonkey/userscripts/examples/script_manifest.json \
-  https://jshute96.github.io/SourceMonkey/userscripts/examples/index.html
-```
-
-These also function as the beginnings of a **compliance test suite** for userscript managers, with tests (`*.spec.ts` files in the same directory) that compare behavior across SourceMonkey, Tampermonkey, and Violentmonkey.
+These example scripts function as the beginnings of a **compliance test suite** for userscript managers, with tests (`*.spec.ts` files in the same directory) that compare behavior across SourceMonkey, Tampermonkey, and Violentmonkey.
 
 The [jshute96/userscripts](https://github.com/jshute96/userscripts) GitHub repo is an example of a repo with many scripts built using SourceMonkey and Claude Code.
 
@@ -165,6 +174,8 @@ The [jshute96/userscripts](https://github.com/jshute96/userscripts) GitHub repo 
    - It opens on the first run, with a box of suggested scripts to install, such as the example scripts. Closing the box hides it (the Options page can show it again).
    - Use the **Add** box to add scripts or collections, from URLs or file paths. Adding a directory creates a collection with all scripts under that directory.
    - Opening userscripts (`*.user.js` URLs) in Chrome will redirect to SourceMonkey's script install page.  (You can disable this on the Options page.)
+
+For `sm-dev` and testing tools, see [Userscript development tools](#userscript-development-tools) below.
 
 ## Using SourceMonkey
 
@@ -493,6 +504,60 @@ library file when that's where it came from.
 Details: [docs/injection.md](docs/injection.md),
 [docs/injection-modes.md](docs/injection-modes.md).
 
+## Userscript development tools
+
+### Getting `sm-dev`
+
+`sm-dev` is installed through `npm`, and requires Node 22 or newer.
+
+#### Run `sm-dev` without installing
+```sh
+npx sm-dev@latest <command>
+```
+
+- Use `@latest`: a bare `npx sm-dev` keeps running whichever version it downloaded first.
+
+#### Install `sm-dev` globally
+
+This adds `sm-dev` on your path so it can be run directly.
+
+```sh
+npm install -g sm-dev       # or: pnpm add -g sm-dev
+
+# To update later
+npm update -g sm-dev        # or: pnpm update -g --latest sm-dev
+```
+
+#### Add `sourcemonkey` as a dependency in a userscript repo
+
+The `sourcemonkey` package provides `sm-dev`, plus the
+Playwright test fixture and the agent skills:
+
+```sh
+pnpm add -D sourcemonkey @playwright/test   # or: npm install -D sourcemonkey @playwright/test
+pnpm exec playwright install chromium       # or: npx playwright install chromium
+
+# Run it, using the version installed in the repo
+pnpm sm-dev                                 # or: npx sm-dev
+```
+
+> [!NOTE]
+> pnpm skips versions published less than a day ago, so for a day
+> after a release, `@latest` gives the previous one. Add
+> `--config.minimumReleaseAge=0` to get the new one sooner.
+
+#### `sm-dev` version
+
+`sm-dev --version` shows the version that runs, and the directory it's
+installed in. The examples below write it as plain `sm-dev`.
+
+#### Install Chromium
+
+`sm-dev` commands that launch a browser require Chromium, with a specific version
+set by the Playwright library.
+
+`sm-dev` gives the command to install Chromium when needed.
+
 ### Testing your userscripts
 
 Userscripts are hard to test. The hard part is not the script, it is
@@ -514,8 +579,7 @@ userscripts installs SourceMonkey as a package and gets two things:
   so a test can replay it without logging in. It also fetches and loads
   Tampermonkey or Violentmonkey, to run and manage scripts under them.
 
-Both come from npm. Use `pnpm add -D sourcemonkey` in a repo of
-userscripts, or `npx sm-dev` to run `sm-dev` without installing it.
+Both come from npm (see [Getting `sm-dev`](#getting-sm-dev)).
 See [docs/harness-guide.md](docs/harness-guide.md) to use it, and
 [docs/harness-design.md](docs/harness-design.md) for how it works.
 
@@ -532,48 +596,49 @@ ln -s ../../node_modules/sourcemonkey/skills/SourceMonkey-dev .claude/skills/
 ln -s ../../node_modules/sourcemonkey/skills/SourceMonkey-friction .claude/skills/
 ```
 
-`sm-dev --version` shows the version and the directory `sm-dev` is
-installed in. `skills/` is a subdirectory under that.
+`sm-dev --version` shows the directory `sm-dev` is installed in.
+`skills/` is a subdirectory under that.
 
 ### Starting test browsers and running scripts with `sm-dev`
 
-`sm-dev` starts a browser with a userscript manager loaded. Use
+`sm-dev` ([getting it](#getting-sm-dev)) starts a browser with a
+userscript manager loaded. Use
 `--manager sm`, `tm` or `vm` to select SourceMonkey (the default),
 Tampermonkey or Violentmonkey.
 
 ```sh
 # Start a fresh browser with SourceMonkey, in a new profile, closed when the run ends.
-npx sm-dev start
+sm-dev start
 
 # Start a visible browser and leave it running, without an interactive sm-dev prompt.
-npx sm-dev --headed start my-scripts/ --detach
-npx sm-dev status  # Send it commands (like status)
-npx sm-dev stop    # Stop it
+sm-dev --headed start my-scripts/ --detach
+sm-dev status  # Send it commands (like status)
+sm-dev stop    # Stop it
 
 # Start with a script loaded, and open the page its @match names, or the one given.
-npx sm-dev start my-script.user.js
-npx sm-dev start my-script.user.js https://example.com/
+sm-dev start my-script.user.js
+sm-dev start my-script.user.js https://example.com/
 
 # Start all the scripts in a directory. (A tab opens on the first one's default page, if its @match names one.)
-npx sm-dev start my-scripts/
+sm-dev start my-scripts/
 
 # Start the scripts listed in a manifest file (at a path or URL), or one script from a URL.
-npx sm-dev start https://example.com/scripts/script_manifest.json https://example.com/
-npx sm-dev start https://example.com/scripts/my-script.user.js
+sm-dev start https://example.com/scripts/script_manifest.json https://example.com/
+sm-dev start https://example.com/scripts/my-script.user.js
 
 # Start a browser with Tampermonkey or Violentmonkey instead.
-npx sm-dev --manager tm start my-script.user.js
-npx sm-dev --manager vm start my-script.user.js
+sm-dev --manager tm start my-script.user.js
+sm-dev --manager vm start my-script.user.js
 
 # Start a browser on port 9300, with a persistent profile that's kept between launches.
-npx sm-dev --browser 9300 --open-browser
-npx sm-dev --browser 9300 --existing-browser manager install  # once: add SourceMonkey
-npx sm-dev --browser 9300 --existing-browser start my-script.user.js
+sm-dev --browser 9300 --open-browser
+sm-dev --browser 9300 --existing-browser manager install  # once: add SourceMonkey
+sm-dev --browser 9300 --existing-browser start my-script.user.js
 
 # Start with Tampermonkey, using a profile directory of your own.
-npx sm-dev --browser 9301 --open-browser --profile ~/my-browser-profile
-npx sm-dev --browser 9301 --existing-browser --manager tm manager install
-npx sm-dev --browser 9301 --existing-browser --manager tm start my-script.user.js
+sm-dev --browser 9301 --open-browser --profile ~/my-browser-profile
+sm-dev --browser 9301 --existing-browser --manager tm manager install
+sm-dev --browser 9301 --existing-browser --manager tm start my-script.user.js
 ```
 
 - At a terminal, `start` opens the browser's window and a `> ` prompt
@@ -583,8 +648,8 @@ npx sm-dev --browser 9301 --existing-browser --manager tm start my-script.user.j
   ends. Its profile is
   `~/.config/sm-dev/browser-profile-<port>` unless `--profile` selects
   a profile dir explicitly.
-- `npx sm-dev` alone opens an interactive prompt to type commands at.
-- Use `npx sm-dev help`, and see
+- `sm-dev` alone opens an interactive prompt to type commands at.
+- Use `sm-dev help`, and see
   [docs/harness-guide.md](docs/harness-guide.md), for more commands and
   details.
 
@@ -595,13 +660,13 @@ npx sm-dev --browser 9301 --existing-browser --manager tm start my-script.user.j
 over files on disk, with no browser involved:
 
 ```sh
-npx sm-dev validate path/to/scripts/    # a directory, or single files
+sm-dev validate path/to/scripts/    # a directory, or single files
 ```
 
 It reports each script as `ok` or `invalid` with the same message the
 extension would show, plus any warnings.
 
-### Greasy Fork test corpus
+## Greasy Fork test corpus
 
 The Greasy Fork corpus (`greasyfork-testing/`) has test results from a
 sample of real-world userscripts: the 2000 most-installed scripts on Greasy

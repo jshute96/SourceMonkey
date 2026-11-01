@@ -67,7 +67,7 @@ has them log where the tools got in the way.
 
 ### Requirements
 
-- Node 22+ and pnpm.
+- Node 22+ and pnpm (or npm).
 - A browser to work in. By default each run launches its own, with
   SourceMonkey loaded. See [A browser to work in](#a-browser-to-work-in).
 - `@playwright/test` in the repo (`pnpm add -D @playwright/test`), for
@@ -76,8 +76,9 @@ has them log where the tools got in the way.
   it: run `pnpm exec playwright install chromium`, and again after
   each Playwright update, since each version wants its own build.
   - Where `@playwright/test` isn't installed beside it, as under
-    `npx sm-dev`, sm-dev uses its own copy of Playwright, and gives the
-    command to run when that copy's Chromium is missing.
+    `npx sm-dev@latest` or a global install, sm-dev uses its own copy of
+    Playwright, and gives the command to run when that copy's Chromium
+    is missing.
 - For a lasting browser of your own: SourceMonkey loaded in it, with
   "Allow User Scripts" on. See [Setting it up](#setting-it-up).
 
@@ -86,12 +87,18 @@ has them log where the tools got in the way.
 In a repo of userscripts, install the `sourcemonkey` package from npm:
 
 ```sh
-pnpm add -D sourcemonkey
+pnpm add -D sourcemonkey     # or: npm install -D sourcemonkey
 ```
 
-To run `sm-dev` without installing anything, use `npx sm-dev`
-(`npx sm-dev --help`). The `sm-dev` package only runs the command
-from `sourcemonkey`.
+To use `sm-dev` outside a repo:
+
+- **Without installing anything:** `npx sm-dev@latest --help`. A bare
+  `npx sm-dev` keeps running the version npx cached first.
+- **Installed globally:** `npm install -g sm-dev` (or
+  `pnpm add -g sm-dev`), then run `sm-dev`. Update it with the same
+  command and `sm-dev@latest`.
+- The `sm-dev` package only runs the command from `sourcemonkey`.
+- `sm-dev --version` shows which copy runs, and where it's installed.
 
 When you install from a checkout on disk (`file:../SourceMonkey`, while
 working on both), also add this to `package.json`:
@@ -114,8 +121,9 @@ working on both), also add this to `package.json`:
 
 - Installing the package puts `sm-dev` on your project's path (pnpm
   links it into `node_modules/.bin`). Run it as `pnpm sm-dev …` or
-  `pnpm exec sm-dev …`.
-- Without installing it, run `npx sm-dev …`.
+  `pnpm exec sm-dev …` (`npx sm-dev …` with npm).
+- Without installing it, run `npx sm-dev@latest …`.
+- Installed globally, run `sm-dev …`.
 - In a SourceMonkey checkout it is `scripts/sm-dev`. It runs what
   `lib/` has and never builds it; `pnpm run build` does.
 - The examples below write it as plain `sm-dev`.

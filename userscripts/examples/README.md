@@ -26,14 +26,19 @@ no checkout needed. The scripts come from the directory's
 `script_manifest.json`:
 
 ```sh
-npx sm-dev start https://jshute96.github.io/SourceMonkey/userscripts/examples/script_manifest.json \
+# Run with SourceMonkey
+npx sm-dev@latest start \
+  https://jshute96.github.io/SourceMonkey/userscripts/examples/script_manifest.json \
   https://jshute96.github.io/SourceMonkey/userscripts/examples/index.html
-npx sm-dev --manager tm start https://jshute96.github.io/SourceMonkey/userscripts/examples/script_manifest.json \
+
+# Run with Tampermonkey
+npx sm-dev@latest --manager tm start \
+  https://jshute96.github.io/SourceMonkey/userscripts/examples/script_manifest.json \
   https://jshute96.github.io/SourceMonkey/userscripts/examples/index.html
 ```
 
-Two examples need parts GitHub Pages can't serve: the slow route in
-`headers-run-at/`, and a second host for `frames/` (on Pages, its
+Two examples need parts github.io can't serve: the slow route in
+`headers-run-at/`, and a second host for `frames/` (on github.io, its
 Frame B is on the page's own origin). For those, serve the examples
 locally ([Running locally](#running-locally)).
 

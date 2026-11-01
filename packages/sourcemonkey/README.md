@@ -30,7 +30,7 @@ In a repo of userscripts, install it with Playwright, and the Chromium
 build Playwright drives:
 
 ```sh
-pnpm add -D sourcemonkey @playwright/test
+pnpm add -D sourcemonkey @playwright/test   # or: npm install -D sourcemonkey @playwright/test
 pnpm exec playwright install chromium
 pnpm sm-dev --help
 ```
@@ -38,7 +38,14 @@ pnpm sm-dev --help
 Or run `sm-dev` without installing anything:
 
 ```sh
-npx sm-dev --help
+npx sm-dev@latest --help
+```
+
+Or install `sm-dev` globally:
+
+```sh
+npm install -g sm-dev     # or: pnpm add -g sm-dev
+sm-dev --help
 ```
 
 Commands that launch a browser require Chromium. They'll report the command
