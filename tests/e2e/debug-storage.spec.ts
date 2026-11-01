@@ -44,6 +44,9 @@ test.describe('/debug/storage.html page', () => {
     const req = groups.nth(0).locator('tr.group-item', { hasText: '@require' });
     await expect(req.locator('td.num').nth(1)).toHaveText('2');
     await expect(groups.nth(0).locator('tr.group-item', { hasText: 'metadata' }).locator('td.num').nth(1)).toHaveText('');
+    // Its GM values, as one line; the script without any has none.
+    await expect(groups.nth(0).locator('tr.group-item', { hasText: 'stored values' }).locator('td.num').nth(0)).toHaveText('3 KB');
+    await expect(groups.nth(1).locator('tr.group-item', { hasText: 'stored values' })).toHaveCount(0);
     // The script link opens its viewer; the collection link the collections page.
     await expect(groups.nth(0).locator('tr.group-head a').nth(1))
       .toHaveAttribute('href', `../userscript.html?script=${big.id}`);
@@ -71,7 +74,7 @@ test.describe('/debug/storage.html page', () => {
     await expect(page.locator('th.sortable')).toHaveText([/Size/, /Shared copies/]);
 
     // Stored values: only the script that has some.
-    await page.getByRole('button', { name: 'Stored values' }).click();
+    await page.getByRole('button', { name: 'Stored values', exact: true }).click();
     await expect(groups).toHaveCount(1);
     await expect(groups.nth(0)).toContainText('Big Script');
     await expect(groups.nth(0).locator('td.num').nth(0)).toHaveText('3 KB');
@@ -79,9 +82,77 @@ test.describe('/debug/storage.html page', () => {
 
     // The view survives a reload, and the page follows storage changes.
     await page.reload();
-    await expect(page.getByRole('button', { name: 'Stored values' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByRole('button', { name: 'Stored values', exact: true })).toHaveAttribute('aria-pressed', 'true');
     await sw.evaluate((id) => chrome.storage.local.set({ [`gmval:${id}:k2`]: 1 }), big.id);
     await expect(groups.nth(0).locator('td.num').nth(1)).toHaveText('2');
+    await page.close();
+  });
+
+  test('the trash can deletes a script\'s values, asking first for an installed one', async ({
+    extensionContext, extensionId, fixtureServer, getServiceWorker, sm,
+  }) => {
+    // Shows its value of `a` on the page, as its listener hears it.
+    dir.write({
+      relativePath: 'keeper.user.js',
+      meta: {
+        name: 'Keeper', match: [`${fixtureServer.baseUrl}/*`], runAt: 'document-end',
+        grant: ['GM_getValue', 'GM_addValueChangeListener'],
+      },
+      body: `
+        document.body.dataset.a = String(GM_getValue('a'));
+        GM_addValueChangeListener('a', (_k, _o, n) => { document.body.dataset.a = String(n); });
+      `,
+    });
+    const collection = await sm.addCollection(dir.path);
+    await sm.syncNow();
+    const live = (await sm.getCollectionWithScripts(collection!.id))!.scripts[0];
+    await sm.writeGmValues(live.id, [{ key: 'a', value: 1 }, { key: 'b', value: 2 }]);
+    await sm.gmValuesSaved();
+    const site = await extensionContext.newPage();
+    await site.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(site.locator('body')).toHaveAttribute('data-a', '1');
+    // Values whose script row is gone.
+    const sw = await getServiceWorker();
+    const gone = '00000000-0000-4000-8000-000000000000';
+    await sw.evaluate((id) => chrome.storage.local.set({ [`gmval:${id}:k`]: 'v' }), gone);
+    const valueOwners = async () => [...new Set(await sw.evaluate(async () =>
+      Object.keys(await chrome.storage.local.get(null))
+        .filter((k) => k.startsWith('gmval:'))
+        .map((k) => k.split(':')[1])))].sort();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`chrome-extension://${extensionId}/debug/storage.html#values`);
+    const groups = page.locator('#storage-table tbody.group');
+    await expect(groups).toHaveCount(2);
+    const trash = (text: string) => groups.filter({ hasText: text })
+      .getByRole('button', { name: /^Delete \d+ stored values? for this script$/ });
+
+    // A removed script's go on the click.
+    await expect(trash('Removed script')).toHaveAttribute('title', 'Delete 1 stored value for this script');
+    await trash('Removed script').click();
+    await expect(groups).toHaveCount(1);
+    await expect(page.locator('dialog.confirm-dialog')).not.toBeVisible();
+
+    // An installed script's ask first, naming it and its collection.
+    const dialog = page.locator('dialog.confirm-dialog');
+    await trash('Keeper').click();
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator('.dlg-title')).toHaveText('Delete 2 stored values for this script?');
+    await expect(dialog.locator('.dlg-body')).toContainText('Keeper');
+    await expect(dialog.locator('.dlg-body')).toContainText('Collection');
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).not.toBeVisible();
+    expect(await valueOwners()).toEqual([live.id]);
+
+    await trash('Keeper').click();
+    await dialog.getByRole('button', { name: 'Delete' }).click();
+    await expect(page.locator('#storage-empty')).toHaveText('No scripts have stored values.');
+    await sm.gmValuesSaved();
+    expect(await valueOwners()).toEqual([]);
+    expect(await sm.getGmValues(live.id)).toEqual({});
+    // The tab running it heard the delete.
+    await expect(site.locator('body')).toHaveAttribute('data-a', 'undefined');
+    await site.close();
     await page.close();
   });
 

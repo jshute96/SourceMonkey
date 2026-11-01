@@ -122,7 +122,7 @@ import {
 } from './script-blobs.js';
 import { sameScript } from './script-keys.js';
 import { compareInCollection, preferredCopy } from './copy-preference.js';
-import { readValues, valueWritesSaved, wipeValues, writeValues, type WireValueWrite } from './value-store.js';
+import { readValues, scriptValuesSaved, valueWritesSaved, wipeValues, writeValuesFromWorker, type WireValueWrite } from './value-store.js';
 import { connectGrantsKey } from './connect-grants.js';
 import { sourceUsesUnsafeWindow } from '../unsafe-window-use.js';
 import type { VersionProbe } from '../version-probe.js';
@@ -1759,11 +1759,11 @@ export async function writeRunScript(args: RunScriptArgs): Promise<WriteRunScrip
 // Remove run `run`'s test collection, its rows, their GM values, and the
 // text rows behind them. Returns what went, for the caller's
 // registration sync. `removeCollection` deletes the text rows, keeping
-// any that a copy moved into another collection still reads.
+// any that a copy moved into another collection still reads, and the
+// scripts' values.
 export async function removeSmDevCollection(run: string): Promise<{ scriptIds: string[]; collectionId: string | null }> {
   const container = (await getCollections()).find((c) => smDevRunOfContainer(c.path) === run);
   if (!container) return { scriptIds: [], collectionId: null };
-  for (const sid of container.scriptIds) await wipeValues(sid);
   await removeCollection(container.id);
   return { scriptIds: container.scriptIds, collectionId: container.id };
 }
@@ -2206,7 +2206,23 @@ async function replaceValues(scriptId: string, values: Record<string, unknown>):
     .filter((key) => !Object.hasOwn(values, key))
     .map((key) => ({ key, deleted: true }));
   for (const [key, value] of Object.entries(values)) writes.push({ key, value });
-  if (writes.length > 0) await writeValues(scriptId, writes);
+  if (writes.length > 0) await writeValuesFromWorker(scriptId, writes);
+}
+
+// Deletes all of a script's stored values: the storage debug page's
+// trash can. An installed script's go as deletes through the value
+// store, the same as its own `GM_deleteValue`, so a write racing them
+// is ordered after them and its open tabs hear of them. A removed
+// script's rows are just swept. Returns once the deletes are on disk,
+// so the page's reload no longer shows them.
+export async function clearScriptValues(scriptId: string): Promise<void> {
+  assertWorkerContext('write storage');
+  if (await getRow<ScriptMeta>(scriptKey(scriptId))) {
+    await replaceValues(scriptId, {});
+    await scriptValuesSaved(scriptId);
+  } else {
+    await wipeValues(scriptId);
+  }
 }
 
 // Does this container already hold `canonicalPath`?
@@ -2711,11 +2727,13 @@ export async function moveCollection(
 }
 
 export async function removeCollection(id: string): Promise<void> {
+  let removedIds: string[] = [];
   const nextIndex = await mutate(async () => {
     const collection = await getRaw<StoredCollection>(collectionKey(id));
     const ids = await readCollectionIndex();
     const next = ids.filter((sid) => sid !== id);
     const scriptIds = collection?.scriptIds ?? [];
+    removedIds = scriptIds;
     const rows = await getRows(scriptIds.map(scriptKey));
     const removed = scriptIds.map((sid) => rows[scriptKey(sid)] as ScriptMeta | undefined)
       .filter((r): r is ScriptMeta => r !== undefined);
@@ -2734,6 +2752,24 @@ export async function removeCollection(id: string): Promise<void> {
   // write, not inside it: the local write is the one that has to be
   // atomic, and a failure here must not undo a removal that succeeded.
   await pruneRefreshErrors(nextIndex);
+  await forgetRemovedScripts(removedIds);
+}
+
+// What a removed script leaves outside its row: its GM values and its
+// Log. Nothing can bring them back: a script installed again gets a new
+// id, and values and logs are keyed by id.
+// Never throws: the removal itself already landed, and one failed wipe
+// mustn't stop the others or the Logs. A value row left behind shows
+// on the storage debug page, which can delete it.
+async function forgetRemovedScripts(ids: readonly string[]): Promise<void> {
+  for (const id of ids) {
+    try {
+      await wipeValues(id);
+    } catch (err) {
+      console.info(`[SourceMonkey] Deleting the stored values of removed script ${id} failed:`, err);
+    }
+  }
+  await forgetScriptLogs(ids);
 }
 
 // Drop a single script row from storage and remove its ID from the
@@ -2762,8 +2798,8 @@ export async function removeScript(id: string): Promise<void> {
   // After the write, not inside it: the local write is the one that has
   // to be atomic, and a failure here must not undo a removal that
   // succeeded. The refresh path drops rows the same way and clears their
-  // logs the same way.
-  await forgetScriptLogs([id]);
+  // values and logs the same way.
+  await forgetRemovedScripts([id]);
 }
 
 // The text rows (and pushed-file and origin rows) of the scratch and
@@ -3122,7 +3158,7 @@ export async function refreshCollection(
     // After the write, not inside it — same rule `removeScript` follows:
     // the storage.local write is the one that has to be atomic, and a
     // log we failed to clear must not undo a refresh that landed.
-    await forgetScriptLogs(written.droppedIds);
+    await forgetRemovedScripts(written.droppedIds);
     return { collection: written.collection, scripts: written.scripts };
   } catch (err) {
     await setRefreshError(id, describeError(err));
@@ -3695,7 +3731,7 @@ export async function refreshScript(
     && fetched && 'ok' in fetched && !fetched.ok) {
     // The directory doesn't list it and it can't be read: the file is
     // gone. Dropped the way the collection-level refresh drops it
-    // (row, storage key, logs) — see the header comment. Callers
+    // (row, storage key, values, logs) — see the header comment. Callers
     // already handle a null result as "the row went away during the
     // check".
     console.info(`[SourceMonkey] ${prior.relativePath}: file no longer in its directory; dropping the script`);

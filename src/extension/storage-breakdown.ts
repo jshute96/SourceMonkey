@@ -35,7 +35,7 @@ import { jsonBytes, rowBytes } from './storage-usage.js';
 import type { StoredCollection } from './script-store.js';
 import type { ParsedHeader } from '../userscript-header.js';
 
-export type ItemKind = 'script' | 'metadata' | 'require' | 'resource' | 'smdev-text' | 'smdev-file' | 'imported-text' | 'imported-file';
+export type ItemKind = 'script' | 'metadata' | 'require' | 'resource' | 'smdev-text' | 'smdev-file' | 'imported-text' | 'imported-file' | 'values';
 
 // The script a part of storage belongs to.
 export interface ScriptRef {
@@ -51,7 +51,8 @@ export interface StorageItem {
   kind: ItemKind;
   // The `@resource` name.
   name?: string;
-  // Readable location of the file; absent for `metadata` and the text kinds.
+  // Readable location of the file; absent for `metadata`, `values` and
+  // the text kinds.
   location?: string;
   bytes: number;
   // A `blob:` row the script points at that isn't in storage.
@@ -240,19 +241,6 @@ export function buildStorageBreakdown(rows: Record<string, unknown>): StorageBre
     pending.push({ ref, items });
   }
 
-  const scripts: ScriptEntry[] = pending.map(({ ref, items }) => {
-    const full = items.map(({ item, key }) => ({
-      ...item,
-      shared: key === undefined ? 1 : files.get(key)!.uses.length,
-    }));
-    return {
-      ...ref,
-      bytes: full.reduce((sum, it) => sum + it.bytes, 0),
-      shared: Math.max(1, ...full.map((it) => it.shared)),
-      items: full,
-    };
-  });
-
   const unused: FileEntry[] = [];
   const values = new Map<string, ValueEntry>();
   for (const [key, value] of Object.entries(rows)) {
@@ -272,6 +260,23 @@ export function buildStorageBreakdown(rows: Record<string, unknown>): StorageBre
       entry.count++;
     }
   }
+
+  const scripts: ScriptEntry[] = pending.map(({ ref, items }) => {
+    const full: StorageItem[] = items.map(({ item, key }) => ({
+      ...item,
+      shared: key === undefined ? 1 : files.get(key)!.uses.length,
+    }));
+    // Its GM values, as one line: their total, as the Stored values view
+    // shows it.
+    const own = values.get(ref.scriptId);
+    if (own) full.push({ kind: 'values', bytes: own.bytes, shared: 1 });
+    return {
+      ...ref,
+      bytes: full.reduce((sum, it) => sum + it.bytes, 0),
+      shared: Math.max(1, ...full.map((it) => it.shared)),
+      items: full,
+    };
+  });
 
   return { scripts, files: [...files.values()], unused, values: [...values.values()] };
 }

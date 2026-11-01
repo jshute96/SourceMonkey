@@ -103,6 +103,11 @@ async function loaded(scriptId: string, st: ScriptValues): Promise<Map<string, u
   return st.loading;
 }
 
+// The latest sequence number given out.
+export function currentValueSeq(): number {
+  return lastSeq;
+}
+
 // The script's values and the sequence number they're current to.
 export async function readValues(scriptId: string): Promise<ValueSnapshot> {
   const map = await loaded(scriptId, stateFor(scriptId));
@@ -142,6 +147,24 @@ type SaveFailureHandler = (scriptId: string, err: unknown, kind: ValueFailureKin
 let onSaveFailed: SaveFailureHandler = () => undefined;
 export function onValueSaveFailed(handler: SaveFailureHandler): void {
   onSaveFailed = handler;
+}
+
+// Sends writes to every document running the script. Set by
+// `background.ts`, which keeps track of those documents.
+type ValueBroadcaster = (scriptId: string, writes: readonly WireValueWrite[], seq: number) => Promise<void>;
+let broadcast: ValueBroadcaster = async () => undefined;
+export function setValueBroadcaster(handler: ValueBroadcaster): void {
+  broadcast = handler;
+}
+
+// Writes the worker makes itself rather than for a document (a backup
+// import, the storage debug page's delete): applied like a document's,
+// then sent to every document running the script, so their caches and
+// value-change listeners hear of them.
+export async function writeValuesFromWorker(scriptId: string, writes: WireValueWrite[]): Promise<number> {
+  const seq = await writeValues(scriptId, writes);
+  await broadcast(scriptId, writes, seq);
+  return seq;
 }
 
 // Apply one document's writes, in order, and return their sequence
@@ -225,6 +248,13 @@ export async function wipeValues(scriptId: string): Promise<number> {
   st.values = new Map();
   st.lastChange = nextSeq();
   return wipeScriptValues(scriptId);
+}
+
+// Resolves once this script's accepted writes are on disk. Other
+// scripts' saves don't hold it up.
+export async function scriptValuesSaved(scriptId: string): Promise<void> {
+  const st = scripts.get(scriptId);
+  while (st?.saving) await st.saving;
 }
 
 // Saves still running for states `forgetLoadedValues` dropped.

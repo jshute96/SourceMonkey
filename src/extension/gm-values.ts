@@ -4,8 +4,8 @@
 // Layout. Each `(scriptId, key)` lives at its own
 // `gmval:<scriptId>:<key>` row in chrome.storage.local. Rows are
 // independent of `script:<id>` rows so a write doesn't churn the
-// match-index cache; conversely, deleting a script doesn't lose its
-// stored values without an explicit sweep.
+// match-index cache. Removing a script sweeps them separately
+// (`wipeValues`).
 //
 // Why per-key rows (not a per-script object): chrome.storage.local
 // rejects values larger than ~8 KB per row in some Chrome builds,

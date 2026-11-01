@@ -1,6 +1,7 @@
 // A yes/no confirmation in the extension's own dialog shell, for an
 // action one click away from losing something: the script page's
-// trash can on the script it shows.
+// trash can on the script it shows, and the storage debug page's on an
+// installed script's values.
 //
 // Resolves true for the confirm button, false for Cancel or Esc.
 

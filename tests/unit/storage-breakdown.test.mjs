@@ -58,7 +58,7 @@ function sampleRows() {
   };
 }
 
-test('splits each script into its body, files and metadata', () => {
+test('splits each script into its body, files, metadata and values', () => {
   const rows = sampleRows();
   const b = buildStorageBreakdown(rows);
   const s1 = b.scripts.find((s) => s.scriptId === 's1');
@@ -71,8 +71,14 @@ test('splits each script into its body, files and metadata', () => {
   // The require, the other script's require and the resource.
   assert.equal(byKind.require.shared, 3);
   assert.equal(byKind.metadata.bytes, bytes('script:s1', rows['script:s1']));
-  assert.equal(s1.bytes, byKind.script.bytes + byKind.require.bytes + byKind.metadata.bytes);
+  // Its GM values, as one line.
+  assert.equal(byKind.values.bytes, bytes('gmval:s1:k1', 'v1') + bytes('gmval:s1:k2', 'v2'));
+  assert.equal(byKind.values.shared, 1);
+  assert.equal(s1.bytes, byKind.script.bytes + byKind.require.bytes + byKind.metadata.bytes + byKind.values.bytes);
   assert.equal(s1.shared, 3);
+  // A script without values has no values line.
+  const s2 = b.scripts.find((s) => s.scriptId === 's2');
+  assert.ok(s2 && !s2.items.some((i) => i.kind === 'values'));
 });
 
 test('groups uses of the same stored file, and lists unused blobs', () => {

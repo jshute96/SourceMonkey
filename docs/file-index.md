@@ -174,7 +174,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/userscript.ts` | Userscript viewer controller — installed mode (`?script=`), preview mode (`?preview=`), in-page switching between copies, the Collection row's Move button, the controls row's Open site link, Make local copy and remove buttons, the removed-script page, live `storage` watchers, log pane |
 | `src/extension/compare.ts` | Compare page controller — loads two copies (stored, a preview's download, or an import's backup copy), the fields table with its swap, per-file tabs, unified / side-by-side diff rendering, change-block arrows |
 | `src/extension/debug/icons.ts` | Debug icons controller — lists all cached icons with scope, expiry, per-row refresh/delete, and Delete All |
-| `src/extension/debug/storage.ts` | Debug storage controller: renders the By script, By file and Stored values views, sortable headings, live repaint |
+| `src/extension/debug/storage.ts` | Debug storage controller: renders the By script, By file and Stored values views, sortable headings, live repaint, deleting a script's values |
 | `src/extension/resize-observer-loop.ts` | Keeps Chrome's harmless ResizeObserver loop error out of the extension Errors panel |
 | `src/extension/select-all.ts` | The Ctrl/Cmd-A that selects a page's content rather than the page, given what each page wants selected |
 | `src/extension/line-diff.ts` | Pure line diff (Myers) plus hunk folding and change counts, behind the compare page |
@@ -183,7 +183,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/export-dialog.ts` | The export dialog opened from the collections page's ⋯ menus: what to include, Save As, the result |
 | `src/extension/import-dialog.ts` | The import dialog opened from the collections page's ⋯ menu: choose a file, preview against what's installed, choices, result |
 | `src/extension/delete-icon.ts` | Paints the two removal glyphs (record, file) and words their tooltips: Uninstall, or Delete for stored-text scripts |
-| `src/extension/confirm-dialog.ts` | A yes/no confirmation in the shared dialog shell; asks before uninstalling the script on screen |
+| `src/extension/confirm-dialog.ts` | A yes/no confirmation in the shared dialog shell; asks before uninstalling a script or deleting its stored values |
 | `src/extension/delete-dialog.ts` | The delete-local-script-file confirmation: the file and its path, the dependency lists, an on-disk watch, runs the deletion |
 | `src/extension/file-changes.ts` | Paint-time "deleted" / "modified" chips and the per-collection "refresh pending" chip: listing-based probe, new-file scan, pending counts, tagging, tooltips |
 | `src/extension/local-delete.ts` | Deleting a local copy from disk: which scripts qualify, what goes with them, download-history lookup and removal |
@@ -418,7 +418,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/options.spec.ts` | Options-page UI flows: add-directory form, collection removal, per-script toggle |
 | `tests/e2e/page-links.spec.ts` | E2E for cross-page links: new-tab-ness, named-tab reuse, and the header bar's home link |
 | `tests/e2e/site-icons.spec.ts` | E2E tests for the favicon slot: DOM contract, one icon per site + collapse + column fit, cached icons drawn at once, `@icon` override and its load-time warning, relative paths, two-tier cache, blob-URL de-dup, cross-host redirect rejection, schema self-heal, Chrome `_favicon` DB |
-| `tests/e2e/debug-storage.spec.ts` | E2E test for `/debug/storage.html`: each view, shared copies, sorting, live repaint, and the Options page links |
+| `tests/e2e/debug-storage.spec.ts` | E2E test for `/debug/storage.html`: each view, shared copies, sorting, live repaint, deleting values, and the Options page links |
 | `tests/e2e/debug-icons.spec.ts` | E2E test for `/debug/icons.html`: header bar, cached-icon rows, per-row refresh + delete, and Delete All |
 | `tests/e2e/viewer-layout.spec.ts` | E2E tests for the viewer's height: the code box / Log pane fill the viewport, keep a 20-line minimum, and let the page scroll past a tall details panel |
 | `tests/e2e/viewer-select-all.spec.ts` | E2E for the viewer's Ctrl-A: selects exactly the file text from anywhere on the page, or the Log table without its toolbar |
@@ -532,6 +532,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/gm-dom.spec.ts` | E2E tests for `GM_addStyle` / `GM_addElement`: parents, gating, and CSP exemption and reports |
 | `tests/e2e/gm-clipboard.spec.ts` | E2E tests for `GM_setClipboard` via `navigator.clipboard.writeText` — text round-trip, GM4 alias, permission gating |
 | `tests/e2e/gm-value-ordering.spec.ts` | E2E: two tabs churning the same GM value keys end up agreeing with the worker |
+| `tests/e2e/gm-values-removal.spec.ts` | E2E: removing a script deletes its GM values; pages still running it keep theirs; deletes reach live pages |
 | `tests/e2e/gm-storage-quota.spec.ts` | E2E: a GM value save refused for a full storage quota logs one error on the script |
 | `tests/e2e/gm-storage-bfcache.spec.ts` | E2E: a page restored from the back/forward cache reads GM values written while it was cached |
 | `tests/e2e/gm-broadcast.spec.ts` | E2E tests for cross-tab `GM_setValue` broadcast — tab B sees tab A's write, survives an SW restart, re-syncs after a missed write or delete |

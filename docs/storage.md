@@ -845,7 +845,7 @@ An entry in the prior state that the scan no longer reports is
 - **A drop is not reversible.** The row's UUID goes with it, so a file
   that disappears and comes back (a branch switch, an editor that saves
   by unlink+rename) returns as a fresh row: `enabled: true`, an empty
-  Log, and none of its `gmval:` values, which stay orphaned. That's the
+  Log, and no `gmval:` values (the drop deleted them). That's the
   price of not accumulating stale `MISSING` rows; preserving identity
   across a bounce is filed in `TODO.md`.
 
@@ -1076,9 +1076,15 @@ rows the same way as `storage-usage.ts`.
     format 1 row's inline body) is listed as a file of its own.
   - **Stored values**: GM values per script, only for scripts that
     have some.
+    - A trash can at the end of each row deletes that script's values
+      (`clearScriptValues`, through the worker).
+    - For an installed script it asks first, naming the script and its
+      collection. A removed script's go on the click.
 - **A script's parts**:
   - `script`: its body. `@require` and `@resource`: each file.
   - `metadata`: the `script:<id>` row without any body.
+  - `stored values`: the total of its GM values (`gmval:` rows), for a
+    script that has some. The Stored values view also counts them.
   - For a script sm-dev pushed: sm-dev's copy of its text (with the
     `scratchSource:` row) and each file it pushed from disk.
   - A format 1 body still inline in the row counts as its own file,
@@ -1243,7 +1249,7 @@ content, no header) before the refresh that loads it — see
   collection, a bounded few at a time. Used by the collections page's "Refresh All"
   button and by the `?refresh` URL trigger.
 - `removeCollection(id)` — drop the collection row + every child script row +
-  rewrite the index.
+  rewrite the index, and clear those scripts' GM values and Log rows.
 - `moveCollection(id, 'up' | 'down')` — swap the collection one position in
   the `"collections"` index. No-op at the boundary. Only the index row
   is rewritten; per-collection rows untouched.
@@ -1252,8 +1258,10 @@ content, no header) before the refresh that loads it — see
   trash-can button (container collections), the delete-local-file
   dialog, and `refreshScript` when the directory
   no longer lists the file. A collection refresh drops vanished rows
-  the same way — every path also clears the script's session-storage
-  Log rows.
+  the same way — every path also deletes the script's `gmval:` rows
+  and its session-storage Log rows.
+  - Values aren't kept for a later reinstall: that gets a new id, and
+    values are keyed by id, so nothing could reattach them.
 - `refreshScript(scriptId)` — one-file fast path used by the viewer.
   Goes through the same `fetchOrSkipInParallel` + `rebuildCollection`
   pipeline as the collection-level Refresh (so the two paths can't

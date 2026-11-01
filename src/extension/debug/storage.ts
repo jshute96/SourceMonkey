@@ -1,8 +1,12 @@
 // The storage debug page (/debug/storage.html): where
 // `chrome.storage.local` goes, by script, by stored file, or in GM
-// values. Read-only. See docs/storage.md#storage-debug-page.
+// values. Read-only, apart from the Stored values view's trash cans,
+// which delete a script's values. See docs/storage.md#storage-debug-page.
 
 import { collectionAnchorId } from '../collection-display.js';
+import { confirmDialog } from '../confirm-dialog.js';
+import { setDeleteIcon } from '../delete-icon.js';
+import { clearScriptValues } from '../worker-client.js';
 import { installHomeLinkHandler, namedPageUrl, wireNamedTabLink } from '../page-links.js';
 import { timeStorageRead } from '../storage-scan.js';
 import { describeError } from '../script-store.js';
@@ -21,11 +25,13 @@ import {
   type SortDir,
   type SortKey,
   type StorageBreakdown,
+  type ValueEntry,
 } from '../storage-breakdown.js';
 
 type View = 'script' | 'file' | 'values';
 
 const summaryEl = document.getElementById('storage-summary') as HTMLParagraphElement;
+const errorEl = document.getElementById('storage-error') as HTMLParagraphElement;
 const emptyEl = document.getElementById('storage-empty') as HTMLDivElement;
 const tableEl = document.getElementById('storage-table') as HTMLTableElement;
 const viewButtons = [...document.querySelectorAll<HTMLButtonElement>('.views button')];
@@ -82,6 +88,7 @@ const KIND_LABELS: Record<ItemKind, string> = {
   'smdev-file': 'sm-dev pushed file',
   'imported-text': 'Imported script text',
   'imported-file': 'Imported file',
+  values: 'stored values',
 };
 
 // ---------- Cells ----------
@@ -319,6 +326,51 @@ function fileTable(b: StorageBreakdown): HTMLElement[] {
   return parts;
 }
 
+// Deletes a script's values. Asks first for an installed script, whose
+// values it still uses; a removed script's go on the click.
+async function onDeleteValues(v: ValueEntry, btn: HTMLButtonElement): Promise<void> {
+  if (v.script) {
+    const confirmed = await confirmDialog({
+      title: `${deleteValuesLabel(v)}?`,
+      details: [
+        { label: 'Script', value: v.script.scriptName },
+        ...(v.script.collectionId ? [{ label: 'Collection', value: v.script.collectionName }] : []),
+      ],
+      confirmLabel: 'Delete',
+    });
+    if (!confirmed) return;
+  }
+  btn.disabled = true;
+  errorEl.hidden = true;
+  try {
+    await clearScriptValues(v.scriptId);
+  } catch (err) {
+    errorEl.textContent = `Could not delete the stored values: ${describeError(err)}`;
+    errorEl.hidden = false;
+    btn.disabled = false;
+    return;
+  }
+  // Now, not after the storage listener's delay, so the row goes at once.
+  await load();
+}
+
+// "Delete 3 stored values for this script", the trash can's tooltip and
+// its dialog's title.
+function deleteValuesLabel(v: ValueEntry): string {
+  return `Delete ${plural(v.count, 'stored value')} for this script`;
+}
+
+function deleteCell(v: ValueEntry): HTMLTableCellElement {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'remove-script';
+  setDeleteIcon(btn, 'record');
+  btn.title = deleteValuesLabel(v);
+  btn.setAttribute('aria-label', btn.title);
+  btn.addEventListener('click', () => void onDeleteValues(v, btn));
+  return td('delete', btn);
+}
+
 function valuesTable(b: StorageBreakdown): HTMLElement[] {
   const { key, dir } = sorts.values;
   return [
@@ -327,14 +379,15 @@ function valuesTable(b: StorageBreakdown): HTMLElement[] {
       { label: 'Script', sort: 'script' },
       { label: 'Size', sort: 'size', width: 'col-size', num: true },
       { label: 'Values', sort: 'count', width: 'col-count', num: true },
+      { label: '', width: 'col-delete' },
     ]),
     ...sortValues(b.values, key, dir).map((v) => group([
-      row('group-head', v.script
-        ? [collectionCell(v.script), scriptCell(v.script), sizeCell(v.bytes), td('num', numberFormat.format(v.count))]
-        : [
-          td(undefined, span('muted', 'Removed script')), td(undefined, span('loc', v.scriptId)),
-          sizeCell(v.bytes), td('num', numberFormat.format(v.count)),
-        ]),
+      row('group-head', [
+        ...(v.script
+          ? [collectionCell(v.script), scriptCell(v.script)]
+          : [td(undefined, span('muted', 'Removed script')), td(undefined, span('loc', v.scriptId))]),
+        sizeCell(v.bytes), td('num', numberFormat.format(v.count)), deleteCell(v),
+      ]),
     ])),
   ];
 }

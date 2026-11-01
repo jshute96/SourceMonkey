@@ -145,6 +145,8 @@ export interface SmApi {
   gmValuesSaved(): Promise<void>;
   // Write values (wire form) as another tab of the script would.
   writeGmValues(scriptId: string, writes: { key: string; value?: unknown; deleted?: boolean }[]): Promise<void>;
+  // The storage debug page's delete of all of a script's values.
+  clearScriptValues(scriptId: string): Promise<void>;
   // Seeds an entry directly. For tests that need a specific message,
   // level or timestamp without staging the event that would produce it.
   appendScriptLog(scriptId: string, input: {

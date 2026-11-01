@@ -94,6 +94,7 @@ export const setCollectionOptions = op('setCollectionOptions');
 export const revokeConnectHost = op('revokeConnectHost');
 export const forgetDeniedHost = op('forgetDeniedHost');
 export const clearScriptLog = op('clearScriptLog');
+export const clearScriptValues = op('clearScriptValues');
 export const writeSetting = op('writeSetting');
 export const backfillCollectionDisplayNames = op('backfillCollectionDisplayNames');
 export const reconcileScriptMembership = op('reconcileScriptMembership');

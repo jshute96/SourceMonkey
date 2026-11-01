@@ -41,6 +41,9 @@
       col.col-size { width: 80px; }
       col.col-shared { width: 110px; }
       col.col-count { width: 90px; }
+      col.col-delete { width: 44px; }
+      tr.group-head td.delete { padding-top: 3px; }
+      .storage-error { color: #b00; margin: 0 0 10px; }
       th.sortable { cursor: pointer; user-select: none; }
       th.sortable:hover { color: #0969da; }
       th .sort-arrow { color: #0969da; font-size: 10px; margin-left: 3px; }
@@ -81,6 +84,7 @@
         </div>
         <p id="storage-summary" class="summary"></p>
       </div>
+      <p id="storage-error" class="storage-error" hidden></p>
       <div id="storage-empty" class="empty-state" hidden></div>
       <table id="storage-table" class="storage-table" hidden></table>
     </div>

@@ -163,6 +163,7 @@ import {
   type RefreshBatch,
   getScript,
   getScriptMeta,
+  clearScriptValues,
   getScriptMetas,
   getEnablementTimes,
   isScriptEnabled,
@@ -256,8 +257,10 @@ import { managedChanges } from './managed-changes.js';
 import { managedCollection, managedScripts } from './managed-items.js';
 import {
   forgetLoadedValues,
+  currentValueSeq,
   onValueSaveFailed,
   readValues,
+  setValueBroadcaster,
   valueWritesSaved,
   valuesChangedSince,
   writeValues,
@@ -616,6 +619,8 @@ interface SourceMonkeyApi {
   // the script would: stored, and pushed to every tab running it, so
   // its value-change listeners fire. sm-dev's `set`.
   writeGmValues: (scriptId: string, writes: { key: string; value?: unknown; deleted?: boolean }[]) => Promise<void>;
+  // The storage debug page's delete of all of a script's values.
+  clearScriptValues: (scriptId: string) => Promise<void>;
   // The script's log label (`foo.user.js#E4`). Its number is the
   // service worker's to assign, so a test that needs the label cannot
   // predict it: it has to ask.
@@ -846,6 +851,7 @@ const api: SourceMonkeyApi = {
     // No sender tab, so every tab running the script hears it.
     await handleBatchWrite({ scriptId, writes }, {});
   },
+  clearScriptValues,
   // `scriptLogLabel`, not `getScriptLogLabel` — the awaited form, so a
   // test never races the id table and gets a UUID prefix back.
   getScriptLogLabel: scriptLogLabel,
@@ -4843,6 +4849,8 @@ function setDebugForceSnapshotFailure(value: boolean): void {
 // badge shows it: the value store reports the first failure, and again
 // only after a save has worked.
 onValueSaveFailed((scriptId, err, kind) => { void reportValueSaveFailure(scriptId, err, kind); });
+// The worker's own writes (`writeValuesFromWorker`) go to every tab.
+setValueBroadcaster((scriptId, writes, seq) => broadcastValueUpdate(scriptId, writes, seq, undefined));
 
 // Pending Log writes for failures, so the test surface can wait for them.
 const valueFailureReports = new Set<Promise<void>>();
@@ -4887,6 +4895,12 @@ async function handleBatchWrite(
   payload: BatchWritePayload,
   sender: chrome.runtime.MessageSender,
 ): Promise<{ ok: true; seq: number }> {
+  // A script uninstalled while a page still runs it: that page keeps
+  // its own values in memory, but nothing is saved (its values were
+  // deleted with it) or sent to its other copies, which each keep
+  // theirs. Answered as taken, so the page doesn't report every flush
+  // as failed. Any number does: no broadcast for it will follow.
+  if (!(await getScriptMeta(payload.scriptId))) return { ok: true, seq: currentValueSeq() };
   // The store takes the writes into its map at once and saves them
   // behind; nothing here waits for disk. A document that starts now
   // gets them in its snapshot from the same map.
@@ -4990,6 +5004,9 @@ async function handleGmResync(
   const scriptId = payload.scriptId;
   if (typeof scriptId !== 'string' || !scriptId) return { ok: false };
   if (viaBridge(payload) && !(await bridgeMayActAs(scriptId, sender, STORAGE_SUBSYSTEMS))) return { ok: false, error: BRIDGE_DENIED };
+  // An uninstalled script's page keeps the values it has (see
+  // `handleBatchWrite`), rather than taking an empty map.
+  if (!(await getScriptMeta(scriptId))) return { ok: false };
   const tabId = sender.tab?.id;
   if (tabId != null) registerOpener(scriptId, tabId, (sender as { documentId?: string }).documentId);
   const { values, seq } = await loadSnapshotForCheckPending(scriptId);

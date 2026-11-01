@@ -8,7 +8,7 @@
 // bodies).
 
 import {
-  addCollection, backfillCollectionDisplayNames, createCollection, describeError, importScripts, installScript, migrateCollectionKeysForPage, withoutBodies,
+  addCollection, backfillCollectionDisplayNames, clearScriptValues, createCollection, describeError, importScripts, installScript, migrateCollectionKeysForPage, withoutBodies,
   type AddCollectionResult, type InstallTarget, type ScriptMeta, type StoredScript,
   moveCollection, moveScript, reconcileScriptMembership, removeCollection, removeScript, setCollectionOptions,
   setScriptsEnabled,
@@ -76,6 +76,7 @@ const WORKER_OPS = {
   revokeConnectHost,
   forgetDeniedHost,
   clearScriptLog,
+  clearScriptValues,
   // `null` removes the setting.
   async writeSetting(key: string, value: unknown): Promise<void> {
     if (!SETTING_KEYS.includes(key)) throw new Error(`Internal error: ${key} is not a setting a page may change`);

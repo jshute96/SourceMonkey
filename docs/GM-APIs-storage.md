@@ -307,18 +307,46 @@ Who answers the first two, and why not everyone:
 - Each answer is a message to the worker and back, and a storage
   read when the worker hasn't loaded the script's values yet.
 
+## Values of a script removed while pages run it
+
+Removing a script deletes its stored values. Pages already running it
+go on with what they have:
+
+- **Each page keeps its own copy.** Its cache still answers
+  `GM_getValue`, and its writes still change it.
+- **Nothing is saved or shared.** The worker drops the page's writes
+  without storing or broadcasting them, so two pages running the
+  script no longer see each other's writes.
+  - USER_SCRIPT world: `handleBatchWrite` finds no script row and
+    answers as if it took them, so the page logs nothing.
+  - MAIN world: the bridge gate refuses them first (`BRIDGE_DENIED`),
+    since the script no longer matches the page. The page logs
+    "storage flush not confirmed" to its console.
+- **A resync is refused**, so it doesn't empty the page's cache.
+- A reload drops the script from the page.
+
+Deleting an installed script's values (the storage debug page's trash
+can) is different: the deletes go to every page running it, which
+see the values disappear, and their value-change listeners fire. A
+script that only expects empty storage at its start can be confused
+by that until its page reloads.
+
 ## The worker's value store
 
 `src/extension/value-store.ts` is the only code in the worker that
 reads or writes `gmval:` rows. Everything else goes through it:
 script writes, snapshots for new documents and resyncs, sm-dev's
-`values` and `set`, wiping a removed script's values.
+`values` and `set`, wiping a removed script's values, and the storage
+debug page's delete (`clearScriptValues`).
 
 - **State.** Each script's whole value map, loaded from storage the
   first time it's needed and kept until the worker shuts down.
   Callers that ask while it loads share the load.
 - **Writes** change the map at once and get a sequence number. A
   read right after sees them, whether or not they've reached disk.
+  - The worker's own writes (a backup import, the debug page's
+    delete) go through `writeValuesFromWorker`, which also sends them
+    to every tab running the script, as a document's writes are.
 - **Saving.** At most one `chrome.storage.local` write in flight per
   script. Writes that arrive meanwhile are combined, latest per key
   winning, into the next one.

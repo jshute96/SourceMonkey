@@ -65,7 +65,8 @@ details live in the topic-specific docs linked below.
   [site-icons.md](site-icons.md#debug-page).
 - **Debug storage page** (`src/debug/storage.html` + `src/extension/debug/storage.ts`) —
   where `chrome.storage.local` goes: by script, by stored file (with
-  shared copies), and GM values per script. Linked from the Options
+  shared copies), and GM values per script, each with a button to
+  delete them. Linked from the Options
   page's storage section. See
   [storage.md](storage.md#storage-debug-page).
 - **Install capture** (`src/extension/install-capture.ts`) — turns a navigation

@@ -598,8 +598,10 @@ Adding any of these is a catalog entry + a body — nothing structural.
 - **A value write can race a wipe.** `wipeValues` lists a script's
   rows, then removes them; a write landing in between saves a key that
   the removal then deletes from disk, while the store's map keeps it.
-  The only caller removes an sm-dev run's collection, so it's low
-  impact. Fix: hold new saves for the script until the wipe finishes.
+  A tab's write that passes `handleBatchWrite`'s script-row check just
+  as the script is removed can be saved after its wipe, leaving rows
+  for a script that no longer exists. Both are low impact. Fix: hold
+  new saves for the script until the wipe finishes.
 - **sm-dev runs never use the back/forward cache.** Playwright turns
   it off in every browser it launches, sm-dev's included, so a page a
   script runs on is never restored from it, as it often is in Chrome.
@@ -1614,9 +1616,8 @@ The preview (`userscript.html?preview=<url>`) is where a captured
   or tab focus included, which widens the window — and the row's UUID
   goes with it, so a file that vanishes and comes back (branch switch,
   an editor that saves by unlink+rename, a sync client rewriting in
-  place) returns as a fresh row: `enabled: true`, empty Log, and its `gmval:` values orphaned
-  rather than restored (`gm-values.ts` deliberately keeps them for
-  exactly that restore). Remembering `relativePath → id` for recently
+  place) returns as a fresh row: `enabled: true`, empty Log, and no
+  `gmval:` values (the drop deletes them). Remembering `relativePath → id` for recently
   dropped rows on the collection row would close it; the cost is a
   tombstone list to bound and expire, which is what we just got rid of.
 
