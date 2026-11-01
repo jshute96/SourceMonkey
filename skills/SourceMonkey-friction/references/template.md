@@ -2,7 +2,7 @@
 
 This records problems hit while developing userscripts with SourceMonkey (SM)
 tools (`sm-dev`, the Playwright harness, the `SourceMonkey-dev` skill, the
-script manager (the SourceMonkey extension itself), used as input for
+script manager: the SourceMonkey extension itself), used as input for
 improving them. Add new entries at the end, with a `---` line before each.
 
 Use the `SourceMonkey-friction` skill (shipped with SourceMonkey, in

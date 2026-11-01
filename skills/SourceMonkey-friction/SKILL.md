@@ -1,6 +1,6 @@
 ---
 name: SourceMonkey-friction
-description: Record friction from userscript development with SourceMonkey tools (sm-dev, the Playwright harness, the SourceMonkey-dev skill, the script manager) in a shared friction log. Use when finishing a task that ran into problems with those tools (at commit time, or when abandoning the work), without being asked, or when the person asks to log friction.
+description: Record friction from userscript development with SourceMonkey tools (sm-dev, the Playwright harness, the SourceMonkey-dev skill, the script manager) in a shared friction log. Use when finishing a task that ran into problems with those tools (at commit time, or when abandoning the work), without being asked, or when the person asks to log friction. Also covers compacting the log: moving fixed and obsolete items out, and combining the rest.
 ---
 
 # SourceMonkey friction log
@@ -14,12 +14,16 @@ extension itself). It's input for improving those tools.
 
 `SourceMonkey-friction.md`, in the directory *above* the repo you're
 working in (`../SourceMonkey-friction.md`). That keeps it out of any
-one repo, so sessions in several repos share one log.
+one repo, so sessions in multiple repos share one log.
 
 - If the person or the repo's instructions name another path, use that.
 - If the file doesn't exist, create it from
   [references/template.md](references/template.md), which has the
   title, the tags, and the entry format.
+- Next to it, `SourceMonkey-friction-done.md` holds fixed items and
+  `SourceMonkey-friction-obsolete.md` holds items set aside, moved there
+  when the log is compacted (see [Compacting the log](#compacting-the-log)).
+  New entries never go in those.
 
 ## When to add an entry
 
@@ -75,6 +79,14 @@ Follow the template in the log file (or
 - The sm-dev log file paths (from `start` or `status`) if they show
   what happened.
 
+When an item repeats one in the log's Open items section, say so
+with its ID: `Repeat of Open items #5 ("<its summary>")`, or `Related
+to` when it's only close. Compacting adds it to that item's count.
+
+Under a numbered item, indent a sub-bullet to line up with the item's
+text: 3 spaces under `1.` to `9.`, and 4 under `10.` and up. With too
+few spaces, Markdown doesn't nest it under the item.
+
 Be specific: exact commands, error text, and what you tried. An entry
 should make sense to someone fixing the tools months later, without
 the session transcript.
@@ -101,3 +113,59 @@ items stand out.
 A finding about the entry as a whole, rather than one item, goes at
 the entry's end: a `### Update YYYY-MM-DD` heading, then what was
 learned.
+
+## Compacting the log
+
+When the person asks to compact the friction log, or to clean it up,
+do the following. "Items" means both friction and missing-tools items.
+
+1. Make sure a backup exists first. If the person hasn't made one,
+   copy the log to `SourceMonkey-friction.md-MMDD.md` (today's date).
+2. Move each struck-through item, with its notes, to
+   `SourceMonkey-friction-done.md`, under the heading of the entry it
+   came from (add the heading there if it's new). An item from an
+   earlier compacted section goes under that section's heading, with
+   its `#N`. Add to the file; don't rewrite what is there.
+3. Spot-check open items that may be fixed now: try the command, or
+   read the code. Move the fixed ones to the done file too, struck
+   through as in [Notes on earlier items](#notes-on-earlier-items),
+   with a `Fixed (checked YYYY-MM-DD): <how>` note ("checked": found
+   fixed now, with no known commit).
+4. Move to `SourceMonkey-friction-obsolete.md`, naming the entry each
+   came from, items that are:
+   - intended behavior, or already documented as a known limit;
+   - outside the tools: a site's bot wall or outage, the machine, how
+     agents were briefed;
+   - overtaken by later changes;
+   - too obscure to act on: one unconfirmed report where nothing broke.
+
+   Put each under the heading for its reason, reusing the headings
+   already there. Add to the file; don't rewrite what is there.
+5. Rewrite what is left as the log's `## Open items (compacted
+   YYYY-MM-DD)` section, after the log's intro and template and before
+   any new entries, with a `---` line before it:
+   - Start it with a short paragraph: the dates of the entries it
+     covers, where the done, obsolete and backup files are, and that
+     IDs are written into the text.
+   - Combine reports of the same problem into one item, with how many
+     reports and their dates: `(4 reports, 2026-10-02 to 10-14)`.
+   - Describe each as it is now: drop the parts that have been fixed,
+     and keep the concrete examples and ideas that are still useful.
+   - Group items under short `###` headings by area.
+   - Write each item as a plain bullet starting with its ID,
+     `- **#N** [tags] **<summary>** (<N> reports, <dates>)`, numbered
+     straight through all the groups, with sub-bullets indented 4
+     spaces. Not a numbered list: some renderers restart those at 1
+     under each heading, so the numbers shown wouldn't match the
+     "Open items #N" that later entries cite.
+   - Fold an earlier compacted section into the new one: its items keep
+     their counts, plus the new reports, including later items marked
+     as repeats of them. Fold a `Related to` item in when it's the same
+     problem; otherwise it stays its own item.
+   - Number the new section afresh.
+   - Leave out the per-entry "What worked well" and log-path notes.
+     The backup keeps them.
+6. Check every open item went somewhere: the done file, the obsolete
+   file, or an item of the new section.
+7. Re-read the log just before writing it, to check if another session
+   added any new entries concurrently.
