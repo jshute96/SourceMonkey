@@ -167,7 +167,7 @@ test('wait and the actions settle the page, and say what kept it busy', async ({
   expect((await run('wait selector T1 #go')).lines).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The `wait selector` command takes a tab as `--tab T1`, not as an argument\.\n {2}Usage: /)]);
   // Other --words ending the text are text, as is anything quoted.
   expect((await run('wait log \'Running --dry-run mode\' --timeout-seconds 0.2')).lines).toEqual(['[sm-dev] Wait failed: No log line matched "Running --dry-run mode" within 0.2s', searchedTo]);
-  expect((await run('wait T1 log x')).lines).toEqual(['[sm-dev] ERROR: The `wait log` command takes no tab, since it watches all of the run\'s output']);
+  expect((await run('wait T1 log x')).lines[0].split('\n')[0]).toBe('[sm-dev] ERROR: The `wait log` command takes a tab as `--tab T1`, not as an argument.');
   expect((await run('wait 99999999s')).lines).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: A delay can be at most \d+s$/)]);
   // A mistyped flag fails too, so a line of several stops there.
   expect((await run('wait --soon')).ok).toBe(false);

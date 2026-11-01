@@ -233,10 +233,7 @@ export async function waitFor(ctx: ConsoleContext, parsed: ParsedArgs): Promise<
   if (given === null) return false;
   const timeoutMs = given ?? SETTLE_TIMEOUT_MS;
 
-  if (parsed.form === 'log') {
-    if (parsed.tab !== undefined) return mistake('The `wait log` command takes no tab, since it watches all of the run\'s output');
-    return waitForLog(ctx, parsed, timeoutMs);
-  }
+  if (parsed.form === 'log') return waitForLog(ctx, parsed, timeoutMs);
 
   // A plain delay. A tab or `all` before it (`wait T2 3s`) is allowed
   // and has no effect: a delay waits the same whichever tab is named.
@@ -388,7 +385,11 @@ async function waitForLog(ctx: ConsoleContext, parsed: ParsedArgs, timeoutMs: nu
   const given = typeof flags['--since'] === 'string' ? parsePosition(flags['--since']) : undefined;
   if (typeof given === 'object') return mistake(given.error);
   const since = given ?? ctx.previousStart ?? 0;
-  const fits = (record: LogRecord): boolean => inSources(record, sources) && matcher.matches(streamText(record, true));
+  // `--tab T2`: only that tab's lines, its frames' included. All tabs'
+  // by default, or with `--tab all`.
+  const named = parsed.tab !== undefined && parsed.tab.toLowerCase() !== 'all' ? pickTab(ctx, parsed.tab) : undefined;
+  if (named === null) return false;
+  const fits = (record: LogRecord): boolean => (!named || record.tab === named.n) && inSources(record, sources) && matcher.matches(streamText(record, true));
   const found = (record: LogRecord): true => {
     ctx.out(`${LOG_MATCHED}${streamText(record, true)}`);
     ctx.out(foundAt(record.id));
@@ -415,7 +416,7 @@ async function waitForLog(ctx: ConsoleContext, parsed: ParsedArgs, timeoutMs: nu
   // Seen as it streamed, if its source streams; said again, so the
   // reply says it was found.
   if (later) return found(later);
-  ctx.out(`${WAIT_FAILED}No log line matched ${matcher.shown} within ${seconds(timeoutMs)}`);
+  ctx.out(`${WAIT_FAILED}No log line${named ? ` from ${tabName(named)}` : ''} matched ${matcher.shown} within ${seconds(timeoutMs)}`);
   ctx.out(searchedUpTo(logs.position()));
   return false;
 }

@@ -247,15 +247,34 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('cdp Nope.nothing')).toEqual([expect.stringMatching(/^\[sm-dev\] Nope\.nothing failed: /)]);
   expect(await run('cdp nope')).toEqual([expect.stringContaining('`nope` is not a CDP method')]);
   expect(await run('cdp Page.enable Page.reload')).toEqual([expect.stringContaining('A `cdp` command makes one call')]);
-  // A block's calls share a session, so an override one sets holds for
-  // the next; it ends with the command.
+  // The tab's calls share a session, so an override one sets holds for
+  // the next, in later commands too, until `cdp --reset`.
   const dark = '{"expression": "matchMedia(\'(prefers-color-scheme: dark)\').matches", "returnByValue": true}';
   expect(await run(`cdp --tab T1\nEmulation.setEmulatedMedia {"features": [{"name": "prefers-color-scheme", "value": "dark"}]}\nRuntime.evaluate ${dark}`)).toEqual([
     '{}', JSON.stringify({ result: { type: 'boolean', value: true } }, null, 2),
   ]);
-  // Undone as the block's session detaches, which Chrome finishes a
-  // moment after.
-  await expect.poll(() => run(`cdp Runtime.evaluate ${dark}`)).toEqual([JSON.stringify({ result: { type: 'boolean', value: false } }, null, 2)]);
+  expect(await run(`cdp Runtime.evaluate ${dark}`)).toEqual([JSON.stringify({ result: { type: 'boolean', value: true } }, null, 2)]);
+  expect(await page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches)).toBe(true);
+  expect(await run('cdp --reset')).toEqual(['[sm-dev] Dropped the CDP session for T1, undoing what its calls set.']);
+  expect(await run('cdp --reset')).toEqual(['[sm-dev] There was no CDP session for T1.']);
+  // Undone as the session detaches, which Chrome finishes a moment after.
+  await expect.poll(() => page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches)).toBe(false);
+  // An init script runs from the start of each later page.
+  await run('cdp Page.addScriptToEvaluateOnNewDocument {"source": "window.early = document.readyState"}');
+  await page.reload();
+  expect(await page.evaluate(() => (window as unknown as { early?: string }).early)).toBe('loading');
+  // Interception is turned off as the command ends, so loads go on.
+  await run('cdp Fetch.enable');
+  await page.reload({ timeout: 5000 });
+  await run('cdp --reset');
+  // A size override is undone by the reset, back to the page's own size.
+  const size = () => page.evaluate(() => [innerWidth, innerHeight]);
+  const before = await size();
+  await run('cdp Emulation.setDeviceMetricsOverride {"width": 375, "height": 600, "deviceScaleFactor": 1, "mobile": false}');
+  expect(await size()).toEqual([375, 600]);
+  await run('cdp --reset');
+  await expect.poll(size).toEqual(before);
+  await run('cdp --reset');
   // A call cut off by the page loading a new document succeeds; a later
   // call's own failure still fails, the navigation being over by then.
   expect(await runConsoleCommand('cdp Runtime.evaluate {"expression": "new Promise(() => location.reload())", "awaitPromise": true}', ctx)).not.toBe(false);

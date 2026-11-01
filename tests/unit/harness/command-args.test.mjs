@@ -114,11 +114,12 @@ test('a page command takes its tab as --tab, anywhere among its words', () => {
   // --help still shows help, past the mistake.
   assert.equal(typed('click', 'T2 --help').help, true);
   assert.equal(typed('logs', 'all --help').help, true);
-  // Only logs takes --tab all.
+  // logs and wait log take --tab all; the page commands don't.
   assert.equal(typed('logs', '--tab all').tab, 'all');
   assert.equal(typed('click', '.x --tab all').error.split('\n')[0], 'The `click` command doesn\'t take `--tab all`. Name one tab, as in `--tab T2`.');
-  // wait log watches the whole run.
-  assert.equal(typed('wait', 'log x --tab T1').error.split('\n')[0], 'The `wait log` command has no `--tab` flag. The `--tab` flag is for `wait selector` and `wait selector-gone`.');
+  // wait log watches one tab's lines with --tab, all tabs' without.
+  assert.equal(typed('wait', 'log x --tab T1').tab, 'T1');
+  assert.equal(typed('wait', 'T1 log x').error.split('\n')[0], 'The `wait log` command takes a tab as `--tab T1`, not as an argument.');
 });
 
 test('a command about tabs takes its tab as its argument or as --tab, once', () => {

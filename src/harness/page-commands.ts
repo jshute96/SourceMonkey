@@ -563,11 +563,15 @@ export async function runPageCommand(
         return;
       }
       case 'cdp': {
+        const name = input.flags['--file'];
+        const reset = input.flags['--reset'] === true;
+        const alone = !input.text && input.block === undefined && name === undefined;
         // `--file <path>`: the calls from a file, one per line, as a block
         // has them.
-        let calls: CdpCall[] | string;
-        const name = input.flags['--file'];
-        if (typeof name === 'string') {
+        let calls: CdpCall[] | string = [];
+        if (reset && alone) {
+          // Only the reset, below.
+        } else if (typeof name === 'string') {
           if (input.text || input.block !== undefined) {
             sayMistake('The `cdp` command takes calls or `--file <path>`, not both');
             return;
@@ -588,21 +592,36 @@ export async function runPageCommand(
           sayMistake(`${calls}`);
           return;
         }
-        // A session of its own, detached at the end, so what a call
-        // sets for its session (Emulation.* overrides, enabled domains)
-        // ends with the command, as it does for any CDP client. With
-        // `--frame`, on the target the frame is in: its own, or for one
-        // in its parent's process (which Playwright refuses a session
-        // for) the nearest ancestor's that has one, the tab's at the top.
-        // That target reaches all its frames, so the calls name the
-        // frame themselves where they need to; said, with its id.
+        // `--reset`: the tab's lasting session dropped first, which
+        // undoes what its calls set. Alone, that's all.
+        if (reset) {
+          const dropped = await dropTabSession(page);
+          if (alone) {
+            say(ui`${dropped ? 'Dropped the' : 'There was no'} CDP session for ${idRole(`T${tab.n}`)}${dropped ? ', undoing what its calls set' : ''}.`);
+            return;
+          }
+        }
+        // On the tab, its lasting session (`tabSessions`), so what a
+        // call sets for its session (Emulation.* overrides, init
+        // scripts, enabled domains) lasts across loads, as in DevTools.
+        // With `--frame`, a session of its own, detached at the end:
+        // on the target the frame is in, its own, or for one in its
+        // parent's process (which Playwright refuses a session for) the
+        // nearest ancestor's that has one, the tab's at the top. That
+        // target reaches all its frames, so the calls name the frame
+        // themselves where they need to; said, with its id.
         let session: CDPSession | undefined;
+        let lasting = false;
         for (let at: Frame | null = frame ?? null; at && at !== page.mainFrame() && !session; at = at.parentFrame()) {
           session = await page.context().newCDPSession(at).catch(() => undefined);
           if (session && at !== frame) {
             const frameId = await tab.link.frameCdpId(frame!);
             say(ui`${frameShown} is part of ${idRole(`F${tab.link.host.frameIds.number(at)}`)}'s target, so the calls go there.${frameId ? ui` Name the frame in them by its frameId, ${code(frameId)}.` : ''}`);
           }
+        }
+        if (!session && !frame) {
+          lasting = true;
+          session = await tabSession(page);
         }
         if (!session) {
           session = await page.context().newCDPSession(page);
@@ -637,6 +656,9 @@ export async function runPageCommand(
             } catch (err) {
               // Playwright's wrapping, `Protocol error (Page.nope): `, repeats the method.
               const message = plain(err as Error).replace(/^Protocol error \([^)]*\): /, '');
+              // A lasting session that has gone (its target crashed) is
+              // dropped, so the next command gets a new one.
+              if (lasting && /closed|detached/i.test(message)) void dropTabSession(page);
               if (page.isClosed() || CUT_OFF_BY_NAVIGATION.test(message)) {
                 say(page.isClosed() ? `The tab closed before ${method} finished` : `${method} got no answer, since the page navigated`);
                 return;
@@ -662,7 +684,17 @@ export async function runPageCommand(
           // Not waited for: with a dialog open, detaching doesn't finish
           // until it's answered, and the command must return so that
           // accept or dismiss can run.
-          session.detach().catch(() => undefined);
+          if (!lasting) session.detach().catch(() => undefined);
+          else {
+            // What would leave the page waiting on nobody is turned off:
+            // intercepted requests, a paused debugger.
+            const used = (prefix: string): boolean => calls.some((c) => c.method.startsWith(prefix));
+            for (const domain of ['Fetch', 'Debugger']) {
+              if (used(`${domain}.`)) session.send(`${domain}.disable` as never).catch(() => undefined);
+            }
+            // New frames and workers held at their start for a debugger.
+            if (used('Target.setAutoAttach')) session.send('Target.setAutoAttach', { autoAttach: false, waitForDebuggerOnStart: false }).catch(() => undefined);
+          }
           page.off('request', onRequest);
         }
         return;
@@ -804,6 +836,66 @@ const KEYS_BY_LOWER = new Map([
  */
 export function keyName(typed: string): string {
   return keyParts(typed).map((part) => (part.length <= 1 ? part : KEYS_BY_LOWER.get(part.toLowerCase()) ?? part)).join('+');
+}
+
+// Each tab's lasting session for `cdp` calls, until `cdp --reset` or
+// the tab closes, with the page's size before its first call.
+const tabSessions = new WeakMap<Page, { session: CDPSession; size?: PageSize }>();
+
+interface PageSize { width: number; height: number; deviceScaleFactor: number }
+
+// The page's size as its window shows it, for `dropTabSession` to put back.
+function pageSize(page: Page): Promise<PageSize | undefined> {
+  return page.evaluate(() => ({ width: innerWidth, height: innerHeight, deviceScaleFactor: devicePixelRatio })).catch(() => undefined);
+}
+
+/**
+ * `page`'s lasting `cdp` session, opened on first use with the Page
+ * domain on: `Page.addScriptToEvaluateOnNewDocument` scripts run only
+ * with it. That isn't waited for: with a dialog open, it doesn't return
+ * until the dialog is answered. Sent first, it's on before the calls'.
+ */
+async function tabSession(page: Page): Promise<CDPSession> {
+  const held = tabSessions.get(page);
+  if (held) return held.session;
+  const size = await pageSize(page);
+  const session = await page.context().newCDPSession(page);
+  tabSessions.set(page, { session, size });
+  session.send('Page.enable').catch(() => undefined);
+  return session;
+}
+
+// How long `cdp --reset` waits for the session to detach: with a dialog
+// open, it doesn't until the dialog is answered, which the run's next
+// command (`accept`) must be free to do.
+const DETACH_WAIT_MS = 1000;
+
+/**
+ * Detaches `page`'s lasting `cdp` session, which undoes what its calls
+ * set. False when it had none.
+ *
+ * Detaching clears a size override altogether, the viewport a hidden
+ * browser's launch set included (set from another connection, which
+ * the run can't ask to set it again). So a page left at another size
+ * than before the first call gets that size back, on a new lasting
+ * session. Only when the detach changed it: a window a person resized
+ * meanwhile keeps its size.
+ */
+async function dropTabSession(page: Page): Promise<boolean> {
+  const held = tabSessions.get(page);
+  if (!held) return false;
+  tabSessions.delete(page);
+  const attached = await pageSize(page);
+  await Promise.race([held.session.detach().catch(() => undefined), new Promise<void>((r) => setTimeout(r, DETACH_WAIT_MS).unref())]);
+  const before = held.size;
+  const now = await pageSize(page);
+  const differs = (a?: PageSize, b?: PageSize): boolean => !!a && !!b && (a.width !== b.width || a.height !== b.height);
+  if (before && differs(now, attached) && differs(now, before)) {
+    const session = await tabSession(page);
+    await session.send('Emulation.setDeviceMetricsOverride', { ...before, mobile: false }).catch(() => undefined);
+    tabSessions.set(page, { session, size: before });
+  }
+  return true;
 }
 
 // The numpad keys Playwright's layout has with NumLock off (`Numpad1`

@@ -1682,8 +1682,8 @@ acts on the current tab, or the one `--tab` names (`--tab T2`,
 ### `cdp`
 
 `cdp` sends raw CDP calls to the tab, for what can't be done with sm-dev commands
-(mouse wheel, drag, window size). Each command, or block, opens a CDP
-session of its own:
+(mouse wheel, drag, window size). Its calls on a tab share one CDP
+session, which lasts as long as the tab:
 
 ```sh
 sm-dev cdp Input.dispatchMouseEvent '{"type": "mouseWheel", "x": 400, "y": 300, "deltaX": 0, "deltaY": 600}' -- wait
@@ -1699,14 +1699,25 @@ sm-dev cdp Input.dispatchMouseEvent '{"type": "mouseWheel", "x": 400, "y": 300, 
 - A call is a `Domain.method`, then its params as a JSON object (bare,
   or in single quotes).
 - One call per command. A `{{` block, or `--file <path>`, holds
-  several, one per line, sharing a session. They run in order and stop
+  multiple, one per line. They run in order and stop
   at the first failure.
   - Blank lines and `#` comments are skipped, and a mistake names its
     line.
 - `Browser.*` and `Target.*` work too, and default to the tab
   (`Browser.getWindowForTarget` with no params).
-- The session ends with the command or block, and with it anything
-  set for it (`Emulation.*` overrides, enabled domains).
+- What the calls set lasts for the tab, across page loads:
+  `Emulation.*` overrides, `Page.addScriptToEvaluateOnNewDocument`
+  scripts (which run from each new page's start), enabled domains.
+  `cdp --reset` drops the session, which undoes them.
+  - Request interception (`Fetch.*`) and the debugger (`Debugger.*`)
+    are turned off at the end of each command that used them, so the
+    page isn't left waiting.
+  - So is `Target.setAutoAttach`, whose `waitForDebuggerOnStart` holds
+    new frames and workers at their start.
+  - `cdp --reset` also gives the page back its size from before the
+    first call: dropping the session clears a hidden browser's
+    viewport too.
+  - With `--frame`, the calls get a session that ends with the command.
 - `cdp` doesn't wait for the page to settle, and each call gets 10
   seconds to answer.
 
@@ -1917,6 +1928,8 @@ Limits of the heuristic:
   command began (not counting a `wait` or a command that only looks),
   so one a click set off while it settled counts. Then at new ones.
   - `--since <position>` looks from there instead.
+- It sees every tab's lines, or with `--tab T2` that tab's (its
+  frames' included).
 - It sees every source, the page's own lines too, unless
   `--log-source` says otherwise. Each is matched in the form the
   stream would print it, whole: `[page log] KEYUP 143`.

@@ -1890,10 +1890,29 @@ The run commands that drive and read a tab's page (`click`, `type`,
     - With `--script`, bare or naming one, it's an error: the script
       was asked for, and no other world has its scope. `--script` with
       no run script selected is an error too.
-- `cdp` opens a fresh CDP session on the tab (`newCDPSession`) for each
-  command and detaches it after.
-  - Settings the calls make (like `Emulation.*` overrides) end when
-    the command does, and never reach the run's own session.
+- `cdp` keeps one CDP session per tab (`tabSessions`), opened on its
+  first call, so what calls set lasts across commands and page loads,
+  as in DevTools: `Emulation.*` overrides, init scripts, domains.
+  - Agents expected that, and kept losing a viewport, a color scheme
+    or an init script to the next command.
+  - It enables the Page domain when opened, which
+    `Page.addScriptToEvaluateOnNewDocument` scripts need to run.
+  - What would leave the page waiting on nobody is turned off at the
+    end of each command that used it: `Fetch.disable` (intercepted
+    requests), `Debugger.disable` (a pause), `Target.setAutoAttach`
+    off (new frames held for a debugger).
+  - `cdp --reset` detaches it, which undoes what it set. The wait for
+    the detach is cut at a second, since with a dialog open it doesn't
+    finish until the dialog is answered.
+    - Detaching clears a size override altogether, a hidden browser's
+      launch viewport included, which the run can't have set again
+      (another connection set it). So when the detach changed the
+      page's size, the size from before the first call is set back on
+      a new lasting session.
+  - It's apart from the run's own session, but emulation is the page's
+    to share: an override a call sets wins over the run's.
+  - With `--frame`, a session of its own for the command, detached
+    after: a frame's target can change as it navigates.
   - Being a run command, it needs no `targetId` or port: the run
     already has the tab.
   - A command makes one call. A `{{` block or `--file` makes several,

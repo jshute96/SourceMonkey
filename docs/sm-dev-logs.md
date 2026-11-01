@@ -69,7 +69,7 @@ shows the line, once, under its first source's prefix:
 |---|---|---|
 | Stream | `sm,event,script` | Every tab of the run |
 | `logs` | `sm,event,script` | The current tab, and the scripts that ran on it |
-| `wait log` | `all` | Every tab, since the previous command began |
+| `wait log` | `all` | Every tab (or `--tab T2`'s), since the previous command began |
 
 - The stream's sources are the run's, set by `start --log-source`.
   - They're what the run's log file holds, and what a client following

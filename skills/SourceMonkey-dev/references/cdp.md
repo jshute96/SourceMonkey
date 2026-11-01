@@ -42,14 +42,16 @@ $R cdp Browser.getVersion                          # browser-level domains work 
   fails with a message. One cut off by the page navigating (a
   navigating `Runtime.evaluate`) says so, and counts as done.
 - `cdp` doesn't wait for the page to settle. Run `wait` after it.
-- **Session state ends with the command.** `Emulation.*` overrides,
-  enabled domains and event subscriptions last only as long as its
-  session: one command, or one block.
-  - To use one across sm-dev commands, hold a connection open in your
-    own script (below), and clear what you set before it exits.
-  - So a call that sets something up for a later navigation
-    (`Page.addScriptToEvaluateOnNewDocument`) goes in the same block as
-    the `Page.navigate`.
+- **What calls set lasts for the tab**, across later commands and page
+  loads: `Emulation.*` overrides (viewport, color scheme, touch),
+  `Page.addScriptToEvaluateOnNewDocument` scripts (they run from each
+  new page's start, for watching a page from its first moment),
+  enabled domains.
+  - `cdp --reset` drops it all. Do that when a check is done, so later
+    ones don't run with it.
+  - `Fetch.*` interception and `Debugger.*` are turned off at the end
+    of each command, so use them within one block.
+  - With `--frame`, state ends with the command.
 - **A call can't use an earlier call's result.** An `objectId` from
   `Runtime.evaluate` can't be passed to the next call in a block. For
   chains like that, write a script.
@@ -217,9 +219,9 @@ $R wait -- eval '[innerWidth, innerHeight]'
 - It's a real resize: it lasts, affects the window's other tabs, and
   fires `resize` in the page. Put it back when done.
 - A headless browser (a temp browser, unless headed) ignores it. There, use
-  `Emulation.setDeviceMetricsOverride` from a script that keeps its
-  connection open, and `Emulation.clearDeviceMetricsOverride` before it
-  exits. An override left set confuses later measurements.
+  `cdp Emulation.setDeviceMetricsOverride`, which lasts for the tab, and
+  `cdp --reset` when done. An override left set confuses later
+  measurements.
 
 ### Fullscreen
 
@@ -280,9 +282,8 @@ EOF
 ### Other things worth knowing
 
 - **Dark mode, reduced motion, print**: `Emulation.setEmulatedMedia`
-  with `features` (`prefers-color-scheme: dark`). Session-scoped: set
-  it and check the page (`Runtime.evaluate`, `Page.captureScreenshot`)
-  in one `cdp {{` block, or from a script that stays connected.
+  with `features` (`prefers-color-scheme: dark`). It lasts for the
+  tab until `cdp --reset`, so `screenshot` and `eval` after it see it.
 - **Network**: `Network.enable` in a script, then
   `Network.requestWillBeSent` / `Network.responseReceived` events;
   `Network.getResponseBody` for a body. The script's own

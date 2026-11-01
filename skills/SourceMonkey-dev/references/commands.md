@@ -250,7 +250,7 @@ asked to.
 | --- | --- |
 | `wait [T2\|all]` | The tab to settle |
 | `wait selector <css>`, `wait selector-gone <css>` | An element to appear / disappear |
-| `wait log <text>`, `wait log /regex/` | A log line since the previous command began (or `--since`). `--find <text>` works too |
+| `wait log <text>`, `wait log /regex/` | A log line since the previous command began (or `--since`), from any tab (or `--tab T2`). `--find <text>` works too |
 | `wait 500ms`, `wait 2s` | Time (last resort) |
 | `--timeout-seconds S` | Give up after S seconds (default 5). On a delay, it may be given if not shorter |
 

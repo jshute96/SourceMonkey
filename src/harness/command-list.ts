@@ -153,7 +153,12 @@ const SETTLING = ['start', ...TAB_LOADS, 'click', 'hover', 'type', 'key'];
 // whose help lists it themselves (its default differs) aren't here.
 const TIMED = ['start', 'click', 'hover', 'type', 'key', 'eval', 'snapshot', 'probe', 'screenshot', 'closetab', 'load', 'update'];
 // wait log, listed under both Logs and Waiting.
-const WAIT_LOG: HelpCommand = { usage: 'wait log [--find=]<text>', syntax: { args: 'text' }, about: [] };
+const WAIT_LOG: HelpCommand = {
+  usage: 'wait log [--find=]<text>',
+  syntax: { args: 'text', tab: 'flag', tabAll: true },
+  about: [],
+  options: [{ term: '--tab <tab>', about: 'Only lines from a specific tab (`T2`). By default, lines from any tab or none.' }],
+};
 const WAIT_LOG_ABOUT = ['Wait for a log line with the text, or matching `/regex/`, logged since the previous command began.'];
 // The page commands that act in an iframe with `--frame`.
 const IN_FRAME = ['eval', 'click', 'hover', 'type', 'snapshot', 'screenshot', 'probe', 'wait selector', 'wait selector-gone', 'cdp'];
@@ -644,8 +649,11 @@ export const HELP_SECTIONS: HelpSection[] = [
         name: 'cdp',
         summary: 'Send raw Chrome DevTools Protocol calls',
         text: [
-          'Use it for what no other command does. Each `cdp` command is one CDP session.',
-          'A `{{` block or `--file` holds multiple `Method` calls, one per line, run sequentially in that session, stopping after errors.',
+          'Use it for what no other command does.',
+          'Calls on a tab share one CDP session, so what they set lasts for the tab, across page loads: `Emulation.*` overrides, `Page.addScriptToEvaluateOnNewDocument` scripts, enabled domains. `cdp --reset` drops it.',
+          'Request interception (`Fetch.*`), the debugger (`Debugger.*`) and `Target.setAutoAttach` are turned off at the end of each command, so the page isn\'t left waiting.',
+          'With `--frame`, the calls get a session of their own, which ends with the command.',
+          'A `{{` block or `--file` holds multiple `Method` calls, one per line, run in order, stopping after errors.',
           'Lines starting with `#` are comments.',
           '`params` is a JSON object, bare or in single quotes.',
           '',
@@ -662,6 +670,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         ],
         options: [
           { term: '--timeout-seconds S', about: 'Give up on each call after `S` seconds (default: `10`).', commands: ['cdp'] },
+          { term: '--reset', about: 'Drop the tab\'s session first, which undoes what its calls set (overrides, init scripts).', commands: ['cdp'] },
         ],
       },
       {

@@ -703,8 +703,9 @@ $R --json probe '.result' | jq '.selectors[0].count'
 
 For what sm-dev has no command for, `cdp` sends a raw CDP call to a
 tab (the current one, or the one `--tab T2` names), and prints the result as JSON.
-A `{{` block, or `--file`, holds several calls, one per line, on one
-session:
+A `{{` block, or `--file`, holds multiple calls, one per line. Call
+side-effects (emulation, init scripts) last for the tab until
+`cdp --reset`:
 
 ```sh
 $R cdp Input.dispatchMouseEvent '{"type":"mouseWheel","x":400,"y":300,"deltaX":0,"deltaY":600}'
@@ -715,8 +716,8 @@ $R cdp --tab T2 Page.getNavigationHistory
   back and forward, window size, mouse wheel, clicks at a point,
   drag, fullscreen, per-frame tracing.
 - `cdp` doesn't wait for the page to settle. Run `wait` after it.
-- For events, or state that outlasts one command, connect your own CDP
-  client alongside the run (see the reference).
+- For events, connect your own CDP client alongside the run (see the
+  reference).
 - Things sm-dev can do itself are better done there: it waits for the
   page to settle, and its output lands in the run's stream.
 - Some things need no CDP: `eval history.back()` then `wait`,

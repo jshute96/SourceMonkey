@@ -486,7 +486,7 @@ test('commands sent to a run, and stop, refuse what they can\'t act on', () => {
   for (const name of ['open', 'reload', 'newtab']) assert.match(cli(name, '--bogus').out, new RegExp(`^ERROR: The \`${name}\` command has no --bogus flag\\.$`));
   // Then its usage and the flags it does take, for a near miss.
   assert.deepEqual(cli('wait', '--timeout', '9'), { code: 2, out: 'ERROR: The `wait` command has no --timeout flag.' });
-  assert.match(piped('', 'wait', '--timeout', '9').stderr, /^ {2}Usage: `wait \[T<n>\|all\]`\n(.*\n)* {2}Flags: `--timeout-seconds S`, /m);
+  assert.match(piped('', 'wait', '--timeout', '9').stderr, /^ {2}Usage: `wait \[T<n>\|all\]`\n(.*\n)* {2}Flags: .*`--timeout-seconds S`, /m);
   assert.deepEqual(cli('snapshot --out f --bad'), { code: 2, out: 'ERROR: The `snapshot` command has no --bad flag.' });
   // In free text too: a --name word is a flag, so an unknown one is
   // refused rather than run as eval's JavaScript.
@@ -742,7 +742,7 @@ test('each run command takes the flags its help lists, and no others', async () 
   const tab = '--tab';
   const expected = {
     newtab: saved, open: [...saved, tab], reload: [...loads, '--force', tab],
-    closetab: ['--force', T, tab], cdp: ['--file', '--frame', T, tab],
+    closetab: ['--force', T, tab], cdp: ['--file', '--frame', T, '--reset', tab],
     click: ['--at', '--button', '--count', '--modifiers', '--nowait', '--frame', T, tab], hover: ['--at', '--modifiers', '--nowait', '--frame', T, tab],
     type: ['--nowait', '--file', '--clear', '--frame', T, tab], key: ['--nowait', T, tab],
     eval: ['--page', '--script', '--frame', '--file', '--out', T, tab], snapshot: ['--selector', '--visible', '--out', '--find', '--up', '--context', '--limit', '--frame', T, tab],
