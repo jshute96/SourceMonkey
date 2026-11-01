@@ -1076,9 +1076,10 @@ where the page can't get hold of it later:
   reach it, both closed:
   - `.caller`, from a page function the wrap's top level calls
     directly. So that top level (the GM bindings) calls nothing the
-    page could have replaced: `console.info`, `Reflect.apply` and
-    promise-making are the registry's copies (`info`, `apply`,
-    `resolve` / `reject`), taken when the gate was made.
+    page could have replaced: `console.info` and `Reflect.apply` are
+    the registry's copies (`info`, `apply`), taken when the gate was
+    made, and the `GM.*` aliases make their Promises in the runtime
+    (`gm.promised`).
   - V8's stack-trace API (`Error.prepareStackTrace` with
     `CallSite.getFunction`), which hands a page every sloppy function
     on the stack down to the first strict one. So the user program

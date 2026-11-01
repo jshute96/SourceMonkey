@@ -79,6 +79,23 @@ test.describe('examples / gm-resource', () => {
     await page.close();
   });
 
+  test('GM_getResourceURL(name, false) produces a data: URL', async ({
+    extensionContext, fixtureServer, setup,
+  }) => {
+    await setup.installScriptsFrom(__dirname);
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/gm-resource/gm-resource.html`);
+    await expect(page.locator('#runStatus')).toHaveText(/Userscript ran/);
+
+    await page.locator('#btn-img-data').click();
+    const src = await page.locator('#imgSlot img').getAttribute('src');
+    expect(src).toMatch(/^data:image\/svg\+xml;base64,/);
+    expect(atob(src!.slice(src!.indexOf(',') + 1))).toContain('<svg');
+
+    await page.close();
+  });
+
   test('Unknown resource name returns nothing from both APIs', async ({
     extensionContext, fixtureServer, setup,
   }) => {

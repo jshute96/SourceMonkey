@@ -23,6 +23,9 @@
         <em>Content-Type</em> the resource was fetched with so the
         browser dispatches correctly. Tampermonkey returns a
         <code>data:</code> URL instead.</li>
+      <li><code>GM_getResourceURL(name, false)</code> &mdash; returns
+        a base64 <code>data:</code> URL, for pages whose CSP blocks
+        <code>blob:</code> images.</li>
     </ul>
 
     <h2>Details</h2>
@@ -48,6 +51,7 @@
       <button id="btn-css"     type="button">GM_getResourceText: load CSS, then GM_addStyle</button>
       <button id="btn-json"    type="button">GM_getResourceText: parse JSON</button>
       <button id="btn-img"     type="button">GM_getResourceURL: render SVG as &lt;img&gt;</button>
+      <button id="btn-img-data" type="button">GM_getResourceURL(name, false): render as a data: URL</button>
       <button id="btn-missing" type="button">Look up a missing name</button>
     </div>
 

@@ -11,6 +11,7 @@
   "gm-notification/gm-notification.user.js",
   "gm-open-in-tab/gm-open-in-tab.user.js",
   "gm-resource/gm-resource.user.js",
+  "gm-return-values/gm-return-values.user.js",
   "gm-storage/gm-storage.user.js",
   "gm-tab/gm-tab.user.js",
   "gm-value-listeners/gm-value-listeners.user.js",

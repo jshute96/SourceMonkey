@@ -20,7 +20,7 @@
 //   - Exposed to userscripts at runtime via GM_getResourceText
 //     (UTF-8 decode on demand, mojibake-tolerant) and
 //     GM_getResourceURL (blob: URL minted in the page with the
-//     fetched content-type).
+//     fetched content-type, or a data: URL given `false`).
 //
 // Shared semantics:
 //   - resolveScriptResource rules from file-loader: absolute

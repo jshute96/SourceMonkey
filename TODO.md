@@ -469,38 +469,54 @@ The next items came from the 2026-10-31 batch (the `top-rated` and
 `top-daily20261031` labels), checked against Tampermonkey with
 `sm-dev --manager tm` where noted.
 
-- **`GM.getResourceUrl` returns a string, not a Promise**
-  (`gm-resource-url-sync`: 16111).
-  - 16111 calls `GM.getResourceUrl(name).then(...)`, which throws
-    "GM.getResourceUrl(...).then is not a function", so the page stays
-    unformatted.
-  - Under `--manager tm` the unchanged script works (same 1320 lines
-    and 2442 highlight spans as a copy wrapped in `Promise.resolve`).
-    Violentmonkey's `GM.*` aliases are async too.
-  - Likely fix: `gmDotPromised: true` on the `GM_getResourceURL`
-    entry in `src/gm-api-catalog.ts`. Check `GM_getResourceText`'s
-    `GM.` form too, and update docs/supported-GM-APIs.md.
-- **Granting one storage API doesn't give the rest of its group**
+- **Granting one API doesn't give the rest of its group**
   (`grant-by-group`: 473912, 568618).
-  - A probe granting only `GM_setValue` gets `GM_getValue`,
-    `GM_listValues`, `GM_deleteValue`, `GM_addValueChangeListener`,
-    `GM.listValues` and `GM.getValue` under `--manager tm`. In
-    SourceMonkey every one of them is undefined.
+  - Tampermonkey grants by group: any one name grants the whole
+    group, in both its `GM_` and `GM.` forms. Probed 2026-10-31:
+    - Granting only `GM_setValue` gives `GM_getValue`,
+      `GM_listValues`, `GM_deleteValue`, `GM_addValueChangeListener`,
+      `GM.listValues` and `GM.getValue`.
+    - Granting `GM_registerMenuCommand` gives
+      `GM_unregisterMenuCommand`; `GM_getResourceText` gives
+      `GM_getResourceURL`; `GM_addStyle` gives `GM_addElement`.
+    - It works both ways: granting only `GM_getValue` gives
+      `GM_setValue`, `GM_unregisterMenuCommand` gives
+      `GM_registerMenuCommand`, and so on.
+    - Unrelated APIs stay out (`GM_openInTab`, `GM_setClipboard`).
+  - Violentmonkey grants exactly the names listed: `GM_x` doesn't
+    even give `GM.x`. SourceMonkey is in between: it pairs `GM_x`
+    with `GM.x` and nothing more.
   - 473912 grants `GM_getValue`/`GM_setValue` and calls
     `GM.listValues` from its reset command, which throws. 568618
     grants only `GM_setValue` and calls `GM_getValue` at startup.
-  - Fix: when a script grants any storage API, provide the whole
-    group (both the `GM_` and `GM.` forms). Check whether
-    Tampermonkey groups other APIs the same way before generalizing.
-- **`GM_getResourceURL` always returns a `blob:` URL**
-  (`resource-url-blob-csp`: 7596).
-  - DuckDuckGo Lite's CSP allows `data:` images but not `blob:`, so
-    7596's popup icon is blank. A `data:` URL of the same PNG shows.
-  - Tampermonkey returns `data:` URLs
-    (docs/cross-manager-test-results.md); Violentmonkey does when the
-    second argument is `false`.
-  - Possible fix: return a `data:` URL, at least for `(name, false)`,
-    or for small resources.
+  - Fix: follow TM's groups, since providing extra names can't break
+    a script written for VM. The groups seen: storage (values and
+    value-change listeners), resources
+    (`getResourceText`/`getResourceURL`), menu (register/unregister),
+    DOM (`addStyle`/`addElement`). Probe others (tabs, bulk storage)
+    under `--manager tm` before relying on them.
+- **`GM_download` fails on forbidden request headers**
+  (586881, which falls back to `GM_xmlhttpRequest` and still saves).
+  - A `headers` object with `Referer`, `Origin` or `User-Agent` makes
+    `chrome.downloads.download` refuse the whole download: "Unsafe
+    request header name". `headerPairs` in `src/extension/gm-download.ts`
+    passes every header straight through.
+  - Probed 2026-10-31 against a local server that logs request
+    headers:
+    - VM's default download sent all four headers (`Referer`,
+      `Origin`, `User-Agent`, `X-Probe`) and saved the file.
+    - TM's `native` mode did too. Its default mode fetches the same
+      way once the `downloads` permission is granted (in headless the
+      permission prompt never got an answer, so the default-mode
+      probe never made a request).
+    - SourceMonkey made no request and called `onerror`.
+  - Possible fix: keep forbidden headers out of the
+    `chrome.downloads` call and set them with a short-lived DNR rule,
+    as `GM_xmlhttpRequest` does (`src/extension/gm-xhr-headers.ts`,
+    docs/xhr-header-surgery.md). Measure first whether DNR rules apply
+    to `chrome.downloads` requests, and whether a URL fragment tag
+    survives into the download request. Otherwise, fetch in the worker
+    and save the bytes, at least when forbidden headers are given.
 
 ## Cross-manager coverage
 
@@ -1444,6 +1460,14 @@ with a trade-off worth recording:
 
 ## `@require` follow-ups
 
+- **`data:` URLs in `@resource` are refused.** `@resource note
+  data:text/plain;base64,aGVsbG8=` makes the script invalid
+  (`DATA_URL_NOT_SUPPORTED` in `src/external-files.ts`), while TM and
+  VM both install it and serve the body (seen 2026-10-31 under
+  `--manager tm|vm` with `userscripts/examples/gm-return-values/`).
+  Decoding the URL in place of a fetch would cover `@resource`;
+  check what TM and VM do for a `data:` `@require` before allowing
+  that too.
 - **Storage format 2 follow-ups.** Bodies live in shared
   `blob:<sha256>` rows ([storage.md](docs/storage.md#content-blobs)),
   and readers that need only the rows skip them. Still open:

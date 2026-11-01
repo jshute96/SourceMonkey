@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name        SourceMonkey example: gm-resource: GM_getResourceText / GM_getResourceURL
 // @namespace   https://github.com/jshute96/SourceMonkey
-// @version     1.0.6
+// @version     1.0.7
 // @description Read prefetched @resource files as text and as URLs.
 // @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
 // @match       https://jshute96.github.io/SourceMonkey/userscripts/examples/gm-resource/gm-resource.html
@@ -59,10 +59,9 @@
     append(`GM_getResourceText("config") -> greeting="${parsed.greeting}", items=[${parsed.items.join(',')}]`);
   });
 
-  document.getElementById('btn-img').addEventListener('click', () => {
-    const url = GM_getResourceURL('logo');
+  function showImage(url, call) {
     if (typeof url !== 'string') {
-      append('GM_getResourceURL("logo") returned undefined');
+      append(`${call} returned undefined`);
       return;
     }
     const slot = document.getElementById('imgSlot');
@@ -74,7 +73,16 @@
       img.style.border = '1px solid #999';
       slot.appendChild(img);
     }
-    append(`GM_getResourceURL("logo") -> ${url.slice(0, 24)}…`);
+    append(`${call} -> ${url.slice(0, 24)}…`);
+  }
+
+  document.getElementById('btn-img').addEventListener('click', () => {
+    showImage(GM_getResourceURL('logo'), 'GM_getResourceURL("logo")');
+  });
+
+  // `false` asks for a data: URL rather than a blob: one.
+  document.getElementById('btn-img-data').addEventListener('click', () => {
+    showImage(GM_getResourceURL('logo', false), 'GM_getResourceURL("logo", false)');
   });
 
   document.getElementById('btn-missing').addEventListener('click', () => {

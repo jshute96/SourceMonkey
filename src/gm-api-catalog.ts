@@ -70,7 +70,8 @@ export interface GmApiSpec {
   // The legacy `GM_x` name. Always present.
   name: string;
   // The GM4-style alias under the `GM.` namespace, if any. Some APIs
-  // (e.g. unsafeWindow, GM_info itself) don't have a GM. alias.
+  // (e.g. unsafeWindow) don't have a GM. alias. Every `GM.` function
+  // returns a Promise (see `emitGmObject` in gm-bindings.ts).
   gmDotName?: string;
   // `sync` resolves in USER_SCRIPT world without an SW round-trip
   // (storage reads, addStyle, etc.). `async` always goes to the SW.
@@ -82,11 +83,6 @@ export interface GmApiSpec {
   // replaced on the script's `window`). The emitter dispatches on
   // `subsystem` for those.
   kind: ApiKind;
-  // Used by the GM4 `GM.` alias: when truthy, the dot form returns a
-  // Promise even if the legacy `GM_x` form returns synchronously. (GM4
-  // wrapped every storage primitive in a Promise; the legacy form
-  // didn't.)
-  gmDotPromised?: boolean;
   subsystem: ApiSubsystem;
   // Header tags the script must declare for this API to be usable.
   // Currently only `connect` (for `GM_xmlhttpRequest`) and `resource`
@@ -125,16 +121,16 @@ export const GM_APIS: readonly GmApiSpec[] = Object.freeze([
   // ----- Logging -----
   { name: 'GM_log', gmDotName: 'log', kind: 'sync', subsystem: 'log' },
 
-  // ----- Storage (sync return; GM. form returns Promise per GM4) -----
-  { name: 'GM_setValue', gmDotName: 'setValue', gmDotPromised: true, kind: 'sync', subsystem: 'storage' },
-  { name: 'GM_getValue', gmDotName: 'getValue', gmDotPromised: true, kind: 'sync', subsystem: 'storage' },
-  { name: 'GM_deleteValue', gmDotName: 'deleteValue', gmDotPromised: true, kind: 'sync', subsystem: 'storage' },
-  { name: 'GM_listValues', gmDotName: 'listValues', gmDotPromised: true, kind: 'sync', subsystem: 'storage' },
+  // ----- Storage -----
+  { name: 'GM_setValue', gmDotName: 'setValue', kind: 'sync', subsystem: 'storage' },
+  { name: 'GM_getValue', gmDotName: 'getValue', kind: 'sync', subsystem: 'storage' },
+  { name: 'GM_deleteValue', gmDotName: 'deleteValue', kind: 'sync', subsystem: 'storage' },
+  { name: 'GM_listValues', gmDotName: 'listValues', kind: 'sync', subsystem: 'storage' },
   // Bulk forms (TM 5.x, VM 2.19.1+): the per-key calls applied to each
   // key, so writes go into the same batch and listeners fire per key.
-  { name: 'GM_getValues', gmDotName: 'getValues', gmDotPromised: true, kind: 'sync', subsystem: 'storage' },
-  { name: 'GM_setValues', gmDotName: 'setValues', gmDotPromised: true, kind: 'sync', subsystem: 'storage' },
-  { name: 'GM_deleteValues', gmDotName: 'deleteValues', gmDotPromised: true, kind: 'sync', subsystem: 'storage' },
+  { name: 'GM_getValues', gmDotName: 'getValues', kind: 'sync', subsystem: 'storage' },
+  { name: 'GM_setValues', gmDotName: 'setValues', kind: 'sync', subsystem: 'storage' },
+  { name: 'GM_deleteValues', gmDotName: 'deleteValues', kind: 'sync', subsystem: 'storage' },
 
   // ----- Value-change listeners (sync register/unregister) -----
   { name: 'GM_addValueChangeListener', gmDotName: 'addValueChangeListener', kind: 'sync', subsystem: 'storage-listener' },
@@ -171,7 +167,7 @@ export const GM_APIS: readonly GmApiSpec[] = Object.freeze([
   { name: 'GM_openInTab', gmDotName: 'openInTab', kind: 'async', subsystem: 'tab' },
   // Per-tab objects kept by the SW while the tab is open. Each takes an
   // optional callback, as in TM, and returns a Promise when given none,
-  // which is what the `GM.` form passes through.
+  // which is what the `GM.` form returns.
   { name: 'GM_getTab', gmDotName: 'getTab', kind: 'async', subsystem: 'tab-data' },
   { name: 'GM_saveTab', gmDotName: 'saveTab', kind: 'async', subsystem: 'tab-data' },
   { name: 'GM_getTabs', gmDotName: 'getTabs', kind: 'async', subsystem: 'tab-data' },

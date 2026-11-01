@@ -54,7 +54,7 @@ test('emitGmBindings: every script gets the module names and Firefox stand-ins',
     const out = emitGmBindings(granted, makeInfo());
     // eslint-disable-next-line no-new-func
     const names = new Function('__smReg', `${out.js}; return { exports, module, define, cloneInto, exportFunction, createObjectIn };`)({
-      info: () => {}, apply: Reflect.apply, resolve: (v) => Promise.resolve(v), reject: (e) => Promise.reject(e), gm: {},
+      info: () => {}, apply: Reflect.apply, gm: {},
     });
     assert.equal(names.exports, undefined);
     assert.equal(names.module, undefined);
@@ -140,7 +140,7 @@ test('emitGmBindings: GM_getResourceURL routes to reg.gm.resource.getUrl', () =>
     grants: ['GM_getResourceURL'],
   }));
   assert.match(out.js, /const GM_getResourceURL = function/);
-  assert.match(out.js, /__smReg\.gm\.resource\.getUrl\("script-1"/);
+  assert.match(out.js, /__smReg\.gm\.resource\.getUrl\("script-1", name, isBlobUrl\)/);
 });
 
 test('emitGmBindings: resource.init emitted in js when resources are declared', () => {
@@ -203,7 +203,7 @@ test('emitGmBindings: GM_getTab / GM_saveTab / GM_getTabs route to reg.gm.tabDat
   assert.match(out.js, /const GM_getTab = function \(callback\) \{ return __smReg\.gm\.tabData\.get\("script-1", callback\)/);
   assert.match(out.js, /const GM_saveTab = function \(tab, callback\) \{ return __smReg\.gm\.tabData\.save\("script-1", tab, callback\)/);
   assert.match(out.js, /const GM_getTabs = function \(callback\) \{ return __smReg\.gm\.tabData\.list\("script-1", callback\)/);
-  assert.match(out.js, /getTab: function \(\) \{ return __smReg\.apply\(GM_getTab, null, arguments\)/);
+  assert.match(out.js, /getTab: function \(\) \{ return __smReg\.gm\.promised\(GM_getTab, arguments\); \}/);
   assert.doesNotMatch(out.js, /"sm:gm-call"/);
 });
 
@@ -222,18 +222,26 @@ test('emitGmBindings: GM_download routes to reg.gm.download.start with the scrip
   assert.doesNotMatch(out.js, /"sm:gm-call"[^}]*GM_download/);
 });
 
-test('emitGmBindings: GM.download is a pass-through alias (returns the control object)', () => {
+test('emitGmBindings: GM.download starts the download in Promise mode', () => {
   const out = emitGmBindings(['GM_download'], makeInfo({ grants: ['GM_download'] }));
-  assert.match(out.js, /download: function [^}]*__smReg\.apply\(GM_download, null, arguments\)/);
-  assert.doesNotMatch(out.js, /download: function [^}]*Promise\.resolve\(GM_download/);
+  assert.match(out.js, /download: function \(detailsOrUrl, name\) \{ return __smReg\.gm\.download\.start\("script-1", detailsOrUrl, name, true\)/);
 });
 
-test('emitGmBindings: GM.log is a pass-through alias (no Promise wrap)', () => {
-  // GM_log is kind:sync without gmDotPromised, so the GM4 alias should
-  // be a pass-through, not Promise-wrapped.
-  const out = emitGmBindings(['GM_log'], makeInfo({ grants: ['GM_log'] }));
-  assert.match(out.js, /log: function [^}]*__smReg\.apply\(GM_log, null, arguments\)/);
-  assert.doesNotMatch(out.js, /log: function [^}]*Promise\.resolve\(GM_log/);
+test('emitGmBindings: GM. forms of sync APIs return a Promise', () => {
+  const grants = ['GM_log', 'GM_getResourceURL', 'GM_getResourceText', 'GM_registerMenuCommand'];
+  const out = emitGmBindings(grants, makeInfo({ grants }));
+  for (const [dot, gm] of [['log', 'GM_log'], ['getResourceUrl', 'GM_getResourceURL'], ['getResourceText', 'GM_getResourceText'],
+    ['registerMenuCommand', 'GM_registerMenuCommand']]) {
+    assert.match(out.js, new RegExp(`${dot}: function \\(\\) \\{ return __smReg\\.gm\\.promised\\(${gm}, arguments\\); \\}`), dot);
+  }
+});
+
+test('emitGmBindings: GM.addStyle / GM.addElement / GM.openInTab return the thenable value, a throw rejecting', () => {
+  const grants = ['GM_addStyle', 'GM_addElement', 'GM_openInTab'];
+  const out = emitGmBindings(grants, makeInfo({ grants }));
+  assert.match(out.js, /addStyle: function \(\) \{ return __smReg\.gm\.promised\(GM_addStyle, arguments, true\); \}/);
+  assert.match(out.js, /addElement: function \(\) \{ return __smReg\.gm\.promised\(GM_addElement, arguments, true\); \}/);
+  assert.match(out.js, /openInTab: function \(\) \{ return __smReg\.gm\.promised\(GM_openInTab, arguments, true\); \}/);
 });
 
 test('emitGmBindings: GM_xmlhttpRequest routes to reg.gm.xhr.start', () => {
@@ -254,8 +262,8 @@ test('emitGmBindings: emits a GM object with the GM4 aliases for granted APIs', 
   assert.match(out.js, /const GM = \{ /);
   assert.match(out.js, /setValue:/);
   assert.match(out.js, /xmlHttpRequest:/);
-  // GM4 storage forms wrap in a promise, through the registry's copies.
-  assert.match(out.js, /setValue: function [^}]*__smReg\.resolve\(__smReg\.apply\(GM_setValue/);
+  // GM4 forms wrap in a guarded promise, through the runtime.
+  assert.match(out.js, /setValue: function \(\) \{ return __smReg\.gm\.promised\(GM_setValue, arguments\); \}/);
 });
 
 test('emitGmBindings: GM.info is exposed (not GM.GM_info)', () => {

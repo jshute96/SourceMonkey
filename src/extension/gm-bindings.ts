@@ -398,14 +398,14 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
   }
   // Resource subsystem: GM_getResourceText decodes the stored bytes
   // as UTF-8 on demand; GM_getResourceURL mints a blob: URL with the
-  // stored content-type. Both lookups close over scriptId so the
+  // stored content-type (or a data: URL, given `false`). Both lookups close over scriptId so the
   // runtime can find the script's prefetched resource map.
   if (spec.subsystem === 'resource') {
     switch (spec.name) {
       case 'GM_getResourceText':
         return `const GM_getResourceText = function (name) { return __smReg.gm.resource.getText(${jsLit(scriptId)}, name); };`;
       case 'GM_getResourceURL':
-        return `const GM_getResourceURL = function (name) { return __smReg.gm.resource.getUrl(${jsLit(scriptId)}, name); };`;
+        return `const GM_getResourceURL = function (name, isBlobUrl) { return __smReg.gm.resource.getUrl(${jsLit(scriptId)}, name, isBlobUrl); };`;
     }
   }
   if (spec.kind === 'sync') {
@@ -441,12 +441,13 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
 
 // Build the GM4 namespace object — `const GM = { ... }`. Not frozen, as
 // in TM and VM: GM_config and other libraries add to it.
-// For each granted API with a `gmDotName`, expose a property on `GM`.
-// When `gmDotPromised` is true, wrap the GM_x return value in a promise
-// so the GM4 caller can `await` it uniformly. Both go through the
-// registry's copies (`apply`, `resolve`, `reject`): a page that replaced
-// `Function.prototype.apply` or `Promise.resolve` would otherwise be
-// handed the GM function itself.
+// For each granted API with a `gmDotName`, expose a property on `GM`
+// that returns a Promise, as GM4 defines and TM does for every one (VM
+// only for some). Most wrap the GM_x return value in a guarded Promise
+// (`gm.promised` in the runtime), a throw rejecting it. The call goes
+// through the runtime's captured `Reflect.apply`: a page that replaced
+// `Function.prototype.apply` would otherwise be handed the GM function
+// itself.
 function emitGmObject(grantedSpecs: readonly GmApiSpec[], scriptId: string): string {
   const props: string[] = [];
   for (const spec of grantedSpecs) {
@@ -462,17 +463,21 @@ function emitGmObject(grantedSpecs: readonly GmApiSpec[], scriptId: string): str
       props.push(`xmlHttpRequest: function (details) { return __smReg.gm.xhr.start(${jsLit(scriptId)}, details, true); }`);
       continue;
     }
-    if (spec.gmDotPromised) {
-      // The legacy GM_x can be sync (storage reads from cache) or
-      // throw (sync stub). Wrap in a Promise so the GM4 alias
-      // matches its documented signature unconditionally.
-      props.push(
-        `${spec.gmDotName}: function () { try { return __smReg.resolve(__smReg.apply(${spec.name}, null, arguments)); } catch (e) { return __smReg.reject(e); } }`,
-      );
-    } else {
-      // Pass-through: same call shape, same return.
-      props.push(`${spec.gmDotName}: function () { return __smReg.apply(${spec.name}, null, arguments); }`);
+    // A Promise that settles when the download does, with `abort` on
+    // it, as in TM, where GM_download returns `{abort}` right away.
+    if (spec.name === 'GM_download') {
+      props.push(`download: function (detailsOrUrl, name) { return __smReg.gm.download.start(${jsLit(scriptId)}, detailsOrUrl, name, true); }`);
+      continue;
     }
+    if (spec.subsystem === 'dom' || spec.name === 'GM_openInTab') {
+      // GM_addStyle / GM_addElement / GM_openInTab already return their
+      // value with a one-shot `then` (see `thenable` in the runtime),
+      // which serves both `.then` callers and scripts that use the
+      // value directly, as VM's do. A Promise would hide the value.
+      props.push(`${spec.gmDotName}: function () { return __smReg.gm.promised(${spec.name}, arguments, true); }`);
+      continue;
+    }
+    props.push(`${spec.gmDotName}: function () { return __smReg.gm.promised(${spec.name}, arguments); }`);
   }
   if (props.length === 0) return '';
   return `const GM = { ${props.join(', ')} };`;

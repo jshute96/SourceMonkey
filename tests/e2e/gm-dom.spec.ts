@@ -346,6 +346,45 @@ test.describe('GM_addStyle / GM_addElement (Phase 4)', () => {
     await page.close();
   });
 
+  test('GM.addStyle / GM_addStyle return the element, which also works with then and await', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'GMAddStyleThenable',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_addStyle', 'GM_addElement'],
+      },
+      body: `
+        (async () => {
+          const out = [];
+          const direct = GM.addStyle('#a {}');
+          out.push(direct instanceof HTMLStyleElement);
+          const awaited = await GM.addStyle('#b {}');
+          out.push(awaited instanceof HTMLStyleElement && awaited.textContent === '#b {}');
+          const viaThen = await new Promise((ok) => GM.addStyle('#c {}').then(ok));
+          out.push(viaThen instanceof HTMLStyleElement && viaThen.textContent === '#c {}');
+          const legacy = await GM_addStyle('#d {}');
+          out.push(legacy instanceof HTMLStyleElement);
+          // A throw (no tag name) comes back as a rejection.
+          out.push(await GM.addElement('').then(() => 'resolved', () => 'rejected'));
+          document.body.dataset.smThenable = out.join(',');
+        })();
+      `,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-thenable', 'true,true,true,true,rejected');
+    await page.close();
+  });
+
   test('ungranted GM_addStyle is not callable', async ({
     extensionContext,
     fixtureServer,

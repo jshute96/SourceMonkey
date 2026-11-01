@@ -140,6 +140,40 @@ test.describe('GM_openInTab', () => {
     await page.close();
   });
 
+  test('GM.openInTab returns the control object, which also works with await', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'OpenTabGmDot',
+        match: [`${fixtureServer.baseUrl}/target.html`],
+        runAt: 'document-end',
+        grant: ['GM_openInTab'],
+      },
+      body: `
+        (async () => {
+          const ctl = GM.openInTab(${JSON.stringify(`${fixtureServer.baseUrl}/other.html`)}, true);
+          const direct = typeof ctl.close === 'function';
+          const awaited = await ctl;
+          document.body.dataset.smGmDot = [direct, awaited === ctl].join(',');
+        })();
+      `,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    const newTabPromise = extensionContext.waitForEvent('page');
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-gm-dot', 'true,true');
+    const opened = await newTabPromise;
+    await opened.close();
+    await page.close();
+  });
+
   test('ungranted GM_openInTab is undefined in scope', async ({
     extensionContext,
     fixtureServer,

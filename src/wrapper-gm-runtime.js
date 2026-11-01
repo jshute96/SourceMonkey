@@ -39,14 +39,12 @@
   var reg = (function (k) {
     var g = document.__smGate;
     if (typeof g !== "function") {
-      var m = Object.create(null), c = Object.create, a = Reflect.apply, p = Promise;
+      var m = Object.create(null), c = Object.create, a = Reflect.apply;
       var i = console.info.bind(console);
-      var rs = function (v) { return new p(function (y) { y(v); }); };
-      var rj = function (e) { return new p(function (y, n) { n(e); }); };
       g = function (x) {
         if (typeof x !== "string") return void 0;
         var r = m[x];
-        if (!r) { r = c(null); r.apply = a; r.resolve = rs; r.reject = rj; r.info = i; m[x] = r; }
+        if (!r) { r = c(null); r.apply = a; r.info = i; m[x] = r; }
         return r;
       };
       var d = c(null);
@@ -1778,10 +1776,27 @@
     } catch (_e) { return false; }
   }
 
+  /* GM_addStyle and GM_addElement return the element with a one-shot
+     `then` on it, as VM does, and GM_openInTab its control object. So
+     `.then(...)` and `await` work (TM's `GM.` forms give a Promise of
+     the value), and so does using the value directly (VM's give the
+     value). `then` clears itself before resolving: resolving with an
+     object that has a `then` calls it again, so `await` would
+     otherwise never finish. It leaves an own `then` of undefined
+     rather than deleting it, so resolving doesn't read one a page put
+     on a prototype. */
+  function thenable(obj) {
+    setOwnBare(obj, "then", function (onOk, onErr) {
+      setOwnBare(obj, "then", undefined);
+      return guarded(new _Promise(function (resolve) { resolve(obj); })).then(onOk, onErr);
+    });
+    return obj;
+  }
+
   var dom = {
     /* GM_addStyle(css): create <style>, set its textContent, attach
        to (document.head || document.documentElement). Returns the
-       style element. */
+       style element, made thenable. */
     addStyle: function (scriptId, css) {
       var el = _docCreateElement ? _docCreateElement("style") : document.createElement("style");
       el.textContent = String(css == null ? "" : css);
@@ -1790,7 +1805,7 @@
         var why = insertNode(parent, el);
         if (why !== null && styleWasBlocked(el)) reportBlockedStyle(scriptId, "GM_addStyle", why);
       }
-      return el;
+      return thenable(el);
     },
     /* GM_addElement: two signatures (both call shapes match TM/VM;
        the no-parent default-parent rule matches VM — TM always
@@ -1839,7 +1854,7 @@
           reportBlockedStyle(scriptId, "GM_addElement", notRelayed);
         }
       }
-      return el;
+      return thenable(el);
     },
   };
 
@@ -1853,7 +1868,8 @@
        - getUrl decodes base64 → Blob → blob: URL on first call,
          caches the URL per name. Subsequent calls return the same
          URL (matches TM — userscripts that compare `===` between two
-         GM_getResourceURL calls get the same value).
+         GM_getResourceURL calls get the same value). Given `false`
+         as its second argument, it returns a `data:` URL instead.
      The blob: URL is alive for the document's lifetime; we don't
      URL.revokeObjectURL on bfcache since the wrapper runtime itself
      stays around. */
@@ -1865,6 +1881,7 @@
       byName: _ObjectCreate(null),
       textCache: _ObjectCreate(null),
       urlCache: _ObjectCreate(null),
+      dataUrlCache: _ObjectCreate(null),
     };
     resourceBoxes[scriptId] = b;
     return b;
@@ -1894,6 +1911,7 @@
       b.byName = _ObjectCreate(null);
       b.textCache = _ObjectCreate(null);
       b.urlCache = _ObjectCreate(null);
+      b.dataUrlCache = _ObjectCreate(null);
       if (!items || typeof items !== "object") return;
       var keys = _ObjectKeys(items);
       for (var i = 0; i < keys.length; i++) {
@@ -1928,11 +1946,24 @@
        resource bytes, with the stored Content-Type as the blob MIME.
        Empty CT falls back to application/octet-stream so the browser
        has *something* to dispatch on (matches VM). Returns undefined
-       when the name isn't declared. */
-    getUrl: function (scriptId, name) {
+       when the name isn't declared.
+
+       A falsy `isBlobUrl` (`false`) gives a base64 `data:` URL instead,
+       as in VM (TM always gives one). Some pages' CSP allows `data:` images
+       but not `blob:` ones. */
+    getUrl: function (scriptId, name, isBlobUrl) {
       var b = resourceBoxes[scriptId];
       if (!b) return undefined;
       var key = String(name);
+      /* As in VM, any falsy value given (not left out) asks for data:. */
+      if (isBlobUrl !== undefined && !isBlobUrl) {
+        if (_ReflectApply(_hasOwn, b.dataUrlCache, [key])) return b.dataUrlCache[key];
+        if (!_ReflectApply(_hasOwn, b.byName, [key])) return undefined;
+        var res = b.byName[key];
+        var dataUrl = "data:" + (res.ct || "application/octet-stream") + ";base64," + res.b64;
+        b.dataUrlCache[key] = dataUrl;
+        return dataUrl;
+      }
       if (_ReflectApply(_hasOwn, b.urlCache, [key])) return b.urlCache[key];
       if (!_ReflectApply(_hasOwn, b.byName, [key])) return undefined;
       if (!_Blob || !_URL_createObjectURL) return undefined;
@@ -2889,7 +2920,7 @@
         try { console.info("[SourceMonkey] GM_openInTab send failed:", err && err.message || err); } catch (_e) {}
         dispatchTabClose(requestId);
       });
-      return control;
+      return thenable(control);
     },
   };
   function dispatchTabClose(requestId) {
@@ -3208,11 +3239,38 @@
   }
 
   var download = {
-    start: function (scriptId, detailsOrUrl, name) {
-      var d = normalizeDownloadArgs(detailsOrUrl, name);
+    /* GM_download returns `{abort}`. With `asPromise` (GM.download, as
+       in TM) it returns a Promise instead, with `abort` on it: it
+       resolves with `onload`'s argument. An error, timeout or abort
+       rejects it with its callback's argument, or resolves it with that
+       when the script gave that callback, as in TM, so a script that
+       handles errors in callbacks gets no unhandled rejection.
+       `details`' callbacks still run. */
+    start: function (scriptId, detailsOrUrl, name, asPromise) {
+      var d;
+      if (asPromise) {
+        try { d = normalizeDownloadArgs(detailsOrUrl, name); }
+        catch (e) { return guarded(new _Promise(function (_ok, fail) { fail(e); })); }
+      } else {
+        d = normalizeDownloadArgs(detailsOrUrl, name);
+      }
+      var settle = null;
+      var promise = null;
+      if (asPromise) {
+        promise = guarded(new _Promise(function (resolve, reject) {
+          settle = function (ok, value) {
+            if (!ok) return reject(value);
+            /* Resolving reads the value's `then`: an own one, undefined,
+               keeps it from a page getter on `Object.prototype`. */
+            setOwnBare(value, "then", undefined);
+            resolve(value);
+          };
+        }));
+      }
       var requestId = "dl-" + (_downloadNextId++) + "-" + Math.random().toString(36).slice(2, 10);
       var inPage = isInPageDownloadUrl(d.url);
       activeDownloads[requestId] = {
+        settle: settle,
         onload: d.onload,
         onerror: d.onerror,
         ontimeout: d.ontimeout,
@@ -3280,22 +3338,22 @@
           });
         });
       }
-      return {
-        abort: function () {
-          var entry = activeDownloads[requestId];
-          if (!entry) return;
-          if (entry.transport === "sw") {
-            api.sendAsync({ type: "sm:gm-download-abort", requestId: requestId }).catch(function () {});
-          }
-          /* Settle locally right away — matches GM_xmlhttpRequest's
-             abort, which doesn't wait for the SW round-trip. */
-          dispatchDownloadEvent(requestId, {
-            kind: "error",
-            error: "download_canceled",
-            details: { current: "USER_CANCELED" },
-          });
-        },
-      };
+      var control = promise || {};
+      setOwn(control, "abort", function () {
+        var entry = activeDownloads[requestId];
+        if (!entry) return;
+        if (entry.transport === "sw") {
+          api.sendAsync({ type: "sm:gm-download-abort", requestId: requestId }).catch(function () {});
+        }
+        /* Settle locally right away — matches GM_xmlhttpRequest's
+           abort, which doesn't wait for the SW round-trip. */
+        dispatchDownloadEvent(requestId, {
+          kind: "error",
+          error: "download_canceled",
+          details: { current: "USER_CANCELED" },
+        });
+      });
+      return control;
     },
   };
 
@@ -3340,6 +3398,7 @@
         ? entry.onabort
         : entry.onerror;
     }
+    if (entry.settle) entry.settle(event.kind === "load" || typeof cb === "function", arg);
     if (typeof cb !== "function") return;
     try {
       cb(arg);
@@ -3827,6 +3886,22 @@
        transport section at the top of this file. */
     sendAsync: function (payload) {
       return transportSend(payload);
+    },
+    /* The `GM.` form of most APIs (see `emitGmObject` in
+       gm-bindings.ts): calls `GM_x` and hands back a guarded Promise of
+       what it returns, a throw rejecting it. A guarded Promise that
+       `GM_x` returned (GM_getTab, GM_notification) comes back as is,
+       and so does any value with `passThrough` (the thenable values
+       GM_addStyle, GM_addElement and GM_openInTab return). Guarded, so
+       a page that replaced `Promise.prototype.then` doesn't see what a
+       script's `.then` on it is given. */
+    promised: function (fn, args, passThrough) {
+      var v;
+      try { v = _ReflectApply(fn, null, args); }
+      catch (e) { return guarded(new _Promise(function (_ok, fail) { fail(e); })); }
+      if (passThrough) return v;
+      if (v !== null && typeof v === "object" && _ReflectApply(_hasOwn, v, ["then"]) && v.then === guardedThen) return v;
+      return guarded(new _Promise(function (resolve) { resolve(v); }));
     },
     storage: storage,
     dom: dom,

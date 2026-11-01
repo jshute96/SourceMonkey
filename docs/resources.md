@@ -8,9 +8,12 @@ at runtime via:
 - `GM_getResourceText(name)` — body decoded as UTF-8 (mojibake-tolerant).
 - `GM_getResourceURL(name)` — `blob:` URL minted in the page with the
   fetched Content-Type as the blob MIME.
+  - `GM_getResourceURL(name, false)` gives a base64 `data:` URL
+    instead, as in VM, for pages whose CSP blocks `blob:` images.
 
-Both APIs are synchronous — the wrapper bakes the bytes (base64) into
-the per-script registration so no runtime fetch happens on access.
+Both `GM_` forms are synchronous (the `GM.` forms return a Promise):
+the wrapper bakes the bytes (base64) into the per-script registration,
+so no runtime fetch happens on access.
 
 ## Accepted reference forms
 
@@ -92,6 +95,8 @@ The runtime keeps a per-script box of:
   caches.
 - `urlCache[name]` — first `GM_getResourceURL` call mints a `Blob`
   and `URL.createObjectURL`, caches the URL.
+- `dataUrlCache[name]` — the same for the `data:` URL that
+  `GM_getResourceURL(name, false)` builds.
 
 - Empty Content-Type for the blob falls back to
   `application/octet-stream` so the browser has something to dispatch

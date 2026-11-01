@@ -124,6 +124,39 @@ code {
   font-size: 0.9em;
 }
 
+/* A small table of results (gm-return-values). */
+.results {
+  border-collapse: collapse;
+  font-size: 0.9em;
+}
+
+.results th,
+.results td {
+  border: 1px solid #ddd;
+  padding: 0.3em 0.75em;
+  text-align: left;
+}
+
+.results thead th {
+  background: #f0f0f0;
+}
+
+.results tbody th,
+.results td {
+  font-family: monospace;
+  font-weight: normal;
+}
+
+.results tbody tr:nth-child(even) {
+  background: #fafafa;
+}
+
+/* Cells the script marks as holding a Promise. */
+.results td.promise {
+  background: #eef3ff;
+  color: #2a5cdc;
+}
+
 /* Side-by-side field comparison (gm-info). */
 .comparison {
   border-collapse: collapse;

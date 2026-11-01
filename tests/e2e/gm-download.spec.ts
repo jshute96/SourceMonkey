@@ -558,7 +558,7 @@ test.describe('GM_download', () => {
     await page.close();
   });
 
-  test('GM.download (GM4 alias) is bound and returns the control object', async ({
+  test('GM.download (GM4 alias) returns a Promise of the load, with abort on it', async ({
     extensionContext,
     fixtureServer,
     sm,
@@ -572,13 +572,13 @@ test.describe('GM_download', () => {
         grant: ['GM_download'],
       },
       body: `${REPORTER}
-        const ctl = GM.download({
+        const p = GM.download({
           url: 'data:text/plain,hi',
           name: 'sm-gm-dot.txt',
-          onload: () => report('load'),
           onerror: (e) => report('error:' + (e && e.error)),
         });
-        document.body.dataset.smCtl = String(ctl && typeof ctl.abort === 'function');
+        document.body.dataset.smCtl = String(p instanceof Promise && typeof p.abort === 'function');
+        p.then((r) => report('load:' + r.filename), (e) => report('rejected:' + (e && e.error)));
       `,
     });
     await sm.addCollection(scriptsDir.path);
@@ -587,7 +587,63 @@ test.describe('GM_download', () => {
     const page = await extensionContext.newPage();
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page.locator('body')).toHaveAttribute('data-sm-ctl', 'true');
-    await expect(page.locator('body')).toHaveAttribute('data-sm-download', 'load');
+    await expect(page.locator('body')).toHaveAttribute('data-sm-download', 'load:sm-gm-dot.txt');
+    await page.close();
+  });
+
+  test('GM.download rejects when aborted', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'DownloadGmDotAbort',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_download'],
+      },
+      body: `${REPORTER}
+        const p = GM.download({ url: '${fixtureServer.baseUrl}/target.html', name: 'sm-abort.html' });
+        p.then(() => report('resolved'), (e) => report('rejected:' + (e && e.error)));
+        p.abort();
+      `,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-download', 'rejected:download_canceled');
+    await page.close();
+  });
+
+  test('GM.download resolves with the error when the script gave onerror', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'DownloadGmDotOnerror',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_download'],
+      },
+      body: `${REPORTER}
+        const p = GM.download({ url: '${fixtureServer.baseUrl}/target.html', name: 'sm-abort2.html', onerror: () => {} });
+        p.then((r) => report('resolved:' + (r && r.error)), () => report('rejected'));
+        p.abort();
+      `,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page = await extensionContext.newPage();
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('body')).toHaveAttribute('data-sm-download', 'resolved:download_canceled');
     await page.close();
   });
 

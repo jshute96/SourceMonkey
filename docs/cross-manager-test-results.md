@@ -84,6 +84,17 @@ stays enforced in an SM-only spec.
   - `GM_getResourceURL` returns a base64 `data:` URL under TM, where SM
     and VM mint a `blob:` URL. The page renders either, so the spec
     checks the scheme per manager and fetches the URL under all three.
+  - `GM_getResourceURL(name, false)` gives a `data:` URL under all
+    three.
+- **`gm-return-values/`** (what the `GM_` and `GM.` form of each API
+  returns) — measured under TM 5.5.1 and VM 2.49.0. The spec holds a TM
+  baseline and lists each manager's differences from it:
+  - TM returns a Promise from every `GM.` form.
+  - VM only from some (storage, `getResourceUrl`); `addStyle` and
+    `addElement` give the element with a `then`, in both forms. Its
+    awaited `GM.setValue` is `null`.
+  - SM matches TM, except the thenable elements (as VM) and string
+    menu command ids (as VM; TM's are numbers).
   - An unknown name gives `null` from both `GM_getResourceText` and
     `GM_getResourceURL` under TM, and `undefined` under SM and VM. The
     spec expects each manager's own value.

@@ -61,18 +61,6 @@ test('GM. aliases are GM4-style (camelCase, dropped GM_ prefix)', () => {
   }
 });
 
-test('GM_info has no GM. promised version (it returns an object, not a Promise)', () => {
-  const spec = findApi('GM_info');
-  assert.ok(spec);
-  assert.equal(spec.gmDotPromised, undefined);
-});
-
-test('storage APIs return a Promise from the GM. namespace (per GM4 spec)', () => {
-  for (const n of ['GM_setValue', 'GM_getValue', 'GM_deleteValue', 'GM_listValues', 'GM_getValues', 'GM_setValues', 'GM_deleteValues']) {
-    assert.equal(findApi(n).gmDotPromised, true, `${n} should be promised under GM.`);
-  }
-});
-
 test('unsupported names return undefined', () => {
   assert.equal(findApi('GM_audio'), undefined);
   assert.equal(findApi('GM_webRequest'), undefined);

@@ -93,7 +93,6 @@ test('the registry carries built-ins as they were when it was made', async () =>
   // No prototype: a missing field reads as undefined, past any getter.
   assert.equal(Object.getPrototypeOf(reg), null);
   assert.equal(typeof reg.apply, 'function');
-  assert.equal(await reg.resolve(3), 3);
 });
 
 test('withChannelKey puts the key in place of the stand-in', () => {

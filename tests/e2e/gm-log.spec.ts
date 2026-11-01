@@ -47,7 +47,7 @@ test.describe('GM_log', () => {
     await page.close();
   });
 
-  test('GM.log (GM4 alias) also forwards', async ({
+  test('GM.log (GM4 alias) also forwards, and returns a Promise', async ({
     extensionContext,
     fixtureServer,
     sm,
@@ -61,8 +61,8 @@ test.describe('GM_log', () => {
         grant: ['GM_log'],
       },
       body: `
-        GM.log('via GM dot');
-        document.body.dataset.smLog = 'ok';
+        const p = GM.log('via GM dot');
+        document.body.dataset.smLog = p instanceof Promise ? 'ok' : 'not a Promise';
       `,
     });
     await sm.addCollection(scriptsDir.path);

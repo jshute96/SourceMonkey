@@ -10,7 +10,6 @@
     "domain-moved": "Matches only a domain the site has left (like discordapp.com, now discord.com), so it never runs on the real pages",
     "gm-info-options": "Reads GM_info.script.options, which Tampermonkey provides and SourceMonkey doesn't",
     "gm-reassign": "Assigns to a granted GM_* name (GM_xmlhttpRequest = GM.xmlHttpRequest). Works in the page world since c2dbb1f; still throws under @inject-into content, where SourceMonkey declares those names const",
-    "gm-resource-url-sync": "Calls .then on GM.getResourceUrl, which returns a Promise in Tampermonkey and Violentmonkey but a plain string in SourceMonkey",
     "grant-by-group": "Calls a GM API it didn't grant whose group it did grant (GM.listValues with only GM_getValue), which Tampermonkey provides for the whole group and SourceMonkey doesn't",
     "grant-none-override": "Declares @grant none alongside other @grant lines, so in every manager it gets no GM APIs and throws on its first GM_* call",
     "http-only-match": "Matches only http:// on a site that now redirects to https, so it never runs on the real page in any manager",
@@ -24,7 +23,6 @@
     "needs-gm-webrequest": "Uses Tampermonkey's GM_webRequest (@webRequest), which SourceMonkey doesn't support",
     "needs-site-jquery": "A page-world script that calls the site's jQuery ($), which the site no longer loads, so it throws in every manager",
     "openintab-data-url": "Opens a data: URL with GM_openInTab, which Tampermonkey opens and SourceMonkey refuses (it allows only http and https)",
-    "resource-url-blob-csp": "Shows a GM_getResourceURL image on a site whose CSP allows data: images but not blob:; SourceMonkey always returns a blob: URL, where Tampermonkey (and Violentmonkey when asked) returns a data: URL",
     "sends-browsing-data": "Sends the URLs or contents of pages you visit to the author's server, beyond what its feature needs",
     "service-dead": "Depends on a third-party download or proxy service that no longer responds",
     "setclipboard-callback": "Passes a callback as GM_setClipboard's third argument, which Tampermonkey calls once the copy is done and SourceMonkey ignores",
@@ -11004,14 +11002,16 @@
         "date": "2026-10-31",
         "version": "2.2.5"
       },
-      "tags": [
-        "resource-url-blob-csp"
-      ],
       "notes": [
         {
           "date": "2026-10-31",
           "version": "2.2.5",
           "text": "On DuckDuckGo Lite results (`lite.duckduckgo.com/lite/?q=wikipedia`), hovering the first result rewrote its href from `//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.wikipedia.org%2F...` to `https://www.wikipedia.org/`, with `rel=\"external noreferrer nofollow noopener\"`, and showed the \"Original link\" popup pointing at the old redirect URL.\n- SourceMonkey: the popup's icon is blank. The script calls `GM_getResourceURL('icon', false)`; SourceMonkey returns a `blob:` URL, and the page's CSP has `img-src data: https://...` with no `blob:`, so the image fails to load (an `Image` on that URL errors).\n- Setting the popup's background to a `data:` URL of the same PNG made the icon show (screenshot), and an `Image` on it loaded (128 px).\n- Tampermonkey returns a `data:` URL from `GM_getResourceURL` (docs/cross-manager-test-results.md, `gm-resource/`), and Violentmonkey returns one when the second argument is `false` (`getResource` in `src/injected/web/gm-api.js`), so both would show the icon here."
+        },
+        {
+          "date": "2026-10-31",
+          "version": "2.2.5",
+          "text": "Re-tested after adding `GM_getResourceURL(name, false)` support: it now returns a `data:` URL, and on DuckDuckGo Lite the popup's icon loads (an `Image` on the popup's background URL loaded at 128 px)."
         }
       ]
     },
@@ -19342,19 +19342,20 @@
         "version": "4.1.2"
       },
       "test": {
-        "status": "fail",
-        "blame": "sourcemonkey",
+        "status": "pass",
         "date": "2026-10-31",
         "version": "4.1.2"
       },
-      "tags": [
-        "gm-resource-url-sync"
-      ],
       "notes": [
         {
           "date": "2026-10-31",
           "version": "4.1.2",
           "text": "On cdnjs `underscore-min.js` (application/javascript, shown as `body > pre`):\n- SourceMonkey: the script threw `GM.getResourceUrl(...).then is not a function` (line 90) before formatting, so the page stayed one long minified line. SourceMonkey's `GM.getResourceUrl` returns the `blob:` URL string directly (no `gmDotPromised` on `GM_getResourceURL` in `src/gm-api-catalog.ts`); the gm4-polyfill `@require` keeps it since `GM.getResourceUrl` is already defined.\n- A copy with `Promise.resolve(GM.getResourceUrl(STYLE))` worked: Prettier reformatted it to 1320 lines, highlight.js added 2442 spans, and the atom-one-dark background (rgb(40, 44, 52)) applied.\n- Tampermonkey (`--manager tm`) ran the original file with the same result (1320 lines, 2442 spans). Violentmonkey makes `GM.*` aliases async too (`src/injected/web/gm-api.js`, `GM4_ALIAS`)."
+        },
+        {
+          "date": "2026-10-31",
+          "version": "4.1.2",
+          "text": "Re-tested after making every `GM.*` function return a Promise: now passes. On cdnjs `underscore-min.js` the unchanged script reformatted the page to 1320 lines with 2442 highlight.js spans and the atom-one-dark background (rgb(40, 44, 52)), the same as Tampermonkey."
         }
       ]
     },

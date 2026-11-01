@@ -181,6 +181,7 @@ events.
 | `gm-download/`             | `GM_download`                                                     | button-driven |
 | `gm-menu/`                 | `GM_registerMenuCommand` / `GM_unregisterMenuCommand`             | button-driven |
 | `gm-resource/`             | `GM_getResourceText` / `GM_getResourceURL`                        | pure read     |
+| `gm-return-values/`        | What the `GM_` and `GM.` forms of some APIs return, per manager    | button-driven |
 | `window-onurlchange/`      | `@grant window.onurlchange` (the `urlchange` event)               | page-wired    |
 | `window-close-focus/`      | `@grant window.close` / `@grant window.focus`                     | button-driven |
 | `run-at-context-menu/`     | `@run-at context-menu` (runs only when asked)                     | button-driven |

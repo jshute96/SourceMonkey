@@ -271,10 +271,23 @@ output ships whether the script lands in USER_SCRIPT or MAIN.
 
 `GM` is a `const` built at compile time, and not frozen, as in TM and
 VM (GM_config and other libraries add to it). Each granted API
-with a `gmDotName` becomes a property. Where `gmDotPromised` is true
-(storage primitives), the GM4 form wraps the legacy `GM_x` call in
-`Promise.resolve` so callers can `await` it uniformly — matching the
-GM4 spec.
+with a `gmDotName` becomes a property that returns a Promise, as GM4
+defines and TM does for all of them (VM only for some):
+
+- Most wrap the legacy `GM_x` call's result in a Promise, and turn a
+  throw into a rejection.
+- `GM.xmlHttpRequest` and `GM.download` settle when the request or
+  download does, with `abort` on the Promise. A failed download
+  resolves rather than rejects when the script gave the callback for
+  it (`onerror`, `ontimeout`, `onabort`), as in TM.
+- `GM.addStyle` and `GM.addElement` return the element itself, and
+  `GM.openInTab` its control object, with a one-shot `then` on it (as
+  VM does for the elements, also on the `GM_` forms). So `.then` and
+  `await` work, and so does a script written for VM that uses the
+  value directly.
+  - `then` replaces itself with an own `then` of undefined before
+    resolving: resolving with an object that has a `then` calls it
+    again, so `await` would never finish.
 
 `GM.info` aliases the literal `GM_info` object. There is no
 `GM.unsafeWindow` (the legacy form lacks a `gmDotName`).
@@ -739,7 +752,7 @@ Per-tab objects, one per (tab, script). User-facing behavior is in
   `sm:gm-tab-data` message per call (`action: get | save | list`).
 - With a callback, the call returns `undefined` and a failure is
   logged to the page console; without one, it returns the Promise.
-  The `GM.` aliases pass through, so they get the Promise.
+  The `GM.` aliases call it without one, so they get the Promise.
 - `save` sends a shallow copy of the object's own keys.
 
 ### SW side

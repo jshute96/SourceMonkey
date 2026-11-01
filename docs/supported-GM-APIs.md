@@ -31,10 +31,11 @@ A script declares APIs via `@grant`:
 
 Both `GM_x` and `GM.x` forms canonicalize to the same legacy `GM_x`
 name. SourceMonkey then emits **both** bindings: the legacy
-`GM_setValue` and the GM4 alias `GM.setValue`. Storage APIs return
-synchronously from the legacy form and return a Promise from the
-`GM.` form (matches the GM4 contract). Most other APIs are
-pass-through aliases.
+`GM_setValue` and the GM4 alias `GM.setValue`. Every `GM.` form returns
+a Promise (the GM4 contract, and what TM does), while the `GM_` form
+returns its value directly. `GM.addStyle` and `GM.addElement` return
+the element, and `GM.openInTab` its control object, with a `then` on
+it, so the value works directly too, as in VM. See [GM-APIs.md](GM-APIs.md#gm4-alias-namespace).
 
 `@grant none` (or an absent `@grant`) emits **no** `GM_*` bindings.
 A `@grant none` script gets the page's `window` directly (MAIN world);
@@ -203,7 +204,7 @@ Differences from TM, detailed in
 
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
-| `GM_log` / `GM.log` | ✅ | ✓ | ✓ | ✓ | Thin `console.log` wrapper prefixed with `[SourceMonkey:<scriptId>]`. Arguments are passed through unchanged so Chrome's `%c` / `%o` formatters and DevTools object inspection still work. Returns `undefined`. |
+| `GM_log` / `GM.log` | ✅ | ✓ | ✓ | ✓ | Thin `console.log` wrapper prefixed with `[SourceMonkey:<scriptId>]`. Arguments are passed through unchanged so Chrome's `%c` / `%o` formatters and DevTools object inspection still work. Returns `undefined` (`GM.log`: a Promise of it). |
 
 ---
 
@@ -280,7 +281,7 @@ and the page's CSP applies to it.
 
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
-| `GM_addStyle` / `GM.addStyle` | ✅ | ✓ | ✓ |   | Creates a `<style>` and appends to `document.head` (or `documentElement` if head isn't there yet). Returns the element. |
+| `GM_addStyle` / `GM.addStyle` | ✅ | ✓ | ✓ |   | Creates a `<style>` and appends to `document.head` (or `documentElement` if head isn't there yet). Returns the element, with a one-shot `then` so it also works as a Promise of itself (as in VM). |
 | `GM_addElement` / `GM.addElement` | ✅ | ✓ | ✓ |   | Two signatures: `GM_addElement(tag, attrs?)` appends to `<head>` for `script`/`style`/`link`/`meta`/`title`/`base` and to `<body>` for everything else (routing by tag as VM does; TM differs — see below); `GM_addElement(parent, tag, attrs?)` appends to the given parent. `attrs.textContent` is a recognized pseudo-attribute. Boolean `false` attrs are omitted (avoids the `disabled="false"` foot-gun); `true` serializes as `""` per HTML spec. `innerHTML` is **not** recognized as a pseudo-attribute by design — call it on the returned element if you need it. **Cross-manager note:** TM appends to `<head>` regardless of tag in the no-parent form, so a `GM_addElement('p', ...)` lands in `<head>` under TM but in `<body>` under SM/VM. The TM docs don't pin the default parent down, so neither rule is wrong — SM routes by tag as VM does, because that's more useful for non-head tags. SM's head list is a superset: VM's stops at `script`/`style`/`link`/`meta`, so `title` and `base` land in `<body>` there and in `<head>` here. |
 
 ---
@@ -568,7 +569,7 @@ How this is done, and what it can't cover:
 
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
-| `GM_openInTab` / `GM.openInTab` | ✅ | ✓ | ✓ |   | `chrome.tabs.create` wrapper. Returns a control object synchronously: `{ close(), closed, onclose }`. See below for call shapes and options. |
+| `GM_openInTab` / `GM.openInTab` | ✅ | ✓ | ✓ |   | `chrome.tabs.create` wrapper. Returns a control object synchronously: `{ close(), closed, onclose }` (`GM.openInTab`: the same object, with a one-shot `then`, so it also works as a Promise of itself). See below for call shapes and options. |
 | `GM_getTab` / `GM.getTab` | ✅ | ✓ |   |   | This script's object for the current tab, kept while the tab is open. See [Per-tab data](#per-tab-data). |
 | `GM_saveTab` / `GM.saveTab` | ✅ | ✓ |   |   | Saves that object (a shallow copy). |
 | `GM_getTabs` / `GM.getTabs` | ✅ | ✓ |   |   | This script's object for every tab that has one, keyed by tab id. |
@@ -614,7 +615,7 @@ How this is done, and what it can't cover:
 
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
-| `GM_download` / `GM.download` | ✅ | ✓ | ✓ |   | Saves a file to the browser's download directory. Returns `{ abort() }` synchronously (TM's documented return). `http(s)` URLs go through `chrome.downloads`; `blob:` / `data:` URLs are downloaded in-page. Requires the extension's `downloads` permission. |
+| `GM_download` / `GM.download` | ✅ | ✓ | ✓ |   | Saves a file to the browser's download directory. Returns `{ abort() }` synchronously (TM's documented return). `GM.download` returns a Promise instead, with `abort` on it, as in TM: it resolves with `onload`'s argument. A failure (an `abort()` included) rejects with what `onerror` / `ontimeout` gets, or resolves with it when the script gave that callback, as in TM. `http(s)` URLs go through `chrome.downloads`; `blob:` / `data:` URLs are downloaded in-page. Requires the extension's `downloads` permission. |
 
 ### Download call shape
 
@@ -807,7 +808,7 @@ baked into the per-script wrapper. See
 | API | Status | TM | VM | GM | Notes |
 |-----|:------:|:--:|:--:|:--:|-------|
 | `GM_getResourceText` / `GM.getResourceText` | ✅ | ✓ | ✓ | ✓ | UTF-8 decode on demand. Returns `undefined` for an unknown name, as VM does (TM returns `null`). Binary resources still decode (mojibake-tolerant); use `GM_getResourceURL` instead. |
-| `GM_getResourceURL` / `GM.getResourceUrl` | ✅ | ✓ | ✓ | ✓ | Mints (and caches) a `blob:` URL with the fetched Content-Type, as VM does (TM returns a base64 `data:` URL). Same URL on repeat calls for one name; `undefined` for an unknown one (TM: `null`). GM4 form spells it lowercase-`u` (`getResourceUrl`) — deliberate casing mismatch with the legacy form. |
+| `GM_getResourceURL` / `GM.getResourceUrl` | ✅ | ✓ | ✓ | ✓ | Mints (and caches) a `blob:` URL with the fetched Content-Type, as VM does (TM returns a base64 `data:` URL). `GM_getResourceURL(name, false)` returns a `data:` URL instead, as in VM, for pages whose CSP blocks `blob:`. Same URL on repeat calls for one name; `undefined` for an unknown one (TM: `null`). GM4 form spells it lowercase-`u` (`getResourceUrl`) — deliberate casing mismatch with the legacy form. |
 
 ---
 
