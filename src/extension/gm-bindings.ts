@@ -275,6 +275,12 @@ function emitOneBinding(spec: GmApiSpec, scriptId: string): string {
         return `const GM_deleteValue = function (key) { return __smReg.gm.storage.del(${jsLit(scriptId)}, key); };`;
       case 'GM_listValues':
         return `const GM_listValues = function () { return __smReg.gm.storage.list(${jsLit(scriptId)}); };`;
+      case 'GM_getValues':
+        return `const GM_getValues = function (keysOrDefaults) { return __smReg.gm.storage.getMany(${jsLit(scriptId)}, keysOrDefaults); };`;
+      case 'GM_setValues':
+        return `const GM_setValues = function (values) { return __smReg.gm.storage.setMany(${jsLit(scriptId)}, values); };`;
+      case 'GM_deleteValues':
+        return `const GM_deleteValues = function (keys) { return __smReg.gm.storage.delMany(${jsLit(scriptId)}, keys); };`;
     }
   }
   // Storage-listener subsystem: addValueChangeListener / removeValueChangeListener

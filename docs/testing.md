@@ -360,7 +360,8 @@ fetch via the SW). Highlights:
   bindings.
 - `tests/e2e/gm-storage.spec.ts` — `GM_setValue`/`getValue`/
   `deleteValue`/`listValues` round-trip, persistence across reloads,
-  per-script namespace isolation, `GM.` promise forms.
+  per-script namespace isolation, `GM.` promise forms, the bulk
+  `getValues`/`setValues`/`deleteValues`.
 - `tests/e2e/gm-broadcast.spec.ts` — cross-tab `GM_setValue`
   broadcast: a write in tab A is observable in tab B; delivery
   survives the SW losing its in-memory openers table; a document

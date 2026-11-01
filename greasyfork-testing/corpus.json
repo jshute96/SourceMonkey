@@ -53475,13 +53475,7 @@
       ],
       "valid": {
         "status": "ok",
-        "warnings": [
-          "Ignoring unsupported @grant GM_getValues (in the script, line 13)"
-        ],
-        "tags": [
-          "unsupported-grant:GM_getValues"
-        ],
-        "date": "2026-10-13",
+        "date": "2026-10-31",
         "version": "1.4.17"
       },
       "test": {
@@ -89724,12 +89718,6 @@
       ],
       "valid": {
         "status": "ok",
-        "warnings": [
-          "Ignoring unsupported @grant GM_deleteValues (in the script, line 22)"
-        ],
-        "tags": [
-          "unsupported-grant:GM_deleteValues"
-        ],
         "date": "2026-10-31",
         "version": "1.4.1"
       },
@@ -89746,6 +89734,11 @@
           "date": "2026-10-31",
           "version": "1.4.1",
           "text": "On https://github.com/search?q=china-dictatorship&type=repositories the results list showed 4 repos where a `--noscript` tab showed 10: all 6 by `cirosantilli` and `wumaoland` (on its default list) were removed. Each remaining result got a block button; clicking the first stored `customBanList = [\"Lopes-Marcio\"]` and removed that row.\n- SourceMonkey: the \"Reset settings\" menu command (after accepting its confirm) threw `GM.listValues is not a function`, so nothing was reset. The script grants only `GM_getValue`/`GM_setValue`/`GM_deleteValues` and calls `GM.listValues` and `GM.deleteValues`. Tampermonkey gives a script the whole storage group (`GM.listValues`, `GM.deleteValues` included) when it grants any one of them; SourceMonkey provides only the granted names, and doesn't support `GM_deleteValues` at all (TODO.md, bulk storage)."
+        },
+        {
+          "date": "2026-10-31",
+          "version": "1.4.1",
+          "text": "`GM_deleteValues` is now supported, but \"Reset settings\" still fails the same way: it calls `GM.listValues` first, which it didn't grant (the `grant-by-group` gap). Not re-run."
         }
       ]
     },
@@ -101671,31 +101664,24 @@
       ],
       "valid": {
         "status": "ok",
-        "warnings": [
-          "Ignoring unsupported @grant GM_setValues, GM_getValues, GM_deleteValues (in the script, line 25)"
-        ],
-        "tags": [
-          "unsupported-grant:GM_setValues",
-          "unsupported-grant:GM_getValues",
-          "unsupported-grant:GM_deleteValues"
-        ],
         "date": "2026-10-31",
         "version": "43"
       },
       "test": {
-        "status": "fail",
-        "blame": "sourcemonkey",
+        "status": "pass",
         "date": "2026-10-31",
         "version": "43"
       },
-      "tags": [
-        "unsupported-grant:GM_getValues"
-      ],
       "notes": [
         {
           "date": "2026-10-31",
           "version": "43",
           "text": "On a public favlist (`space.bilibili.com/3/favlist?fid=2242824203`, 31 videos) the backup itself works: it stored 31 per-video records with `GM_setValue` and added its A/B/J/X links under each card.\n- SourceMonkey: the \"导出本地备份数据\" (export backup) button throws `ReferenceError: GM_getValues is not defined` (getAll, line 6443), so nothing is exported. Import, migration and clearing use `GM_setValues` / `GM_deleteValues` too. Known gap: bulk value APIs, listed as unsupported in [docs/supported-GM-APIs.md](docs/supported-GM-APIs.md); Tampermonkey 5.x and Violentmonkey 2.19.1+ provide them.\n- Test setup: from our location Bilibili marks the visitor `user_site=OVERSEAS` and redirects to `space.bilibili.com/zh-Hans/3/favlist`, where the script's `space.bilibili.com/\\d+/favlist` check fails and it does nothing. Setting the cookie `user_site=CN` avoided the redirect."
+        },
+        {
+          "date": "2026-10-31",
+          "version": "43",
+          "text": "Re-tested after adding the bulk value APIs (`GM_getValues` / `GM_setValues` / `GM_deleteValues`): now passes. Same setup (`user_site=CN` cookie, `space.bilibili.com/3/favlist?fid=2242824203`).\n- The script stored 31 per-video records again.\n- \"导出本地备份数据\" (export) downloaded a JSON backup with all 31 records, read through `GM_getValues(GM_listValues().sort())`.\n- \"清空本地备份数据\" (clear, under the advanced settings), confirmed in its dialog, removed all of them with `GM_deleteValues`, leaving only `settings`.\n- Import (`GM_setValues`) not exercised: its `<input type=file>` is never added to the document, and sm-dev can't answer the file chooser it opens."
         }
       ]
     },

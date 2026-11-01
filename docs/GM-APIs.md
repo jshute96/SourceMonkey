@@ -281,6 +281,10 @@ GM4 spec.
 
 ## Storage (`GM_setValue` / `GM_getValue` / `GM_deleteValue` / `GM_listValues`)
 
+The bulk `GM_setValues` / `GM_deleteValues` apply the per-key calls
+to each key, so their writes join the same batch and listeners fire
+per key. `GM_getValues` reads multiple keys from the same cache.
+
 See [`GM-APIs-storage.md`](GM-APIs-storage.md) for the full
 treatment: why values have to sit in the document's realm, how the
 snapshot gets seeded at document start, the freshness mechanisms
@@ -508,10 +512,22 @@ that asks about the rest: see
 Per-script, per-key listener registry living in the page-side
 runtime. Listeners fire synchronously on:
 
-- Local `GM_setValue` / `GM_deleteValue` — `remote=false`.
-- Remote cross-tab broadcasts — `remote=true`.
+- Local `GM_setValue` / `GM_deleteValue` (and the bulk forms):
+  `remote=false`.
+- Remote cross-tab broadcasts: `remote=true`.
 
-Pre-flight cache load (`storage.init`) does NOT fire listeners —
+A write that changes nothing fires no listener, as in TM:
+
+- Deleting a key that isn't set. (VM fires for this one.)
+- Setting a key to the primitive it already holds.
+- A broadcast whose value matches the cached one, compared in stored
+  form.
+- One difference from TM and VM: a local set of an object always
+  fires, even an equal one. `GM_getValue` hands back the cached object
+  itself, so the same object coming back may have been changed in
+  place. TM and VM hand out a fresh copy, so they can compare.
+
+Pre-flight cache load (`storage.init`) does NOT fire listeners:
 the cache hasn't observably changed from the page's perspective.
 
 API shape matches TM/VM:

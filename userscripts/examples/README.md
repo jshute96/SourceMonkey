@@ -170,7 +170,7 @@ events.
 | -------------------------- | ----------------------------------------------------------------- | ------------- |
 | `gm-info/`                 | `GM_info`                                                         | pure read     |
 | `gm-log/`                  | `GM_log`                                                          | button-driven |
-| `gm-storage/`              | `GM_setValue` / `GM_getValue` / `GM_deleteValue` / `GM_listValues` | form-driven   |
+| `gm-storage/`              | `GM_*Value` / `GM_listValues`, bulk `GM_*Values`                  | form-driven   |
 | `gm-value-listeners/`      | `GM_addValueChangeListener` / `GM_removeValueChangeListener`       | form-driven   |
 | `gm-dom/`                  | `GM_addStyle` / `GM_addElement`                                   | button-driven |
 | `gm-clipboard/`            | `GM_setClipboard`                                                 | form-driven   |

@@ -68,7 +68,7 @@ test('GM_info has no GM. promised version (it returns an object, not a Promise)'
 });
 
 test('storage APIs return a Promise from the GM. namespace (per GM4 spec)', () => {
-  for (const n of ['GM_setValue', 'GM_getValue', 'GM_deleteValue', 'GM_listValues']) {
+  for (const n of ['GM_setValue', 'GM_getValue', 'GM_deleteValue', 'GM_listValues', 'GM_getValues', 'GM_setValues', 'GM_deleteValues']) {
     assert.equal(findApi(n).gmDotPromised, true, `${n} should be promised under GM.`);
   }
 });

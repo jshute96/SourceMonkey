@@ -524,7 +524,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/line-diff.test.mjs` | Unit tests for the line diff: round-trip, shortest script, hunk boundaries, the large-edit fallback |
 | `tests/unit/script-identity.test.mjs` | Unit tests for the related-versions lookup — identity key rules, absolute-URL matching, list disjointness, install / move target cases |
 | `tests/e2e/gm-grants.spec.ts` | E2E tests: `@grant` gating, ungranted APIs return undefined, GM_info shape, `GM.` alias namespace, `GM.setValue` granted form |
-| `tests/e2e/gm-storage.spec.ts` | E2E tests for `GM_setValue`/`GM_getValue`/`GM_deleteValue`/`GM_listValues` round-trip, persistence across reloads, per-script namespace isolation, `GM.` promised forms |
+| `tests/e2e/gm-storage.spec.ts` | E2E tests for `GM_setValue`/`GM_getValue`/`GM_deleteValue`/`GM_listValues` round-trip, persistence across reloads, per-script isolation, `GM.` promised forms, bulk `GM_*Values` |
 | `tests/e2e/versions-navigation.spec.ts` | E2E for the panel's place on the page, its keyboard walk, and selecting copies from it in place: click / Enter / Space / new-tab, where focus lands, sticky sections, Back, the preview's merged box |
 | `tests/e2e/compare.spec.ts` | E2E tests for the compare page: fields table, per-file tabs and chips, view controls, swap, preview side, missing copy |
 | `tests/e2e/other-versions.spec.ts` | E2E tests for the other-versions panel: absolute-URL matching across collection kinds, per-row toggle, Refresh all, removing the copy on screen, the preview's callout / banner / install-offer section, the heading fold |

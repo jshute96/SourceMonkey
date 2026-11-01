@@ -233,7 +233,10 @@ VM](GM-APIs-storage.md#compared-with-violentmonkey).
 | `GM_getValue` / `GM.getValue` | ✅ | ✓ | ✓ | ✓ | Sync read from the in-page cache; returns `defaultValue` for unknown keys. |
 | `GM_deleteValue` / `GM.deleteValue` | ✅ | ✓ | ✓ | ✓ | Same flush/batching shape as `setValue`. |
 | `GM_listValues` / `GM.listValues` | ✅ | ✓ | ✓ | ✓ | Returns the list of currently-known keys. |
-| `GM_addValueChangeListener` / `GM.addValueChangeListener` | ✅ | ✓ | ✓ |   | Fires on local writes (`remote=false`) and on cross-tab broadcasts (`remote=true`). Signature: `cb(key, oldValue, newValue, remote)`. |
+| `GM_getValues` / `GM.getValues` | ✅ | ✓ | ✓ |   | Given an array of keys, returns an object of the ones that are set. Given `{key: default}`, returns every key, with the default for an unset one. Given nothing, returns all values, as in TM. |
+| `GM_setValues` / `GM.setValues` | ✅ | ✓ | ✓ |   | `setValue` for each key of the object, in the same batch. A value that can't be stored throws before any of them is applied. |
+| `GM_deleteValues` / `GM.deleteValues` | ✅ | ✓ | ✓ |   | `deleteValue` for each key in the array. Anything but an array is ignored, as in TM. |
+| `GM_addValueChangeListener` / `GM.addValueChangeListener` | ✅ | ✓ | ✓ |   | Fires on local writes (`remote=false`) and on cross-tab broadcasts (`remote=true`). A write that changes nothing (a delete of an unset key, setting the same primitive, a broadcast of the cached value) fires nothing, as in TM. Unlike TM and VM, a local set of an object always fires, even an equal one. Signature: `cb(key, oldValue, newValue, remote)`. |
 | `GM_removeValueChangeListener` / `GM.removeValueChangeListener` | ✅ | ✓ | ✓ |   | Unregister by the id returned from `add…`. |
 
 ### Storage caveats
@@ -830,9 +833,6 @@ is a catalog entry + a body — nothing structural.
 - `GM_cookie` (and `GM.cookie`) — cross-origin cookie store.
   TM's, and VM's too since 2.35.1: `.list` / `.set` / `.delete`, with
   the calling script's `@match` validated against the target URL.
-- `GM_getValues` / `GM_setValues` / `GM_deleteValues` — bulk storage
-  reads and writes (TM 5.x, VM 2.19.1+). Our per-call storage APIs
-  already batch writes, so these are convenience, not throughput.
 - `GM_audio`, `GM_webRequest` — TM-specific surface.
 - `GM.bootstrap`, `GM_NEXT_API_FROM_TM`, etc. — moving targets.
 

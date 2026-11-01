@@ -65,6 +65,7 @@
   var _JSONStringify = JSON.stringify;
   var _ObjectKeys = Object.keys;
   var _isArray = Array.isArray;
+  var _ObjectIs = Object.is;
   /* Captured for the stored-value codec below. `_objToString` is how
      it brand-checks Date / RegExp / Map / Set: `instanceof` misses a
      value that came from another realm (an <iframe>'s `Date`), and a
@@ -1212,9 +1213,17 @@
       delete s.cache[key];
       fireListeners(scriptId, key, oldValue, undefined, true);
     } else {
+      /* A write that left the value as it was fires nothing, as in TM
+         and VM. Both sides are compared in wire form, as the resync
+         does; a cached value that can't be encoded counts as changed. */
+      var had = _ReflectApply(_hasOwn, s.cache, [key]);
+      var same = false;
+      if (had) {
+        try { same = sameStoredValue(encodeValue(oldValue), w.value); } catch (_rE) {}
+      }
       var newValue = decodeValue(w.value);
       s.cache[key] = newValue;
-      fireListeners(scriptId, key, oldValue, newValue, true);
+      if (!same) fireListeners(scriptId, key, oldValue, newValue, true);
     }
   }
   /* ---------- Resync: recovering from a lost broadcast ----------
@@ -1381,6 +1390,41 @@
     applyRemoteUpdate(msg.scriptId, msg.writes, msg.seq);
   });
 
+  /* One local write, shared by the single and bulk setters: update
+     the cache, queue the write for the next flush, then fire the
+     key's listeners with remote=false. `encoded` is the value in
+     codec wire form. Keys are strings everywhere, as listeners store
+     them, so `GM_setValue(1, x)` fires a listener on "1". */
+  function applySet(scriptId, s, key, value, encoded) {
+    key = String(key);
+    var had = _ReflectApply(_hasOwn, s.cache, [key]);
+    var oldValue = had ? s.cache[key] : undefined;
+    s.cache[key] = value;
+    s.unanswered[key] = (hasUnanswered(s, key) ? s.unanswered[key] : 0) + 1;
+    s.pending.push({ key: key, value: encoded });
+    scheduleFlush(scriptId);
+    /* A write that changes nothing fires no listener. Only primitives
+       can be judged unchanged: GM_getValue hands back the cached object
+       itself, so the same object coming back may have been changed in
+       place, and always fires. TM and VM compare stored forms, so an
+       equal object fires nothing there. */
+    var same = had && (value === null || typeof value !== "object") &&
+      typeof value !== "function" && _ObjectIs(oldValue, value);
+    if (!same) fireListeners(scriptId, key, oldValue, value, false);
+  }
+
+  /* Deleting a key that isn't set fires no listener, as in TM. */
+  function applyDelete(scriptId, s, key) {
+    key = String(key);
+    var had = _ReflectApply(_hasOwn, s.cache, [key]);
+    var oldValue = had ? s.cache[key] : undefined;
+    delete s.cache[key];
+    s.unanswered[key] = (hasUnanswered(s, key) ? s.unanswered[key] : 0) + 1;
+    s.pending.push({ key: key, value: DELETED_SENTINEL });
+    scheduleFlush(scriptId);
+    if (had) fireListeners(scriptId, key, oldValue, undefined, false);
+  }
+
   var storage = {
     /* Called from the GM prelude spliced into the main-body wrap
        function (which only fires after the prelude's awaitDecision
@@ -1461,27 +1505,68 @@
          here. Mutating the object you stored was already unsupported
          — see sameStoredValue — and which of the two behaviours you
          get now depends on the value's type. */
-      var encoded = encodeValue(value);
-      var oldValue = _ReflectApply(_hasOwn, s.cache, [key]) ? s.cache[key] : undefined;
-      s.cache[key] = value;
-      s.unanswered[key] = (hasUnanswered(s, key) ? s.unanswered[key] : 0) + 1;
-      s.pending.push({ key: key, value: encoded });
-      scheduleFlush(scriptId);
-      fireListeners(scriptId, key, oldValue, value, false);
+      applySet(scriptId, s, key, value, encodeValue(value));
     },
     del: function (scriptId, key) {
-      var s = ensureStore(scriptId);
-      var oldValue = _ReflectApply(_hasOwn, s.cache, [key]) ? s.cache[key] : undefined;
-      delete s.cache[key];
-      s.unanswered[key] = (hasUnanswered(s, key) ? s.unanswered[key] : 0) + 1;
-      s.pending.push({ key: key, value: DELETED_SENTINEL });
-      scheduleFlush(scriptId);
-      fireListeners(scriptId, key, oldValue, undefined, false);
+      applyDelete(scriptId, ensureStore(scriptId), key);
     },
     list: function (scriptId) {
       var s = stores[scriptId];
       if (!s || !s.ready) return [];
       return _ObjectKeys(s.cache);
+    },
+    /* GM_getValues, as in TM and VM: given an array of keys, returns
+       an object of the ones that are set; given an object of
+       `{key: default}`, returns every key, with the default for an
+       unset one. TM returns all values when given nothing. */
+    getMany: function (scriptId, keysOrDefaults) {
+      var out = {};
+      var s = stores[scriptId];
+      var cache = s && s.ready ? s.cache : _ObjectCreate(null);
+      var has = function (k) { return _ReflectApply(_hasOwn, cache, [k]); };
+      /* Own properties, so a stored "__proto__" key comes back as one
+         rather than setting the result's prototype. */
+      var put = function (k, v) {
+        _ObjectDefineProperty(out, k, { value: v, writable: true, enumerable: true, configurable: true });
+      };
+      if (keysOrDefaults == null) {
+        var all = _ObjectKeys(cache);
+        for (var a = 0; a < all.length; a++) put(all[a], cache[all[a]]);
+      } else if (_isArray(keysOrDefaults)) {
+        for (var i = 0; i < keysOrDefaults.length; i++) {
+          var k = String(keysOrDefaults[i]);
+          if (has(k)) put(k, cache[k]);
+        }
+      } else if (typeof keysOrDefaults === "object") {
+        var dk = _ObjectKeys(keysOrDefaults);
+        for (var j = 0; j < dk.length; j++) {
+          put(dk[j], has(dk[j]) ? cache[dk[j]] : keysOrDefaults[dk[j]]);
+        }
+      }
+      return out;
+    },
+    /* GM_setValues({key: value, ...}): GM_setValue for each own key,
+       queued into the same batch. Every value is encoded first, so a
+       value that can't be stored throws with none of them applied. */
+    setMany: function (scriptId, values) {
+      if (values === null || typeof values !== "object") return;
+      var s = ensureStore(scriptId);
+      var keys = _ObjectKeys(values);
+      /* Read each value once: a getter, or a listener fired for an
+         earlier key, could otherwise make the cache and the write differ. */
+      var raw = [];
+      var encoded = [];
+      for (var i = 0; i < keys.length; i++) {
+        raw.push(values[keys[i]]);
+        encoded.push(encodeValue(raw[i]));
+      }
+      for (var j = 0; j < keys.length; j++) applySet(scriptId, s, keys[j], raw[j], encoded[j]);
+    },
+    /* GM_deleteValues([key, ...]). TM ignores anything but an array. */
+    delMany: function (scriptId, keys) {
+      if (!_isArray(keys)) return;
+      var s = ensureStore(scriptId);
+      for (var i = 0; i < keys.length; i++) applyDelete(scriptId, s, keys[i]);
     },
     /* GM_addValueChangeListener(key, callback) — register a per-key
        listener. Returns a listener-id the caller can pass to
@@ -1490,7 +1575,8 @@
 
        Listeners fire on:
          - Local GM_setValue / GM_deleteValue (remote=false), AFTER
-           the cache has been updated and the write queued.
+           the cache has been updated and the write queued, unless
+           the write changed nothing (see applySet / applyDelete).
          - Remote sm:gm-value-update broadcasts (remote=true).
        Pre-flight loads (storage.init) do NOT fire listeners — the
        cache hasn't observably changed from the page's perspective. */

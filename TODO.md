@@ -576,9 +576,6 @@ Adding any of these is a catalog entry + a body — nothing structural.
   reference shape: validate the target URL against the calling
   script's `@match`, and hide `httpOnly` cookies unless the user
   opted in.
-- `GM_getValues` / `GM_setValues` / `GM_deleteValues` — bulk storage
-  calls that both TM (5.x) and VM (2.19.1+) have. Convenience over our
-  existing per-key APIs, which already batch writes.
 
 ### GM_* implementation follow-ups
 

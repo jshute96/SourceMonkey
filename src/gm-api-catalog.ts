@@ -130,6 +130,11 @@ export const GM_APIS: readonly GmApiSpec[] = Object.freeze([
   { name: 'GM_getValue', gmDotName: 'getValue', gmDotPromised: true, kind: 'sync', subsystem: 'storage' },
   { name: 'GM_deleteValue', gmDotName: 'deleteValue', gmDotPromised: true, kind: 'sync', subsystem: 'storage' },
   { name: 'GM_listValues', gmDotName: 'listValues', gmDotPromised: true, kind: 'sync', subsystem: 'storage' },
+  // Bulk forms (TM 5.x, VM 2.19.1+): the per-key calls applied to each
+  // key, so writes go into the same batch and listeners fire per key.
+  { name: 'GM_getValues', gmDotName: 'getValues', gmDotPromised: true, kind: 'sync', subsystem: 'storage' },
+  { name: 'GM_setValues', gmDotName: 'setValues', gmDotPromised: true, kind: 'sync', subsystem: 'storage' },
+  { name: 'GM_deleteValues', gmDotName: 'deleteValues', gmDotPromised: true, kind: 'sync', subsystem: 'storage' },
 
   // ----- Value-change listeners (sync register/unregister) -----
   { name: 'GM_addValueChangeListener', gmDotName: 'addValueChangeListener', kind: 'sync', subsystem: 'storage-listener' },

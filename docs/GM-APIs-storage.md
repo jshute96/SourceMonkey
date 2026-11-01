@@ -1,7 +1,8 @@
 # GM_* storage APIs
 
-`GM_setValue` / `GM_getValue` / `GM_deleteValue` / `GM_listValues`
-(and their `GM.*` promised aliases). Background and high-level GM_*
+`GM_setValue` / `GM_getValue` / `GM_deleteValue` / `GM_listValues`,
+the bulk `GM_getValues` / `GM_setValues` / `GM_deleteValues` (and
+their `GM.*` promised aliases). Background and high-level GM_*
 docs live in [`GM-APIs.md`](GM-APIs.md); this file covers the storage
 subsystem in depth.
 
@@ -225,6 +226,7 @@ caches directly via a broadcast:
   `GM_addValueChangeListener` callbacks with `remote=true`, unless
   it already knows the key at a newer number (see
   [Ordering writes](#ordering-writes)).
+  A write that leaves the cached value as it was fires nothing.
 - The writing document isn't sent its own writes: it applied them
   locally, and learns their number from the reply to its batch.
 
@@ -450,9 +452,9 @@ every navigation.
 
 ## Sending writes
 
-- `GM_setValue` / `GM_deleteValue` update the page-side cache
-  synchronously, fire local value-change listeners, and queue the
-  write.
+- `GM_setValue` / `GM_deleteValue` (and the bulk forms, per key)
+  update the page-side cache synchronously, fire local value-change
+  listeners when the value changed, and queue the write.
 - The queue goes to the SW as one `sm:gm-batch-write` from a
   microtask: at the end of the current run of script code. A loop of
   writes is one message; a loop with an `await` in it is several.

@@ -12,6 +12,7 @@
 //   - GM_deleteValue removes the key
 //   - After sync: SECOND page sees the persisted value
 //   - Cross-script isolation: scripts have independent namespaces
+//   - Bulk GM_setValues / GM_getValues / GM_deleteValues, both forms
 
 import { test, expect } from '../fixtures/extension';
 import { ScriptsDir } from '../fixtures/scripts-dir';
@@ -252,5 +253,49 @@ test.describe('GM_* storage (Phase 3)', () => {
     await page.goto(`${fixtureServer.baseUrl}/target.html`);
     await expect(page.locator('body')).toHaveAttribute('data-sm-probe', 'yes');
     await page.close();
+  });
+
+  test('bulk GM_setValues / GM_getValues / GM_deleteValues persist, in both forms', async ({
+    extensionContext,
+    fixtureServer,
+    sm,
+  }) => {
+    scriptsDir.write({
+      relativePath: 'a.user.js',
+      meta: {
+        name: 'Bulk',
+        match: [`${fixtureServer.baseUrl}/*`],
+        runAt: 'document-end',
+        grant: ['GM_setValues', 'GM_getValues', 'GM_deleteValues', 'GM.getValues', 'GM.setValues', 'GM.deleteValues'],
+      },
+      body: `
+        (async () => {
+          const before = GM_getValues({ a: 'none', b: 'none' });
+          GM_setValues({ a: 1, b: 2, c: 3 });
+          GM_deleteValues(['c']);
+          await GM.setValues({ d: 4 });
+          await GM.deleteValues(['d']);
+          const after = await GM.getValues(['a', 'b', 'c', 'd']);
+          document.body.dataset.smProbe = JSON.stringify({ before, after });
+        })();
+      `,
+    });
+    await sm.addCollection(scriptsDir.path);
+    await sm.syncNow();
+
+    const page1 = await extensionContext.newPage();
+    await page1.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page1.locator('body')).toHaveAttribute('data-sm-probe', /after/);
+    expect(JSON.parse((await page1.locator('body').getAttribute('data-sm-probe'))!)).toEqual({
+      before: { a: 'none', b: 'none' }, after: { a: 1, b: 2 },
+    });
+    await waitForGmValues(sm, (v) => v.a === 1 && v.b === 2 && !('c' in v) && !('d' in v), 'a = 1, b = 2');
+    await page1.close();
+
+    // The second load reads what the first one wrote.
+    const page2 = await extensionContext.newPage();
+    await page2.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page2.locator('body')).toHaveAttribute('data-sm-probe', /"before":\{"a":1,"b":2\}/);
+    await page2.close();
   });
 });
