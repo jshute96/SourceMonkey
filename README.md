@@ -1,7 +1,7 @@
 # SourceMonkey - Userscript manager Chrome extension
 
 > [!NOTE]
-> SourceMonkey is experimental and under development. There's no Chrome Web Store release yet, but you can [install the extension](#getting-started) from the released zip file, or build from source.
+> SourceMonkey is experimental and under development. See [Getting started](#getting-started) for install instructions.
 
 **Userscripts** are JavaScript patches that modify specific web
 pages. They're like lightweight Chrome extensions that are easy to
@@ -111,8 +111,6 @@ Most common `GM*` APIs work, and most common script headers are supported.
 See [docs/supported-GM-APIs.md](docs/supported-GM-APIs.md) and
 [docs/supported-headers.md](docs/supported-headers.md) for details.
 
-SourceMonkey isn't in the Chrome Web Store yet.
-[Install it](#getting-started) from a release zip or build it from source.
 SourceMonkey requires **Chrome 152 or newer**.
 
 The [example scripts](#example-userscripts) also run as tests against
@@ -152,20 +150,12 @@ The [jshute96/userscripts](https://github.com/jshute96/userscripts) GitHub repo 
 
 ## Getting started
 
-> [!NOTE]
-> A Chrome Web Store release is coming.
+1. Install the extension from the
+   [Chrome Web Store](https://chromewebstore.google.com/detail/sourcemonkey/cgeoigcimmclmhiamjicgccmojfdgkkd).
+   - To install a release zip or build from source, see
+     [Installing an unpacked build](#installing-an-unpacked-build).
 
-1. Install the extension with **Load unpacked**:
-   1. Get the code:
-       - **From a release zip:** Download `SourceMonkey-vX.Y.Z.zip` from the
-        [Releases page](https://github.com/jshute96/SourceMonkey/releases)
-        and unzip it.
-       - **From source:** Check out this repo and build it (see [SourceMonkey Development](#sourcemonkey-development)) into `dist/`.
-
-   2. In Chrome, open `chrome://extensions`, enable **Developer mode**,
-      click **Load unpacked**, and select that directory.
-
-2. On `chrome://extensions`, for SourceMonkey enable:
+2. Open `chrome://extensions` and, for SourceMonkey, enable:
    - **Pin to toolbar**, so the SourceMonkey icon is visible.
    - **"Allow User Scripts"**. Without it Chrome can't inject scripts.
    - **"Allow access to file URLs"**, if you want to load scripts from
@@ -667,8 +657,8 @@ pnpm run build       # build into dist/
 pnpm run watch       # automatically rebuild when TypeScript files change
 ```
 
-The built extension is written to `dist/`. Install as described in
-[Getting started](#getting-started).
+The built extension is written to `dist/`. Install it as described in
+[Installing an unpacked build](#installing-an-unpacked-build).
 
 The build also generates `sm-dev` and the test harness code in `lib/`.
 ([Details here](docs/architecture.md#two-outputs-dist-and-lib).)
@@ -679,6 +669,20 @@ The build also generates `sm-dev` and the test harness code in `lib/`.
 scripts/sm-dev --help
 scripts/sm-dev validate userscripts/examples
 ```
+
+### Installing an unpacked build
+
+To run a release zip or your own build instead of the Chrome Web Store
+version, install it with **Load unpacked**:
+
+1. Get the code:
+   - **From a release zip:** Download `SourceMonkey-vX.Y.Z.zip` from the
+     [Releases page](https://github.com/jshute96/SourceMonkey/releases)
+     and unzip it.
+   - **From source:** Check out this repo and [build it](#build) into `dist/`.
+2. In Chrome, open `chrome://extensions`, enable **Developer mode**,
+   click **Load unpacked**, and select the unzipped directory or `dist/`.
+3. Continue from step 2 of [Getting started](#getting-started).
 
 ### Test
 

@@ -260,9 +260,12 @@ PREV_TAG=$(git tag --list 'v*' --sort=-v:refname | sed -n 2p)
 
 {
   cat <<EOF
-**Install the extension:** download \`$(basename "$ZIP")\` below and unzip it. In
-Chrome, open \`chrome://extensions\`, enable **Developer mode**, click **Load
-unpacked**, and select the unzipped directory.
+**Install the extension** from the
+[Chrome Web Store](https://chromewebstore.google.com/detail/sourcemonkey/cgeoigcimmclmhiamjicgccmojfdgkkd).
+
+**Or load this release unpacked:** download \`$(basename "$ZIP")\` below and
+unzip it. In Chrome, open \`chrome://extensions\`, enable **Developer mode**,
+click **Load unpacked**, and select the unzipped directory.
 
 **sm-dev:** run \`npx sm-dev@$VERSION\`, or install it in a repo of userscripts
 with \`pnpm add -D sourcemonkey@$VERSION\`. The \`.tgz\` files below are the
