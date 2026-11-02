@@ -1203,8 +1203,6 @@ function forgetScriptsExcept(keep: ReadonlySet<string>): void {
 // into the Add field and clicking Add. Validates the input;
 // shows an error if it doesn't look like an absolute path or URL.
 // On success or duplicate, jumps to the resulting collection section.
-// Lets the docs/redirect-page.md deep link route here from anywhere
-// on the web (see docs/deep-link.md).
 async function bootstrap(): Promise<void> {
   // The GitHub auth token hydrated before anything here reads GitHub.
   // Released even if anything above the render throws: every repaint
@@ -1596,8 +1594,8 @@ async function renderCollectionSection(collection: StoredCollection): Promise<HT
   // For `markDiskChanges`, which works from the DOM after a paint.
   section.dataset.collectionPath = collection.path;
   syncManifestStatDataset(section, collection);
-  // Stable per-collection anchor; lets deep links (and the post-add
-  // `jumpToCollection` helper) scroll directly to this section.
+  // Stable per-collection anchor; lets the post-add `jumpToCollection`
+  // helper (and `#collection-…` links) scroll directly to this section.
   section.id = collectionAnchorId(collection.id);
   if (!collectionOn) section.classList.add('disabled');
 

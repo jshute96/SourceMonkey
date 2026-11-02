@@ -54,7 +54,6 @@ import {
   loadLocalRootsSetting,
   rootsFromText,
 } from '../local-file-overrides.js';
-import { installDeepLinkRedirect } from './deep-link.js';
 import { REJECTIONS_KEY, readRejections, type RejectionMap } from './script-rejection.js';
 import { readRefreshErrors, type RefreshErrorMap } from './refresh-error.js';
 import { installUserJsCapture, isCaptureEnabled } from './install-capture.js';
@@ -6152,7 +6151,6 @@ installStorageListener();
 installStaleScriptListener();
 installFocusRefresh();
 installNavigationListeners();
-installDeepLinkRedirect();
 installUserJsCapture();
 installStallMonitor();
 // Sweep header rules stranded by a worker that died mid-request. The

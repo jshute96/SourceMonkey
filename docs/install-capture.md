@@ -122,7 +122,7 @@ navigation. Capturing it hijacks a page the user opened to *read*.
 - `canonicalCollectionInput` (`directories.ts`) picks the bare path as the
   one true spelling. It runs inside **`addCollection`**, so every entry
   point converges — the capture, the preview's Install, the collections
-  page's field, and the `?add=` deep link.
+  page's field, and its `?add=` parameter.
 - Reads canonicalize the *stored* value too (the preview's
   already-installed check, the container's duplicate check), so rows
   written before this existed still match.
@@ -382,18 +382,18 @@ Where the marker comes from and goes:
 - Only `buildPreviewPageUrl` (`install-capture.ts`) adds it, and the
   capture is the only thing that calls it.
 - The collections page builds its own preview URL and does not add it.
-- `deep-link.ts` — the redirect that lets a web page link into the
-  extension, forwarding its query string — deletes this parameter from
-  whatever it forwards.
 - `userscript.ts` reads it once, into `previewWasCaptured`, for the
   decision above. Nothing else looks at it.
 
-That third point is the security-relevant one. Acting on the marker
-means navigating the user's tab and writing a capture bypass for the
-target URL, so a web page must not be able to set it. Web pages cannot
-open `chrome-extension://` URLs at all, which leaves the deep-link
-redirect as the only way a parameter could cross from the web onto an
-extension page — hence the strip.
+Acting on the marker means navigating the user's tab and writing a
+capture bypass for the target URL, so a web page must not be able to
+set it.
+
+- Web pages cannot open `chrome-extension://` URLs at all, and no
+  extension page is web-accessible, so nothing on the web can put a
+  parameter onto one.
+- Anything added later that forwards a web page's parameters onto an
+  extension page must strip this one.
 
 ### When the URL isn't a script
 
@@ -491,15 +491,6 @@ path those differ.
   the initial read — the handler awaits the settled flag on its async
   side and re-checks before opening the preview, rather than capturing
   for a user who turned capture off.
-
-## Relationship to the deep link
-
-- [`docs/deep-link.md`](deep-link.md) covers the other direction: a
-  page that *wants* to hand SourceMonkey a URL links to the GitHub
-  redirect stub with `?page=collections.html&add=…`.
-- Capture needs no cooperation from the page at all, but only works
-  from a `.user.js` URL. Starting from a script's *listing* page needs
-  the deep link, which the page has to opt into.
 
 ## Limitations / future work
 

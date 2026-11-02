@@ -152,7 +152,6 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/parse-sandbox.ts` | Sandboxed-page compile probe — `new Function` per source, plus the `<script>` probes that locate the error |
 | `src/extension/offscreen.ts` | Offscreen-document relay: the DOM the service worker lacks, hosting a sandboxed parse frame |
 | `src/extension/background.ts` | Service worker entrypoint; per-tab badge, toolbar click / double click / right-click items and the popup's view + requests, sm:* listener, the pages' `sm:op` worker-ops port, focus-triggered local refresh, the pages' http-read and log-write relays, injector + match-index bootstrap, first-run collections-page open |
-| `src/extension/deep-link.ts` | `webNavigation` listener: rewrites the GitHub `redirect-page.md` URL to the matching `chrome-extension://…` page |
 | `src/extension/stall-monitor.ts` | Under debug logging, logs each time the service worker's thread was blocked for over 200 ms |
 | `src/extension/install-capture.ts` | Captures http(s) + file:// navigations to `*.user.js` and opens the viewer's preview mode, in a new tab beside a page |
 | `src/extension/collections.ts` | Collections page controller — Add-field routing into the dialog, options gear, render, membership repair, in-place updates, refresh highlights + dropped-row ghosts, repaint-from-storage on change, suggestion box, `?refresh`/`?refresh_local`/`?refresh_file`/`?add` triggers |
@@ -563,7 +562,6 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/gm-tab.test.mjs` | Unit tests for the `GM_openInTab` SW dispatcher (mapping, close routing, originator cleanup) |
 | `tests/unit/gm-menu.test.mjs` | Unit tests for the `GM_registerMenuCommand` registry (declaration order, in-place update, per-document scoping of clear/unregister) |
 | `tests/unit/delete-icon.test.mjs` | Unit tests for the trash cans' Uninstall / Delete wording by script location |
-| `tests/unit/deep-link.test.mjs` | Unit tests for `buildDeepLinkTarget` — URL prefix match, allowlist, passthrough params, null on bad input |
 | `tests/unit/markup-response.test.mjs` | Unit tests for the markup guard: content-type families, leading-`<` body test, message wording |
 | `tests/unit/install-capture.test.mjs` | Unit tests for the `.user.js` capture helpers: URL predicate, forge page-view exclusion, install-page URL, one-shot bypass |
 | `tests/unit/popup-imports.test.mjs` | Keeps the toolbar popup's module graph small: no script store or location scanner |
@@ -726,8 +724,6 @@ For userscript repos to install, so their coding agents know how to use `sm-dev`
 | `docs/testing.md` | Unit + e2e test harness layout, the SW test surface, and the Chrome-flags workaround for headless user-scripts |
 | `docs/cross-manager-testing.md` | How the examples suite runs against Tampermonkey and Violentmonkey: the fresh test browser, the two install mechanisms, fragile bits |
 | `docs/cross-manager-test-results.md` | Snapshot of what passes / skips / fails under Tampermonkey and Violentmonkey today, with triage notes for each divergence |
-| `docs/redirect-page.md` | Canonical GitHub-hosted "front door" the extension watches for; deep-link target that rewrites to `chrome-extension://...` |
-| `docs/deep-link.md` | Design of the external-page → extension-page redirect (GitHub URL + `webNavigation` + allowlisted `page` param) |
 | `docs/install-capture.md` | How `.user.js` link clicks become installs: what Chrome does on its own, the capture, the prompt, the bypass |
 | `docs/script-identity.md` | How two rows are recognised as the same script, and the "Other versions" panel built on it |
 | `docs/script-enablement.md` | Keeping one copy of each script active: exclusive toggles, active times, restores, preference order |

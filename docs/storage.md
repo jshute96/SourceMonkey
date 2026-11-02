@@ -1744,7 +1744,7 @@ google-chrome 'chrome-extension://<extension-id>/collections.html?refresh_file=/
 - A single `.user.js` value (URL or path) opens the viewer's preview in
   a new tab rather than being added outright — see
   [script-viewer.md](script-viewer.md#preview-mode). Every other value
-  opens the collection dialog prefilled, so a deep-linked directory
+  opens the collection dialog prefilled, so a directory added this way
   gets a name and a readability check before it exists.
 - Scrubs the param from the URL once it was consumed; a cancelled
   dialog leaves it in place so the user can edit and retry.
@@ -1756,8 +1756,6 @@ google-chrome 'chrome-extension://<extension-id>/collections.html?refresh_file=/
 - `?add` runs first, so a collection the same URL adds is included in
   the refresh — and a `?refresh_file=` rejection is the message left
   standing on the page's single error line.
-- Is the entry point used by `docs/redirect-page.md` (see
-  [`deep-link.md`](deep-link.md)).
 
 ### Row highlights after refresh
 

@@ -536,10 +536,6 @@ takes effect:
 - [supported-GM-APIs.md](supported-GM-APIs.md) — user-facing
   inventory of which `GM_*` names work, which are stubbed, and how
   they map to TM / VM / GM4 behavior.
-- [deep-link.md](deep-link.md) — external "front door" that rewrites a
-  GitHub-hosted markdown URL to the matching `chrome-extension://...`
-  page, so web pages can link into the extension without knowing its
-  ID.
 - [install-capture.md](install-capture.md) — capturing `.user.js`
   navigations (web links and local files) into the viewer's preview
   mode, and the Chrome-version quirks that make it necessary.

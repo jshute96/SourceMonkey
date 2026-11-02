@@ -155,9 +155,10 @@ export function isUserJsUrl(url: string): boolean {
 //
 // Nothing on the web can set this, and it has to stay that way: a page
 // that could forge it could make the viewer navigate the tab and plant
-// a capture bypass. `deep-link.ts` strips it for that reason. The
-// whole flow — who adds it, who strips it, who reads it — is written
-// up in [docs/install-capture.md], "The `captured=1` marker".
+// a capture bypass. Web pages can't open extension pages (none is
+// web-accessible), so anything that ever forwards a web page's params
+// onto one must strip it. The whole flow — who adds it, who reads it —
+// is written up in [docs/install-capture.md], "The `captured=1` marker".
 export const CAPTURED_PARAM = 'captured';
 
 // Marks a captured preview opened in a tab of its own, beside the tab
