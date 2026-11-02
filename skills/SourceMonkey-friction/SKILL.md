@@ -7,7 +7,8 @@ description: Record friction from userscript development with SourceMonkey tools
 
 The friction log collects problems hit while developing userscripts
 with SourceMonkey (SM) tools: `sm-dev`, the Playwright harness, the
-`SourceMonkey-dev` skill, and the script manager (the SourceMonkey
+`SourceMonkey-dev` skill and the other SourceMonkey skills
+(`SourceMonkey-userscripts`, `install-in-SourceMonkey`), and the script manager (the SourceMonkey
 extension itself). It's input for improving those tools.
 
 ## Where the log lives

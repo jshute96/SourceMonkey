@@ -583,17 +583,27 @@ Both come from npm (see [Getting `sm-dev`](#getting-sm-dev)).
 See [docs/harness-guide.md](docs/harness-guide.md) to use it, and
 [docs/harness-design.md](docs/harness-design.md) for how it works.
 
-For coding agents, [skills/SourceMonkey-dev](skills/SourceMonkey-dev/SKILL.md)
-is a skill with recipes for developing and testing with these tools.
-[skills/SourceMonkey-friction](skills/SourceMonkey-friction/SKILL.md)
-is optional: it has agents record a friction log of problems hit using
-these tools, as feedback for improving them later. Both ship in the
-package, so a userscript repo can link them in:
+For coding agents, the package ships skills in `skills/`:
+
+- [SourceMonkey-dev](skills/SourceMonkey-dev/SKILL.md): recipes for
+  developing and testing with these tools.
+- [SourceMonkey-userscripts](skills/SourceMonkey-userscripts/SKILL.md):
+  the workflow for building a script, and tips for things sites do that
+  break scripts (single-page apps, React, CSP-sandboxed pages, and more).
+- [install-in-SourceMonkey](skills/install-in-SourceMonkey/SKILL.md)
+  and [install-in-Tampermonkey](skills/install-in-Tampermonkey/SKILL.md):
+  installing a script in the person's own browser.
+- [SourceMonkey-friction](skills/SourceMonkey-friction/SKILL.md)
+  (optional): has agents record a friction log of problems hit using
+  these tools, as feedback for improving them later.
+
+A userscript repo can link them in:
 
 ```sh
 mkdir -p .claude/skills
-ln -s ../../node_modules/sourcemonkey/skills/SourceMonkey-dev .claude/skills/
-ln -s ../../node_modules/sourcemonkey/skills/SourceMonkey-friction .claude/skills/
+for s in SourceMonkey-dev SourceMonkey-userscripts install-in-SourceMonkey install-in-Tampermonkey SourceMonkey-friction; do
+  ln -s ../../node_modules/sourcemonkey/skills/$s .claude/skills/
+done
 ```
 
 `sm-dev --version` shows the directory `sm-dev` is installed in.

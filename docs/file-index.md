@@ -34,6 +34,9 @@ One-line descriptions of every source file, grouped by directory.
 | `.claude/commands/codereview.md` | `/codereview` slash command — launches a background review subagent |
 | `.claude/skills/SourceMonkey-dev` | Symlink to `skills/SourceMonkey-dev/`, so agents here load the harness skill too |
 | `.claude/skills/SourceMonkey-friction` | Symlink to `skills/SourceMonkey-friction/`, so agents here log tool friction too |
+| `.claude/skills/SourceMonkey-userscripts` | Symlink to `skills/SourceMonkey-userscripts/`, so agents here load the script-writing skill too |
+| `.claude/skills/install-in-SourceMonkey` | Symlink to `skills/install-in-SourceMonkey/` |
+| `.claude/skills/install-in-Tampermonkey` | Symlink to `skills/install-in-Tampermonkey/` |
 | `.claude/skills/corpus-testing/SKILL.md` | Repo-only skill: testing GreasyFork corpus scripts live, running batches with agents, re-testing after fixes |
 | `.claude/skills/corpus-testing/references/testing-a-script.md` | How to test and record one corpus script; the brief handed to each agent in a batch |
 | `.claude/commands/pushreview.md` | `/pushreview` slash command — `/codereview` then commit + push if clean |
@@ -673,7 +676,7 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 
 ## Agent skills (`skills/`)
 
-For userscript repos to install, so their coding agents know how to use `sm-dev` and the harness, and report where the tools got in the way.
+For userscript repos to install, so their coding agents know how to write scripts, use `sm-dev` and the harness, install scripts, and report where the tools got in the way.
 
 | File | Description |
 |------|-------------|
@@ -682,6 +685,11 @@ For userscript repos to install, so their coding agents know how to use `sm-dev`
 | `skills/SourceMonkey-dev/references/cdp.md` | Raw CDP recipes beside a run: wheel, clicks at a point, drag, window size, fullscreen, per-frame tracing |
 | `skills/SourceMonkey-dev/references/specs.md` | Writing Playwright specs with the harness fixture: example, sm-dev-to-fixture mapping, network requests |
 | `skills/SourceMonkey-dev/references/other-managers.md` | Testing scripts under Violentmonkey with sm-dev: how to start, how the run's scripts are kept, what differs |
+| `skills/SourceMonkey-userscripts/SKILL.md` | Writing userscripts: the workflow from request to installed script, triage, header and logging conventions, and an index of topic references |
+| `skills/SourceMonkey-userscripts/references/` | Topic references on things sites do that break scripts, one file per topic; `SKILL.md` lists them and when to load each |
+| `skills/install-in-SourceMonkey/SKILL.md` | Installing and refreshing scripts in SourceMonkey from the command line, local `@require` overrides, manifest files |
+| `skills/install-in-Tampermonkey/SKILL.md` | Installing scripts in Tampermonkey: raw copies or pointers that load the local file |
+| `skills/install-in-Tampermonkey/scripts/convert-to-file-pointer.py` | Turns a userscript into a header-only pointer script that `@require`s the local file |
 | `skills/SourceMonkey-friction/SKILL.md` | When and how to log friction with the SourceMonkey tools in the shared `../SourceMonkey-friction.md` log, and how to compact it |
 | `skills/SourceMonkey-friction/references/template.md` | The friction log's starting file: title, tags, and the entry format |
 

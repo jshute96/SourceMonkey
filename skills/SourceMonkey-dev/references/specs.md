@@ -41,6 +41,15 @@ test('adds the button', async ({ page, loadUserscript, gm, reports }) => {
 - `page.route` can serve made-up URLs (`https://x.test/big.png`) for
   tests with no site behind them. `loadUserscript(path, { url })` alone
   tests matching with no page load at all.
+- To test two installed copies of one script in one document (each
+  with its own sandbox and storage), load it twice and give the second
+  load a `copy` name: `loadUserscript(path)`, then
+  `loadUserscript(path, { copy: 'second' })`. Any name works. Without
+  `copy`, the second load replaces the first.
+- Waiting for a smooth scroll to settle: poll the target element's
+  `getBoundingClientRect().top` until it stops changing, not
+  `window.scrollY`. On pages that lazy-load content above the target,
+  `scrollY` can sit still while the element is still moving.
 - Fixture reference:
   [harness-guide.md](https://github.com/jshute96/SourceMonkey/blob/main/docs/harness-guide.md#writing-specs-the-playwright-fixture)
-  has the rest: `serveHtml` options, `copy`, `saveHtml`.
+  has the rest: `serveHtml` options, `saveHtml`.

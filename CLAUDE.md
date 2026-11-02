@@ -154,7 +154,9 @@ user before elaborating further. Default to action over planning.
 ## Working on userscripts with our tools
 - When developing, debugging or testing userscripts with `sm-dev` or the
   harness (not when changing the tools themselves), use the
-  `SourceMonkey-dev` skill for how to work with them.
+  `SourceMonkey-dev` skill for how to work with them, and
+  `SourceMonkey-userscripts` for how to write the scripts and for tips on
+  issues that show up on some sites.
 - Apply the `SourceMonkey-friction` skill too: when that work is
   finished (committed or abandoned) and ran into friction with the
   tools or the skill, log it as the skill describes.

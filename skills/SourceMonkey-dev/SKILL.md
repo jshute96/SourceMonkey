@@ -52,6 +52,11 @@ Where to look:
   lists the topics; `help <topic>`, `help <command>` or
   `help <command> <subcommand>` (`help script save`) shows one,
   `help commands` lists the commands, and `help all` everything.
+- The `SourceMonkey-userscripts` skill: what to build and how, from a
+  request to a working script, with tips for things sites do that break
+  scripts. 
+- The`install-in-SourceMonkey` skill: installs a script in the person's
+  own browser.
 - The `SourceMonkey-friction` skill, when installed: log where these
   tools got in the way once the task is done.
 - Full docs, when the above isn't enough:
@@ -878,3 +883,13 @@ refused. How it works and what differs:
 - **A wait gave up**: its message says what was still busy (requests,
   DOM changes). A page with a slow API or a never-ending resource never
   settles; `wait selector` for the element you need instead.
+- **Page loads on one site stall or crawl in an `--open-browser`
+  browser**, while a temp browser loads them quickly: the kept profile's
+  service workers for that site may be the cause (seen on large sites
+  like nytimes.com and youtube.com). Clear that site's service workers
+  and cache storage, which keeps its cookies and sign-ins: DevTools,
+  Application, Storage, "Clear site data" with only those boxes ticked,
+  or over CDP from that site's tab,
+  `Storage.clearDataForOrigin` with `storageTypes: 'service_workers,cache_storage'`.
+  It can come back once the site registers its worker again. A spec that
+  needs no login avoids it by running in a temp browser.
