@@ -37,6 +37,8 @@ One-line descriptions of every source file, grouped by directory.
 | `.claude/skills/SourceMonkey-userscripts` | Symlink to `skills/SourceMonkey-userscripts/`, so agents here load the script-writing skill too |
 | `.claude/skills/install-in-SourceMonkey` | Symlink to `skills/install-in-SourceMonkey/` |
 | `.claude/skills/install-in-Tampermonkey` | Symlink to `skills/install-in-Tampermonkey/` |
+| `.claude/skills/publish-on-GreasyFork` | Symlink to `skills/publish-on-GreasyFork/` |
+| `.claude/skills/userscript-collections` | Symlink to `skills/userscript-collections/` |
 | `.claude/skills/corpus-testing/SKILL.md` | Repo-only skill: testing GreasyFork corpus scripts live, running batches with agents, re-testing after fixes |
 | `.claude/skills/corpus-testing/references/testing-a-script.md` | How to test and record one corpus script; the brief handed to each agent in a batch |
 | `.claude/commands/pushreview.md` | `/pushreview` slash command — `/codereview` then commit + push if clean |
@@ -333,6 +335,8 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `userscripts/debugging/no-click-nav.user.js` | Follows links, goes back, or opens a URL after a delay, so it works with the popup open |
 | `userscripts/greasyfork/` | Userscripts for Greasy Fork pages |
 | `userscripts/greasyfork/show-test-results.user.js` | Userscript that shows corpus validation and test status beside each script's stats on Greasy Fork, from GitHub Pages or a local server |
+| `userscripts/greasyfork/prefill-forms-from-hash.user.js` | Userscript that fills Greasy Fork's new script, new version and import forms from URL hash parameters; `publish-on-GreasyFork` builds those URLs |
+| `userscripts/greasyfork/prefill-forms-from-hash.md` | Its doc: the hash parameters, form selectors and how fields are filled |
 
 ## Tests (`tests/`)
 
@@ -676,7 +680,7 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 
 ## Agent skills (`skills/`)
 
-For userscript repos to install, so their coding agents know how to write scripts, use `sm-dev` and the harness, install scripts, and report where the tools got in the way.
+For userscript repos to install, so their coding agents know how to write scripts, use `sm-dev` and the harness, install scripts, keep a repo of scripts organized, publish on Greasy Fork, and report where the tools got in the way.
 
 | File | Description |
 |------|-------------|
@@ -690,6 +694,14 @@ For userscript repos to install, so their coding agents know how to write script
 | `skills/install-in-SourceMonkey/SKILL.md` | Installing and refreshing scripts in SourceMonkey from the command line, local `@require` overrides, manifest files |
 | `skills/install-in-Tampermonkey/SKILL.md` | Installing scripts in Tampermonkey: raw copies or pointers that load the local file |
 | `skills/install-in-Tampermonkey/scripts/convert-to-file-pointer.py` | Turns a userscript into a header-only pointer script that `@require`s the local file |
+| `skills/userscript-collections/SKILL.md` | Optional repo layout for a collection of scripts: a directory per site, `script_manifest.json`, generated README tables and site icons, a doc per script |
+| `skills/userscript-collections/references/` | The manifest and README tables, script docs and the Summary, screenshot conventions |
+| `skills/userscript-collections/scripts/update_readme.py` | Regenerates a collection's README tables and doc titles from its manifest |
+| `skills/userscript-collections/scripts/update_site_icons.py` | Saves each script's icons into `site-icons/` with an `sm-dev` run, and lists them in the manifest |
+| `skills/publish-on-GreasyFork/SKILL.md` | Publishing and updating scripts and libraries on Greasy Fork through prefilled forms, optionally recording their IDs in the manifest |
+| `skills/publish-on-GreasyFork/scripts/greasyfork-url.py` | Builds and opens a prefilled Greasy Fork form URL (`new`, `update`, `import`) |
+| `skills/publish-on-GreasyFork/scripts/greasyfork-scripts.py` | Lists a user's published scripts, matches them to local files, records IDs in the manifest, prints GitHub raw URLs |
+| `skills/publish-on-GreasyFork/scripts/extract-description.py` | Pulls the publishable description and screenshot list out of a script's doc |
 | `skills/SourceMonkey-friction/SKILL.md` | When and how to log friction with the SourceMonkey tools in the shared `../SourceMonkey-friction.md` log, and how to compact it |
 | `skills/SourceMonkey-friction/references/template.md` | The friction log's starting file: title, tags, and the entry format |
 

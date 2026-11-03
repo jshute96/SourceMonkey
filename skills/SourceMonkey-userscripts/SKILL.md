@@ -17,6 +17,13 @@ things sites do that break scripts.
 - **`install-in-SourceMonkey` and `install-in-Tampermonkey`:** installing
   a script in the person's own browser, and what it takes for an edit
   to reach it.
+- **`userscript-collections`** (optional): a layout for a repo of
+  scripts, with a manifest, a doc per script, and generated README
+  tables. Use it only in a repo that follows that layout, or asks to
+  adopt it.
+- **`publish-on-GreasyFork`** (optional): publishing and updating
+  scripts on Greasy Fork. Use it only when the person asks to publish
+  there.
 - **The `tampermonkey` plugin skill**, when installed, has general
   references on userscript syntax, in its own `references/` directory:
   `common-pitfalls.md`

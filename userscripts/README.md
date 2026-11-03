@@ -15,6 +15,11 @@ Userscripts kept in this repo, by directory:
     On Greasy Fork script pages and listings, shows the results of testing
     each script with SourceMonkey. See the
     [GreasyFork corpus README](../greasyfork-testing/README.md#on-greasy-fork-pages).
+  - [`prefill-forms-from-hash.user.js`](https://jshute96.github.io/SourceMonkey/userscripts/greasyfork/prefill-forms-from-hash.user.js):
+    Fills Greasy Fork's new script, new version and import forms from
+    parameters in the URL hash. The
+    [publish-on-GreasyFork](../skills/publish-on-GreasyFork/SKILL.md) skill
+    builds those URLs. See its [doc](greasyfork/prefill-forms-from-hash.md).
 - [`debugging/`](debugging/): Helpers for manual testing. They aren't
   installed or kept enabled by default; enable them when needed.
   - [`no-click-nav.user.js`](debugging/no-click-nav.user.js): Navigates

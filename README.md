@@ -593,17 +593,36 @@ For coding agents, the package ships skills in `skills/`:
 - [install-in-SourceMonkey](skills/install-in-SourceMonkey/SKILL.md)
   and [install-in-Tampermonkey](skills/install-in-Tampermonkey/SKILL.md):
   installing a script in the person's own browser.
+- [userscript-collections](skills/userscript-collections/SKILL.md)
+  (optional): a layout for a repo of scripts, with a manifest, docs, and
+  generated README tables and site icons.
+- [publish-on-GreasyFork](skills/publish-on-GreasyFork/SKILL.md)
+  (optional): publishing and updating scripts on Greasy Fork, with the
+  [prefill-forms-from-hash](userscripts/greasyfork/prefill-forms-from-hash.md)
+  userscript.
 - [SourceMonkey-friction](skills/SourceMonkey-friction/SKILL.md)
   (optional): has agents record a friction log of problems hit using
   these tools, as feedback for improving them later.
 
-A userscript repo can link them in:
+A userscript repo can link them in. First set where the links go, and
+where the skills are, relative to that directory:
 
 ```sh
-mkdir -p .claude/skills
-for s in SourceMonkey-dev SourceMonkey-userscripts install-in-SourceMonkey install-in-Tampermonkey SourceMonkey-friction; do
-  ln -s ../../node_modules/sourcemonkey/skills/$s .claude/skills/
-done
+SKILLS_DIR=.claude/skills
+SM_SKILLS=../../node_modules/sourcemonkey/skills
+mkdir -p $SKILLS_DIR
+```
+
+Then link the ones you want:
+
+```sh
+ln -s $SM_SKILLS/SourceMonkey-dev $SKILLS_DIR/
+ln -s $SM_SKILLS/SourceMonkey-userscripts $SKILLS_DIR/
+ln -s $SM_SKILLS/install-in-SourceMonkey $SKILLS_DIR/
+ln -s $SM_SKILLS/install-in-Tampermonkey $SKILLS_DIR/
+ln -s $SM_SKILLS/userscript-collections $SKILLS_DIR/
+ln -s $SM_SKILLS/publish-on-GreasyFork $SKILLS_DIR/
+ln -s $SM_SKILLS/SourceMonkey-friction $SKILLS_DIR/
 ```
 
 `sm-dev --version` shows the directory `sm-dev` is installed in.

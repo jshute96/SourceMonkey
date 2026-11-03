@@ -45,3 +45,5 @@ greasyfork-testing/download-report.json
 # record-results.mjs's lock and in-flight temp files.
 greasyfork-testing/corpus.json.lock
 greasyfork-testing/corpus.json.tmp-*
+# Python bytecode from the skills' scripts.
+__pycache__/
