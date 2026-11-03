@@ -42,7 +42,9 @@ sites/
 
 1. **The manifest:** add, change or remove its entry in
    `script_manifest.json`, in site order. Only set a `category` if the
-   person asks for one.
+   person asks for one. `sm-dev manifest --dir . <script>` adds a new
+   entry in place; `sm-dev manifest --dir . sites --prune` adds all new
+   ones and drops deleted ones.
 2. **Its doc:** write or update the sibling `.md`, with `@name`,
    `@description` and the doc's Summary written as a set. See
    [references/script-docs.md](references/script-docs.md).
@@ -93,8 +95,10 @@ need `sm-dev` of its own.
 
 ## Starting a collection
 
-* Create `script_manifest.json` as `{"scripts": [], "libraries": []}`
-  (drop `libraries` if there are none), and add an entry per script.
+* Create `script_manifest.json` with
+  `sm-dev manifest --dir . sites --create --format object`, which lists
+  each script under `sites/`. Add a `"libraries": []` list beside
+  `scripts` if there are libraries.
 * In `README.md`, add a `<!-- update_readme.py category=default -->`
   line where the table should go, followed by a blank line, plus one
   per other category and a `<!-- update_readme.py libraries -->` line

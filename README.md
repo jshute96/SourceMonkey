@@ -399,9 +399,9 @@ Entry paths resolve like this:
 - **Absolute** URLs (`https://…`, `file:///…`) are used verbatim, and
   can point anywhere.
 
-To generate a manifest from a directory of userscripts, run
-`scripts/make_manifest.sh` inside that directory and redirect stdout to
-`script_manifest.json`.
+To make a manifest from a directory of userscripts, use
+`sm-dev manifest <dir> --create`. Run it again to add new scripts, with
+`--prune` to drop deleted ones. See `sm-dev help manifest`.
 
 ### Keeping scripts up to date
 

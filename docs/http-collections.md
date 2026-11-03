@@ -181,7 +181,7 @@ manifest JSON can be tested locally and then served unchanged over
 HTTP. A typical workflow:
 
 1. Write `script_manifest.json` next to your `*.user.js` files (or
-   generate it with `scripts/make_manifest.sh`).
+   make it with `sm-dev manifest <dir> --create`).
 2. Add the local path (e.g. `/home/me/scripts/script_manifest.json`)
    as a collection in SourceMonkey to verify the entries load and inject.
 3. Serve the directory over HTTP; replace the collection with the

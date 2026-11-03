@@ -79,8 +79,7 @@ test('example userscripts use the SourceMonkey icon', () => {
 
 // Each script_manifest.json lists every userscript under its directory,
 // sorted, so loading it (in sm-dev or as a collection) gets them all.
-// Regenerate it with `sh ../../scripts/make_manifest.sh > script_manifest.json`
-// from that directory.
+// Update it with `pnpm sm-dev manifest <dir> --prune`.
 for (const dir of [EXAMPLES, path.resolve(EXAMPLES, '../bad-examples')]) {
   test(`${path.basename(dir)}/script_manifest.json lists every userscript there`, () => {
     const files = fs.readdirSync(dir, { recursive: true })
@@ -88,6 +87,6 @@ for (const dir of [EXAMPLES, path.resolve(EXAMPLES, '../bad-examples')]) {
       .filter((f) => f.endsWith('.user.js'))
       .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
     const listed = JSON.parse(fs.readFileSync(path.join(dir, 'script_manifest.json'), 'utf8'));
-    assert.deepEqual(listed, files, `Out of date: in ${path.relative(process.cwd(), dir)}, run sh ../../scripts/make_manifest.sh > script_manifest.json`);
+    assert.deepEqual(listed, files, `Out of date: run pnpm sm-dev manifest ${path.relative(process.cwd(), dir)} --prune`);
   });
 }

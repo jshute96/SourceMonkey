@@ -4,8 +4,9 @@
 
 The list of scripts SourceMonkey (the userscript manager) loads from
 the collection, and the collection's source of truth for which scripts
-exist. Edit it by hand, except for the generated fields below. It's an
-object with two lists:
+exist. Add and remove script entries with `sm-dev manifest` (see
+SKILL.md); edit the other fields by hand, except for the generated ones
+below. It's an object with two lists:
 
 ```json
 {
@@ -20,7 +21,8 @@ field and top-level key, so the tools here (and other skills, like
 
 ### `scripts`
 
-One entry per userscript, in site order (by path), each an object with:
+One entry per userscript, in site order (by path). An entry is a plain
+path string, or an object with:
 
 * `path`: the relative path from the collection root. Required.
 * `category`: which README table the script belongs in. Omit it for the

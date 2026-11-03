@@ -1364,6 +1364,27 @@ In a run, not given files, they act on the run's scripts and tabs:
   (`all`, `2024`) is taken for the path, not the run's scripts.
 - `--root` and `--local` are the run's own.
 
+### Making a manifest: `manifest`
+
+`sm-dev manifest` adds scripts to a `script_manifest.json` (see
+[http-collections.md](http-collections.md#manifest-format)). It works
+on files only, with no run or browser.
+
+- `sm-dev manifest <dir>` adds each `.user.js` under `<dir>` (skipping
+  hidden directories and `node_modules`) to `<dir>/script_manifest.json`.
+- With multiple arguments or a script file, `--dir` names the manifest's
+  directory. Every local path must be under it; URLs are added as given.
+- A missing manifest is an error unless `--create` is given, so a
+  mistyped directory doesn't make a new file. `--format array` (the
+  default) or `object` picks the new file's shape.
+- An update keeps the file's other keys, entry fields and order:
+  - Each new entry goes before the first one that sorts after it.
+  - New entries are `{"path": ...}` objects if all existing entries
+    are objects, and plain strings otherwise.
+- Nothing is removed unless `--prune` is given. It then drops entries
+  whose file is missing, under the directories among the arguments.
+- `--dry-run` shows the changes and writes nothing.
+
 ## Working with tabs
 
 | Run command | What it does |

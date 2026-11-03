@@ -36,6 +36,7 @@ import type { ManagerVerb } from './manager-actions.js';
 import type { ManagerControl } from './manager-commands.js';
 import { COMMAND_NAMES, MAX_TIMER_SECONDS, OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, TIMEOUT_FLAG, TIMEOUT_NEEDS_SECONDS, GLOBAL_FLAGS, VALUE_GLOBALS, commandHelp, commandNamed, commandSuggestion, commandSyntax, globalFlagMistake, helpTarget, helpText, timeoutSecondsMs, unsupportedCommand } from './command-list.js';
 import { readJsonFile } from './input-file.js';
+import { MANIFEST_FORMATS, checkManifest, manifestCommand, type ManifestFormat, type ManifestOptions } from './manifest-command.js';
 import { echoLine, err as errorLine, ERROR_PREFIX, paintOutput, quoted, SM_DEV_PREFIX, streamHasColor } from './output-style.js';
 // The roles for marked-up output, as S.id(...): their names are common locals here.
 import * as S from './output-style.js';
@@ -121,6 +122,8 @@ interface Opts {
   json?: boolean;
   /** `--json=single` or `=multi`, over the global one. */
   jsonLayout?: JsonLayout;
+  /** `manifest`'s flags. */
+  manifest: ManifestOptions;
 }
 
 // The commands' flags that take a value, for finding the command's
@@ -143,6 +146,7 @@ function parseArgs(argv: string[]): Opts {
   const opts: Opts = {
     command: null, args: [],
     all: false, noTab: false, watch: false, detach: false, newRun: false, noWait: false, fromSaved: false, offline: false,
+    manifest: { create: false, prune: false, dryRun: false },
   };
   const at = commandIndex(argv);
   // None: said by the caller, as is a name that is no command of sm-dev's own.
@@ -230,6 +234,14 @@ function parseArgs(argv: string[]): Opts {
         break;
       }
       case '--nojson': opts.json = false; break;
+      case '--dir': opts.manifest.dir = text; break;
+      case '--create': opts.manifest.create = true; break;
+      case '--prune': opts.manifest.prune = true; break;
+      case '--dry-run': opts.manifest.dryRun = true; break;
+      case '--format':
+        if (!(MANIFEST_FORMATS as readonly string[]).includes(text)) throw new UsageError(`The ${quoted('--format')} flag needs ${MANIFEST_FORMATS.map((f) => quoted(f)).join(' or ')}`);
+        opts.manifest.format = text as ManifestFormat;
+        break;
       case '--lang':
         try {
           opts.lang = parseLang(text);
@@ -1560,7 +1572,7 @@ function runsHere(words: string[]): boolean {
 }
 
 // Ones that need no run, or act on runs themselves.
-const HERE = new Set(['start', 'attach', 'stop', 'exit', 'list', 'help']);
+const HERE = new Set(['start', 'attach', 'stop', 'exit', 'list', 'help', 'manifest']);
 
 /**
  * Whether a command only looks, so a line of only such commands needn't
@@ -2024,6 +2036,7 @@ async function checkCommand(words: string[]): Promise<void> {
   switch (opts.command) {
     case 'validate': return checkValidate(opts);
     case 'match': return checkMatch(opts);
+    case 'manifest': return checkManifest(opts.args, opts.manifest);
     case 'start': await checkStart(opts); return;
     case 'attach': checkAttach(opts); return;
     case 'stop': checkStop(opts); return;
@@ -2052,6 +2065,7 @@ async function runOne(words: string[], client: Client): Promise<number> {
     switch (opts.command) {
       case 'validate': return await validate(opts);
       case 'match': return await match(opts);
+      case 'manifest': return manifestCommand(opts.args, opts.manifest, print);
       case 'start': return await startCommand(opts, parsed.words, client);
       case 'attach': return await attachCommand(opts, client);
       case 'list': return await listCommand(opts);

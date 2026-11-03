@@ -49,6 +49,7 @@ flowchart LR
 | `command-list.ts` | Every command's help, arguments and options, as data |
 | `command-lines.ts` | Input lines into commands: blocks, lists, stdin |
 | `checks.ts`, `path-args.ts` | `match` / `validate`, and file-argument globs |
+| `manifest-command.ts` | `manifest`: adds scripts to a `script_manifest.json`, with no run |
 | `console-commands.ts` | A run's commands across its tabs, the dialog tracker, the `--interactive` prompt |
 | `prompt-history.ts` | The prompt's history file, kept across sessions |
 | `prompt-editor.ts` | Multi-line editing of `{{` blocks at the prompt |

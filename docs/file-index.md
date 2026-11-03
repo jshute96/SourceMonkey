@@ -53,7 +53,6 @@ One-line descriptions of every source file, grouped by directory.
 | `scripts/pack-npm.sh` | Pack both npm packages into `.tgz` files, with `packages/sourcemonkey/README.md` as `sourcemonkey`'s README |
 | `scripts/release.sh` | Cut a `vX.Y.Z` release: checks, zips and package `.tgz`s, tag, GitHub release (draft by default), npm publish |
 | `scripts/serve-examples.mjs` | Local HTTP server for `userscripts/examples/`, including the `/__slow/?ms=N` delay route the `headers-run-at` demo needs |
-| `scripts/make_manifest.sh` | Scan the current dir for `*.user.js` and emit a SourceMonkey HTTP-manifest JSON array to stdout (redirect to `script_manifest.json`) |
 | `scripts/update-public-suffixes.mjs` | Regenerates `src/public-suffixes.ts` from the ICANN section of the Public Suffix List (run by hand, output committed) |
 | `scripts/clean-stale-test-profiles.mjs` | Sweep, run before the e2e suites, of `/tmp` profiles and data dirs left by test runs and temp browsers that died early |
 
@@ -310,6 +309,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/tm-ids.ts` | The E-numbers sm-dev keeps for Tampermonkey's script uuids, in a file in its cache |
 | `src/harness/script-mark.ts` | The comment sm-dev adds as a script's last line in another manager: its file, and for a run's, the run |
 | `src/harness/managers.ts` | The userscript managers `--manager` names (SourceMonkey, Tampermonkey, Violentmonkey), with their Web Store ids |
+| `src/harness/manifest-command.ts` | `sm-dev manifest`: adds scripts to a `script_manifest.json`, creates one, or prunes missing entries |
 | `src/harness/browser-extensions.ts` | The managers in a browser, over CDP and a hidden `chrome://extensions`: list, enable, load unpacked, Allow User Scripts; hidden pages kept open |
 | `src/harness/manager-fetch.ts` | `manager fetch`: downloads TM or VM from the Chrome Web Store and unpacks its CRX into sm-dev's cache |
 | `src/harness/manager-actions.ts` | The `manager` verbs: fetch, install, enable and disable a manager, with their messages |
@@ -607,6 +607,7 @@ unit tests.
 | `tests/unit/harness/wait.test.mjs` | Unit tests for `wait`'s delays and the message when a tab doesn't settle |
 | `tests/unit/harness/path-args.test.mjs` | Unit tests for sm-dev's glob matching and file argument expansion |
 | `tests/unit/harness/manifest-args.test.mjs` | Unit tests for sm-dev's manifest arguments: which words are manifests, and the scripts one lists |
+| `tests/unit/harness/manifest-command.test.mjs` | Runs `sm-dev manifest` over temp directories: create, add, prune, and what an update keeps |
 | `tests/unit/harness/cli-args.test.mjs` | Unit tests for `sm-dev`'s command line: `start` flags, `match` output, scripts by URL, `--run`, `--` lines, misuse |
 | `tests/unit/harness/page-commands.test.mjs` | Unit tests for how the page commands name keys for `key`, read `click`'s flags and `cdp` calls, and word errors |
 | `tests/unit/harness/command-args.test.mjs` | Unit tests for the command parser: quotes, flags with `=` or not, tabs, text, forms, refused arguments |

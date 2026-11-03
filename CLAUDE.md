@@ -238,9 +238,9 @@ user before elaborating further. Default to action over planning.
   `script_manifest.json` are easy to miss. `tests/unit/examples.test.mjs`
   checks them.
 - Adding, removing or renaming a script in `userscripts/examples/` or
-  `userscripts/bad-examples/` means regenerating that directory's
-  `script_manifest.json`: `sh ../../scripts/make_manifest.sh >
-  script_manifest.json` from inside it.
+  `userscripts/bad-examples/` means updating that directory's
+  `script_manifest.json`: `pnpm sm-dev manifest userscripts/examples
+  --prune` (or `bad-examples`).
 - When changing the body of any `userscripts/examples/**/*.user.js`, bump
   its `@version` header. Managers update an installed script only when
   the file's `@version` is newer (dotted-numeric ordering), so without

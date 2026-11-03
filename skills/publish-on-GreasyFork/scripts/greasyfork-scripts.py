@@ -149,7 +149,7 @@ class Manifest:
       output = self.data
     else:
       output = self._written(self.entries, "scripts")
-    self.path.write_text(json.dumps(output, indent=2) + "\n", encoding="utf-8")
+    self.path.write_text(json.dumps(output, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
   def user(self) -> str | None:
     """The top-level `greasyfork.user`, if the manifest records one."""

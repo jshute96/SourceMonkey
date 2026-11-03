@@ -151,6 +151,34 @@ def save_icons(root, run, script_id, rel, icon_dir):
     return paths
 
 
+def read_entries(manifest, manifest_path):
+  """The manifest's script entries, each as an object.
+
+  The manifest is a bare list or a `{"scripts": [...]}` object, and an
+  entry may be a bare path string. A string becomes `{"path": ...}`
+  here and in `manifest` itself, so a `site_icons` field can go on it;
+  `write_entries` turns back the ones that got none.
+  """
+  raw = manifest if isinstance(manifest, list) else manifest.get('scripts')
+  if not isinstance(raw, list):
+    sys.exit(f'{manifest_path}: not a script list or a {{"scripts": [...]}} object')
+  were_strings = set()
+  for i, entry in enumerate(raw):
+    if isinstance(entry, str):
+      raw[i] = {'path': entry}
+      were_strings.add(i)
+    elif not (isinstance(entry, dict) and isinstance(entry.get('path'), str)):
+      sys.exit(f'{manifest_path}: an entry is neither a path nor an object with a "path": {entry!r}')
+  return raw, were_strings
+
+
+def write_entries(entries, were_strings):
+  """Turn entries that were strings, and got no other field, back into strings."""
+  for i in were_strings:
+    if list(entries[i]) == ['path']:
+      entries[i] = entries[i]['path']
+
+
 def main():
   parser = argparse.ArgumentParser(description=__doc__,
                                    formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -166,7 +194,7 @@ def main():
   if not manifest_path.is_file():
     sys.exit(f'{manifest_path}: not found; run this inside a collection, or pass --root')
   manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
-  entries = manifest['scripts']
+  entries, were_strings = read_entries(manifest, manifest_path)
   if args.scripts:
     wanted = {script_path(root, p) for p in args.scripts}
     missing = wanted - {e['path'] for e in entries}
@@ -208,6 +236,7 @@ def main():
     if f.relative_to(root).as_posix() not in used:
       print(f'Removing unused {f.relative_to(root)}')
       f.unlink()
+  write_entries(entries, were_strings)
   manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + '\n',
                            encoding='utf-8')
   print('Manifest updated. Run update_readme.py to show the icons.')

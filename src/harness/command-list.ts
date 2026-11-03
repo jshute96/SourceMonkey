@@ -746,6 +746,39 @@ export const HELP_SECTIONS: HelpSection[] = [
     ],
   },
   {
+    title: 'Manifests',
+    name: 'manifests',
+    summary: 'Add scripts to a `script_manifest.json`',
+    text: [
+      'A manifest is a file named `script_manifest.json` that lists userscripts, so they can be loaded together as one collection.',
+      'SourceMonkey can add it as a collection from its local path or a web URL. sm-dev\'s `start` and `validate` also accept it to load all the scripts it lists.',
+      'The JSON content is a list of script paths, or `{"scripts": [...]}`.',
+      'Paths are relative to the manifest\'s directory.',
+      '',
+    ],
+    commands: [
+      {
+        usage: 'manifest [--dir <directory>] [script]...',
+        syntax: WORDS,
+        summary: 'Add scripts to a `script_manifest.json`, or make one.',
+        about: [
+          'Add scripts to `<directory>/script_manifest.json`. Scripts already listed are left as they are.',
+          '`<directory>` is the one given by `--dir`, or the only argument when that is a directory (`manifest .`).',
+        ],
+        args: [
+          { term: '[script]...', about: ['Files or URLs ending in `.user.js`, directories, or globs. See `help files`.', 'Files must be under the manifest\'s directory.', 'Default, with `--dir`: all scripts under it.'] },
+        ],
+        options: [
+          { term: '--dir <directory>', about: ['The manifest location.', 'Default: With one directory argument, that directory.'] },
+          { term: '--create', about: 'Create `script_manifest.json` if there isn\'t one.' },
+          { term: '--format <format>', about: 'With `--create`: The new manifest\'s shape. `array` (default) is a list of paths, `object` is `{"scripts": [...]}`.' },
+          { term: '--prune', about: 'Also remove entries whose file no longer exists, under the directories given.' },
+          { term: '--dry-run', about: 'Show what would change, and write nothing.' },
+        ],
+      },
+    ],
+  },
+  {
     title: 'Userscript managers',
     name: 'managers',
     summary: 'Install and control userscript managers',
@@ -1413,7 +1446,7 @@ function editDistance(a: string, b: string): number {
 }
 
 /** The commands sm-dev runs itself, never sent to a run. */
-export const CLIENT_COMMANDS = new Set(['start', 'attach', 'stop', 'list', 'exit', 'help']);
+export const CLIENT_COMMANDS = new Set(['start', 'attach', 'stop', 'list', 'exit', 'help', 'manifest']);
 
 /**
  * The commands sm-dev runs itself when given only files and URLs, and

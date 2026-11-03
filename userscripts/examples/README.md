@@ -246,9 +246,10 @@ prose paragraphs. Mirrors the project-wide doc convention.
 5. Name each userscript `SourceMonkey example: <dir>: <what it shows>`,
    so a directory's scripts sort together in a manager's list.
 6. Add a row to the table above and a link in `index.html`.
-   Regenerate `script_manifest.json` here, which lists every example
-   script: `sh ../../scripts/make_manifest.sh > script_manifest.json`.
-   Do the same in `userscripts/bad-examples/` when adding a script there.
+   Update `script_manifest.json` here, which lists every example
+   script: `pnpm sm-dev manifest userscripts/examples --prune` from the
+   repo root. Do the same for `userscripts/bad-examples` when adding a
+   script there.
 7. In `<api>.spec.ts`, import the fixture from
    `../../fixtures/manager` and call
    `await setup.installScriptsFrom(__dirname)` — that registers the
