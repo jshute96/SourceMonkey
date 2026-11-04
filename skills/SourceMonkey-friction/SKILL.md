@@ -54,8 +54,11 @@ at the end, so one task doesn't produce many separate notes.
 Follow the template in the log file (or
 [references/template.md](references/template.md)):
 
-- A `##` heading with the date and a short topic, then the repo and the
-  scripts worked on.
+- A `##` heading with the date and a short topic, then the repo, the
+  SourceMonkey version and the scripts worked on.
+  - For the version, use `sm-dev --version`, run the same way as the
+    task's other `sm-dev` commands, so it reports the copy that was used.
+    From `sm-dev 0.5.2 from <dir>`, record `0.5.2`.
 - What we were trying to do.
 - The friction: things that failed or misled, confusing output, and
   anything better tools could make easier or faster. Add a concrete
@@ -149,12 +152,13 @@ do the following. "Items" means both friction and missing-tools items.
      covers, where the done, obsolete and backup files are, and that
      IDs are written into the text.
    - Combine reports of the same problem into one item, with how many
-     reports and their dates: `(4 reports, 2026-10-02 to 10-14)`.
+     reports, their dates, and the latest version reported, when known:
+     `(4 reports, 2026-10-02 to 10-14, latest on 0.5.2)`.
    - Describe each as it is now: drop the parts that have been fixed,
      and keep the concrete examples and ideas that are still useful.
    - Group items under short `###` headings by area.
    - Write each item as a plain bullet starting with its ID,
-     `- **#N** [tags] **<summary>** (<N> reports, <dates>)`, numbered
+     `- **#N** [tags] **<summary>** (<N> reports, <dates>, latest on <version>)`, numbered
      straight through all the groups, with sub-bullets indented 4
      spaces. Not a numbered list: some renderers restart those at 1
      under each heading, so the numbers shown wouldn't match the

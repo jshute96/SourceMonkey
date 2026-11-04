@@ -24,6 +24,7 @@ Template:
 ## YYYY-MM-DD: <short topic>
 
 **Repo:** `<repo>`
+**Version:** `<version from sm-dev --version>`
 **Scripts:** `<paths of scripts and libraries worked on>`
 
 **Task:** <what we were trying to do>
