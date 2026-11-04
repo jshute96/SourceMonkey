@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name        Missing Require
+// @description A @require of a file that doesn't exist, so the script is invalid
 // @namespace   https://github.com/jshute96/SourceMonkey
 // @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
 // @match       https://example.com/*
-// @version     1.0.1
+// @version     1.0.2
 // >>> the error: no such file next to this script.
 // @require     ./does-not-exist.js
 // ==/UserScript==

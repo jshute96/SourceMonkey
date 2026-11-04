@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<!-- The form from Greasy Fork's /en/script_versions/new page, as served to a
+     signed-in user on 2026-11-03, with the rest of the page left out and the
+     session token replaced. The script at the end stands in for the tabs. -->
+<html><head><meta charset="utf-8"><title>Post a new script</title></head>
+<body>
+<form class="new_script_version" id="new_script_version" enctype="multipart/form-data" action="/en/script_versions" accept-charset="UTF-8" method="post"><input type="hidden" name="authenticity_token" value="test-token">
+
+
+  <input type="hidden" name="language" id="language" value="js">
+
+
+  
+<div class="form-section">
+  <div class="form-control radio-group">
+    <label>Script type</label><br>
+      <input required="required" type="radio" value="1" checked="checked" name="script[script_type]" id="script_script_type_1"> <label class="radio-label" for="script_script_type_1">Public user script - a user script for all to see and use.</label><br>
+      <input required="required" type="radio" value="2" name="script[script_type]" id="script_script_type_2"> <label class="radio-label" for="script_script_type_2">Unlisted user script - a user script not linked to from anywhere on Greasy Fork. For scripts that are works in progress or those that would not be generally useful to others. Does not prevent others from accessing it if they know the URL.</label><br>
+      <input required="required" type="radio" value="3" name="script[script_type]" id="script_script_type_3"> <label class="radio-label" for="script_script_type_3">Library - a script intended to be <code>@require</code>-d from other scripts and not installed directly.</label><br>
+  </div>
+</div>
+
+
+  <div id="script-library-inputs" class="form-section" hidden="">
+    <div class="form-control">
+      <label for="library-name">Name</label><br>
+      <input id="library-name" name="name" value="" maxlength="100">
+    </div>
+    <div class="form-control">
+      <label for="library-description">Description</label><br>
+      <input id="library-description" name="description" value="" maxlength="500">
+    </div>
+  </div>
+
+
+
+  <div class="form-section">
+    <div class="form-control">
+      <label for="script_version_code">Code</label> <span class="label-note" style="display: inline;"><input type="checkbox" id="enable-source-editor-code" name="enable-source-editor-code" class="enable-source-editor" data-related-editor="script_version_code" data-editor-language="javascript"><label for="enable-source-editor-code" class="checkbox-label">Enable syntax-highlighting source editor</label></span><br>
+      <textarea name="script_version[code]" id="script_version_code"></textarea>
+      <div>Or upload: <input type="file" name="code_upload" id="code-upload" accept="text/javascript,application/javascript"></div>
+    </div>
+  </div>
+
+  <div class="form-section">
+      
+<div class="form-control">
+  <label for="script-version-additional-info-0">
+    Additional info
+    <input type="hidden" name="script_version[additional_info][0][attribute_default]" value="true">
+  </label>
+  <span class="label-note">
+    A more detailed description, instructions, etc.
+  </span><br>
+  <span class="label-note markup-options">
+  <a target="markup_choice" href="/en/help/allowed-markup">(See allowed code.)</a>
+  <label class="radio-label"><input type="radio" name="script_version[additional_info][0][value_markup]" id="script_version_additional_info_0_value_markup_html" value="html" required="required" checked="checked">HTML</label><label class="radio-label"><input type="radio" name="script_version[additional_info][0][value_markup]" id="script_version_additional_info_0_value_markup_markdown" value="markdown" required="required"><a target="markup_choice" href="http://daringfireball.net/projects/markdown/basics">Markdown</a></label>
+</span><br>
+<div class="previewable" data-markup-option-name="script_version[additional_info][0][value_markup]" data-preview-label="Preview" data-write-label="Write"><div class="tabs"><span class="current"><a class="write-tab"><span>Write</span></a></span> <span><a class="preview-tab"><span>Preview</span></a></span></div>
+  <textarea name="script_version[additional_info][0][attribute_value]" id="script-version-additional-info-0"></textarea>
+<div class="preview-results user-content" style="display: none;"></div></div>
+
+</div>
+
+
+    <div class="form-control">
+      <button id="add-additional-info" name="add-additional-info" value="1" type="submit" data-form-path="/en/script_versions/additional_info_form">Add a localized additional info</button>
+    </div>
+
+    <div class="script-screenshot-control">
+      
+Maximum of 5 PNG, GIF, JPEG, or WebP images, smaller than 1 MB each.
+<div>
+  <label for="script_version_attachments">Add:</label>
+  <input name="script_version[attachments][]" type="hidden" value=""><input multiple="multiple" accept="image/png,image/jpeg,image/gif,image/webp" type="file" name="script_version[attachments][]" id="script_version_attachments">
+</div>
+
+    </div>
+  </div>
+
+
+  
+
+    <div class="form-section">
+        <div class="form-control radio-group">
+          <label>Adult content</label><br>
+          Greasy Fork allows scripts with adult content, but they must be marked as such so that users can choose whether they see it.<br>
+          <input name="script[adult_content_self_report]" type="hidden" value="0"><input type="checkbox" value="1" name="script[adult_content_self_report]" id="script_adult_content_self_report">
+          <label for="script_adult_content_self_report" class="radio-label">This script contains adult content or is for a site that contains adult content.</label>
+        </div>
+    </div>
+
+
+    <div class="form-section">
+      <div class="form-control radio-group">
+        <label>Locale</label> <span class="label-note">Should match the language of <code>@name</code>, <code>@description</code>, and the first additional info.</span><br>
+        
+<select name="script[locale_id]">
+  <option value="" selected="">(Automatically detect)</option>
+  <option disabled="">---</option>
+    <option value="7">Arabic (ar)</option>
+    <option value="14">Belarusian (be)</option>
+    <option value="15">Bulgarian (bg)</option>
+    <option value="191">Central Kurdish (ckb)</option>
+    <option value="30">Czech (cs)</option>
+    <option value="34">Danish (da)</option>
+    <option value="35">German (de)</option>
+    <option value="39">Greek (el)</option>
+    <option value="40">English (en)</option>
+    <option value="41">Esperanto (eo)</option>
+    <option value="42">Spanish (es)</option>
+    <option value="192">Spanish (es-419)</option>
+    <option value="47">Finnish (fi)</option>
+    <option value="48">Filipino (fil)</option>
+    <option value="51">French (fr)</option>
+    <option value="190">French (Canada) (fr-CA)</option>
+    <option value="61">Hebrew (he)</option>
+    <option value="65">Croatian (hr)</option>
+    <option value="67">Hungarian (hu)</option>
+    <option value="71">Indonesian (id)</option>
+    <option value="76">Italian (it)</option>
+    <option value="78">Japanese (ja)</option>
+    <option value="80">Georgian (ka)</option>
+    <option value="88">Korean (ko)</option>
+    <option value="110">Marathi (mr)</option>
+    <option value="119">Bokmål (nb)</option>
+    <option value="116">Nepali (ne)</option>
+    <option value="118">Dutch (nl)</option>
+    <option value="130">Polish (pl)</option>
+    <option value="132">Portuguese (pt)</option>
+    <option value="134">Portuguese (Brazil) (pt-BR)</option>
+    <option value="138">Romanian (ro)</option>
+    <option value="139">Russian (ru)</option>
+    <option value="149">Slovak (sk)</option>
+    <option value="155">Serbian (sr)</option>
+    <option value="159">Swedish (sv)</option>
+    <option value="165">Thai (th)</option>
+    <option value="171">Turkish (tr)</option>
+    <option value="176">Uighur (ug)</option>
+    <option value="177">Ukrainian (uk)</option>
+    <option value="181">Vietnamese (vi)</option>
+    <option value="187">Chinese (China) (zh-CN)</option>
+    <option value="188">Chinese (Taiwan) (zh-TW)</option>
+  <option disabled="">---</option>
+    <option value="1">Afar (aa)</option>
+    <option value="2">Abkhazian (ab)</option>
+    <option value="3">Avestan (ae)</option>
+    <option value="4">Afrikaans (af)</option>
+    <option value="5">Akan (ak)</option>
+    <option value="6">Amharic (am)</option>
+    <option value="7">Arabic (ar)</option>
+    <option value="8">Assamese (as)</option>
+    <option value="9">Asturian (ast)</option>
+    <option value="10">Avaric (av)</option>
+    <option value="11">Aymara (ay)</option>
+    <option value="12">Azerbaijani (az)</option>
+    <option value="13">Bashkir (ba)</option>
+    <option value="14">Belarusian (be)</option>
+    <option value="15">Bulgarian (bg)</option>
+    <option value="16">Bihari languages (bh)</option>
+    <option value="17">Bislama (bi)</option>
+    <option value="18">Bambara (bm)</option>
+    <option value="19">Bengali (bn)</option>
+    <option value="20">Tibetan (bo)</option>
+    <option value="21">Breton (br)</option>
+    <option value="22">Bosnian (bs)</option>
+    <option value="23">Catalan (ca)</option>
+    <option value="24">Chechen (ce)</option>
+    <option value="25">Cebuano (ceb)</option>
+    <option value="26">Chamorro (ch)</option>
+    <option value="27">Cherokee (chr)</option>
+    <option value="191">Central Kurdish (ckb)</option>
+    <option value="28">Corsican (co)</option>
+    <option value="29">Cree (cr)</option>
+    <option value="30">Czech (cs)</option>
+    <option value="31">Church Slavic (cu)</option>
+    <option value="32">Chuvash (cv)</option>
+    <option value="33">Welsh (cy)</option>
+    <option value="34">Danish (da)</option>
+    <option value="35">German (de)</option>
+    <option value="36">Divehi (dv)</option>
+    <option value="37">Dzongkha (dz)</option>
+    <option value="38">Ewe (ee)</option>
+    <option value="39">Greek (el)</option>
+    <option value="40">English (en)</option>
+    <option value="41">Esperanto (eo)</option>
+    <option value="42">Spanish (es)</option>
+    <option value="192">Spanish (es-419)</option>
+    <option value="43">Estonian (et)</option>
+    <option value="44">Basque (eu)</option>
+    <option value="45">Persian (fa)</option>
+    <option value="46">Fulah (ff)</option>
+    <option value="47">Finnish (fi)</option>
+    <option value="48">Filipino (fil)</option>
+    <option value="49">Fijian (fj)</option>
+    <option value="50">Faroese (fo)</option>
+    <option value="51">French (fr)</option>
+    <option value="190">French (Canada) (fr-CA)</option>
+    <option value="52">Western Frisian (fy)</option>
+    <option value="53">Irish (ga)</option>
+    <option value="54">Gaelic (gd)</option>
+    <option value="55">Galician (gl)</option>
+    <option value="56">Guarani (gn)</option>
+    <option value="57">Swiss German (gsw-berne)</option>
+    <option value="58">Gujarati (gu)</option>
+    <option value="59">Manx (gv)</option>
+    <option value="60">Hausa (ha)</option>
+    <option value="61">Hebrew (he)</option>
+    <option value="62">Hindi (hi)</option>
+    <option value="63">Hmong (hmn)</option>
+    <option value="64">Hiri Motu (ho)</option>
+    <option value="65">Croatian (hr)</option>
+    <option value="66">Haitian (ht)</option>
+    <option value="67">Hungarian (hu)</option>
+    <option value="68">Armenian (hy)</option>
+    <option value="69">Herero (hz)</option>
+    <option value="70">Interlingua  (ia)</option>
+    <option value="71">Indonesian (id)</option>
+    <option value="72">Interlingue (ie)</option>
+    <option value="73">Igbo (ig)</option>
+    <option value="74">Inupiaq (ik)</option>
+    <option value="75">Icelandic (is)</option>
+    <option value="76">Italian (it)</option>
+    <option value="77">Inuktitut (iu)</option>
+    <option value="78">Japanese (ja)</option>
+    <option value="79">Javanese (jv)</option>
+    <option value="80">Georgian (ka)</option>
+    <option value="81">Kongo (kg)</option>
+    <option value="82">Kikuyu (ki)</option>
+    <option value="83">Kuanyama (kj)</option>
+    <option value="84">Kazakh (kk)</option>
+    <option value="85">Kalaallisut (kl)</option>
+    <option value="86">Central Khmer (km)</option>
+    <option value="87">Kannada (kn)</option>
+    <option value="88">Korean (ko)</option>
+    <option value="89">Kanuri (kr)</option>
+    <option value="90">Kashmiri (ks)</option>
+    <option value="91">Kurdish (ku)</option>
+    <option value="92">Komi (kv)</option>
+    <option value="93">Cornish (kw)</option>
+    <option value="94">Kirghiz (ky)</option>
+    <option value="95">Latin (la)</option>
+    <option value="96">Luxembourgish (lb)</option>
+    <option value="97">Ganda (lg)</option>
+    <option value="98">Limbu (lif)</option>
+    <option value="99">Lingala (ln)</option>
+    <option value="100">Lao (lo)</option>
+    <option value="101">Lithuanian (lt)</option>
+    <option value="102">Latvian (lv)</option>
+    <option value="103">Malagasy (mg)</option>
+    <option value="104">Marshallese (mh)</option>
+    <option value="105">Maori (mi)</option>
+    <option value="106">Macedonian (mk)</option>
+    <option value="107">Malayalam (ml)</option>
+    <option value="108">Mongolian (mn)</option>
+    <option value="109">Moldavian (mo)</option>
+    <option value="110">Marathi (mr)</option>
+    <option value="111">Malay (ms)</option>
+    <option value="112">Maltese (mt)</option>
+    <option value="113">Burmese (my)</option>
+    <option value="114">Nauru (na)</option>
+    <option value="119">Bokmål (nb)</option>
+    <option value="115">Ndebele (nd)</option>
+    <option value="116">Nepali (ne)</option>
+    <option value="117">Ndonga (ng)</option>
+    <option value="118">Dutch (nl)</option>
+    <option value="120">Norwegian Nynorsk (nn)</option>
+    <option value="121">Ndebele (nr)</option>
+    <option value="122">Navajo (nv)</option>
+    <option value="123">Chichewa (ny)</option>
+    <option value="124">Occitan  (oc)</option>
+    <option value="125">Oromo (om)</option>
+    <option value="126">Oriya (or)</option>
+    <option value="127">Ossetian (os)</option>
+    <option value="128">Panjabi (pa)</option>
+    <option value="129">Pali (pi)</option>
+    <option value="130">Polish (pl)</option>
+    <option value="131">Pushto (ps)</option>
+    <option value="132">Portuguese (pt)</option>
+    <option value="134">Portuguese (Brazil) (pt-BR)</option>
+    <option value="133">Portuguese (Portugal) (pt-PT)</option>
+    <option value="135">Quechua (qu)</option>
+    <option value="136">Romansh (rm)</option>
+    <option value="137">Rundi (rn)</option>
+    <option value="138">Romanian (ro)</option>
+    <option value="139">Russian (ru)</option>
+    <option value="140">Kinyarwanda (rw)</option>
+    <option value="141">Sanskrit (sa)</option>
+    <option value="142">Sardinian (sc)</option>
+    <option value="143">Scots (sco)</option>
+    <option value="144">Sindhi (sd)</option>
+    <option value="145">Northern Sami (se)</option>
+    <option value="146">Sango (sg)</option>
+    <option value="147">Serbo-Croatian (sh)</option>
+    <option value="148">Sinhala (si)</option>
+    <option value="149">Slovak (sk)</option>
+    <option value="150">Slovenian (sl)</option>
+    <option value="151">Samoan (sm)</option>
+    <option value="152">Shona (sn)</option>
+    <option value="153">Somali (so)</option>
+    <option value="154">Albanian (sq)</option>
+    <option value="155">Serbian (sr)</option>
+    <option value="156">Swati (ss)</option>
+    <option value="157">Sotho (st)</option>
+    <option value="158">Sundanese (su)</option>
+    <option value="159">Swedish (sv)</option>
+    <option value="160">Swahili (sw)</option>
+    <option value="161">Syriac (syr)</option>
+    <option value="162">Tamil (ta)</option>
+    <option value="163">Telugu (te)</option>
+    <option value="164">Tajik (tg)</option>
+    <option value="165">Thai (th)</option>
+    <option value="166">Tigrinya (ti)</option>
+    <option value="167">Turkmen (tk)</option>
+    <option value="168">Tagalog (tl)</option>
+    <option value="169">Tswana (tn)</option>
+    <option value="170">Tonga  (to)</option>
+    <option value="171">Turkish (tr)</option>
+    <option value="172">Tsonga (ts)</option>
+    <option value="173">Tatar (tt)</option>
+    <option value="174">Twi (tw)</option>
+    <option value="175">Tahitian (ty)</option>
+    <option value="176">Uighur (ug)</option>
+    <option value="177">Ukrainian (uk)</option>
+    <option value="178">Urdu (ur)</option>
+    <option value="179">Uzbek (uz)</option>
+    <option value="180">Venda (ve)</option>
+    <option value="181">Vietnamese (vi)</option>
+    <option value="182">Wolof (wo)</option>
+    <option value="183">Xhosa (xh)</option>
+    <option value="184">Yiddish (yi)</option>
+    <option value="185">Yoruba (yo)</option>
+    <option value="186">Zhuang (za)</option>
+    <option value="187">Chinese (China) (zh-CN)</option>
+    <option value="188">Chinese (Taiwan) (zh-TW)</option>
+    <option value="189">Zulu (zu)</option>
+</select>
+
+      </div>
+    </div>
+
+  
+
+  <p>
+      <input type="submit" name="commit" value="Post script" data-disable-with="Post script">
+  </p>
+</form>
+<script>
+  // Stands in for Greasy Fork's own tab script, which isn't served here:
+  // a clicked tab's <span> becomes the current one.
+  for (const tab of document.querySelectorAll('.previewable .tabs a')) {
+    tab.addEventListener('click', () => {
+      for (const span of tab.closest('.tabs').children) span.classList.toggle('current', span === tab.parentElement);
+    });
+  }
+</script>
+</body></html>

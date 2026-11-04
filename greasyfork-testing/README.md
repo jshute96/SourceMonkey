@@ -479,14 +479,39 @@ script's validation and test status beside its stats, on Greasy Fork's script
 pages and listings. Open that link with a userscript manager installed to
 install it.
 
-- It reads the published results on GitHub Pages by default.
-- Its menu has an item for each source, with the one in use checked:
-  - "Published results (GitHub Pages)", as last pushed.
-  - "Local results (localhost:8765)", from `serve-results.mjs`, for
-    results not pushed yet.
-- Choosing the other item switches to it and reloads the page.
-- It keeps a copy of the results for each source in GM storage, and checks
-  the file's date before downloading it again.
+#### Published or local results
+
+The script reads the results from one of two places, chosen in its menu
+(the one in use is checked):
+
+- **Published results (GitHub Pages)**, the default: the copy of
+  `corpus.json` on GitHub Pages, as last pushed to `main`.
+- **Local results (localhost:8765)**: a copy served from your own checkout,
+  for results recorded but not pushed yet.
+
+Choosing a mode switches to it and reloads the page. The script
+keeps a stored copy of the results for each mode, and checks the file's date
+before downloading it again.
+
+To serve local results:
+
+1. In a checkout of this repo, run:
+
+   ```sh
+   node greasyfork-testing/serve-results.mjs
+   ```
+
+   It serves `corpus.json` from `greasyfork-testing/` on port 8765, read
+   fresh on each request, so results recorded since show up on the next
+   page load.
+2. In the script's menu on any Greasy Fork page, choose
+   **Local results (localhost:8765)**.
+3. If the server can't be reached, the script uses its stored copy of the
+   local results. With none stored yet, the status box says the results
+   couldn't load and names the command above.
+
+The same server also shows the [results page](#viewing-results) at
+`http://localhost:8765/`.
 
 ### Derived tags
 

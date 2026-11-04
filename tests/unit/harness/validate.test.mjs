@@ -83,7 +83,7 @@ test('userscripts/bad-examples produces the same verdicts the browser records', 
 test('validate shows every warning, with the line it is about', () => {
   const { scripts } = validate('userscripts/bad-examples');
   assert.deepEqual(scripts.get('unknown-grant.user.js')?.lines, [
-    'warn: Ignoring unsupported @grant GM_notARealApi, GM_alsoNotReal (in userscripts/bad-examples/unknown-grant.user.js, line 9)',
+    'warn: Ignoring unsupported @grant GM_notARealApi, GM_alsoNotReal (in userscripts/bad-examples/unknown-grant.user.js, line 10)',
   ]);
 });
 

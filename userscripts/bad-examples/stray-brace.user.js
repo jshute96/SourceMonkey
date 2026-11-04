@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name        Stray Closing Brace
+// @description A stray closing brace with code after it, located by the syntax check
 // @namespace   https://github.com/jshute96/SourceMonkey
 // @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
 // @match       https://example.com/*
-// @version     1.0.1
+// @version     1.0.2
 // ==/UserScript==
 // The case the two-probe design exists for. A stray `}` closes the
 // wrapper the check compiles inside — and `new Function` is itself a

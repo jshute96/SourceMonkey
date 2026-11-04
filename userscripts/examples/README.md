@@ -169,36 +169,65 @@ events.
 - **Other managers** — install each `*.user.js` individually via the
   manager's "install from URL" or paste-into-editor flow.
 
-## Examples
+## Scripts
 
-| Directory                  | API(s)                                                            | Shape         |
-| -------------------------- | ----------------------------------------------------------------- | ------------- |
-| `gm-info/`                 | `GM_info`                                                         | pure read     |
-| `gm-log/`                  | `GM_log`                                                          | button-driven |
-| `gm-storage/`              | `GM_*Value` / `GM_listValues`, bulk `GM_*Values`                  | form-driven   |
-| `gm-value-listeners/`      | `GM_addValueChangeListener` / `GM_removeValueChangeListener`       | form-driven   |
-| `gm-dom/`                  | `GM_addStyle` / `GM_addElement`                                   | button-driven |
-| `gm-clipboard/`            | `GM_setClipboard`                                                 | form-driven   |
-| `gm-xmlhttp/`              | `GM_xmlhttpRequest`                                               | form-driven   |
-| `gm-open-in-tab/`          | `GM_openInTab`                                                    | form-driven   |
-| `gm-tab/`                  | `GM_getTab` / `GM_saveTab` / `GM_getTabs`                         | form-driven   |
-| `gm-notification/`         | `GM_notification`                                                 | button-driven |
-| `gm-download/`             | `GM_download`                                                     | button-driven |
-| `gm-menu/`                 | `GM_registerMenuCommand` / `GM_unregisterMenuCommand`             | button-driven |
-| `gm-resource/`             | `GM_getResourceText` / `GM_getResourceURL`                        | pure read     |
-| `gm-return-values/`        | What the `GM_` and `GM.` forms of some APIs return, per manager    | button-driven |
-| `window-onurlchange/`      | `@grant window.onurlchange` (the `urlchange` event)               | page-wired    |
-| `window-close-focus/`      | `@grant window.close` / `@grant window.focus`                     | button-driven |
-| `run-at-context-menu/`     | `@run-at context-menu` (runs only when asked)                     | button-driven |
-| `unsafe-window/`           | `unsafeWindow`: granted, isolated, and used with no grant         | multi-script  |
-| `frames/`                  | Scripts in same- and cross-origin iframes, `@noframes`            | multi-script  |
-| `headers-run-at/`          | `@run-at` (`document-start` / `-end` / `-idle` variants)           | multi-script  |
-| `headers-inject-into/`     | `@inject-into` (`page` MAIN-world vs `content` USER_SCRIPT-world)  | multi-script  |
-| `headers-match-hash/`      | `#hash` in `@match` / `@include` / `@exclude`, per manager        | multi-script  |
-| `headers-include-regex/`   | Regex `@include` / `@exclude`: slashes, flags, case                | multi-script  |
-| `require-scope/`           | `@require` scope in both worlds                                    | multi-script  |
-| `use-strict/`              | Top-level `'use strict'`, in both worlds and with a `@require`     | multi-script  |
-| `xmlhttp-connect/`         | `GM_xmlhttpRequest` + `@connect`: declared, undeclared, prompt     | multi-script  |
+All the example userscripts, by directory, generated from this directory's
+`script_manifest.json` (see
+[Updating the tables](../README.md#updating-the-tables)).
+
+<!-- update_readme.py category=default -->
+| Script | Description |
+| --- | --- |
+| [SourceMonkey example: frames: every frame](frames/every-frame.user.js) | Runs in the page and each of its frames, sharing a counter across them. |
+| [SourceMonkey example: frames: Frame B only](frames/frame-b-only.user.js) | Matches only Frame B, so it runs on a page it doesn't match. |
+| [SourceMonkey example: frames: top frame only](frames/top-only.user.js) | Matches the page and its frames, but @noframes keeps it to the top frame. |
+| [SourceMonkey example: gm-clipboard: GM_setClipboard](gm-clipboard/gm-clipboard.user.js) | Copy a text value to the system clipboard. |
+| [SourceMonkey example: gm-dom: GM_addStyle / GM_addElement](gm-dom/gm-dom.user.js) | Inject styles and elements into the page via DOM helpers. |
+| [SourceMonkey example: gm-download: GM_download](gm-download/gm-download.user.js) | Click buttons to download files with various GM_download call shapes. |
+| [SourceMonkey example: gm-info: GM_info](gm-info/gm-info.user.js) | Hand GM_info to the page, which renders it. |
+| [SourceMonkey example: gm-log: GM_log](gm-log/gm-log.user.js) | Demonstrate GM_log against several arg shapes. |
+| [SourceMonkey example: gm-menu: GM_registerMenuCommand](gm-menu/gm-menu.user.js) | Register and unregister entries in the toolbar action's right-click menu. |
+| [SourceMonkey example: gm-notification: GM_notification](gm-notification/gm-notification.user.js) | Click buttons to fire various GM_notification call shapes. |
+| [SourceMonkey example: gm-open-in-tab: GM_openInTab](gm-open-in-tab/gm-open-in-tab.user.js) | Open new tabs via every GM_openInTab call shape. |
+| [SourceMonkey example: gm-resource: GM_getResourceText / GM_getResourceURL](gm-resource/gm-resource.user.js) | Read prefetched @resource files as text and as URLs. |
+| [SourceMonkey example: gm-return-values: GM_ vs GM. return values](gm-return-values/gm-return-values.user.js) | Call the GM_ and GM. forms of some APIs and show what each returns. |
+| [SourceMonkey example: gm-storage: GM storage](gm-storage/gm-storage.user.js) | Set/get/delete/list per-script GM storage values via a form, one key or many at once. |
+| [SourceMonkey example: gm-tab: GM_getTab / GM_saveTab / GM_getTabs](gm-tab/gm-tab.user.js) | Count this page's loads per tab and list every tab's object with the per-tab APIs. |
+| [SourceMonkey example: gm-value-listeners: GM value-change listeners](gm-value-listeners/gm-value-listeners.user.js) | Register/remove GM_addValueChangeListener callbacks. |
+| [SourceMonkey example: gm-xmlhttp: GM_xmlhttpRequest](gm-xmlhttp/gm-xmlhttp.user.js) | Issue cross-origin HTTP requests via GM_xmlhttpRequest. |
+| [SourceMonkey example: headers-include-regex: /i flag](headers-include-regex/regex-flag-i.user.js) | A regex @include with an i flag after it. This doesn't match. |
+| [SourceMonkey example: headers-include-regex: @exclude with /i flag](headers-include-regex/exclude-flag-i.user.js) | @match names this page, and so does an @exclude regex with an i flag after it. This matches. |
+| [SourceMonkey example: headers-include-regex: escaped slashes](headers-include-regex/regex-escaped.user.js) | A regex @include with escaped slashes (\/). This matches. |
+| [SourceMonkey example: headers-include-regex: unescaped slashes](headers-include-regex/regex-slashes.user.js) | A regex @include with unescaped slashes inside it. This matches. |
+| [SourceMonkey example: headers-include-regex: uppercase glob](headers-include-regex/glob-case.user.js) | An uppercase glob @include, on a lowercase URL. This matches. |
+| [SourceMonkey example: headers-include-regex: uppercase regex](headers-include-regex/regex-case.user.js) | An uppercase regex @include, on a lowercase URL. This matches. |
+| [SourceMonkey example: headers-inject-into: @inject-into content](headers-inject-into/content.user.js) | Runs in an isolated USER_SCRIPT world; can't see page globals. |
+| [SourceMonkey example: headers-inject-into: @inject-into page](headers-inject-into/page.user.js) | Runs in the page's MAIN world; can see page globals. |
+| [SourceMonkey example: headers-match-hash: @exclude of the hash](headers-match-hash/exclude-hash.user.js) | @match names the page, and @exclude *#part names it with #part. This matches except with #part.* |
+| [SourceMonkey example: headers-match-hash: @include with the hash](headers-match-hash/include-hash.user.js) | @include names the page with #part. This matches with #part only.* |
+| [SourceMonkey example: headers-match-hash: @include without the hash](headers-match-hash/include-exact.user.js) | @include names the page without a hash. This matches with no hash only.* |
+| [SourceMonkey example: headers-match-hash: @match plus a regex @include](headers-match-hash/match-regex.user.js) | @match names the page without a hash, plus a regex @include that matches nothing. This matches, with any hash or none. |
+| [SourceMonkey example: headers-match-hash: @match with the hash](headers-match-hash/match-hash.user.js) | @match names the page with #part. This doesn't match.* |
+| [SourceMonkey example: headers-match-hash: @match without the hash](headers-match-hash/match-exact.user.js) | @match names the page without a hash. This matches, with any hash or none. |
+| [SourceMonkey example: headers-run-at: @run-at document-end](headers-run-at/end.user.js) | Demonstrates @run-at document-end (after DOMContentLoaded). |
+| [SourceMonkey example: headers-run-at: @run-at document-idle](headers-run-at/idle.user.js) | Demonstrates @run-at document-idle (default; once readyState is complete, just before load). |
+| [SourceMonkey example: headers-run-at: @run-at document-start](headers-run-at/start.user.js) | Demonstrates @run-at document-start (runs before DOM parses). |
+| [SourceMonkey example: require-scope: @require in the content (USER_SCRIPT) world](require-scope/content-world.user.js) | The same @require'd library reaches an isolated-world script, alongside its GM_* bindings. |
+| [SourceMonkey example: require-scope: @require in the page (MAIN) world](require-scope/page-world.user.js) | A @require'd library's top-level class/const/function reach a MAIN-world script. |
+| [SourceMonkey example: require-scope: relative @require paths](require-scope/relative/relative-require.user.js) | Loads two @require libraries by relative path, in order. |
+| [SourceMonkey example: run-at-context-menu: @run-at context-menu](run-at-context-menu/run-at-context-menu.user.js) | Runs only when asked: each run adds a line to the page. |
+| [SourceMonkey example: unsafe-window: unsafeWindow](unsafe-window/unsafe-window.user.js) | Reads and writes the page's real window through unsafeWindow, while still using GM storage. |
+| [SourceMonkey example: unsafe-window: unsafeWindow outside the page](unsafe-window/isolated.user.js) | The other corner: @inject-into content keeps the script out of the page, so unsafeWindow is not the page's window. |
+| [SourceMonkey example: unsafe-window: unsafeWindow with no grant](unsafe-window/ungranted.user.js) | Uses unsafeWindow without granting it, the way many real scripts do, and reports what the manager hands over. |
+| [SourceMonkey example: use-strict: 'use strict' with a @require (own-after-lib)](use-strict/with-require/own-after-lib.user.js) | Reports whether the script runs in strict mode when it has a @require. |
+| [SourceMonkey example: use-strict: 'use strict' with a @require (strict-lib)](use-strict/with-require/strict-lib.user.js) | Reports whether the script runs in strict mode when it has a @require. |
+| [SourceMonkey example: use-strict: top-level 'use strict' in the content (USER_SCRIPT) world](use-strict/strict-content.user.js) | Reports whether a 'use strict' at the very top of the script puts it in strict mode. |
+| [SourceMonkey example: use-strict: top-level 'use strict' in the page world](use-strict/strict-page.user.js) | Reports whether a 'use strict' at the very top of the script puts it in strict mode. |
+| [SourceMonkey example: window-close-focus: window.close / window.focus](window-close-focus/window-close-focus.user.js) | Close the current tab and raise the browser window through the manager's window.* grants. |
+| [SourceMonkey example: window-onurlchange: window.onurlchange](window-onurlchange/window-onurlchange.user.js) | Watch SPA navigations (pushState / replaceState / hash / back) through the urlchange event. |
+| [SourceMonkey example: xmlhttp-connect: GM_xmlhttpRequest with @connect *](xmlhttp-connect/connect-any.user.js) | Declares @connect *, so requests to any site go without asking. |
+| [SourceMonkey example: xmlhttp-connect: GM_xmlhttpRequest with @connect example.com](xmlhttp-connect/connect-example-com.user.js) | Declares @connect example.com, so requests there go without asking, and SourceMonkey asks before the others. |
+| [SourceMonkey example: xmlhttp-connect: GM_xmlhttpRequest with no @connect lines](xmlhttp-connect/connect-none.user.js) | Declares no @connect lines, so SourceMonkey asks before each request to another site. |
 
 ## Page conventions
 
@@ -245,11 +274,12 @@ prose paragraphs. Mirrors the project-wide doc convention.
    consistent styling.
 5. Name each userscript `SourceMonkey example: <dir>: <what it shows>`,
    so a directory's scripts sort together in a manager's list.
-6. Add a row to the table above and a link in `index.html`.
+6. Add a link in `index.html`.
    Update `script_manifest.json` here, which lists every example
    script: `pnpm sm-dev manifest userscripts/examples --prune` from the
    repo root. Do the same for `userscripts/bad-examples` when adding a
-   script there.
+   script there. Then update `../script_manifest.json` and the README
+   tables, as in [Updating the tables](../README.md#updating-the-tables).
 7. In `<api>.spec.ts`, import the fixture from
    `../../fixtures/manager` and call
    `await setup.installScriptsFrom(__dirname)` — that registers the

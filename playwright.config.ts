@@ -12,10 +12,12 @@ delete process.env.FORCE_COLOR;
 // to port 0 and every context gets its own `mkdtemp` profile, so two
 // workers share nothing (see tests/fixtures/sourcemonkey-launch.ts).
 //
-// Two spec locations:
+// Spec locations:
 //   - tests/e2e/*.spec.ts                — the main suite, grouped by feature.
-//   - userscripts/examples/*/*.spec.ts   — per-API spec lives next to its
-//                                          paired example page + userscript.
+//   - userscripts/**/*.spec.ts           — a userscript's spec, next to it.
+//                                          Each example's sits with its
+//                                          page; the standalone scripts' use
+//                                          the `sourcemonkey/harness` fixture.
 //
 // Projects:
 //   - sourcemonkey (default) — runs every spec under both directories.
@@ -59,7 +61,7 @@ export default defineConfig({
   projects: [
     {
       name: 'sourcemonkey',
-      testMatch: ['tests/e2e/**/*.spec.ts', 'userscripts/examples/**/*.spec.ts'],
+      testMatch: ['tests/e2e/**/*.spec.ts', 'userscripts/**/*.spec.ts'],
       metadata: { manager: 'sourcemonkey' },
       // A retry starts from a fresh browser (Playwright discards the
       // crashed worker and its context), which is what makes it safe.

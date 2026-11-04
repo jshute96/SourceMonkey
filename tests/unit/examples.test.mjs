@@ -1,6 +1,6 @@
 // Checks on the example pages in userscripts/examples/: each one keeps the
 // shared page skeleton's footer, its scripts' names start with the
-// directory, it's listed in the README table and the index page, and
+// directory, it's linked from the index page, and
 // the script_manifest.json files are up to date (see "Adding a new
 // example" in userscripts/examples/README.md).
 
@@ -14,7 +14,6 @@ const EXAMPLES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 const dirs = fs.readdirSync(EXAMPLES, { withFileTypes: true })
   .filter((d) => d.isDirectory() && fs.existsSync(path.join(EXAMPLES, d.name, `${d.name}.html`)))
   .map((d) => d.name);
-const readme = fs.readFileSync(path.join(EXAMPLES, 'README.md'), 'utf8');
 const index = fs.readFileSync(path.join(EXAMPLES, 'index.html'), 'utf8');
 
 test('there are example pages to check', () => {
@@ -30,8 +29,7 @@ for (const dir of dirs) {
     assert.match(footer, /href="[^"]+\.user\.js"/);
   });
 
-  test(`${dir}: listed in the README table and the index`, () => {
-    assert.ok(readme.includes(`| \`${dir}/\``), 'no README table row');
+  test(`${dir}: linked from the index`, () => {
     assert.ok(index.includes(`href="${dir}/`), 'no index.html link');
   });
 }

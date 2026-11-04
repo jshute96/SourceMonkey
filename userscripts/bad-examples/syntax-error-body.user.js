@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name        Syntax Error In Body
+// @description A syntax error in the script body, reported at the line an editor shows
 // @namespace   https://github.com/jshute96/SourceMonkey
 // @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
 // @match       https://example.com/*
-// @version     1.0.1
+// @version     1.0.2
 // ==/UserScript==
 // The plainest location case: no @require, so the composed program the
 // install-time check compiles is just this file behind our GM-bindings

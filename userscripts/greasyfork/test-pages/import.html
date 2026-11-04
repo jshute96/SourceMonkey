@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<!-- The form from Greasy Fork's /en/import page, as served to a signed-in
+     user on 2026-11-03, with the rest of the page left out and the session
+     token replaced. -->
+<html><head><meta charset="utf-8"><title>Import scripts</title></head>
+<body>
+<form action="/en/import/add" accept-charset="UTF-8" method="post"><input type="hidden" name="authenticity_token" value="test-token">
+  <p>
+    <label for="sync-urls">Provide URLs to import from, separated by newlines. These should be URLs to the raw JS or CSS files.</label><br>
+    <textarea id="sync-urls" name="sync_urls" rows="5" required="" style="width: 75%"></textarea>
+  </p>
+
+  <p class="radio-group">
+    What language are the above URLs?<br>
+    <input name="sync-language" id="sync-language-detect" type="radio" checked="" value=""><label for="sync-language-detect">Detect based on the extension, defaulting to JavaScript</label><br>
+    <input name="sync-language" id="sync-language-js" type="radio" value="js"><label for="sync-language-js">JavaScript</label><br>
+    <input name="sync-language" id="sync-language-css" type="radio" value="css"><label for="sync-language-css">CSS</label>
+  </p>
+
+  <p class="radio-group">
+    After the initial import, the script(s) should be synced:<br>
+    <input name="sync-type" id="sync-type-2" type="radio" checked="" value="automatic"><label for="sync-type-2">Automatic - it will be periodically checked for updates</label><br>
+    <input name="sync-type" id="sync-type-1" type="radio" value="manual"><label for="sync-type-1">Manual - it will be checked for updates only when you trigger it</label>
+  </p>
+
+  <p>For scripts from source control, ensure that the URL you use refers to a branch and not a specific commit, otherwise it will never get updated. For example, <code>https://bitbucket.org/username/reponame/raw/<b>branch-name</b>/script.user.js</code> rather than <code>https://bitbucket.org/username/reponame/raw/<b>commit-hash</b>/script.user.js</code>.</p>
+<p>Scripts imported from GitHub, Bitbucket, or GitLab can also be set up to sync using a webhook. A webhook will make it so your scripts are immediately updated on Greasy Fork when you push to your repository. If you want to use a webhook but haven't set it up yet, do the import first, then <a href="/en/users/webhook-info">set up the webhook after</a>.</p>
+
+
+  <input type="submit" name="commit" value="Import" data-disable-with="Import">
+</form>
+</body></html>

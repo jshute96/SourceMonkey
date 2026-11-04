@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name        Require Collision
+// @description Two @require libraries that each parse alone but declare the same const, so the joined script is invalid
 // @namespace   https://github.com/jshute96/SourceMonkey
 // @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
 // @match       https://example.com/*
-// @version     1.0.1
+// @version     1.0.2
 // @require     ./require-collision-lib-a.js
 // @require     ./require-collision-lib-b.js
 // ==/UserScript==

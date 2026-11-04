@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name        Stray Closing Brace At End
+// @description A stray closing brace as the last thing in the file, located by the syntax check
 // @namespace   https://github.com/jshute96/SourceMonkey
 // @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
 // @match       https://example.com/*
-// @version     1.0.1
+// @version     1.0.2
 // ==/UserScript==
 // The sibling of stray-brace.user.js, and the harder half. There the
 // stray brace has code after it, which makes the two probes' messages

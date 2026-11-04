@@ -1,0 +1,470 @@
+{
+  "scripts": [
+    {
+      "path": "bad-examples/blank-lines.user.js",
+      "category": "bad-examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "bad-examples/empty-header.user.js",
+      "category": "bad-examples"
+    },
+    {
+      "path": "bad-examples/empty.user.js",
+      "category": "bad-examples"
+    },
+    {
+      "path": "bad-examples/invalid-header-fields.user.js",
+      "category": "bad-examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "bad-examples/invalid-match.user.js",
+      "category": "bad-examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "bad-examples/leading-text.user.js",
+      "category": "bad-examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "bad-examples/malformed-field.user.js",
+      "category": "bad-examples"
+    },
+    {
+      "path": "bad-examples/missing-require.user.js",
+      "category": "bad-examples"
+    },
+    {
+      "path": "bad-examples/no-header.user.js",
+      "category": "bad-examples"
+    },
+    {
+      "path": "bad-examples/require-collision.user.js",
+      "category": "bad-examples"
+    },
+    {
+      "path": "bad-examples/stray-brace-at-end.user.js",
+      "category": "bad-examples"
+    },
+    {
+      "path": "bad-examples/stray-brace.user.js",
+      "category": "bad-examples"
+    },
+    {
+      "path": "bad-examples/syntax-error-body.user.js",
+      "category": "bad-examples"
+    },
+    {
+      "path": "bad-examples/syntax-error-require.user.js",
+      "category": "bad-examples"
+    },
+    {
+      "path": "bad-examples/throwing-require.user.js",
+      "category": "bad-examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "bad-examples/two-headers.user.js",
+      "category": "bad-examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "bad-examples/unclosed-header.user.js",
+      "category": "bad-examples"
+    },
+    {
+      "path": "bad-examples/unknown-grant.user.js",
+      "category": "bad-examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "bad-examples/unparsable-require.user.js",
+      "category": "bad-examples"
+    },
+    {
+      "path": "bad-examples/unusable-match.user.js",
+      "category": "bad-examples"
+    },
+    {
+      "path": "debugging/no-click-nav.user.js",
+      "category": "debugging"
+    },
+    {
+      "path": "examples/frames/every-frame.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/frames/frame-b-only.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/frames/top-only.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/gm-clipboard/gm-clipboard.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/gm-dom/gm-dom.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/gm-download/gm-download.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/gm-info/gm-info.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/gm-log/gm-log.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/gm-menu/gm-menu.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/gm-notification/gm-notification.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/gm-open-in-tab/gm-open-in-tab.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/gm-resource/gm-resource.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/gm-return-values/gm-return-values.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/gm-storage/gm-storage.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/gm-tab/gm-tab.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/gm-value-listeners/gm-value-listeners.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/gm-xmlhttp/gm-xmlhttp.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/headers-include-regex/exclude-flag-i.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/headers-include-regex/glob-case.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/headers-include-regex/regex-case.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/headers-include-regex/regex-escaped.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/headers-include-regex/regex-flag-i.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/headers-include-regex/regex-slashes.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/headers-inject-into/content.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/headers-inject-into/page.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/headers-match-hash/exclude-hash.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/headers-match-hash/include-exact.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/headers-match-hash/include-hash.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/headers-match-hash/match-exact.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/headers-match-hash/match-hash.user.js",
+      "category": "examples"
+    },
+    {
+      "path": "examples/headers-match-hash/match-regex.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/headers-run-at/end.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/headers-run-at/idle.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/headers-run-at/start.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/require-scope/content-world.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/require-scope/page-world.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/require-scope/relative/relative-require.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/run-at-context-menu/run-at-context-menu.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/unsafe-window/isolated.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/unsafe-window/ungranted.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/unsafe-window/unsafe-window.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/use-strict/strict-content.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/use-strict/strict-page.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/use-strict/with-require/own-after-lib.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/use-strict/with-require/strict-lib.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/window-close-focus/window-close-focus.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/window-onurlchange/window-onurlchange.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/xmlhttp-connect/connect-any.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/xmlhttp-connect/connect-example-com.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "examples/xmlhttp-connect/connect-none.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
+      "path": "greasyfork/prefill-forms-from-hash.user.js",
+      "category": "greasyfork",
+      "site_icons": [
+        "site-icons/greasyfork.org_script_versions_new.png"
+      ]
+    },
+    {
+      "path": "greasyfork/show-test-results.user.js",
+      "category": "greasyfork",
+      "site_icons": [
+        "site-icons/greasyfork.org.png"
+      ]
+    }
+  ]
+}

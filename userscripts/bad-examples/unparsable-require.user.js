@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name        Unparsable Require
+// @description A @require library with an unterminated comment, so the script is invalid
 // @namespace   https://github.com/jshute96/SourceMonkey
 // @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
 // @match       https://example.com/*
-// @version     1.0.1
+// @version     1.0.2
 // @require     ./unparsable-require-lib.js
 // ==/UserScript==
 // The @require fetches successfully and the header is well-formed, so

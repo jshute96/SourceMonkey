@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name        Throwing Require
+// @description A @require library that throws when it runs; the script installs fine and fails at run time
 // @namespace   https://github.com/jshute96/SourceMonkey
 // @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
 // @match       https://example.com/*
-// @version     1.0.1
+// @version     1.0.2
 // @require     ./throwing-require-lib.js
 // ==/UserScript==
 // Loads fine — the @require fetches and parses, so this script's

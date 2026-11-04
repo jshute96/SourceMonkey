@@ -79,17 +79,20 @@ rows show the filename and its first-line comment, in manifest order.
 A `GF` column with Greasy Fork links appears when some entry has a
 `greasyfork` field.
 
-It also rewrites each script doc's `#` title line: the script's
-`site_icons`, then its `@name`.
+* A script with no sibling `.md` gets no doc link, and a table where
+  none has one, or none has icons, leaves that column out.
+* A script with no `@name` shows its filename, and one with no
+  `@description` a blank description.
+
+It also rewrites each script doc's `#` title line, where there's a
+doc: the script's `site_icons`, then its `@name`.
 
 Run it after adding or removing a script or library, or when a
 script's `@name`, `@description` or icons change. `--check` reports
 what's stale without writing. It stops with an error on:
 
-* a script or library listed in the manifest but missing, or missing
-  its sibling `.md`;
-* a script with no `@name` or `@description`, or a doc whose first line
-  isn't a `#` title;
+* a script or library listed in the manifest but missing;
+* a doc whose first line isn't a `#` title;
 * a library whose first line isn't a `//` comment;
 * categories in the manifest that don't match the placeholders in the
   README, either way round, or a category with two placeholders;
@@ -114,6 +117,10 @@ script, or changing its `@icon` or `@match` lines, then run
 
 * Name scripts (`update_site_icons.py sites/x/y.user.js`) to update
   just those; the rest keep their icons.
+* Scripts `sm-dev validate` finds invalid are skipped and keep their
+  icons, since a run can't load them.
+* Scripts with the same remote `@icon` share one file, named for its
+  URL.
 * Site icons come from the live sites, so a full run can also pick up a
   site's new favicon.
 * Scripts on the same site share one file. Files no script uses any

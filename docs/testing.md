@@ -16,6 +16,13 @@ real-browser end-to-end suite for everything that touches the
     Tampermonkey or Violentmonkey copy `manager fetch` cached, and is
     skipped without one ([import.md](import.md#testing)).
 - `tests/fixtures/` — shared harness code.
+- `userscripts/**/*.spec.ts` — a userscript's spec, next to it, in the
+  `sourcemonkey` project.
+  - The examples' specs are the compliance suite
+    ([below](#examples--compliance-suite)).
+  - The standalone scripts' specs (`greasyfork/`, `debugging/`) use the
+    `sourcemonkey/harness` fixture, as a userscript repo's would, on
+    saved or made-up pages.
 - `tests/harness/*.spec.ts` — sm-dev and the fixture consumers import
   (`src/harness/`, see [harness-design.md](harness-design.md)), under
   the `sm-dev` Playwright project (`pnpm run test:sm-dev`).
@@ -498,7 +505,7 @@ files into TM/VM, hit the same URLs, compare outcomes).
 
 - Each example dir holds its own `<api>.spec.ts` next to the page
   + userscript. Playwright is configured (`testMatch:
-  userscripts/examples/**/*.spec.ts` in `playwright.config.ts`) to
+  userscripts/**/*.spec.ts` in `playwright.config.ts`) to
   discover them alongside the main `tests/e2e/` suite. Specs cover the same
   ground as the targeted GM_* specs above but through the public,
   installable userscript surface.

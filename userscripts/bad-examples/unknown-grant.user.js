@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name        Unknown Grant
+// @description @grant of APIs that don't exist, which are dropped with a warning
 // @namespace   https://github.com/jshute96/SourceMonkey
 // @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
 // @match       https://example.com/*
-// @version     1.0.1
+// @version     1.0.2
 // @grant       GM_setValue
 // >>> the error: no such GM API, so this grant is dropped.
 // @grant       GM_notARealApi

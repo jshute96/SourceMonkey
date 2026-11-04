@@ -19,8 +19,11 @@ is the generated table, and is replaced wholesale. Rows come from
 shows (`@name`: site, then title, ignoring case); library rows stay in manifest order.
 
 For a script, the row's name and description are its `@name` and
-`@description` headers. A manifest entry's `category` field selects the
-table; entries with no `category` go in `default`. The set of categories
+`@description` headers. A script with no `@name` shows its filename, and
+one with no `@description` a blank description. The Doc column links the
+sibling `.md`, when there is one; a table where no entry has one leaves
+the column out, and the same for the Site column (icons). A manifest
+entry's `category` field selects the table; entries with no `category` go in `default`. The set of categories
 used in the manifest must match the set of placeholders in README.md
 exactly.
 
@@ -73,9 +76,10 @@ README = REPO_ROOT / 'README.md'
 PLACEHOLDER_RE = re.compile(
     r'<!--\s*update_readme\.py\s+(?:category=([\w-]+)|(libraries))\s*-->')
 
-# Table rows are built as lists of cells, with the GF column always
-# second to last, so table_line() can drop it as a column rather than
-# by parsing text.
+# Table rows are built as lists of cells, ending with Doc, GF and
+# Description, so table_line() can drop Doc and GF as columns rather than
+# by parsing text. They're found from the end because only script tables
+# start with an icons column.
 SCRIPT_HEADER = [['{icons}', 'Script', 'Doc', 'GF', 'Description'],
                  [':---:', '---', '---', '---', '---']]
 # Set in main(): whether any entry is on Greasy Fork, so the GF column
@@ -101,11 +105,25 @@ LIBRARY_HEADER = [['Library', 'Doc', 'GF', 'Description'],
                   ['---', '---', '---', '---']]
 
 
-def table_line(cells):
-  """A Markdown table line from its cells, dropping `GF` unless shown."""
-  if not SHOW_GF:
-    cells = cells[:-2] + cells[-1:]
+def table_line(cells, show_doc=True):
+  """A Markdown table line from its cells, dropping `GF` unless shown,
+  and `Doc` when `show_doc` is false."""
+  doc, gf, description = cells[-3:]
+  cells = cells[:-3] + ([doc] if show_doc else []) + ([gf] if SHOW_GF else []) + [description]
   return '| ' + ' | '.join(cells) + ' |'
+
+
+def table_lines(header, rows, icons=False):
+  """The header lines and `rows` (lists of cells) as one table.
+
+  The Doc column is left out when no row links a doc, and with `icons`
+  (the first column is the site icons), so is that column when no row
+  has any.
+  """
+  show_doc = any(row[-3] for row in rows)
+  if icons and not any(row[0] for row in rows):
+    header, rows = [cells[1:] for cells in header], [cells[1:] for cells in rows]
+  return [table_line(cells, show_doc) for cells in header + rows]
 
 
 def load_manifest():
@@ -125,7 +143,12 @@ def load_manifest():
 
 
 def read_metadata(script_path):
-  """Return (name, description) from a userscript's metadata block."""
+  """Return (name, description) from a userscript's metadata block.
+
+  With no `@name` the name is the filename, and with no `@description`
+  the description is empty, so a script with a broken or missing header
+  (a deliberately bad example, say) still gets a row.
+  """
   fields = {}
   for line in script_path.read_text(encoding='utf-8').splitlines():
     if line.strip() == '// ==/UserScript==':
@@ -133,10 +156,7 @@ def read_metadata(script_path):
     m = re.match(r'//\s*@(\w+)\s+(.*)', line)
     if m:
       fields.setdefault(m.group(1), m.group(2).strip())
-  missing = [f for f in ('name', 'description') if f not in fields]
-  if missing:
-    sys.exit(f'{script_path}: missing @{" and @".join(missing)}')
-  return fields['name'], fields['description']
+  return fields.get('name', script_path.name), fields.get('description', '')
 
 
 def read_library_metadata(library_path):
@@ -162,11 +182,14 @@ def escape_cell(text):
 
 
 def sibling_doc(rel, suffix):
-  """The doc file beside a script or library, checked to exist."""
+  """The doc file beside a script or library, or None if there isn't one."""
   doc = rel[: -len(suffix)] + '.md'
-  if not (REPO_ROOT / doc).exists():
-    sys.exit(f'{doc}: doc file missing for {rel}')
-  return doc
+  return doc if (REPO_ROOT / doc).exists() else None
+
+
+def doc_cell(doc):
+  """The `Doc` column: a link to the doc, or empty."""
+  return f'[doc]({doc})' if doc else ''
 
 
 def gf_cell(entry):
@@ -194,7 +217,10 @@ def doc_title_updates(scripts):
   updates = {}
   for entry in scripts:
     rel = entry['path']
-    doc = REPO_ROOT / sibling_doc(rel, '.user.js')
+    doc_rel = sibling_doc(rel, '.user.js')
+    if not doc_rel:
+      continue
+    doc = REPO_ROOT / doc_rel
     name, _ = read_metadata(REPO_ROOT / rel)
     title = f'# {icons_html(entry, 24, os.path.dirname(rel))}{name}'
     text = doc.read_text(encoding='utf-8')
@@ -217,7 +243,7 @@ def sort_key(name):
 
 
 def build_rows(scripts):
-  """Return {category: [table row, ...]}, sorted by script name.
+  """Return {category: [row cells, ...]}, sorted by script name.
 
   The manifest is in path order, but the table shows `@name`, which
   can sort differently.
@@ -231,16 +257,16 @@ def build_rows(scripts):
     doc = sibling_doc(rel, '.user.js')
     name, description = read_metadata(script)
     # Joined by &nbsp;, so the icons don't wrap onto separate lines.
-    row = table_line([icons_html(entry, 16, sep="&nbsp;").strip(),
-                      f'[{escape_cell(name)}]({rel})', f'[doc]({doc})',
-                      gf_cell(entry), escape_cell(description)])
+    row = [icons_html(entry, 16, sep="&nbsp;").strip(),
+           f'[{escape_cell(name)}]({rel})', doc_cell(doc),
+           gf_cell(entry), escape_cell(description)]
     rows.setdefault(entry.get('category', 'default'), []).append((sort_key(name), row))
   return {category: [row for _, row in sorted(named)]
           for category, named in rows.items()}
 
 
 def build_library_rows(libraries):
-  """Return [table row, ...] for the libraries table, in manifest order."""
+  """Return [row cells, ...] for the libraries table, in manifest order."""
   rows = []
   for entry in libraries:
     rel = entry['path']
@@ -249,8 +275,8 @@ def build_library_rows(libraries):
       sys.exit(f'{rel}: listed in the manifest but not found')
     doc = sibling_doc(rel, '.js')
     name, description = read_library_metadata(library)
-    rows.append(table_line([f'[{escape_cell(name)}]({rel})', f'[doc]({doc})',
-                            gf_cell(entry), escape_cell(description)]))
+    rows.append([f'[{escape_cell(name)}]({rel})', doc_cell(doc),
+                 gf_cell(entry), escape_cell(description)])
   return rows
 
 
@@ -277,13 +303,11 @@ def render(readme_text, rows, library_rows):
       i += 1
     if category:
       table = rows.get(category, [])
-      header = [cell.format(icons=icon_column_header(table)) for cell in SCRIPT_HEADER[0]]
-      out.append(table_line(header))
-      out.extend(table_line(cells) for cells in SCRIPT_HEADER[1:])
-      out.extend(table)
+      icons = icon_column_header([row[0] for row in table])
+      header = [[cell.format(icons=icons) for cell in SCRIPT_HEADER[0]]] + SCRIPT_HEADER[1:]
+      out.extend(table_lines(header, table, icons=True))
     else:
-      out.extend(table_line(cells) for cells in LIBRARY_HEADER)
-      out.extend(library_rows)
+      out.extend(table_lines(LIBRARY_HEADER, library_rows))
 
   manifest_categories = set(rows)
   readme_categories = set(seen)

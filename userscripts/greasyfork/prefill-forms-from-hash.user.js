@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Greasy Fork: Fill post/update/import forms from URL parameters
 // @namespace    https://github.com/jshute96/SourceMonkey
-// @version      0.1.1
+// @version      0.1.2
 // @description  Fills Greasy Fork's new script, new version, and import script forms from URL parameters, so they can be opened pre-filled.
 // @author       Jeff Shute <jshute@gmail.com>
 // @license      MIT
@@ -450,9 +450,11 @@
     const needle = wanted.trim().toLowerCase();
     const match = [...select.options].find((option) => {
       if (option.value === wanted) return true;
+      // Labels read "Spanish (es)": match all of it, the name before the
+      // code, or the code.
       const label = option.textContent.trim().toLowerCase();
-      const code = label.match(/\(([^)]+)\)$/);
-      return label === needle || (code && code[1] === needle);
+      const code = label.match(/^(.*?)\s*\(([^)]+)\)$/);
+      return label === needle || (code && (code[1] === needle || code[2] === needle));
     });
     if (!match) {
       console.error(`${TAG} no locale option matching "${wanted}"`);
@@ -503,9 +505,9 @@
   //
   // Kept here rather than deleted so it's clear this was a decision, and
   // what it would take to undo. The two forms differ: "Post new version"
-  // and "Import" are plain submit inputs, while "Post script" is a button
-  // wired to invisible reCAPTCHA whose token is attached by its own click
-  // handler — so a click, not form.submit(), would be required there.
+  // and "Import" are plain submit inputs, while "Post script" can be a
+  // button wired to invisible reCAPTCHA whose token is attached by its own
+  // click handler — so a click, not form.submit(), would be required there.
   //
   // function submitForm(page) {
   //   const button = page === 'import'

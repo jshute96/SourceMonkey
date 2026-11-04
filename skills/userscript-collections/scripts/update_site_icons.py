@@ -12,14 +12,16 @@ script N save --include icon,site-icons`. Then:
 
 - A site icon is saved as `site-icons/<host and path>.<ext>`, the name
   sm-dev gives it. Scripts on the same site share the file.
-- A remote `@icon` is saved as `site-icons/script-<site>_<script>.<ext>`.
+- A remote `@icon` is saved as `site-icons/icon-<host, path and query>.<ext>`,
+  named for its URL, so scripts with the same `@icon` share the file.
   A relative `@icon` is already a file beside the script, and is
   listed where it is.
 - A PNG bigger than 32x32 is scaled down to fit; the README shows them
   at 16px.
 - Each manifest entry gets a `site_icons` list of repo-relative paths,
   or none when there's nothing to show (sm-dev's globe).
-- Scripts not named keep the icons they have.
+- Scripts not named keep the icons they have, and so do scripts
+  `sm-dev validate` finds invalid, which a run can't load.
 - Files in site-icons/ that no script uses any more are deleted.
 - An entry with `"site_icons_pinned": true` is left as it is, files and
   all. Use it for an icon fixed by hand, such as one a site only shows
@@ -43,10 +45,12 @@ scale the icons.
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.parse
 from pathlib import Path
 
 from PIL import Image
@@ -91,9 +95,13 @@ def json_lines(text):
 
 
 def relative_to(root, file):
-  """A script path from sm-dev status, relative to `root` when it's in it."""
-  path = Path(file)
-  return path.relative_to(root).as_posix() if path.is_absolute() and path.is_relative_to(root) else file
+  """A script path from sm-dev, relative to `root` when it's in it.
+
+  sm-dev gives paths under the directory it runs in (REPO_ROOT) relative
+  to it, which differs from `root` with --root.
+  """
+  path = (REPO_ROOT / file).resolve()
+  return path.relative_to(root).as_posix() if path.is_relative_to(root) else file
 
 
 def script_path(root, given):
@@ -118,6 +126,18 @@ def shrink(path):
     img.save(path, optimize=True)
 
 
+def icon_file_stem(url):
+  """`icon-<host, path and query>` for a remote `@icon` URL, as a filename.
+
+  The query is kept: favicon services (`.../favicons?domain=x.com`) differ
+  only there.
+  """
+  parts = urllib.parse.urlsplit(url)
+  path = parts.path.rsplit('.', 1)[0] if '.' in parts.path.rsplit('/', 1)[-1] else parts.path
+  query = '_' + parts.query if parts.query else ''
+  return 'icon-' + re.sub(r'[^A-Za-z0-9.-]+', '_', parts.netloc + path + query).strip('_')
+
+
 def save_icons(root, run, script_id, rel, icon_dir):
   """Save one script's icons; return their repo-relative paths, in order."""
   with tempfile.TemporaryDirectory() as tmp:
@@ -136,9 +156,7 @@ def save_icons(root, run, script_id, rel, icon_dir):
       local = root.as_uri() + '/'
       if url.startswith(local):
         return [url[len(local):]]
-      script = Path(rel)
-      name = f'script-{script.parent.name}_{script.name.removesuffix(".user.js")}'
-      dest = icon_dir / (name + Path(own[0]['path']).suffix)
+      dest = icon_dir / (icon_file_stem(url) + Path(own[0]['path']).suffix)
     else:
       dest = None
 
@@ -206,6 +224,15 @@ def main():
 
   run = args.run or 'Dicons'
   if not args.run:
+    # A run refuses to start with an invalid script, so leave those out.
+    results = json_lines(sm_dev('--json=single', 'validate',
+                                *[str(root / e['path']) for e in selected], check=False).stdout)
+    invalid = {relative_to(root, r['script'])
+               for doc in results for r in doc.get('results', [])
+               if r.get('verdict') == 'invalid'}
+    for rel in sorted(invalid):
+      print(f'{rel}: skipped, since it is invalid')
+    selected = [e for e in selected if e['path'] not in invalid]
     print(f'Starting sm-dev run {run} with {len(selected)} scripts...')
     sm_dev('--run', run, 'start', *[str(root / e['path']) for e in selected],
            '--notab', '--detach')

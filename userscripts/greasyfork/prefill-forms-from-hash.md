@@ -1,4 +1,4 @@
-# Greasy Fork: Fill post/update/import forms from URL parameters
+# <img src="../site-icons/greasyfork.org_script_versions_new.png" width="24" height="24" alt=""> Greasy Fork: Fill post/update/import forms from URL parameters
 
 ## Summary
 
@@ -60,7 +60,7 @@ parameters that only exist on one of them.
 | `description` | both | Library description field. |
 | `adult` | both | Ticks the adult-content self-report. |
 | `source_editor` | both | Turns Greasy Fork's syntax-highlighting code editor on or off. |
-| `script_locale` | new script | Script language. Accepts the option's numeric id, its label (`Spanish`), or its code (`es`). |
+| `script_locale` | new script | Script language. Accepts the option's numeric id, its label (`Spanish (es)`), the name alone (`Spanish`, taking the first match), or the code (`es`). |
 | `changelog_html` | new version | Sets the changelog markup radio to HTML and fills the changelog. |
 | `changelog_markdown` | new version | Same, with the Markdown radio. |
 | `changelog_html_url` / `changelog_markdown_url` | new version | As above, text loaded from a URL or local path. |
@@ -331,8 +331,9 @@ differently, which is why it clicks a button rather than calling
 
 * New version and import have a plain
   `input[type="submit"][name="commit"]`.
-* The new-script page's control is
-  `button.g-recaptcha[type="submit"]` with a
+* The new-script page had one too when it was saved for the spec
+  (signed in, 2026-11-03), with no captcha. It has also been seen with
+  `button.g-recaptcha[type="submit"]` instead, with a
   `data-callback="submitInvisibleRecaptchaFormScriptVersion"` — an
   invisible reCAPTCHA Enterprise widget. The captcha token is
   obtained by the widget's own click handler, so the form must be
@@ -393,6 +394,6 @@ that make the publishing flow worth automating.
   additional-info block.
 * The `div.previewable` / `a.preview-tab` structure around the
   markup-backed textareas.
-* `name="commit"` on the version and import submit buttons, and the
-  `g-recaptcha` class on the new-script one.
+* `name="commit"` on the submit buttons (or the `g-recaptcha` class,
+  where the new-script page has one).
 * Attachment ordering following upload order.

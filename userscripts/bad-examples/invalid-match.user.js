@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name        Invalid Match
+// @description A @match Chrome refuses, which is dropped while the script runs on its other @match
 // @namespace   https://github.com/jshute96/SourceMonkey
 // @icon        https://jshute96.github.io/SourceMonkey/src/icons/icon-48.png
 // @match       https://example.com/*
 // >>> the error: a "*" inside the host, which Chrome's match-pattern grammar refuses.
 // @match       https://www.*.org/*
-// @version     1.0.1
+// @version     1.0.2
 // ==/UserScript==
 // Not invalid: a `@match` Chrome would refuse is dropped, and the
 // script still runs everywhere its other patterns say — here,

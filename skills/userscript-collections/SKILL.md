@@ -37,6 +37,8 @@ sites/
   Name the file for its main purpose.
 * Every script and library has a sibling `.md` doc with the same
   basename. See [references/script-docs.md](references/script-docs.md).
+  (A repo can leave docs out for scripts documented elsewhere, such as
+  examples or test cases; their README rows then have no doc link.)
 
 ## When a script is added, renamed or removed
 
