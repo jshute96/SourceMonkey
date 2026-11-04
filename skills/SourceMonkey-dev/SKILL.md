@@ -11,8 +11,7 @@ description: Develop, debug and test userscripts with SourceMonkey's sm-dev tool
   It ships as a dev dependency, `sourcemonkey`, with its built
   extension and install checks, so tests and tools use the manager's
   real behavior instead of stubs.
-- **`sm-dev`** (`pnpm sm-dev ...`; `scripts/sm-dev` in a SourceMonkey
-  checkout) is the interactive tool. It starts a
+- **`sm-dev`** (`pnpm sm-dev ...`) is the interactive tool. It starts a
   **run**: a background process that connects to a Chromium over CDP
   (Chrome DevTools Protocol), pushes your scripts as they are on disk
   into the SourceMonkey extension there, opens tabs, and streams what

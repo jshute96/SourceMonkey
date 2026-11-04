@@ -759,12 +759,15 @@ The built extension is written to `dist/`. Install it as described in
 
 The build also generates `sm-dev` and the test harness code in `lib/`.
 ([Details here](docs/architecture.md#two-outputs-dist-and-lib).)
-`scripts/sm-dev` runs the `sm-dev` built here.
+
+`scripts/sm-dev` runs the `sm-dev` built here. So does `pnpm sm-dev` (a
+`package.json` script), which is how the skills run it in other repos.
+Neither builds `lib/` first.
 
 ```sh
-# Example: Run the sm-dev built here.
+# Example: Run the sm-dev built here, with the script or pnpm.
 scripts/sm-dev --help
-scripts/sm-dev validate userscripts/examples
+pnpm sm-dev validate userscripts/examples
 ```
 
 ### Installing an unpacked build

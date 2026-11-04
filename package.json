@@ -33,6 +33,7 @@
     "preinstall": "npx only-allow pnpm",
     "prepack": "node scripts/build.mjs",
     "build": "node scripts/build.mjs",
+    "sm-dev": "scripts/sm-dev",
     "prepublishOnly": "echo 'Publish with scripts/release.sh, which packs the npm README and checks the release.' >&2 && exit 1",
     "typecheck": "tsc -p tsconfig.tests.json --noEmit",
     "watch": "node scripts/build.mjs --watch",

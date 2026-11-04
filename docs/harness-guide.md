@@ -126,8 +126,11 @@ working on both), also add this to `package.json`:
   `pnpm exec sm-dev …` (`npx sm-dev …` with npm).
 - Without installing it, run `npx sm-dev@latest …`.
 - Installed globally, run `sm-dev …`.
-- In a SourceMonkey checkout it is `scripts/sm-dev`. It runs what
-  `lib/` has and never builds it; `pnpm run build` does.
+- In a SourceMonkey checkout, it is `scripts/sm-dev`, or `pnpm sm-dev`
+  (a `package.json` script running it). `pnpm exec sm-dev` skips package
+  scripts, and pnpm never links a package's own bin into itself, so there
+  it finds only a copy on your PATH, if any. Both run what
+  `lib/` has and never build it; `pnpm run build` does.
 - The examples below write it as plain `sm-dev`.
 
 ### Writing specs as ES modules

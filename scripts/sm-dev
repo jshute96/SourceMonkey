@@ -3,7 +3,8 @@
 # `sm-dev` in this checkout. The same tool a repo of userscripts gets on
 # its PATH when it installs the `sourcemonkey` package: the package's
 # `bin` entry points at lib/harness/cli.js, which pnpm links into that
-# repo's node_modules/.bin. Here there is no such link, so this is it.
+# repo's node_modules/.bin. Here there is no such link, so this is it,
+# and the `sm-dev` package.json script runs it for `pnpm sm-dev`.
 #
 #   scripts/sm-dev start userscripts/examples/gm-storage/gm-storage.user.js
 #   scripts/sm-dev --help
@@ -17,5 +18,13 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 if [[ ! -f "$root/lib/harness/cli.js" ]]; then
   echo "sm-dev isn't built: The file lib/harness/cli.js is missing. Run pnpm run build." >&2
   exit 1
+fi
+# `pnpm sm-dev` (the package.json script that runs this) starts in the
+# package root, as every `pnpm run` script does. Go back to where it was
+# run, as `pnpm sm-dev` in another repo would be, so relative paths and
+# the default collection work from a subdirectory. The script name check
+# keeps other scripts' runs of this (`pnpm run test:*`) out of it.
+if [[ "${npm_lifecycle_event:-}" == sm-dev && -n "${INIT_CWD:-}" ]]; then
+  cd "$INIT_CWD"
 fi
 exec node "$root/lib/harness/cli.js" "$@"
