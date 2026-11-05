@@ -530,6 +530,9 @@ support but that don't make it invalid:
   script runs at `document-idle` instead.
 - `icon-dead-link`, `icon-too-large`: an `@icon` that won't download, or is
   over the icon size limit.
+- `resource-dead-link`, `resource-too-large`, `resource-other`: a `@resource`
+  that won't download, is over SourceMonkey's size limit, or was refused for
+  another reason. The script runs without it.
 - `ignored-header:@<tag>`: a header another manager acts on and SourceMonkey
   ignores ([supported-headers.md](../docs/supported-headers.md)).
 

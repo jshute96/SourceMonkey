@@ -1862,7 +1862,9 @@
 
      Per-script cache of declared `@resource` entries, baked into the
      wrapper as `{name: {b64, ct}}` and primed via `resource.init` in
-     the prelude (see gm-bindings.ts). Both reads are lazy:
+     the prelude (see gm-bindings.ts). A resource that didn't load is
+     `{name: {failed: message}}`, and both reads give "" for it. Both
+     reads are lazy:
        - getText decodes base64 → UTF-8 on first call, caches the
          decoded string per name.
        - getUrl decodes base64 → Blob → blob: URL on first call,
@@ -1882,6 +1884,7 @@
       textCache: _ObjectCreate(null),
       urlCache: _ObjectCreate(null),
       dataUrlCache: _ObjectCreate(null),
+      failedReported: _ObjectCreate(null),
     };
     resourceBoxes[scriptId] = b;
     return b;
@@ -1896,6 +1899,20 @@
     var bytes = new Uint8Array(len);
     for (var i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
     return bytes;
+  }
+  /* Whether this name is a resource that didn't load, reporting it the
+     first time per document: a script may ask in a loop. The worker words
+     the Log line, as for `reportBlockedStyle`. */
+  function resourceFailed(b, scriptId, key, api) {
+    if (!_ReflectApply(_hasOwn, b.byName, [key])) return false;
+    var failed = b.byName[key].failed;
+    if (failed === undefined) return false;
+    if (!b.failedReported[key]) {
+      b.failedReported[key] = true;
+      try { console.info("[SourceMonkey:" + scriptId + "] " + api + " returned an empty string. " + failed + (failed.slice(-1) === "." ? "" : ".")); } catch (_e) {}
+      transportSend({ type: "sm:gm-resource-failed", scriptId: scriptId, api: api, name: key }).catch(function () {});
+    }
+    return true;
   }
   var resource = {
     /* Called from the wrapper's prelude with the scriptId and the
@@ -1912,13 +1929,16 @@
       b.textCache = _ObjectCreate(null);
       b.urlCache = _ObjectCreate(null);
       b.dataUrlCache = _ObjectCreate(null);
+      b.failedReported = _ObjectCreate(null);
       if (!items || typeof items !== "object") return;
       var keys = _ObjectKeys(items);
       for (var i = 0; i < keys.length; i++) {
         var k = keys[i];
         var v = items[k];
         if (v && typeof v === "object") {
-          b.byName[k] = { b64: String(v.b64 || ""), ct: String(v.ct || "") };
+          b.byName[k] = v.failed !== undefined
+            ? { failed: String(v.failed) }
+            : { b64: String(v.b64 || ""), ct: String(v.ct || "") };
         }
       }
     },
@@ -1930,6 +1950,7 @@
       var b = resourceBoxes[scriptId];
       if (!b) return undefined;
       var key = String(name);
+      if (resourceFailed(b, scriptId, key, "GM_getResourceText")) return "";
       if (_ReflectApply(_hasOwn, b.textCache, [key])) return b.textCache[key];
       if (!_ReflectApply(_hasOwn, b.byName, [key])) return undefined;
       var bytes = _resDecodeBase64(b.byName[key].b64);
@@ -1955,6 +1976,7 @@
       var b = resourceBoxes[scriptId];
       if (!b) return undefined;
       var key = String(name);
+      if (resourceFailed(b, scriptId, key, "GM_getResourceURL")) return "";
       /* As in VM, any falsy value given (not left out) asks for data:. */
       if (isBlobUrl !== undefined && !isBlobUrl) {
         if (_ReflectApply(_hasOwn, b.dataUrlCache, [key])) return b.dataUrlCache[key];

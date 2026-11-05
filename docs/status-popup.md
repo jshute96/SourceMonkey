@@ -345,8 +345,8 @@ page it affects:
   row's `warned` flag still counts it in the tooltip.
 - A warning comes from either:
   - Its header, on every load: the script's `startupLogs` hold a
-    `warn` (an unsupported `@grant`, a dropped `@match`, an `@icon`
-    problem, ...).
+    `warn` or `error` (an unsupported `@grant`, a dropped `@match`, an
+    `@icon` or `@resource` problem, ...).
   - A `warning` Log entry it made from this tab while this document
     was current (a refused `GM_download`, a style the page's CSP
     blocked, ...). Kept on the document's `warnedIds`.

@@ -20,6 +20,11 @@ import {
   distillResources,
   isFetchFailureMessage,
   MAX_FILE_BYTES,
+  oversizePushedRequire,
+  resourceAskedMessage,
+  resourceProblemLevel,
+  resourceProblemMessage,
+  withoutOversizeResources,
 } from '../../dist/external-files.js';
 import { MAX_ICON_BYTES } from '../../dist/script-icon.js';
 
@@ -289,7 +294,8 @@ test('attachFiles: a data: ref that does not decode names the problem', async ()
     fetchCache: new Map(),
     now: 2000,
   });
-  assert.equal(r.errorMessage, `@resource bad (data:text/plain;base64,@@@): ${BAD_DATA_URL}`);
+  assert.equal(r.errorMessage, undefined);
+  assert.equal(resourceProblemMessage(r.resourceProblems[0]), `@resource bad (data:text/plain;base64,@@@): ${BAD_DATA_URL}`);
 });
 
 test('attachFiles: @require relative resolves against script URL', async () => {
@@ -417,11 +423,13 @@ test('attachFiles: @resource rejects traversal-bearing ref', async () => {
     fetchCache: new Map(),
     now: 2000,
   });
-  assert.match(r.errorMessage, /@resource bad \(\.\.\/secret\.css\)/);
-  assert.match(r.errorMessage, /points outside the script's own folder/);
+  assert.equal(r.errorMessage, undefined);
+  const message = resourceProblemMessage(r.resourceProblems[0]);
+  assert.match(message, /@resource bad \(\.\.\/secret\.css\)/);
+  assert.match(message, /points outside the script's own folder/);
 });
 
-test('attachFiles: @resource fetch failure surfaces name + error', async () => {
+test('attachFiles: @resource fetch failure is a problem that names the resource and the error', async () => {
   const url = 'https://example.com/missing.css';
   const r = await attachFiles({
     scriptFileUrl: SCRIPT_URL,
@@ -432,10 +440,80 @@ test('attachFiles: @resource fetch failure surfaces name + error', async () => {
     fetchCache: new Map([[url, Promise.resolve(fakeFailure('404'))]]),
     now: 2000,
   });
+  assert.equal(r.errorMessage, undefined);
+  assert.deepEqual(r.resources, []);
   // The name AND the ref: a resource name alone doesn't say what
   // failed to load.
-  assert.match(r.errorMessage, /@resource gone \(https:\/\/example\.com\/missing\.css\)/);
-  assert.match(r.errorMessage, /404/);
+  const message = resourceProblemMessage(r.resourceProblems[0]);
+  assert.match(message, /@resource gone \(https:\/\/example\.com\/missing\.css\)/);
+  assert.match(message, /404/);
+});
+
+test('attachFiles: a @resource that fails with a good copy held is a failed refresh, not a problem', async () => {
+  const url = 'https://example.com/kept.css';
+  const prior = { ref: url, url, name: 'kept', bytesBase64: 'AA==', size: 1, contentHash: 'h', contentType: '', loadedAt: 1 };
+  const r = await attachFiles({
+    scriptFileUrl: SCRIPT_URL,
+    header: header(['resource', `kept ${url}`]),
+    priorRequires: new Map(),
+    priorResources: new Map([[url, prior]]),
+    recheck: 'all',
+    fetchCache: new Map([[url, Promise.resolve(fakeFailure('404'))]]),
+    now: 2000,
+  });
+  assert.match(r.errorMessage, /@resource kept/);
+  assert.equal(r.resourceProblems, undefined);
+});
+
+test('attachFiles: preserve keeps a lasting @resource problem, and looks again at one that may pass', async () => {
+  const url = 'https://example.com/gone.css';
+  const run = async (problem, recheck) => {
+    const fetchCache = new Map([[url, Promise.resolve(fakeFetched('body{}', 'text/css'))]]);
+    return attachFiles({
+      scriptFileUrl: SCRIPT_URL,
+      header: header(['resource', `gone ${url}`]),
+      priorRequires: new Map(),
+      priorResources: new Map(),
+      priorResourceProblems: new Map([['gone', problem]]),
+      recheck,
+      fetchCache,
+      now: 2000,
+    });
+  };
+  const lasting = { name: 'gone', ref: url, url, detail: 'The server returned HTTP 404', failure: 'http-error' };
+  const kept = await run(lasting, 'preserve');
+  assert.deepEqual(kept.resourceProblems, [lasting]);
+  assert.deepEqual(kept.resources, []);
+  assert.equal((await run(lasting, 'all')).resources.length, 1);
+  assert.equal((await run({ ...lasting, retry: true }, 'preserve')).resources.length, 1);
+});
+
+test('attachFiles: a @resource moved to a URL that fails is a failed refresh, by its name', async () => {
+  const oldUrl = 'https://example.com/v1.css';
+  const url = 'https://example.com/v2.css';
+  const prior = { ref: oldUrl, url: oldUrl, name: 'css', bytesBase64: 'AA==', size: 1, contentHash: 'h', contentType: '', loadedAt: 1 };
+  const r = await attachFiles({
+    scriptFileUrl: SCRIPT_URL,
+    header: header(['resource', `css ${url}`]),
+    priorRequires: new Map(),
+    priorResources: new Map([[oldUrl, prior]]),
+    recheck: 'all',
+    fetchCache: new Map([[url, Promise.resolve(fakeFailure('404'))]]),
+    now: 2000,
+  });
+  assert.match(r.errorMessage, /@resource css/);
+});
+
+test('resourceAskedMessage ends in one period, whatever the detail ends in', () => {
+  const p = { name: 'n', ref: 'r' };
+  assert.equal(resourceAskedMessage('GM_x', { ...p, detail: 'Gone' }), 'GM_x returned an empty string. @resource n (r): Gone.');
+  assert.equal(resourceAskedMessage('GM_x', { ...p, detail: 'Gone. Push it.' }), 'GM_x returned an empty string. @resource n (r): Gone. Push it.');
+});
+
+test('resourceProblemLevel: only an over-limit file is an error', () => {
+  assert.equal(resourceProblemLevel({ failure: 'oversize' }), 'error');
+  assert.equal(resourceProblemLevel({ failure: 'no-response' }), 'warn');
+  assert.equal(resourceProblemLevel({}), 'warn');
 });
 
 test('attachFiles: preserve mode reuses kept entries, fetches added refs, drops removed refs', async () => {
@@ -819,6 +897,24 @@ test('attachFiles: an http dependency that 404s reports the status, through the 
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test('a pushed over-limit @require is refused, and a @resource loses its body', () => {
+  const pushed = (size) => ({ url: 'file:///x', bytesBase64: Buffer.alloc(size).toString('base64'), contentType: '' });
+  const h = header(['require', 'lib/big.js'], ['resource', 'big big.bin']);
+  assert.equal(oversizePushedRequire(h, { 'lib/big.js': pushed(MAX_FILE_BYTES) }), undefined);
+  assert.match(oversizePushedRequire(h, { 'lib/big.js': pushed(MAX_FILE_BYTES + 1) }), /^@require lib\/big\.js: The file is larger than the 2 MB limit$/);
+  assert.equal(oversizePushedRequire(h, { 'big.bin': pushed(MAX_FILE_BYTES + 1) }), undefined);
+  const small = pushed(MAX_FILE_BYTES);
+  assert.deepEqual(withoutOversizeResources(h, { 'big.bin': small }), { 'big.bin': small });
+  assert.deepEqual(withoutOversizeResources(h, { 'big.bin': pushed(MAX_FILE_BYTES + 1) }), {
+    'big.bin': {
+      url: 'file:///x',
+      bytesBase64: '',
+      contentType: '',
+      failure: { detail: 'The file is larger than the 2 MB limit', reason: 'oversize' },
+    },
+  });
 });
 
 test('attachFiles: an oversize dependency names the limit, not a generic failure', async () => {

@@ -362,6 +362,13 @@
       ]
     },
     {
+      "path": "examples/resource-missing/resource-missing.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
       "path": "examples/run-at-context-menu/run-at-context-menu.user.js",
       "category": "examples",
       "site_icons": [

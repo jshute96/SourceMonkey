@@ -31,9 +31,12 @@
 //   - Same per-refresh cross-script fetch cache: two scripts (and
 //     two refs of either kind) pointing at the same URL share one
 //     fetch. The typed assembly happens after the cache hit.
-//   - Any failure (resolve-time or fetch-time) returns an error
+//   - A `@require` failure (resolve-time or fetch-time) returns an error
 //     message; the caller flips the script to status:'invalid' with
-//     the message and preserves prior-known-good state.
+//     the message and preserves prior-known-good state. So does a
+//     `@resource` that fails with a good copy held. Otherwise a
+//     `@resource` failure is a `ResourceProblem`, and the script runs
+//     without the file.
 
 import {
   fetchResourceBytes,
@@ -64,7 +67,26 @@ import {
 // stockfish engines); small enough to keep a runaway from draining the
 // 10 MB chrome.storage.local quota in one row. Applies to both
 // @require and @resource.
+//
+// This is the extension's limit. The tools run this pipeline too, but
+// `prepareScript` lifts the limit there (`setFileByteLimit`): another
+// manager has limits of its own, and under SourceMonkey the extension
+// refuses the file when the script reaches it.
 export const MAX_FILE_BYTES = 2 * 1024 * 1024;
+
+let fileByteLimit = MAX_FILE_BYTES;
+
+// What `validate` warns of, since it doesn't apply the limit itself: the
+// extension refuses such a file, and another manager may take it.
+export function overFileLimitWarning(kind: 'require' | 'resource'): string {
+  const outcome = kind === 'require' ? 'so SourceMonkey refuses it' : 'so SourceMonkey doesn\'t load it, and the script gets an empty string';
+  return `The file is larger than SourceMonkey's ${byteLimitText(MAX_FILE_BYTES)} limit, ${outcome}. Other managers may accept it.`;
+}
+
+// The limit on `@require` and `@resource` fetches from here on.
+export function setFileByteLimit(maxBytes: number): void {
+  fileByteLimit = maxBytes;
+}
 
 // Rendered in whole MB when the cap divides evenly, so messages say
 // "1 MB" rather than "1024 KB".
@@ -314,6 +336,8 @@ export interface PriorCopy {
 interface FileFailure {
   failed: true;
   errorMessage: string;
+  // Which download failure it was, when the download is what failed.
+  reason?: FetchFailure['reason'];
 }
 
 function isFailure(v: FetchedFile | FileFailure): v is FileFailure {
@@ -386,6 +410,51 @@ export interface PushedFile {
   localUrl?: string;
   bytesBase64: string;
   contentType: string;
+  // Set instead of a body when this `@resource` can't be had: sm-dev
+  // couldn't read it, or it's over the extension's limit. Why, as
+  // `ResourceProblem` words it.
+  failure?: { detail: string; reason?: FetchFailure['reason'] };
+}
+
+// A declared `@resource` that didn't load. The script still runs, with
+// the getters answering "" for that name (docs/resources.md#failure-handling).
+export interface ResourceProblem {
+  name: string;
+  ref: string;
+  // Absent when the ref itself was refused.
+  url?: string;
+  // Why, as a message of its own; see `resourceProblemMessage`.
+  detail: string;
+  // Which download failure it was, when the download is what failed.
+  failure?: FetchFailure['reason'];
+  // Set when the failure may pass on its own (no response, a timeout),
+  // so a background refresh looks again rather than keeping it.
+  retry?: true;
+}
+
+export function resourceProblemMessage(problem: Pick<ResourceProblem, 'name' | 'ref' | 'detail'>): string {
+  return `@resource ${problem.name} (${problem.ref}): ${problem.detail}`;
+}
+
+// What the script's Log says when the script asks for this resource. A
+// detail may already end in a period, as a message of two sentences does.
+export function resourceAskedMessage(api: string, problem: Pick<ResourceProblem, 'name' | 'ref' | 'detail'>): string {
+  const message = resourceProblemMessage(problem);
+  return `${api} returned an empty string. ${message}${message.endsWith('.') ? '' : '.'}`;
+}
+
+// An over-limit file is an error: it fails on every load until the
+// script changes. Other failures can come right by themselves, or are
+// outside the author's hands.
+export function resourceProblemLevel(problem: Pick<ResourceProblem, 'failure'>): 'warn' | 'error' {
+  return problem.failure === 'oversize' ? 'error' : 'warn';
+}
+
+// The header line that declared a `@resource`. Matched on NAME, which is
+// what `distillResources` dedups on, so the line found is the declaration
+// that was actually loaded rather than a later one the loader ignored.
+export function resourceDeclarationLine(header: ParsedHeader | null, name: string): number | undefined {
+  return declarationLine(header, 'resource', (v) => splitResourceValue(v)?.prefix.trim() === name);
 }
 
 export interface AttachFilesArgs {
@@ -397,6 +466,8 @@ export interface AttachFilesArgs {
   // loadedAt preservation when the freshly fetched bytes are unchanged.
   priorRequires: Map<string, StoredRequire>;
   priorResources: Map<string, StoredResource>;
+  // The problems the last build found, by name, for 'preserve' to keep.
+  priorResourceProblems?: Map<string, ResourceProblem>;
   // 'all'      — refetch every declared file. Explicit Refresh uses
   //              this so users can pick up remote changes.
   // 'preserve' — reuse cached priors verbatim; only fetch refs the
@@ -423,9 +494,13 @@ export interface AttachFilesArgs {
 export interface AttachFilesResult {
   requires: StoredRequire[];
   resources: StoredResource[];
-  // Set when at least one file failed. The caller flips the script
-  // to status:'invalid' with this message. Partial lists aren't
-  // useful for injection so we return empty arrays alongside.
+  // The `@resource` files that didn't load, when the script has no
+  // earlier copy of them. These don't stop the script.
+  resourceProblems?: ResourceProblem[];
+  // Set when a `@require` failed, or a `@resource` the script already
+  // holds a good copy of. The caller flips the script to status:'invalid'
+  // with this message, or keeps its good copy. Partial lists aren't useful
+  // for injection so we return empty arrays alongside.
   errorMessage?: string;
   // Line in the SCRIPT's own source that declared the file that failed.
   // The file itself never loaded, so it has no content to point into —
@@ -443,7 +518,7 @@ export interface AttachFilesResult {
 // Localized forms (`@require:de`) are skipped for the same reason
 // `getValues` skips them — they are not the declarations that were
 // loaded.
-function declarationLine(
+export function declarationLine(
   header: ParsedHeader | null,
   tag: 'require' | 'resource',
   matches: (value: string) => boolean,
@@ -454,6 +529,43 @@ function declarationLine(
     if (matches(t.value.trim())) return t.line;
   }
   return undefined;
+}
+
+/**
+ * Why a body pushed with a scratch script can't be kept, if a `@require`
+ * is over the limit: pushed bodies aren't fetched, so the fetcher's check
+ * doesn't see them. Only for pushes; a backup's bundled files were already
+ * installed somewhere, so an import keeps them.
+ */
+export function oversizePushedRequire(
+  header: ParsedHeader | null,
+  files: Readonly<Record<string, PushedFile>>,
+): string | undefined {
+  for (const [ref, file] of Object.entries(files)) {
+    if (!isDeclaredRequire(header, ref) || base64ToBytes(file.bytesBase64).byteLength <= fileByteLimit) continue;
+    return `@require ${ref}: ${describeFetchFailure({ failed: true, reason: 'oversize' }, fileByteLimit)}`;
+  }
+  return undefined;
+}
+
+/**
+ * The pushed files with any over-limit `@resource` body replaced by its
+ * failure, so the body stays out of storage and the script loads without
+ * it, as it does when fetching such a file.
+ */
+export function withoutOversizeResources(
+  header: ParsedHeader | null,
+  files: Readonly<Record<string, PushedFile>>,
+): Record<string, PushedFile> {
+  return Object.fromEntries(Object.entries(files).map(([ref, file]) => {
+    if (isDeclaredRequire(header, ref) || base64ToBytes(file.bytesBase64).byteLength <= fileByteLimit) return [ref, file];
+    const failure = { detail: describeFetchFailure({ failed: true, reason: 'oversize' }, fileByteLimit), reason: 'oversize' as const };
+    return [ref, { url: file.url, bytesBase64: '', contentType: '', failure }];
+  }));
+}
+
+function isDeclaredRequire(header: ParsedHeader | null, ref: string): boolean {
+  return (header?.tags ?? []).some((t) => !t.locale && t.tag === 'require' && t.value.trim() === ref);
 }
 
 export async function attachFiles(args: AttachFilesArgs): Promise<AttachFilesResult> {
@@ -494,6 +606,7 @@ export async function attachFiles(args: AttachFilesArgs): Promise<AttachFilesRes
     decl,
     scriptFileUrl: args.scriptFileUrl,
     prior: args.priorResources,
+    priorProblems: args.priorResourceProblems,
     recheck: args.recheck,
     fetchCache: args.fetchCache,
     now: args.now,
@@ -518,26 +631,20 @@ export async function attachFiles(args: AttachFilesArgs): Promise<AttachFilesRes
     if (res.entry) requires.push(res.entry);
   }
 
+  const resourceProblems: ResourceProblem[] = [];
   for (const [i, res] of resourceResults.entries()) {
     if (res.errorMessage) {
-      const decl = resourceDecls[i];
       return {
         requires: [],
         resources: [],
         errorMessage: res.errorMessage,
-        // Matched on NAME, which is what `distillResources` dedups on,
-        // so the line found is the declaration that was actually
-        // loaded rather than a later one the loader ignored.
-        errorLine: declarationLine(
-          args.header,
-          'resource',
-          (v) => splitResourceValue(v)?.prefix.trim() === decl.name,
-        ),
+        errorLine: resourceDeclarationLine(args.header, resourceDecls[i]!.name),
       };
     }
     if (res.entry) resources.push(res.entry);
+    if (res.problem) resourceProblems.push(res.problem);
   }
-  return { requires, resources };
+  return { requires, resources, ...(resourceProblems.length > 0 ? { resourceProblems } : {}) };
 }
 
 // ---------- @icon check ----------
@@ -690,6 +797,7 @@ export async function fetchRequireForPreview(
 interface LoadResult<E> {
   entry?: E;
   errorMessage?: string;
+  problem?: ResourceProblem;
 }
 
 // What we actually read for a declared URL, and from where.
@@ -720,7 +828,9 @@ function standInFields(loaded: LoadedBytes): Pick<SharedFileFields, 'localUrl' |
 function pushedBytes(pushed: PushedFile): LoadedBytes {
   return {
     ...(pushed.localUrl ? { localUrl: pushed.localUrl } : {}),
-    got: { bytes: base64ToBytes(pushed.bytesBase64), contentType: pushed.contentType },
+    got: pushed.failure
+      ? { failed: true, errorMessage: pushed.failure.detail, ...(pushed.failure.reason ? { reason: pushed.failure.reason } : {}) }
+      : { bytes: base64ToBytes(pushed.bytesBase64), contentType: pushed.contentType },
   };
 }
 
@@ -1048,6 +1158,7 @@ interface LoadResourceArgs {
   decl: ResourceDecl;
   scriptFileUrl: string;
   prior: Map<string, StoredResource>;
+  priorProblems: Map<string, ResourceProblem> | undefined;
   recheck: 'all' | 'preserve';
   fetchCache: FileFetchCache;
   now: number;
@@ -1057,14 +1168,28 @@ interface LoadResourceArgs {
 }
 
 async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredResource>> {
-  // A `@resource` line carries a name AND a ref, and the name alone
-  // doesn't say what failed to load. `@require` names its ref because
-  // that is all it has; this names both.
-  const subject = `@resource ${args.decl.name} (${args.decl.ref})`;
-  const resolved = resolveRef(args.decl.ref, args.scriptFileUrl, args.pushed);
-  if ('failure' in resolved) {
-    return { errorMessage: `${subject}: ${resolved.failure}` };
-  }
+  const { name, ref } = args.decl;
+  // A failure with a good copy held is a failed refresh: the caller keeps
+  // the whole script on its good copy. That covers this name at another
+  // URL too, such as an update bumping a versioned CDN URL. Without one,
+  // the script runs without this resource.
+  const failed = (detail: string, url?: string, reason?: FetchFailure['reason']): LoadResult<StoredResource> => {
+    const heldCopy = [...args.prior.values()].some((p) => p.name === name || p.url === url);
+    if (heldCopy) return { errorMessage: resourceProblemMessage({ name, ref, detail }) };
+    const transient = reason === 'no-response' || reason === 'timeout';
+    return {
+      problem: {
+        name,
+        ref,
+        ...(url !== undefined ? { url } : {}),
+        detail,
+        ...(reason ? { failure: reason } : {}),
+        ...(transient ? { retry: true as const } : {}),
+      },
+    };
+  };
+  const resolved = resolveRef(ref, args.scriptFileUrl, args.pushed);
+  if ('failure' in resolved) return failed(resolved.failure);
   // Resources can be any media type.
   // No URL-level dedup: two `@resource` lines with different
   // names pointing at the same URL are intentional — we want two
@@ -1075,16 +1200,28 @@ async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredRe
   // Prior lookup by URL.
   const prior = args.prior.get(resolved.url);
 
+  // Its last failure, which also means no stand-in was found last time.
+  const priorProblem = args.priorProblems?.get(name);
+
   // Local stand-in first, and before the preserve shortcut — same rule
   // and same reasoning as `@require`; see `readLocalStandIn`.
   const local = args.pushed ? pushedBytes(args.pushed)
     : resolved.inline ?? await timePhase('local-standin', () => readLocalStandIn(
-      resolved.url, args.localRoots, args.fetchCache, lastLookup(args.localLookup, prior)));
+      resolved.url, args.localRoots, args.fetchCache, lastLookup(args.localLookup, prior ?? (priorProblem ? {} : undefined))));
   if (
     !local && args.recheck === 'preserve' &&
     prior && prior.name === args.decl.name && !prior.localUrl
   ) {
     return { entry: prior };
+  }
+  // A recorded failure is kept until a recheck, as for an `@icon`, so a dead
+  // URL isn't fetched again on each page load. Not one that may pass on
+  // its own.
+  if (
+    !local && args.recheck === 'preserve' &&
+    priorProblem?.ref === ref && priorProblem.url === resolved.url && !priorProblem.retry
+  ) {
+    return { problem: priorProblem };
   }
 
   // Resources accept anything — including HTML. A script that wants
@@ -1094,9 +1231,7 @@ async function loadResource(args: LoadResourceArgs): Promise<LoadResult<StoredRe
     got: await ensureFetch(args.fetchCache, resolved.url, priorCopyOf(prior, priorResourceBytes(prior))),
   };
   const got = loaded.got;
-  if (isFailure(got)) {
-    return { errorMessage: `${subject}: ${got.errorMessage}` };
-  }
+  if (isFailure(got)) return failed(got.errorMessage, resolved.url, got.reason);
   // Same 304 reuse as `loadRequire`. The name has to match too: a
   // `@resource` renamed to the same URL is a changed declaration even
   // though the body is identical, and the normal path below is what
@@ -1164,7 +1299,7 @@ async function fetchFileBytes(
 ): Promise<FetchedFile | FileFailure> {
   try {
     const res = await fetchResourceBytes(url, {
-      maxBytes: MAX_FILE_BYTES,
+      maxBytes: fileByteLimit,
       // Only conditional when we hold a validator to offer. A bare
       // prior with neither would send no header and just refetch.
       ...(prior && (prior.etag ?? prior.lastModified)
@@ -1172,7 +1307,7 @@ async function fetchFileBytes(
         : {}),
     });
     if ('failed' in res) {
-      return { failed: true, errorMessage: describeFetchFailure(res) };
+      return { failed: true, errorMessage: describeFetchFailure(res, fileByteLimit), reason: res.reason };
     }
     if (isNotModified(res)) {
       // Unreachable without a prior — `conditional` is only set above

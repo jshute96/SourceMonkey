@@ -146,6 +146,7 @@ Load pipeline (service-worker side, never carries a `tabId`):
 | `extension-startup` | `ensureLoadStateInLogTab`, `ensureOutdatedInLogTab` | Restated after a browser restart — see below. |
 | `parser` | `ensureStartupLogsInLogTab`, the refresh paths, and `emitInitialLoadLog` | Parse-time diagnostics from `script.startupLogs`: at install, when new content lands, restated on a manual no-change refresh, and replayed at boot. |
 | `version-probe` | `probeOneScript` | An `@updateURL` / `@downloadURL` elsewhere declares a newer `@version`. |
+| `gm-resource` | the `sm:gm-resource-failed` report | The script asked for a `@resource` that didn't load. An error, once per name per document. |
 
 Registration:
 
@@ -458,7 +459,9 @@ tracked in `TODO.md`.
   - Load failures (error) — the row's `errorMessage` when it lands
     `invalid`, covering metadata-block parse failures, header
     validation, fetch failures with no good copy to fall back on, and
-    `@require` / `@resource` resolve or fetch failures.
+    `@require` resolve or fetch failures. A `@resource` failure doesn't
+    make the script invalid; it's a `parser` row
+    ([resources.md](resources.md#failure-handling)).
   - `Refresh failed: <reason>` (warning) — a script that's still
     running from its cached copy but whose latest refresh failed
     (`status: ok` + `refreshError`; see

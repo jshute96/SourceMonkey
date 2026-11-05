@@ -77,6 +77,71 @@ test.describe('scratch scripts', () => {
     expect((await sm.getCollections())[0]?.scriptIds ?? []).toEqual([]);
   });
 
+  test('a pushed @require over the size limit is refused, and the script already there stays', async ({ sm }) => {
+    const text = (extra: string[]) => renderUserscript({
+      relativePath: 'scratch.user.js',
+      meta: { name: 'Big lib', match: ['*://*/target.html'], extra },
+      body: '',
+    });
+    const kept = await sm.writeRunScript({ run: RUN, text: text([]) });
+    expect(kept.status).toBe('ok');
+    const refused = await sm.writeRunScript({
+      run: RUN,
+      text: text(['// @require big.js']),
+      files: {
+        'big.js': {
+          url: 'file:///home/me/scripts/big.js',
+          bytesBase64: Buffer.alloc(2 * 1024 * 1024 + 1).toString('base64'),
+          contentType: '',
+        },
+      },
+    });
+    expect(refused.status).toBe('invalid');
+    expect(refused.errorMessage).toBe('@require big.js: The file is larger than the 2 MB limit');
+    const again = await sm.writeRunScript({ run: RUN, text: text([]) });
+    expect(again.scriptId).toBe(kept.scriptId);
+    expect(again.replaced).toBe(true);
+  });
+
+  test('a pushed @resource over the size limit is an error at load and when asked for, and its body is not stored', async ({ extensionContext, fixtureServer, getServiceWorker, sm }) => {
+    const result = await sm.writeRunScript({
+      run: RUN,
+      text: renderUserscript({
+        relativePath: 'scratch.user.js',
+        meta: {
+          name: 'Big resource',
+          match: ['*://*/target.html'],
+          grant: ['GM_getResourceText'],
+          extra: ['// @resource big big.bin'],
+        },
+        body: `document.getElementById('target').textContent = 'got [' + GM_getResourceText('big') + ']';`,
+      }),
+      files: {
+        'big.bin': {
+          url: 'file:///home/me/scripts/big.bin',
+          bytesBase64: Buffer.alloc(2 * 1024 * 1024 + 1).toString('base64'),
+          contentType: '',
+        },
+      },
+    });
+    expect(result.status).toBe('ok');
+    const sw = await getServiceWorker();
+    const size = await sw.evaluate(async () => {
+      const rows = await chrome.storage.local.get(null);
+      return Object.entries(rows).filter(([k]) => k.startsWith('scratchFiles:')).map(([, v]) => JSON.stringify(v).length);
+    });
+    expect(size[0]).toBeLessThan(1000);
+    const big = 'The file is larger than the 2 MB limit';
+    const atLoad = (await sm.getScriptLog(result.scriptId)).filter((e) => e.message.includes(big));
+    expect(atLoad.map((e) => e.level)).toEqual(['error']);
+
+    const page = await claimedPage(extensionContext, getServiceWorker, sm, fixtureServer.baseUrl);
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect(page.locator('#target')).toHaveText('got []');
+    await expect.poll(async () => (await sm.getScriptLog(result.scriptId)).filter((e) => e.source === 'gm-resource').map((e) => e.level)).toEqual(['error']);
+    await page.close();
+  });
+
   test('a relative @require is read from the files pushed with the text, and refused without them', async ({ extensionContext, extensionId, fixtureServer, sm, getServiceWorker }) => {
     const text = renderUserscript({
       relativePath: 'scratch.user.js',

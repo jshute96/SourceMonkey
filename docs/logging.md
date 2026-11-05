@@ -235,8 +235,9 @@ still drives the Log-tab mirror.
   other grants, a `@match` Chrome's grammar refuses, `unsafeWindow`
   pinned to the isolated world by `@inject-into content` (all `warn`),
   and an ungranted `unsafeWindow` reference moving the script into the
-  page (`info`). Future detectors (partial `@resource` failures,
-  deprecation notices, etc.) extend `extractStartupLogs`.
+  page (`info`). A `@resource` that didn't load (`warn`, or `error` over
+  the size limit) is added when the files load. Future detectors
+  (deprecation notices, etc.) extend `extractStartupLogs`.
 
 ### Properties
 

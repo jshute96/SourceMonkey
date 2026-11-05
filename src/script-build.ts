@@ -20,6 +20,10 @@ import {
 import {
   attachFiles,
   checkScriptIcon,
+  resourceDeclarationLine,
+  resourceProblemLevel,
+  resourceProblemMessage,
+  type ResourceProblem,
   distillRequires,
   distillResources,
   type FileFetchCache,
@@ -175,12 +179,15 @@ export interface StoredScript {
   // but carry raw bytes (base64) rather than decoded text — so they
   // can serve images, fonts, JSON, CSS, etc. via GM_getResource*.
   resources?: StoredResource[];
+  // The declared `@resource` files that didn't load. The script runs
+  // without them. Each is also on `startupLogs`.
+  resourceProblems?: ResourceProblem[];
   // What the last check of the script's `@icon` found; see
   // `checkScriptIcon`. A problem is also on `startupLogs` as a warning.
   // Kept so a background refresh needn't download the icon again.
   iconCheck?: IconCheck;
   // Parse-time diagnostics from the header checks, plus an `@icon` that
-  // can't be shown (see `iconCheck`). Only
+  // can't be shown (see `iconCheck`) and any `resourceProblems`. Only
   // populated for `status === 'ok'` rows; error rows don't run so the
   // diagnostics would be dead bytes, and applyFetchError inherits
   // whatever the prior `ok` row had (correct because it also
@@ -704,13 +711,15 @@ export function buildInitialInvalidEntry(args: {
 }
 
 // Resolve + fetch a script's `@require` bodies AND `@resource` blobs,
-// attaching both lists onto the StoredScript. On any failure preserves
+// attaching both lists onto the StoredScript. On a failure, preserves
 // the prior's last-known-good state and flips status to 'invalid' with a
 // message naming the offending URL — mirrors `applyFetchError`'s
 // content-preservation policy for body-fetch failures, so a flaky
 // dependency doesn't clobber the user's working version. Without
-// declared deps a userscript usually breaks worse than not injecting,
-// so erroring out is safer than running headless.
+// a declared `@require` a userscript usually breaks worse than not
+// injecting, so erroring out is safer than running headless. A `@resource`
+// with no good copy to keep isn't such a failure: the script runs without
+// it (`resourceProblems`).
 //
 // `recheck === 'preserve'` reuses every cached prior verbatim and only
 // fetches refs the script newly declares. `recheck === 'all'` refetches
@@ -746,6 +755,7 @@ export async function applyFiles(
 ): Promise<StoredScript> {
   const priorRequires = new Map((prior?.requires ?? []).map((r) => [r.url, r]));
   const priorResources = new Map((prior?.resources ?? []).map((r) => [r.url, r]));
+  const priorResourceProblems = new Map((prior?.resourceProblems ?? []).map((p) => [p.name, p]));
   // Configured roots come from storage, so make sure that read has
   // landed before asking — a refresh racing SW startup would otherwise
   // resolve as if none were set and persist that.
@@ -773,10 +783,15 @@ export async function applyFiles(
       newReqRefs.length === (prior.requires?.length ?? 0) &&
       newReqRefs.every((ref, i) => prior.requires?.[i]?.ref === ref);
     const newResDecls = distillResources(built.header);
+    // A problem counts as known unless it may pass on its own, which
+    // `attachFiles` has to look at again.
+    let loaded = 0;
     const sameRess =
-      newResDecls.length === (prior.resources?.length ?? 0) &&
-      newResDecls.every((d, i) => {
-        const p = prior.resources?.[i];
+      newResDecls.length === (prior.resources?.length ?? 0) + priorResourceProblems.size &&
+      newResDecls.every((d) => {
+        const problem = priorResourceProblems.get(d.name);
+        if (problem) return problem.ref === d.ref && !problem.retry;
+        const p = prior.resources?.[loaded++];
         return p && p.name === d.name && p.ref === d.ref;
       });
     if (sameReqs && sameRess) {
@@ -784,6 +799,7 @@ export async function applyFiles(
       else delete built.requires;
       if (prior.resources) built.resources = prior.resources;
       else delete built.resources;
+      applyResourceProblems(built, prior.resourceProblems);
       // Still route through the parse check. `built` is a fresh row,
       // so returning here directly would drop `parseCheckedHash` and
       // make every later refresh re-compile content that never moved.
@@ -798,6 +814,7 @@ export async function applyFiles(
     header: built.header,
     priorRequires,
     priorResources,
+    priorResourceProblems,
     recheck,
     fetchCache,
     now,
@@ -834,12 +851,14 @@ export async function applyFiles(
     );
     delete built.requires;
     delete built.resources;
+    delete built.resourceProblems;
     return built;
   }
   if (result.requires.length > 0) built.requires = result.requires;
   else delete built.requires;
   if (result.resources.length > 0) built.resources = result.resources;
   else delete built.resources;
+  applyResourceProblems(built, result.resourceProblems);
   // A dependency whose content changed is fresh content for the script
   // too: what runs is the composed body. Everything that asks "is there
   // a newer copy than the page ran" compares `loadedAt` (the reload
@@ -859,6 +878,36 @@ function dependenciesChanged(a: StoredScript, b: StoredScript): boolean {
     (s.resources ?? []).map((r) => [r.name, r.url, r.contentHash]),
   ]);
   return key(a) !== key(b);
+}
+
+// Record the failed `@resource` files on `built`, each as a load-time
+// note on the line that declared it. A row reused whole (see
+// `applyIconCheck`) already carries the last build's notes, so those go
+// first.
+function applyResourceProblems(built: StoredScript, problems: ResourceProblem[] | undefined): void {
+  const stale = new Set(resourceProblemLogs(built).map((l) => l.message));
+  if (stale.size > 0 && built.startupLogs) {
+    const kept = built.startupLogs.filter((l) => !stale.has(l.message));
+    if (kept.length > 0) built.startupLogs = kept;
+    else delete built.startupLogs;
+  }
+  // Invalid rows don't run and carry no startup logs; see `startupLogs`.
+  if (!problems || problems.length === 0 || built.status !== 'ok') {
+    delete built.resourceProblems;
+    return;
+  }
+  built.resourceProblems = problems;
+  built.startupLogs = [...(built.startupLogs ?? []), ...resourceProblemLogs(built)];
+}
+
+function resourceProblemLogs(
+  script: Pick<StoredScript, 'resourceProblems' | 'header' | 'relativePath'>,
+): StartupLog[] {
+  return (script.resourceProblems ?? []).map((problem) => ({
+    level: resourceProblemLevel(problem),
+    message: resourceProblemMessage(problem),
+    location: locationIn(script.relativePath, resourceDeclarationLine(script.header, problem.name)),
+  }));
 }
 
 // Record the `@icon` check on `built`, and a problem it found as a
@@ -899,16 +948,18 @@ async function applyIconCheck(
 }
 
 // A stored row's startup logs, derived again: the header checks, plus
-// the stored `@icon` warning. That one comes from a download, not the
-// header, so it is carried over rather than re-derived. For the
-// backfills that rebuild a row's logs without rebuilding the row.
+// the stored `@icon` warning and `@resource` problems. Those come from a
+// download, not the header, so they are carried over rather than
+// re-derived. For the backfills that rebuild a row's logs without
+// rebuilding the row.
 export function rederivedStartupLogs(
-  script: Pick<StoredScript, 'iconCheck' | 'header' | 'relativePath'>,
+  script: Pick<StoredScript, 'iconCheck' | 'resourceProblems' | 'header' | 'relativePath'>,
   usesUnsafeWindow: boolean,
 ): StartupLog[] {
   const logs = [...extractStartupLogs(script.header, script.relativePath, usesUnsafeWindow)];
   const iconLog = iconCheckLog(script);
   if (iconLog) logs.push(iconLog);
+  logs.push(...resourceProblemLogs(script));
   return logs;
 }
 

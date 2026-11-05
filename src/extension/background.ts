@@ -72,6 +72,7 @@ import {
   type ParseVerdict,
 } from '../parse-check-protocol.js';
 import { isManualScript, type ParseChecker } from '../script-build.js';
+import { resourceAskedMessage } from '../external-files.js';
 import {
   ensureLogIdsLoaded,
   getScriptLogLabel,
@@ -108,6 +109,7 @@ import {
   SM_MAIN_BLOCKED_MSG,
   SM_GM_LOG_MSG,
   SM_GM_DOM_BLOCKED_MSG,
+  SM_GM_RESOURCE_FAILED_MSG,
   SM_MANUAL_MSG,
   SM_START_MSG,
   SM_SWAPPED_MSG,
@@ -923,8 +925,11 @@ const api: SourceMonkeyApi = {
   // here must not settle before the registration is in place.
   writeRunScript: (args) => queueSmDevWork(async () => {
     const result = await writeRunScript(args);
-    pendingScriptIds.add(result.scriptId);
-    pendingCollectionIds.add(result.collectionId);
+    // A push refused before anything was stored has no ids.
+    if (result.scriptId) {
+      pendingScriptIds.add(result.scriptId);
+      pendingCollectionIds.add(result.collectionId);
+    }
     await syncNowForTests();
     await startRunSweeps();
     return result;
@@ -2341,7 +2346,7 @@ async function popupScriptInputs(ids: readonly string[]): Promise<CachedPopupScr
           enabled: isScriptEnabled(s),
           identity: identityKey(s.header ?? null),
           version: (s.header ? getValue(s.header, 'version')?.trim() : '') || null,
-          headerWarnings: s.startupLogs?.some((l) => l.level === 'warn') ?? false,
+          headerWarnings: s.startupLogs?.some((l) => l.level === 'warn' || l.level === 'error') ?? false,
           location: s.fileUrl,
           ...(s.status === 'invalid'
             ? { invalid: s.errorMessage ? describeDiagnostic(s.errorMessage, s.errorLocation) : '' }
@@ -5596,6 +5601,28 @@ function installScriptMessageListener(): void {
             message: cspBlockedStyleMessage(payload.api === 'GM_addElement' ? 'GM_addElement' : 'GM_addStyle', payload.why),
           });
         }
+      }, sendResponse);
+    }
+    if (type === SM_GM_RESOURCE_FAILED_MSG) {
+      // The runtime's once-per-name report (see `resourceFailed` in
+      // wrapper-gm-runtime.js). An error: unlike the load-time note,
+      // this script is now running without something it asked for.
+      // Worded here from the row, as for the report above.
+      const payload = msg as { scriptId?: unknown; api?: unknown; name?: unknown };
+      return guardBridgeCall(msg, payload.scriptId, ['resource'], sender, () => {
+        const { scriptId, name } = payload;
+        if (typeof scriptId !== 'string' || typeof name !== 'string') return;
+        const api = payload.api === 'GM_getResourceURL' ? 'GM_getResourceURL' : 'GM_getResourceText';
+        void getScriptMeta(scriptId).then((script) => {
+          const problem = script?.resourceProblems?.find((p) => p.name === name);
+          if (!problem) return;
+          logScriptEvent(scriptId, {
+            level: 'error',
+            source: 'gm-resource',
+            tabId,
+            message: resourceAskedMessage(api, problem),
+          });
+        }).catch((err) => { console.info('[SourceMonkey] could not log a failed @resource:', err); });
       }, sendResponse);
     }
     if (type === SM_GM_LOG_MSG) {

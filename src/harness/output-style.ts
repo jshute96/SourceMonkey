@@ -29,7 +29,7 @@ export const MARKUP = '\u0002\ue000';
 /** What a piece of output is. Each has one style, in STYLES. */
 export type Role =
   | 'prompt' | 'typed' | 'cmd' | 'code' | 'err' | 'warn'
-  | 'h' | 'sel' | 'id' | 'dim' | 'url' | 'name';
+  | 'h' | 'sel' | 'id' | 'dim' | 'url' | 'name' | 'ok';
 
 type Look = 'bold' | 'dim' | 'italic' | 'underline' | 'red' | 'green' | 'magenta' | 'cyan';
 
@@ -48,6 +48,7 @@ const STYLES: Record<Role, Look[]> = {
   dim: ['dim'],
   url: ['underline'],
   name: ['italic'],
+  ok: ['green'],
 };
 
 // Each look's SGR codes, on and off.
@@ -93,6 +94,8 @@ export const MISTAKE_PREFIX = `${SM_DEV_PREFIX}${ERROR_PREFIX}`;
 export const WARNING_PREFIX = 'Warning: ';
 /** Starts a script's warning from preparing it (`warningLines`). */
 export const WARNING_LEVEL = 'warn: ';
+/** Starts a script's error from preparing it (`warningLines`), which doesn't make it invalid. */
+export const ERROR_LEVEL = 'error: ';
 /** Starts a script's warning from preparing it, as a run prints it. */
 export const SCRIPT_WARNING_PREFIX = `${SM_DEV_PREFIX}${WARNING_LEVEL}`;
 /** Starts a failed `wait`. */
@@ -175,6 +178,8 @@ export const code = (text: string): string => role('code', text);
 export const heading = (text: string): string => role('h', text);
 export const selected = (text: string): string => role('sel', text);
 export const dim = (text: string): string => role('dim', text);
+/** A check that passed. */
+export const ok = (text: string): string => role('ok', text);
 /** A message we wrote, as an error: its `backticked` spans are commands (see `message`). */
 export const err = (text: string): string => role('err', message(text));
 /** A message we wrote, as a warning. */

@@ -156,7 +156,7 @@
     "sm:gm-window-close", "sm:gm-window-focus",
     "sm:gm-tab-data",
     "sm:gm-resync",
-    "sm:gm-log", "sm:gm-dom-blocked",
+    "sm:gm-log", "sm:gm-dom-blocked", "sm:gm-resource-failed",
     /* Generic envelope for async APIs that have no dedicated body yet
        (the fall-through in gm-bindings.ts). Unreachable today — every
        async catalog entry has its own message type — and listed so the

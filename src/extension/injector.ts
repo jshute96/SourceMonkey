@@ -86,6 +86,7 @@ import {
 } from './script-store.js';
 import { CONTEXT_MENU_RUN_AT, SUPPORTED_RUN_AT, getValue, getValues, hasTag, type ParsedHeader } from '../userscript-header.js';
 import { isManualScript } from '../script-build.js';
+import { distillResources, resourceProblemMessage } from '../external-files.js';
 import {
   WRAPPER_BRIDGE,
   WRAPPER_GM_RUNTIME,
@@ -665,6 +666,19 @@ export function wrapSealEntry(scriptId: string, logLabel: string): string {
   return `${registryExpr()}.sealed(${jsLit(scriptId)});\n//# sourceURL=${buildSealSourceUrl(logLabel)}\n`;
 }
 
+// `GM_info.script.resources`: the loaded and failed resources together,
+// in the order the header declares them.
+function resourceListOf(script: StoredScript): { name: string; url: string }[] {
+  const order = distillResources(script.header).map((d) => d.name);
+  const position = (name: string): number => {
+    const at = order.indexOf(name);
+    return at < 0 ? order.length : at;
+  };
+  return [...(script.resources ?? []), ...(script.resourceProblems ?? [])]
+    .sort((a, b) => position(a.name) - position(b.name))
+    .map((r) => ({ name: r.name, url: r.ref }));
+}
+
 // Pure: assemble the GmInfoInput literal we'll bake into GM_info.
 // `grantedNames` is the script's resolved grant set (empty for
 // `@grant none` / no-grants / unknown-only / MAIN world). It's
@@ -686,9 +700,12 @@ function buildGmInfoInput(
   // script that declares an empty `@name` sees an empty name rather
   // than silently getting its URL.
   const name = getValue(header, 'name') ?? script.relativePath;
-  const resources: Record<string, { b64: string; ct: string }> = {};
+  const resources: GmInfoInput['resources'] = {};
   for (const r of script.resources ?? []) {
     resources[r.name] = { b64: r.bytesBase64, ct: r.contentType };
+  }
+  for (const p of script.resourceProblems ?? []) {
+    resources[p.name] = { failed: resourceProblemMessage(p) };
   }
   // Headers TM copies onto `GM_info.script` by name. Absent → null.
   const passthrough = {} as Record<GmInfoPassthroughTag, string | null>;
@@ -718,9 +735,11 @@ function buildGmInfoInput(
     // `.ref`, not `.url`: report the ref as written in the header, as
     // TM/VM do, rather than the resolved (possibly local file://) URL.
     // These are the *loaded* lists (deduped; and after a failed
-    // refresh, the prior good set — same as the body they go with).
+    // refresh, the prior good set — same as the body they go with),
+    // plus the resources that didn't load, which the script still
+    // declares and can still ask for.
     requires: (script.requires ?? []).map((r) => r.ref),
-    resourceList: (script.resources ?? []).map((r) => ({ name: r.name, url: r.ref })),
+    resourceList: resourceListOf(script),
     connects: getValues(header, 'connect'),
     noframes: hasTag(header, 'noframes'),
     userAgentData: readUserAgentData(),

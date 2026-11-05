@@ -559,9 +559,10 @@ function addLocalFiles(dl: HTMLDListElement, files: DetailsModel['files']): void
 // contributes no bytes, so counting it would promise a total the
 // number beside it doesn't include.
 //
-// A failure therefore shows up as the tail going missing entirely, not
-// as a short count: `attachFiles` reports a failure with EMPTY lists,
-// so one broken dependency drops the whole suffix. The declarations
+// A failure that stops the script therefore shows up as the tail going
+// missing entirely, not as a short count: `attachFiles` reports it with
+// EMPTY lists, so one broken dependency drops the whole suffix. A
+// `@resource` the script runs without just isn't counted. The declarations
 // themselves stay visible in the metadata block either way, and the
 // error itself is what the message bar above the panel is for.
 function dependencySizeSuffix(files: DetailsModel['files']): string {

@@ -215,6 +215,7 @@ All the example userscripts, by directory, generated from this directory's
 | [SourceMonkey example: require-scope: @require in the content (USER_SCRIPT) world](require-scope/content-world.user.js) | The same @require'd library reaches an isolated-world script, alongside its GM_* bindings. |
 | [SourceMonkey example: require-scope: @require in the page (MAIN) world](require-scope/page-world.user.js) | A @require'd library's top-level class/const/function reach a MAIN-world script. |
 | [SourceMonkey example: require-scope: relative @require paths](require-scope/relative/relative-require.user.js) | Loads two @require libraries by relative path, in order. |
+| [SourceMonkey example: resource-missing: a @resource that doesn't load](resource-missing/resource-missing.user.js) | Declares a @resource whose URL doesn't exist, and shows what the script gets when it asks for it. |
 | [SourceMonkey example: run-at-context-menu: @run-at context-menu](run-at-context-menu/run-at-context-menu.user.js) | Runs only when asked: each run adds a line to the page. |
 | [SourceMonkey example: unsafe-window: unsafeWindow](unsafe-window/unsafe-window.user.js) | Reads and writes the page's real window through unsafeWindow, while still using GM storage. |
 | [SourceMonkey example: unsafe-window: unsafeWindow outside the page](unsafe-window/isolated.user.js) | The other corner: @inject-into content keeps the script out of the page, so unsafeWindow is not the page's window. |

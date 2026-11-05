@@ -399,6 +399,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/sync-window.spec.ts` | A navigation racing a registration sync still gets injected, and the set never empties mid-sync |
 | `tests/e2e/badge.spec.ts` | Per-tab badge and tooltip: green/red/orange/purple, MISSING, RELOAD, disabled since load, warnings |
 | `tests/e2e/sandbox-csp.spec.ts` | Pages sent with a CSP `sandbox` header or in an `<iframe sandbox>`: MAIN-world scripts run isolated instead |
+| `tests/e2e/resource-failure.spec.ts` | A `@resource` that doesn't load: the script runs, warns at load, gets "" and logs an error when asking, and a refresh recovers |
 | `tests/e2e/reload-without-scripts.spec.ts` | "Reload page with no userscripts" and its per-script forms: one-shot skips, grey NOT_LOADED badge, info Log entries |
 | `tests/e2e/popup.spec.ts` | The toolbar popup: rows by collection, toggles, removed scripts and the reload banner, exclusive checkbox and shown copy, collection menu, menu commands, single vs double click |
 | `tests/e2e/body-reads.spec.ts` | Which reads load script bodies: enable toggles read none, unchanged refreshes one copy; full syncs skip held code |

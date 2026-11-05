@@ -36,6 +36,7 @@
   "require-scope/content-world.user.js",
   "require-scope/page-world.user.js",
   "require-scope/relative/relative-require.user.js",
+  "resource-missing/resource-missing.user.js",
   "run-at-context-menu/run-at-context-menu.user.js",
   "unsafe-window/isolated.user.js",
   "unsafe-window/ungranted.user.js",

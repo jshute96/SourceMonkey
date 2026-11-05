@@ -229,7 +229,8 @@ async function importValidation(opts, results, unchecked = []) {
       .map((w) => describe(w.message, w.location));
     // `ok` with a category is a check that couldn't decide (see the validator's
     // classify()); worth seeing, but not a failure.
-    if (result.status === 'ok' && result.category !== 'ok') warnings.push(`${result.category}: ${result.detail}`);
+    // A `@resource` problem is already among the warnings.
+    if (result.status === 'ok' && result.category !== 'ok' && result.category !== '@resource') warnings.push(`${result.category}: ${result.detail}`);
     const valid = { status: result.status };
     if (result.status !== 'ok') {
       valid.error = result.errorMessage ? describe(result.errorMessage, result.location) : result.detail;
@@ -241,6 +242,8 @@ async function importValidation(opts, results, unchecked = []) {
     if (result.status === 'invalid' && result.reason) tags.push(`invalid:${result.reason}`);
     // Why the `@icon` can't be shown, as the validator classified it.
     if (result.iconProblem) tags.push(`icon-${result.iconProblem}`);
+    // Why a `@resource` didn't load, which doesn't make the script invalid.
+    for (const problem of result.resourceProblems ?? []) tags.push(`resource-${problem}`);
     if (tags.length) valid.tags = tags;
     valid.date = date;
     if (result.version) valid.version = result.version;

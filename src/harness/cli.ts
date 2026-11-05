@@ -542,7 +542,7 @@ async function runHere(
       logSources: opts.logSources,
       collectionRoot: lineRoots.collectionRoot,
       localRoots: lineRoots.localRoots,
-      out: writeOutputLine,
+      out: writeRunLine,
       markup: true,
       until,
       onStop: () => stop(),
@@ -625,7 +625,18 @@ async function detachRun(words: string[], runId: string | undefined): Promise<{ 
   await writing.close();
   let ready: { id: string | null } | null = null;
   let exitCode: number | null = null;
-  child.on('message', (m: { ready?: string | null }) => { if (m && 'ready' in m) ready = { id: m.ready ?? null }; });
+  // The marked form of plain lines the file will hold, for painting them
+  // as a run in this process would. A line with none, such as a crash in
+  // Node itself, is passed on as the file has it.
+  const marked = new Map<string, string[]>();
+  child.on('message', (m: { ready?: string | null; marked?: string }) => {
+    if (m && 'ready' in m) ready = { id: m.ready ?? null };
+    if (typeof m?.marked !== 'string') return;
+    for (const line of S.markupLines(m.marked)) {
+      const plain = S.plainLine(line);
+      marked.set(plain, [...(marked.get(plain) ?? []), line]);
+    }
+  });
   // Its exit code, for a client that waits for it to end (--stop-after-seconds),
   // which keeps this process alive meanwhile.
   const exited = new Promise<number>((resolve) => {
@@ -664,7 +675,12 @@ async function detachRun(words: string[], runId: string | undefined): Promise<{ 
     const rest = lines.pop()!;
     if (end && rest) lines.push(rest);
     partial = end ? '' : rest;
-    for (const line of lines) print(line.replace(LOG_LINE_PREFIX, ''));
+    // Lets a message sent just before these lines arrive.
+    await new Promise((resolve) => setImmediate(resolve));
+    for (const line of lines) {
+      const plain = line.replace(LOG_LINE_PREFIX, '');
+      print(marked.get(plain)?.shift() ?? plain);
+    }
   };
   try {
     while (ready === null && exitCode === null) {
@@ -701,6 +717,15 @@ let onOutputClosed = (): void => process.exit(process.exitCode ?? 0);
 
 // Drawn around the prompt, when one is showing.
 function print(line: string): void {
+  writeOutputLine(line);
+}
+
+// A run's line. In a background run, the file it goes to is plain, so
+// while the client that started it is passing the file on, a line with
+// markup also goes to that client (see `detachRun`). Sent first, so it's
+// there by the time the client reads the file.
+function writeRunLine(line: string): void {
+  if (detachedLog && process.connected && line.includes(S.MARKUP)) process.send?.({ marked: line }, () => undefined);
   writeOutputLine(line);
 }
 

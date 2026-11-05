@@ -237,7 +237,8 @@ output ships whether the script lands in USER_SCRIPT or MAIN.
   - `script.require` — `@require` refs; `script.resources` — `{name,
     url}` per `@resource`. Both carry the ref as written (`./lib.js`),
     like TM/VM, not the resolved URL; they list the loaded files
-    (deduped, and the prior good set after a failed refresh).
+    (deduped, and the prior good set after a failed refresh), plus any
+    `@resource` that [didn't load](resources.md#failure-handling).
   - `script.connect` — `@connect` hosts; `script.noframes` — whether
     `@noframes` is present.
   - `script.author` / `homepage` / `icon` / `icon64` / `supportURL` /

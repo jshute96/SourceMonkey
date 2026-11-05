@@ -457,6 +457,9 @@ keys would look like a wiped profile.
 - `resources?` — prefetched `@resource` files, as `StoredResource`
   entries with their bodies in blobs the same way. See
   [resources.md](resources.md#storage-shape).
+- `resourceProblems?` — the declared `@resource` files that didn't load:
+  `{name, ref, url?, detail, failure?, retry?}`. See
+  [resources.md](resources.md#failure-handling).
 - `iconCheck?` — what the last check of the script's `@icon` found:
   `{ref, local?, message?}`, with `message` set when the icon can't be
   shown. Kept so a background refresh needn't download the icon again.

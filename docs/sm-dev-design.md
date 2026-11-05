@@ -314,11 +314,16 @@ Command marks:
   - `streamHasColor` decides, per stream: stdout and stderr each at a
     terminal with color, or `FORCE_COLOR`. `NO_COLOR` turns it off.
   - Pipes, files, `--json` results and the run's log get plain text.
+    - A background run's starting client reads its output from that log,
+      so the run also sends it each marked line over their IPC channel
+      (`writeRunLine`, `detachRun` in `cli.ts`), for the same colors as
+      any other output.
   - ANSI codes a script or page logged pass through to a terminal, and
     are taken out of plain text (`stripAnsi`), where nothing would show
     them. `--find` and `wait log` match a line without them too.
 - Lines carry markup: XML-like tags naming roles, not looks
-  (`<id>T1</id>`, `<url>`, `<name>`, `<cmd>`, `<code>`, `<h>`, `<sel>`).
+  (`<id>T1</id>`, `<url>`, `<name>`, `<cmd>`, `<code>`, `<h>`, `<sel>`,
+  `<ok>`).
   - One table (`STYLES`) maps each role to its look, so colors change
     in one place.
   - A marked line starts with `MARKUP` (a control character, then a
@@ -710,6 +715,10 @@ Commands from stdin (`--stdin`, or piped with no command) go through a
     `@resource` file the script names, as sm-dev fetched them
     (`pushedFiles(…, true)`). The extension stores a run's scripts at
     URLs of its own, so it can't resolve a relative ref itself.
+    - For a `@resource` sm-dev couldn't read, the run sends the failure
+      instead of a body (needs protocol minor 1). The extension replaces
+      an over-limit body with a failure too, so the script loads without
+      the file.
   - `--watch` and `update` only re-read scripts from disk, so they
     never re-fetch a web script.
   - GitHub folder URLs aren't taken: a bare `github.com` URL stays a

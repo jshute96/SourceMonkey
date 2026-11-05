@@ -127,6 +127,15 @@ test('validate accepts @run-at context-menu, with no warning', (t) => {
   assert.deepEqual(s.lines, []);
 });
 
+test('validate colors each verdict at a terminal: ok green, not the rest of its line', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sm-validate-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'fine.user.js');
+  fs.writeFileSync(file, '// ==UserScript==\n// @name Fine\n// @match https://example.com/*\n// ==/UserScript==\n');
+  const r = spawnSync(process.execPath, [CLI, 'validate', file], { encoding: 'utf8', env: { ...process.env, FORCE_COLOR: '1' } });
+  assert.ok(r.stdout.startsWith('\x1b[32mok\x1b[0m       '), JSON.stringify(r.stdout));
+});
+
 test('validate calls a script unchecked when the syntax check could not decide', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sm-validate-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

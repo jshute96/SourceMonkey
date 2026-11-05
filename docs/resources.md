@@ -115,18 +115,48 @@ The runtime keeps a per-script box of:
 
 ## Failure handling
 
-Same conservative policy as `@require`. Any of these flips the parent
-script to `status: 'invalid'` with a message naming the resource name:
+Unlike a `@require`, a `@resource` that doesn't load doesn't stop the
+script: the script may use it on only some paths, or not need it to
+work. Any of these counts, with a message naming the resource:
 
 - Resolution rejection, naming which rule refused it.
-- Fetch failure, naming which one — see
-  [requires.md](requires.md#failure-handling); both kinds share
-  `describeFetchFailure` / `describeResolveFailure`.
+- Fetch failure, naming which one; both kinds share
+  `describeFetchFailure` / `describeResolveFailure` with `@require`
+  ([requires.md](requires.md#failure-handling)).
 - A `data:` URL whose payload doesn't decode.
+- A file over the size limit.
 
-A partial resource list isn't useful — if one resource is broken the
-whole script is rolled back to its prior-known-good state (same
-preserve-on-failure policy as `@require`).
+### What happens
+
+- **At load:** a note on the `@resource` line in the Log tab and
+  `sm-dev validate`, and a Warning status where the script runs.
+  - It's a **warning**, or an **error** for a file over the limit.
+    The limit fails on every load until the script changes, and the
+    others can come right by themselves or are outside the author's
+    hands.
+  - The script stays `ok`, and the row records it in `resourceProblems`.
+- **When the script asks:** `GM_getResourceText` and `GM_getResourceURL`
+  give `""` (as TM does; a name that was never declared gives
+  `undefined`).
+  - The first ask for each name per document logs an **error**, worded
+    by the worker from the row, and a `console.info` line in the page.
+- `GM_info.script.resources` still lists it, since the script declares it.
+
+### Earlier copies and retrying
+
+- **With a good copy already loaded** under that name or URL, a failure
+  is a failed refresh, as for `@require`: the whole script stays on its
+  prior copy and `refreshError` records why
+  ([requires.md](requires.md#failure-handling)).
+  - So an update that moves a resource to a URL that fails doesn't land.
+- **Without one,** the recorded failure is kept until a refresh tries
+  the file again, so a dead URL isn't fetched on each page load:
+  - An explicit Refresh always tries again.
+  - A background refresh does too for a failure that may pass by
+    itself (no response, a timeout), as for `@icon`.
+  - A local stand-in is read every pass, as usual.
+- A retry that loads the file clears the problem and counts as new
+  content, so open pages are marked for a reload.
 
 ## Refresh policy
 
@@ -149,7 +179,9 @@ pass share one byte fetch — the typed assembly (`StoredRequire` vs
 
 ## Limits
 
-- Per-resource body: **2 MB** (shared cap with `@require`).
+- Per-resource body: **2 MB** (shared cap with `@require`, applied by the
+  extension as [there](requires.md#limits)). A resource over it doesn't
+  make the script invalid: see [Failure handling](#failure-handling).
 - Per-fetch timeout: 5 s (file-loader default).
 - Empty bodies rejected.
 

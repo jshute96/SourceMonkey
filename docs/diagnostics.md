@@ -39,7 +39,8 @@ it, shared with the header diagnostics.
 | unknown `@grant` (a warning) | the first offending `@grant` line |
 | a `@match` Chrome's grammar refuses (a warning) | the `@match` line that declared it |
 | `@match <pattern> uses "*" inside its host, so this script would never run…` | the first offending `@match` line, when no pattern is usable |
-| `@require` / `@resource` that won't load | the header line that declared it |
+| `@require` that won't load (the script is invalid) | the header line that declared it |
+| `@resource` that won't load (a warning, or an error over the size limit; the script still runs) | the header line that declared it |
 
 The header messages are exported constants rather than inline literals,
 so a rewording can't quietly stop matching what compares against them:

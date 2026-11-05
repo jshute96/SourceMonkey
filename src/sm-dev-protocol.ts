@@ -91,7 +91,9 @@ export const SKIP_REASON_SM_DEV = 'tab controlled by sm-dev';
 //   `sandbox` turns off script in its own world, the page-world scripts
 //   run isolated instead, which sm-dev notes rather than warning that
 //   they can't run.
-export const SM_DEV_PROTOCOL = { major: 3, minor: 0 } as const;
+// 3.1: a pushed file can carry a `failure` instead of a body, and
+//   `writeRunScript` runs a script with an over-limit `@resource` without it.
+export const SM_DEV_PROTOCOL = { major: 3, minor: 1 } as const;
 
 export interface ProtocolVersion {
   major: number;

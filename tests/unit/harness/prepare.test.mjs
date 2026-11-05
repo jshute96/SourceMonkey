@@ -13,8 +13,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { explainMatch, prepareScript, scriptRoots, withDefaultScheme } from '../../../lib/harness/prepare.js';
+import { explainMatch, prepareScript, scriptRoots, warningLines, withDefaultScheme } from '../../../lib/harness/prepare.js';
 import { NO_NAME } from '../../../dist/extension/script-store.js';
+import { MAX_FILE_BYTES } from '../../../lib/external-files.js';
 
 const HEADER = `// ==UserScript==
 // @name         Test script
@@ -262,4 +263,21 @@ test('withDefaultScheme adds http:// only where a URL has no scheme', () => {
   // A path is a local file, not a host.
   assert.equal(withDefaultScheme('/tmp/x.html'), 'file:///tmp/x.html');
   assert.equal(withDefaultScheme('./x.html'), pathToFileURL(path.resolve('x.html')).toString());
+});
+
+test('prepareScript: applies no size limit to its files unless asked', async () => {
+  const text = [
+    '// ==UserScript==', '// @name Big', '// @match *://*/*',
+    '// @resource big https://example.com/big.wasm',
+    '// ==/UserScript==', '',
+  ].join('\n');
+  const fetch = async () => new Response(new Uint8Array(MAX_FILE_BYTES + 1), { status: 200 });
+  const free = await prepareScript({ text, sourceUrl: 'https://example.com/big.user.js', fetch });
+  assert.equal(free.status, 'ok', free.errorMessage);
+  assert.equal(free.script.resources[0].size, MAX_FILE_BYTES + 1);
+  assert.match(warningLines(free).join('\n'), /^error: @resource big \(https:\/\/example\.com\/big\.wasm\): The file is larger than SourceMonkey's 2 MB limit, so SourceMonkey doesn't load it, and the script gets an empty string\. Other managers may accept it\..*line 4/);
+  const limited = await prepareScript({ text, sourceUrl: 'https://example.com/big.user.js', fetch, maxFileBytes: MAX_FILE_BYTES });
+  assert.equal(limited.status, 'ok', limited.errorMessage);
+  assert.equal(limited.script.resourceProblems[0].failure, 'oversize');
+  assert.deepEqual(limited.startupLogs.map((l) => [l.level, l.message]), [['error', '@resource big (https://example.com/big.wasm): The file is larger than the 2 MB limit']]);
 });

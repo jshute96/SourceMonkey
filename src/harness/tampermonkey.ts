@@ -35,6 +35,11 @@ interface TmScript {
 
 const OPTIONS_PAGE = 'options.html';
 
+// What Chrome lets one extension message hold. A resource reaches TM only
+// in a message (`saveExternal` is the one way in, and `saveScript` doesn't
+// fetch), where a binary file's NUL bytes take six characters each.
+const MAX_MESSAGE_BYTES = 64 * 1024 * 1024;
+
 // How long one listing of every script, code included, answers again.
 // A command asks for the list, then the texts, then the count, so this
 // saves reading them all three times. Any call that changes something
@@ -173,7 +178,12 @@ export class Tampermonkey implements ExternalManager {
     }
     // A resource is kept as a string of its bytes, one character each.
     for (const [url, { contentType, base64 }] of Object.entries(options.files?.resources ?? {})) {
-      await this.call('saveExternal', { uuid: saved.uuid, url, code: Buffer.from(base64, 'base64').toString('latin1'), mimetype: contentType || 'application/octet-stream' });
+      const bytes = Buffer.from(base64, 'base64').toString('latin1');
+      const size = Buffer.byteLength(JSON.stringify(bytes));
+      if (size > MAX_MESSAGE_BYTES) {
+        throw new Error(`The @resource ${quoted(url)} takes ${Math.ceil(size / (1024 * 1024))} MB in a browser message, over Chrome's 64 MB limit, and a message is the only way sm-dev can give it to ${this.label}. Use ${quoted('--manager vm')} to run the script under another manager.`);
+      }
+      await this.call('saveExternal', { uuid: saved.uuid, url, code: bytes, mimetype: contentType || 'application/octet-stream' });
     }
     return { id: this.numberOf(saved.uuid), isNew: uuid === undefined };
   }

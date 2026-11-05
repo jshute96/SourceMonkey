@@ -509,6 +509,7 @@ export class ExtensionLink {
    * extension before protocol 1.2 ignores it.
    */
   async push(text: string, name: string, files: Record<string, PushedFile> = {}, source?: string): Promise<PushResult> {
+    if (Object.values(files).some((f) => f.failure)) this.requireMinor(1, 'Loading a script with a @resource that can\'t be read');
     return this.call(({ run, t, n, f, s }) => (self as unknown as { SourceMonkey: Api }).SourceMonkey.writeRunScript({ run, text: t, name: n, files: f, ...(s ? { source: s } : {}) }),
       { run: this.runId, t: text, n: name, f: files, s: source });
   }

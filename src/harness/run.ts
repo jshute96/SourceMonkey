@@ -1874,7 +1874,7 @@ async function prepareAll(opts: RunOptions, files = opts.files): Promise<Prepare
       return null;
     }
     // As markup, so backticks from the script's own header stay text.
-    for (const line of warningLines(p)) opts.out(`[sm-dev] ${line.startsWith(S.WARNING_LEVEL) ? S.asWarning(line) : S.ui`${line}`}`);
+    for (const line of warningLines(p)) opts.out(`[sm-dev] ${line.startsWith(S.ERROR_LEVEL) ? S.asError(line) : line.startsWith(S.WARNING_LEVEL) ? S.asWarning(line) : S.ui`${line}`}`);
     out.push(p);
   }
   return out;

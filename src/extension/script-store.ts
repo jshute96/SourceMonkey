@@ -96,6 +96,8 @@ import {
   prefetchKnownStandIns,
   type FileFetchCache,
   type PushedFile,
+  oversizePushedRequire,
+  withoutOversizeResources,
 } from '../external-files.js';
 import { type LocalFileScope, type LocalLookup } from '../local-file-overrides.js';
 import { scanAllStorage, scanStorageRows } from './storage-scan.js';
@@ -1700,15 +1702,20 @@ export async function writeRunScript(args: RunScriptArgs): Promise<WriteRunScrip
   if (!/^[A-Za-z0-9._-]+$/.test(args.run)) throw new Error(`Internal error: ${JSON.stringify(args.run)} is not an sm-dev run id`);
   const header = parseHeader(args.text);
   const name = args.name?.trim() || (header ? getValue(header, 'name')?.trim() : '') || 'script';
+  // Before the write below, which a body past the storage quota would
+  // fail. A script already in the run keeps its last good copy.
+  const oversize = oversizePushedRequire(header, args.files ?? {});
+  if (oversize) return { scriptId: '', collectionId: '', status: 'invalid', errorMessage: oversize, replaced: false };
+  const files = args.files && withoutOversizeResources(header, args.files);
   const url = scratchUrl(args.run, name);
   // The text and its files in one write, so no refresh reads one
   // without the other. Replaced whole, so a body the script no longer
   // reads from disk goes.
-  const hasFiles = args.files !== undefined && Object.keys(args.files).length > 0;
+  const hasFiles = files !== undefined && Object.keys(files).length > 0;
   const source: ScratchSource | undefined = args.source ? { fileUrl: args.source, given: name } : undefined;
   await writeLocal({
     [scratchTextKey(url)]: args.text,
-    ...(hasFiles ? { [scratchFilesKey(url)]: args.files } : {}),
+    ...(hasFiles ? { [scratchFilesKey(url)]: files } : {}),
     ...(source ? { [scratchSourceKey(url)]: source } : {}),
   });
   const stale = [...(hasFiles ? [] : [scratchFilesKey(url)]), ...(source ? [] : [scratchSourceKey(url)])];

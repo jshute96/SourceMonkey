@@ -44,12 +44,12 @@ import { hasTag } from '../userscript-header.js';
 import { scriptBasename } from '../script-display.js';
 import { representativeMatch } from '../match-targets.js';
 import { bytesToBase64, sha256Hex } from '../bytes.js';
-import type { PushedFile } from '../external-files.js';
+import { declarationLine, MAX_FILE_BYTES, overFileLimitWarning, resourceDeclarationLine, setFileByteLimit, type PushedFile } from '../external-files.js';
 import { buildParseCheckSource } from '../composed-source.js';
 import { resolveScriptWorld, type InjectionWorld } from '../script-world.js';
 import { checkParseNode } from './parse-check-node.js';
 import { MANIFEST_FILENAME } from '../collection-scan.js';
-import { WARNING_LEVEL } from './output-style.js';
+import { ERROR_LEVEL, WARNING_LEVEL } from './output-style.js';
 
 export type { InjectionWorld };
 
@@ -90,6 +90,13 @@ export interface PrepareOptions {
    * dependencies out of a downloaded tree this way.
    */
   fetch?: (url: string) => Promise<Response>;
+  /**
+   * The size limit on `@require` and `@resource` files. None by default:
+   * the limit is the extension's, which it applies when a script reaches
+   * it. The corpus validator asks for it, to report what the extension
+   * would refuse.
+   */
+  maxFileBytes?: number;
 }
 
 /**
@@ -248,6 +255,7 @@ async function prepareScriptNow(given: PrepareOptions): Promise<PreparedScript> 
   // set on every call; `prepareScript` serializes calls for the same
   // reason.
   setConfiguredLocalRoots((opts.localRoots ?? []).map(dirUrl));
+  setFileByteLimit(opts.maxFileBytes ?? Infinity);
   const built = await buildScriptFromText({
     // Stable across re-prepares of the same file, so the host keeps
     // that script's values and records under one key, and distinct for
@@ -327,8 +335,27 @@ export function parseCheckWarning(note: ParseCheckNote): string {
  */
 export function warningLines(prepared: PreparedScript, { parseCheck = true } = {}): string[] {
   const lines = prepared.startupLogs.map((l) => `${l.level}: ${describeDiagnostic(l.message, l.location)}`);
+  lines.push(...overFileLimitLines(prepared.script));
   if (parseCheck && prepared.parseCheckNote) lines.push(`${WARNING_LEVEL}${parseCheckWarning(prepared.parseCheckNote)}`);
   return lines;
+}
+
+// The files that SourceMonkey's limit would refuse, which leaves the
+// script valid: the limit is the extension's, not a fault in the script.
+// A `@resource` is an error, as the extension logs it when loading the
+// script, and a `@require` a warning.
+function overFileLimitLines(script: StoredScript): string[] {
+  const location = (line: number | undefined) => ({ file: script.relativePath, line });
+  return [
+    ...(script.requires ?? []).filter((r) => r.size > MAX_FILE_BYTES).map((r) => {
+      const message = `@require ${r.ref}: ${overFileLimitWarning('require')}`;
+      return `${WARNING_LEVEL}${describeDiagnostic(message, location(declarationLine(script.header, 'require', (value) => value === r.ref)))}`;
+    }),
+    ...(script.resources ?? []).filter((r) => r.size > MAX_FILE_BYTES).map((r) => {
+      const message = `@resource ${r.name} (${r.ref}): ${overFileLimitWarning('resource')}`;
+      return `${ERROR_LEVEL}${describeDiagnostic(message, location(resourceDeclarationLine(script.header, r.name)))}`;
+    }),
+  ];
 }
 
 // ---------- Matching ----------
@@ -465,5 +492,16 @@ export function pushedFiles(prepared: PreparedScript, all = false): Record<strin
   };
   for (const r of prepared.script.requires ?? []) add(r.ref, r, bytesToBase64(new TextEncoder().encode(r.source)));
   for (const r of prepared.script.resources ?? []) add(r.ref, r, r.bytesBase64);
+  // One the extension couldn't read either, or has no folder to look
+  // in, so it reports what was found here.
+  for (const p of prepared.script.resourceProblems ?? []) {
+    if (!all && p.url && !p.url.startsWith('file:')) continue;
+    out[p.ref] = {
+      url: p.url ?? p.ref,
+      bytesBase64: '',
+      contentType: '',
+      failure: { detail: p.detail, ...(p.failure ? { reason: p.failure } : {}) },
+    };
+  }
   return out;
 }

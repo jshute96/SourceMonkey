@@ -41,6 +41,7 @@ import { resolveScriptResource } from '../lib/file-loader.js';
 import {
   BAD_DATA_URL,
   describeFetchFailure,
+  MAX_FILE_BYTES,
   distillRequires,
   distillResources,
   isFetchFailureMessage,
@@ -177,6 +178,8 @@ async function checkScript(file, offlineRoot) {
     sourceUrl: scriptUrlFor(file, offlineRoot),
     // A corpus script has no repo of local copies to find.
     localFiles: false,
+    // The extension's limit, since this reports what it would refuse.
+    maxFileBytes: MAX_FILE_BYTES,
     ...(offlineRoot && { fetch: offlineFetch(offlineRoot) }),
   });
 }
@@ -229,6 +232,14 @@ function classify(prepared) {
   // Still `ok`: the check failed open, which is the design. Called out
   // separately because "we couldn't tell" is not "it parses".
   if (note) return { category: `parse check ${note.kind}`, detail: note.message || '(no message)' };
+  // Still `ok`, so no `reason`, which would tag it invalid. Still worth
+  // the report: the script runs without this file. Its first one only;
+  // `resourceProblems` in the JSON has them all.
+  const resourceProblem = script.resourceProblems?.[0];
+  if (resourceProblem) {
+    const url = resourceProblem.url ?? resourceProblem.ref;
+    return { category: '@resource', detail: OFFLINE_REASON_TEXT[fetchLog.get(url)] ?? resourceProblem.detail.replace(/"[^"]*"/g, '"…"'), url };
+  }
   return { category: 'ok' };
 }
 
@@ -393,6 +404,7 @@ function record(name, prepared) {
   if (version) out.version = version.trim();
   const iconProblem = classifyIcon(script.iconCheck);
   if (iconProblem) out.iconProblem = iconProblem;
+  if (script.resourceProblems?.length) out.resourceProblems = [...new Set(script.resourceProblems.map(classifyResource))];
   // The load-time diagnostics the Log tab shows. They don't change the
   // verdict, so they only reach the JSON, not the report.
   if (prepared.startupLogs.length) {
@@ -412,6 +424,13 @@ function record(name, prepared) {
 function classifyIcon(check) {
   if (!check?.failure || check.failure === 'wrong-content-type') return undefined;
   return check.failure === 'oversize' ? 'too-large' : 'dead-link';
+}
+
+// Why a `@resource` didn't load, as a short slug that
+// `record-results.mjs validate` records as a `resource-<slug>` tag.
+function classifyResource(problem) {
+  if (!problem.failure) return 'other';
+  return problem.failure === 'oversize' ? 'too-large' : 'dead-link';
 }
 
 // ---------- Main ----------

@@ -11,7 +11,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isMarkupContentType, looksLikeMarkup, markupResponseMessage } from '../markup-response.js';
 import { unusableMatchGroupKey } from '../url-match.js';
 import { ALLOWED_ENTRY_SCHEMES, MANIFEST_FILENAME, isUserScriptEntry, parseManifest, resolveManifestEntryUrl } from '../collection-scan.js';
-import { asError, asWarning, code, heading, id, INVALID_PREFIX, quoted, roleCell, tableLines, textCell, ui, url, WARNING_LEVEL, type Cell } from './output-style.js';
+import { asError, asWarning, code, ERROR_LEVEL, heading, id, INVALID_PREFIX, ok, quoted, roleCell, tableLines, textCell, ui, url, WARNING_LEVEL, type Cell } from './output-style.js';
 import { HAS_SCHEME, globFiles, globMistake, isDirectory, isGlob, walkScripts } from './path-args.js';
 import { jsonResult, type MatchPage, type ValidateData } from './json-output.js';
 import { NO_RULE_COVERS_URL, NO_RULE_COVERS_URLS, explainMatch, isDirectoryMessage, noSuchFileMessage, parseCheckWarning, preparedNoframes, prepareScript, shownPath, warningLines, type PreparedScript } from './prepare.js';
@@ -249,8 +249,11 @@ export type ValidateVerdict = 'ok' | 'invalid' | 'unchecked';
  */
 export function validateLines(label: string, prepared: PreparedScript): { lines: string[]; verdict: ValidateVerdict; error?: string; warnings: string[] } {
   const warnings = warningLines(prepared, { parseCheck: false });
-  // A warning's line in color, as when a run loads the script.
-  const indented = warnings.map((line) => (line.startsWith(WARNING_LEVEL) ? asWarning(`    ${line}`) : `    ${line}`));
+  // A warning's or error's line in color, as when a run loads the script.
+  const indented = warnings.map((line) => {
+    if (line.startsWith(ERROR_LEVEL)) return asError(`    ${line}`);
+    return line.startsWith(WARNING_LEVEL) ? asWarning(`    ${line}`) : `    ${line}`;
+  });
   if (prepared.status !== 'ok') {
     const error = prepared.diagnostic ?? '';
     return { lines: [`${INVALID_PREFIX}${label}`, asError(`    ${error}`), ...indented], verdict: 'invalid', error, warnings };
@@ -259,7 +262,7 @@ export function validateLines(label: string, prepared: PreparedScript): { lines:
     const error = parseCheckWarning(prepared.parseCheckNote);
     return { lines: [ui`UNCHECKED ${url(label)}`, `    ${error}`, ...indented], verdict: 'unchecked', error, warnings };
   }
-  return { lines: [ui`ok       ${url(label)}`, ...indented], verdict: 'ok', warnings };
+  return { lines: [ui`${ok('ok')}       ${url(label)}`, ...indented], verdict: 'ok', warnings };
 }
 
 /**

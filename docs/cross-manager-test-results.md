@@ -91,6 +91,13 @@ stays enforced in an SM-only spec.
     `GM_getResourceText` on a percent-encoded one throws
     `InvalidCharacterError` from `atob`, where SM and TM return the
     text.
+- **`resource-missing/`** (a `@resource` URL that doesn't exist) —
+  measured under TM 5.5.1 and VM 2.49.0. The script runs in all three.
+  - The getters give `""` under SM and TM, and the URL under VM, in
+    both the `GM_` and `GM.` forms.
+  - TM warns in the page's console on each call, and fetches again on
+    each page load. VM says nothing, and doesn't fetch on a page load.
+  - SM's own behavior: [resources.md](resources.md#failure-handling).
 - **`gm-return-values/`** (what the `GM_` and `GM.` form of each API
   returns) — measured under TM 5.5.1 and VM 2.49.0. The spec holds a TM
   baseline and lists each manager's differences from it:

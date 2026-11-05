@@ -84,6 +84,8 @@ import {
   attachFiles,
   distillRequires,
   fetchRequireForPreview,
+  resourceDeclarationLine,
+  resourceProblemMessage,
   type AttachFilesResult,
   type FileFetchCache,
   type StoredRequire,
@@ -2461,8 +2463,7 @@ async function checkPreviewSource(text: string, header: ParsedHeader | null): Pr
   // Fetching each declared `@require` individually looks equivalent and
   // isn't: `attachFiles` dedups by canonical URL (a library declared
   // twice is loaded once), and it covers `@resource`, whose bytes are
-  // baked into the checked text and whose fetch failures land a real
-  // install as `invalid`. A loop that skipped both would compose a
+  // baked into the checked text. A loop that skipped both would compose a
   // program no install ever produces — and duplicate library bodies
   // read as `already been declared`, i.e. a syntax error reported
   // against a perfectly healthy script.
@@ -2502,6 +2503,13 @@ async function checkPreviewSource(text: string, header: ParsedHeader | null): Pr
   }
   if (files.requires.length > 0) script.requires = files.requires;
   if (files.resources.length > 0) script.resources = files.resources;
+  // The script installs and runs without these.
+  for (const problem of files.resourceProblems ?? []) {
+    appendPreviewWarning({
+      message: resourceProblemMessage(problem),
+      location: locationIn(resourceDeclarationLine(script.header, problem.name)),
+    });
+  }
 
   const verdict = await checkScriptParses(script);
   // `unknown` and `null` are the machinery saying it couldn't decide.

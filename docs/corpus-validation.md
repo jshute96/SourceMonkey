@@ -68,6 +68,9 @@ so the offline fetch sends none, the same as a `file://` read.
 
 ## Reporting
 
+A script with a `@resource` that doesn't load stays `ok`, and is still
+listed under `@resource`, with no `reason`.
+
 Failures are grouped by category (`header`, `@require`, `@resource`,
 `syntax error`) and then by message, with example script names.
 
@@ -106,6 +109,9 @@ dependency `url` when one failed. It also carries:
 - `iconProblem`, when the `@icon` didn't download: `too-large` when
   it's over the icon size limit, `dead-link` for any other download
   failure. Recorded as an `icon-<problem>` tag.
+- `resourceProblems`, when a `@resource` didn't load: `too-large`,
+  `dead-link`, or `other` when it was refused without a download. Each is
+  recorded as a `resource-<problem>` tag.
 - `version`, the script's `@version`.
 - `warnings`, the load-time diagnostics the viewer's Log tab would show,
   each as `{ level, message, location? }`.

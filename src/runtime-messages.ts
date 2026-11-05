@@ -23,6 +23,9 @@ export const SM_GM_LOG_MSG = 'sm:gm-log';
 // (MAIN world only — the isolated world is exempt). One warning per
 // script per document, in the script's Log.
 export const SM_GM_DOM_BLOCKED_MSG = 'sm:gm-dom-blocked';
+// A script asked for a `@resource` that didn't load. One error per name
+// per document, in the script's Log.
+export const SM_GM_RESOURCE_FAILED_MSG = 'sm:gm-resource-failed';
 // The page reporting that it just came to the front, so the SW can
 // check this tab's local scripts for edits. Chrome's own focus events
 // miss the case that matters most — see

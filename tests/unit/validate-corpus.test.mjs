@@ -131,8 +131,8 @@ test('offline mode resolves @require URLs out of the tree', async (t) => {
   // reporter that lost its counts would otherwise pass everything below.
   assert.equal(records.length, 4);
   assert.match(stdout, /Scripts checked: 4\b/);
-  assert.match(stdout, /ok:\s+1 \(/);
-  assert.match(stdout, /invalid:\s+3 \(/);
+  assert.match(stdout, /ok:\s+2 \(/);
+  assert.match(stdout, /invalid:\s+2 \(/);
 
   assert.equal(got.get('good.user.js')?.status, 'ok', got.get('good.user.js')?.message);
   assert.equal(got.get('dead.user.js')?.status, 'invalid');
@@ -153,10 +153,10 @@ test('offline mode resolves @require URLs out of the tree', async (t) => {
     'https://example.com/scripts/absent-helper.js',
   );
 
-  // The `@resource` subject is `<name> (<ref>)`, so recovering the URL
-  // means taking that apart rather than reading the ref directly. A
-  // mis-parse doesn't throw — it yields no URL and a generic reason —
-  // so both halves are pinned.
+  // A script with a dead `@resource` runs without it, but still has a
+  // place in the report. No `reason`, which would tag it invalid.
+  assert.equal(got.get('dead-resource.user.js')?.status, 'ok');
+  assert.equal(got.get('dead-resource.user.js')?.reason, undefined);
   assert.equal(got.get('dead-resource.user.js')?.category, '@resource');
   assert.match(got.get('dead-resource.user.js')?.detail ?? '', /not in the offline tree/);
   assert.equal(

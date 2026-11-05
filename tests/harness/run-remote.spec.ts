@@ -302,6 +302,31 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
   }
 });
 
+test('a background run\'s startup output is colored as validate\'s is, and its log stays plain', async ({ fixtureServer, scriptsDir }) => {
+  test.setTimeout(60_000);
+  const setup = await setUp();
+  try {
+    const file = scriptsDir.write({
+      relativePath: 'colored.user.js',
+      meta: { name: 'Colored', match: ['*://*/target.html'], extra: ['// @resource bad missing.css'] },
+      body: '',
+    });
+    setup.env.FORCE_COLOR = '1';
+    const lines = await setup.cli('--root', scriptsDir.path, 'start', '--browser', String(setup.port), '--detach', file, `${fixtureServer.baseUrl}/target.html`);
+    const validated = await setup.cli('--root', scriptsDir.path, 'validate', file);
+    const okLine = lines.find((l) => l.includes('colored.user.js') && !l.startsWith('[sm-dev]'))!;
+    expect(okLine).toContain('\x1b[32mok\x1b[0m');
+    const warning = lines.find((l) => l.includes('warn: @resource bad'))!;
+    expect(warning.startsWith('\x1b[1m\x1b[35m')).toBe(true);
+    // The same lines `validate` prints.
+    expect(validated).toEqual(expect.arrayContaining([okLine, warning]));
+    const log = lines.at(-1)!.match(/Output log: \S*?(\/\S+\.log)/)![1];
+    expect(readFileSync(log, 'utf8')).not.toContain('\x1b[');
+  } finally {
+    await setup.cleanup();
+  }
+});
+
 test('start --detach returns once started, is replaced by the next unless --new, and stops when idle', async ({ fixtureServer, scriptsDir }) => {
   test.setTimeout(60_000);
   const setup = await setUp();

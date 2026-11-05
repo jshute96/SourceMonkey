@@ -226,7 +226,9 @@ Depends on whether we already had a good copy:
   detected the way the `@require` markup gate detects it — and an HTML
   resource is legitimate, so the gate would be wrong there anyway. Only
   a hard `@resource` fetch failure gets the keep-the-good-copy
-  treatment.
+  treatment, and only with a good copy to keep. With none, the script
+  runs without the file: see
+  [resources.md](resources.md#failure-handling).
 
 ## Reload fast-path interaction
 
@@ -352,6 +354,14 @@ buys most of it back:
 - Per-require body: **2 MB**. Big enough for jQuery / chunky libraries;
   small enough that a runaway can't drain the 10 MB
   `chrome.storage.local` quota in one row.
+  - The extension applies it, to fetched files and to files `sm-dev` pushes.
+    The tools don't: `validate` reports a larger `@require` as a warning,
+    since the script isn't invalid, and `start` under SourceMonkey refuses
+    it. (A larger `@resource` is an error in `validate`, and under
+    SourceMonkey the script runs without it; see
+    [resources.md](resources.md#failure-handling).) Other managers get the
+    whole file, except that Tampermonkey can only be given what fits in a
+    64 MB browser message.
 - Per-fetch timeout: 5 s (file-loader default).
 - Empty bodies are rejected (the fetcher treats them as failure). A
   future `@require` of a 0-byte JS file would need to distinguish

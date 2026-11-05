@@ -1859,14 +1859,32 @@
         "youtube.com"
       ],
       "valid": {
-        "status": "invalid",
-        "error": "@resource translations (https://yeppha.github.io/downloads/translations.json): The server returned HTTP 404 (in the script, line 82)",
-        "tags": [
-          "invalid:resource-dead-link"
+        "status": "ok",
+        "warnings": [
+          "@resource translations (https://yeppha.github.io/downloads/translations.json): The server returned HTTP 404 (in the script, line 82)"
         ],
-        "date": "2026-10-13",
+        "tags": [
+          "resource-dead-link"
+        ],
+        "date": "2026-11-04",
         "version": "2.1.7"
-      }
+      },
+      "test": {
+        "status": "fail",
+        "blame": "script",
+        "date": "2026-11-04",
+        "version": "2.1.7"
+      },
+      "tags": [
+        "trusted-types"
+      ],
+      "notes": [
+        {
+          "date": "2026-11-04",
+          "version": "2.1.7",
+          "text": "On a YouTube watch page (headless) the script does nothing: no `ytcenter` element appears on the page and no setting is stored. Its only effect is the page's own Trusted Types error when it injects its whole body as an inline `<script>`: `This document requires 'TrustedScript' assignment ... will not be executed`. The body therefore never runs.\n\n- Same in Tampermonkey (`--manager tm`): the same two Trusted Types errors, and no `ytcenter` element on the page.\n- Missing resource: `translations` (`yeppha.github.io`, 404) is its locale table, pasted into the injected call. An empty string still parses (a trailing comma in the call), so that alone isn't what stops it, and the code using it is never reached.\n- SourceMonkey: gives `\"\"` without throwing and logs one error naming the resource and the 404.\n- Script: last updated in 2014, written for YouTube's old page structure."
+        }
+      ]
     },
     "1023": {
       "listing": {
@@ -2320,18 +2338,31 @@
         "*.grepolis.*"
       ],
       "valid": {
-        "status": "invalid",
-        "error": "@resource HTML2Canvas (https://raw.githubusercontent.com/Quackmaster/html2canvas/v0.4/build/html2canvas.js): The server returned HTTP 404 (in the script, line 9)",
+        "status": "ok",
         "warnings": [
-          "@icon http://s1.directupload.net/images/140711/eshmcqzu.png: The server returned HTTP 404 (in the script, line 7)"
+          "@icon http://s1.directupload.net/images/140711/eshmcqzu.png: The server returned HTTP 404 (in the script, line 7)",
+          "@resource HTML2Canvas (https://raw.githubusercontent.com/Quackmaster/html2canvas/v0.4/build/html2canvas.js): The server returned HTTP 404 (in the script, line 9)"
         ],
         "tags": [
-          "invalid:resource-dead-link",
-          "icon-dead-link"
+          "icon-dead-link",
+          "resource-dead-link"
         ],
-        "date": "2026-10-13",
+        "date": "2026-11-04",
         "version": "2.59.00"
-      }
+      },
+      "test": {
+        "status": "n/a",
+        "reason": "game",
+        "date": "2026-11-04",
+        "version": "2.59.00"
+      },
+      "notes": [
+        {
+          "date": "2026-11-04",
+          "version": "2.59.00",
+          "text": "Not run: Grepolis game tool that needs a game account."
+        }
+      ]
     },
     "1253": {
       "listing": {
@@ -6203,14 +6234,29 @@
         "www.mturk.com"
       ],
       "valid": {
-        "status": "invalid",
-        "error": "@resource datatab (https://greasyfork.org/scripts/4258-datatables-css-cdn-with-images/code/Datatables%20CSS%20CDN%20with%20Images.js?version=13654): The server returned HTTP 404 (in the script, line 11)",
-        "tags": [
-          "invalid:resource-dead-link"
+        "status": "ok",
+        "warnings": [
+          "@resource datatab (https://greasyfork.org/scripts/4258-datatables-css-cdn-with-images/code/Datatables%20CSS%20CDN%20with%20Images.js?version=13654): The server returned HTTP 404 (in the script, line 11)"
         ],
-        "date": "2026-10-13",
+        "tags": [
+          "resource-dead-link"
+        ],
+        "date": "2026-11-04",
         "version": "0.3b"
-      }
+      },
+      "test": {
+        "status": "n/a",
+        "reason": "requires-login",
+        "date": "2026-11-04",
+        "version": "0.3b"
+      },
+      "notes": [
+        {
+          "date": "2026-11-04",
+          "version": "0.3b",
+          "text": "Not run: MTurk qualification pages need a worker account."
+        }
+      ]
     },
     "4218": {
       "listing": {
@@ -13268,18 +13314,31 @@
         "greasyfork.org"
       ],
       "valid": {
-        "status": "invalid",
-        "error": "@resource LICENSE (https://raw.githubusercontent.com/HACKSCOMICON/greasyforksearch/master/LICENSE): The server returned HTTP 404 (in the script, line 13)",
+        "status": "ok",
         "warnings": [
-          "@icon http://www.mediafire.com/convkey/6b10/64gmr1m4qul6xalzg.jpg?size_id=2: The server returned HTTP 404 (in the script, line 6)"
+          "@icon http://www.mediafire.com/convkey/6b10/64gmr1m4qul6xalzg.jpg?size_id=2: The server returned HTTP 404 (in the script, line 6)",
+          "@resource LICENSE (https://raw.githubusercontent.com/HACKSCOMICON/greasyforksearch/master/LICENSE): The server returned HTTP 404 (in the script, line 13)"
         ],
         "tags": [
-          "invalid:resource-dead-link",
-          "icon-dead-link"
+          "icon-dead-link",
+          "resource-dead-link"
         ],
-        "date": "2026-10-13",
+        "date": "2026-11-04",
         "version": "5.1"
-      }
+      },
+      "test": {
+        "status": "fail",
+        "blame": "script",
+        "date": "2026-11-04",
+        "version": "5.1"
+      },
+      "notes": [
+        {
+          "date": "2026-11-04",
+          "version": "5.1",
+          "text": "Greasy Fork redesigned its search form, so the script finds nothing to add to. On `/en/scripts` and `/en` there's no `#script-search` (the forms are now `form.sidebar-search` and `form.home-search`), so no `#search-other-sites` select appears; the script starts, logs no error and does nothing.\n\n- Script: the no-results links also need `#script-list-sort` and a pathname of exactly `/scripts/search`; Greasy Fork's search URLs have a locale prefix. The search page itself showed a Cloudflare `Just a moment...` page, headless and headed, so that path was judged from the code only.\n- The missing `@resource LICENSE` plays no part: the script is `@grant none` and never reads it.\n- sm-dev: run from the repo root, `validate` and `start` show no warning for this resource, since the repo's own `LICENSE` serves as a local stand-in for the URL ending in `/LICENSE`. A copy with another file name in the URL, or run from another directory, shows the 404."
+        }
+      ]
     },
     "9713": {
       "listing": {
@@ -17584,14 +17643,28 @@
         "xueshu.baidu.com"
       ],
       "valid": {
-        "status": "invalid",
-        "error": "@resource baiduLiteStyle (https://gitcode.net/-/snippets/1906/raw/master/LiteStyle.css?inline=false): The server returned HTTP 404 (in the script, line 129)",
-        "tags": [
-          "invalid:resource-dead-link"
+        "status": "ok",
+        "warnings": [
+          "@resource baiduLiteStyle (https://gitcode.net/-/snippets/1906/raw/master/LiteStyle.css?inline=false): The server returned HTTP 404 (in the script, line 129)"
         ],
-        "date": "2026-10-13",
+        "tags": [
+          "resource-dead-link"
+        ],
+        "date": "2026-11-04",
         "version": "27.20"
-      }
+      },
+      "test": {
+        "status": "pass",
+        "date": "2026-11-04",
+        "version": "27.20"
+      },
+      "notes": [
+        {
+          "date": "2026-11-04",
+          "version": "27.20",
+          "text": "On a Bing search page (headless, `userscript manager`) the script reflows results into two columns: `#b_results` is 923px wide with results side by side (each 452px), against 648px in a single column in a `--noscript` tab. It adds its `自定义` button, and the `AC-重定向脚本设置` menu command opens its settings page on `ac-baidu.90dao.com`. With `isRedirectEnable` set in its `ACConfig` value (off by default), all 10 result links went from `bing.com/ck/a` to the real URLs on reload.\n\n- Missing resource: `baiduLiteStyle` (`gitcode.net`, HTTP 404/418) is CSS for the Baidu Lite option, off by default and unused on Bing. The script asks for it while preloading all styles and compiles the `\"\"` with less without a problem, so it costs nothing visible.\n- SourceMonkey: the Log shows one error per page load for it, once the preload runs, naming the resource and the status."
+        }
+      ]
     },
     "14197": {
       "listing": {
@@ -26436,14 +26509,29 @@
         "*"
       ],
       "valid": {
-        "status": "invalid",
-        "error": "@resource pinyinTree (https://hoothin.github.io/UserScripts/Switch%20Traditional%20Chinese%20and%20Simplified%20Chinese/pinyinTree.json): The file is larger than the 2 MB limit (in the script, line 35)",
-        "tags": [
-          "invalid:resource-too-large"
+        "status": "ok",
+        "warnings": [
+          "@resource pinyinTree (https://hoothin.github.io/UserScripts/Switch%20Traditional%20Chinese%20and%20Simplified%20Chinese/pinyinTree.json): The file is larger than the 2 MB limit (in the script, line 35)"
         ],
-        "date": "2026-10-13",
+        "tags": [
+          "resource-too-large"
+        ],
+        "date": "2026-11-04",
         "version": "1.2.7.12"
-      }
+      },
+      "test": {
+        "status": "fail",
+        "blame": "sourcemonkey",
+        "date": "2026-11-04",
+        "version": "1.2.7.12"
+      },
+      "notes": [
+        {
+          "date": "2026-11-04",
+          "version": "1.2.7.12",
+          "text": "On a zh.wikipedia.org/zh-cn page (`地球`), Ctrl+F8 converts the page to traditional (title `维基百科` to `維基百科`; body `太阳系` to `太陽系`, with a notification), but pinyin doesn't work.\n\n- Pinyin (Alt+F8) fails: the script's `@resource pinyinTree` is 8.0 MB, over SourceMonkey's 2 MB limit. `GM_getResourceText` gives `\"\"`, the script's `JSON.parse` throws into its own catch, and it alerts `拼音詞典加載失敗`. 0 `<ruby>` elements.\n- Tampermonkey (`--manager tm`), same page and Alt+F8: 12286 `<ruby>` elements with readings (`地球`, `dì qiú`).\n- SourceMonkey: this is a known limit, documented in [docs/resources.md](docs/resources.md#failure-handling). The file is live (HTTP 200); only the limit stops it. The rest of the script runs, and the Log entry is correct."
+        }
+      ]
     },
     "24437": {
       "listing": {
@@ -32698,14 +32786,29 @@
         "www.wanikani.com"
       ],
       "valid": {
-        "status": "invalid",
-        "error": "@resource accents (https://raw.githubusercontent.com/mifunetoshiro/kanjium/94473cd69598abf54cc338a0b89f190a6c02a01c/data/source_files/raw/accents.txt): The file is larger than the 2 MB limit (in the script, line 12)",
-        "tags": [
-          "invalid:resource-too-large"
+        "status": "ok",
+        "warnings": [
+          "@resource accents (https://raw.githubusercontent.com/mifunetoshiro/kanjium/94473cd69598abf54cc338a0b89f190a6c02a01c/data/source_files/raw/accents.txt): The file is larger than the 2 MB limit (in the script, line 12)"
         ],
-        "date": "2026-10-13",
+        "tags": [
+          "resource-too-large"
+        ],
+        "date": "2026-11-04",
         "version": "0.84"
-      }
+      },
+      "test": {
+        "status": "n/a",
+        "reason": "requires-login",
+        "date": "2026-11-04",
+        "version": "0.84"
+      },
+      "notes": [
+        {
+          "date": "2026-11-04",
+          "version": "0.84",
+          "text": "Not run: WaniKani lesson and review pages need an account."
+        }
+      ]
     },
     "31080": {
       "listing": {
@@ -38986,14 +39089,29 @@
         "worker.mturk.com"
       ],
       "valid": {
-        "status": "invalid",
-        "error": "@resource datatab (https://greasyfork.org/scripts/4258-datatables-css-cdn-with-images/code/Datatables%20CSS%20CDN%20with%20Images.js?version=13654): The server returned HTTP 404 (in the script, line 14)",
-        "tags": [
-          "invalid:resource-dead-link"
+        "status": "ok",
+        "warnings": [
+          "@resource datatab (https://greasyfork.org/scripts/4258-datatables-css-cdn-with-images/code/Datatables%20CSS%20CDN%20with%20Images.js?version=13654): The server returned HTTP 404 (in the script, line 14)"
         ],
-        "date": "2026-10-13",
+        "tags": [
+          "resource-dead-link"
+        ],
+        "date": "2026-11-04",
         "version": "0.53"
-      }
+      },
+      "test": {
+        "status": "n/a",
+        "reason": "requires-login",
+        "date": "2026-11-04",
+        "version": "0.53"
+      },
+      "notes": [
+        {
+          "date": "2026-11-04",
+          "version": "0.53",
+          "text": "Not run: MTurk qualification pages need a worker account."
+        }
+      ]
     },
     "38993": {
       "listing": {
@@ -42648,14 +42766,32 @@
         "*"
       ],
       "valid": {
-        "status": "invalid",
-        "error": "@resource up_button_icon (https://coding.net/u/mofiter/p/public_files/git/raw/master/back_to_top_button.png): The server returned HTTP 404 (in the script, line 11)",
-        "tags": [
-          "invalid:resource-dead-link"
+        "status": "ok",
+        "warnings": [
+          "@resource up_button_icon (https://coding.net/u/mofiter/p/public_files/git/raw/master/back_to_top_button.png): The server returned HTTP 404 (in the script, line 11)",
+          "@resource down_button_icon (https://coding.net/u/mofiter/p/public_files/git/raw/master/go_to_bottom_button.png): The server returned HTTP 404 (in the script, line 12)"
         ],
-        "date": "2026-10-13",
+        "tags": [
+          "resource-dead-link"
+        ],
+        "date": "2026-11-04",
         "version": "0.3"
-      }
+      },
+      "test": {
+        "status": "pass",
+        "date": "2026-11-04",
+        "version": "0.3"
+      },
+      "tags": [
+        "dead-asset"
+      ],
+      "notes": [
+        {
+          "date": "2026-11-04",
+          "version": "0.3",
+          "text": "On a long Wikipedia page (84922 px), clicking the button scrolled to the bottom (`scrollY` 84175) and clicking again back to 0.\n\n- Script: both `@resource` icons on coding.net return 404, so `GM_getResourceURL` gives `\"\"` and the button is an empty `src` image. Chrome draws a 35x35 box with a broken-image mark at the bottom right, with no up or down arrow to show the direction. It still works.\n- The host's dead link is the cause, not SourceMonkey. The Log names each resource once per document."
+        }
+      ]
     },
     "370575": {
       "listing": {
@@ -53563,18 +53699,31 @@
         "diep.io"
       ],
       "valid": {
-        "status": "invalid",
-        "error": "@resource spadeCSS (http://spade-squad.com/pub/userscript/spadeuserscript.css): The server returned HTTP 404 (in the script, line 17)",
+        "status": "ok",
         "warnings": [
-          "@icon http://spade-squad.com/pub/userscript/icon64.png: The server returned HTTP 404 (in the script, line 8)"
+          "@icon http://spade-squad.com/pub/userscript/icon64.png: The server returned HTTP 404 (in the script, line 8)",
+          "@resource spadeCSS (http://spade-squad.com/pub/userscript/spadeuserscript.css): The server returned HTTP 404 (in the script, line 17)"
         ],
         "tags": [
-          "invalid:resource-dead-link",
-          "icon-dead-link"
+          "icon-dead-link",
+          "resource-dead-link"
         ],
-        "date": "2026-10-13",
+        "date": "2026-11-04",
         "version": "1.0.0"
-      }
+      },
+      "test": {
+        "status": "n/a",
+        "reason": "game",
+        "date": "2026-11-04",
+        "version": "1.0.0"
+      },
+      "notes": [
+        {
+          "date": "2026-11-04",
+          "version": "1.0.0",
+          "text": "Not run: diep.io game tool."
+        }
+      ]
     },
     "394945": {
       "listing": {
@@ -55652,18 +55801,34 @@
         "rycamelot.com"
       ],
       "valid": {
-        "status": "invalid",
-        "error": "@resource sound_files (https://koc-cdn.popreach.com/fb/e2/src/pb/resource/sound_files.js): The server returned HTTP 404 (in the script, line 18)",
+        "status": "ok",
         "warnings": [
-          "@icon https://koc-cdn.popreach.com/fb/e2/src/img/items/70/363.jpg: The server returned HTTP 404 (in the script, line 5)"
+          "@icon https://koc-cdn.popreach.com/fb/e2/src/img/items/70/363.jpg: The server returned HTTP 404 (in the script, line 5)",
+          "@resource sound_files (https://koc-cdn.popreach.com/fb/e2/src/pb/resource/sound_files.js): The server returned HTTP 404 (in the script, line 18)",
+          "@resource image_files (https://koc-cdn.popreach.com/fb/e2/src/pb/resource/image_files.js): The server returned HTTP 404 (in the script, line 19)",
+          "@resource champion_uniques (https://koc-cdn.popreach.com/fb/e2/src/pb/resource/champion_uniques.js): The server returned HTTP 404 (in the script, line 20)",
+          "@resource emoticons (https://koc-cdn.popreach.com/fb/e2/src/pb/resource/emoticons.js): The server returned HTTP 404 (in the script, line 21)"
         ],
         "tags": [
-          "invalid:resource-dead-link",
-          "icon-dead-link"
+          "icon-dead-link",
+          "resource-dead-link"
         ],
-        "date": "2026-10-13",
+        "date": "2026-11-04",
         "version": "3.65"
-      }
+      },
+      "test": {
+        "status": "n/a",
+        "reason": "game",
+        "date": "2026-11-04",
+        "version": "3.65"
+      },
+      "notes": [
+        {
+          "date": "2026-11-04",
+          "version": "3.65",
+          "text": "Not run: Kingdoms of Camelot game bot, on Facebook and a game site that needs an account."
+        }
+      ]
     },
     "399197": {
       "listing": {
@@ -62238,18 +62403,33 @@
         "*"
       ],
       "valid": {
-        "status": "invalid",
-        "error": "@resource r2_favorite_icon (https://greasyfork.org/rails/active_storage/blobs/eyJfcmFpbHMiOnsibWVzc2FnZSI6IkJBaHBBcnBXIiwiZXhwIjpudWxsLCJwdXIiOiJibG9iX2lkIn19--96e6f39247ac3675b622982c3716b47ec80bdce6/favorite.png?locale=zh-CN): The server returned HTTP 404 (in the script, line 24)",
+        "status": "ok",
         "warnings": [
-          "@icon https://greasyfork.org/system/screenshots/screenshots/000/023/701/original/scripticon.png?1601395548: The server returned HTTP 404 (in the script, line 19)"
+          "@icon https://greasyfork.org/system/screenshots/screenshots/000/023/701/original/scripticon.png?1601395548: The server returned HTTP 404 (in the script, line 19)",
+          "@resource r2_favorite_icon (https://greasyfork.org/rails/active_storage/blobs/eyJfcmFpbHMiOnsibWVzc2FnZSI6IkJBaHBBcnBXIiwiZXhwIjpudWxsLCJwdXIiOiJibG9iX2lkIn19--96e6f39247ac3675b622982c3716b47ec80bdce6/favorite.png?locale=zh-CN): The server returned HTTP 404 (in the script, line 24)",
+          "@resource r1_notice_icon (https://greasyfork.org/system/screenshots/screenshots/000/023/766/original/transparent.png?1601910259): The server returned HTTP 404 (in the script, line 25)",
+          "@resource r1_silent_mode_tips (https://greasyfork.org/rails/active_storage/blobs/eyJfcmFpbHMiOnsibWVzc2FnZSI6IkJBaHBBcWxXIiwiZXhwIjpudWxsLCJwdXIiOiJibG9iX2lkIn19--5983520c5085da9140f885278762eff9ad78aef6/exit_silent_mode.png?locale=zh-CN): The server returned HTTP 404 (in the script, line 26)"
         ],
         "tags": [
-          "invalid:resource-dead-link",
-          "icon-dead-link"
+          "icon-dead-link",
+          "resource-dead-link"
         ],
-        "date": "2026-10-13",
+        "date": "2026-11-04",
         "version": "0.1.45"
-      }
+      },
+      "test": {
+        "status": "n/a",
+        "reason": "bot-blocked",
+        "date": "2026-11-04",
+        "version": "0.1.45"
+      },
+      "notes": [
+        {
+          "date": "2026-11-04",
+          "version": "0.1.45",
+          "text": "Greasy Fork's Cloudflare blocks the feed the script is built on: `/en/scripts.json` and `/en/moderator_actions` give the script HTTP 403 in a temp browser, headless and headed. `/en/scripts.json` also gives 403 to a `fetch` from the greasyfork.org page itself (a `Just a moment...` page) and to `curl`, so this doesn't depend on the manager.\n\n- Script: `$.parseJSON` then throws on that HTML in the `GM_xmlhttpRequest` `onload`, so its panel didn't appear on Wikipedia or on Greasy Fork.\n- A scratch copy with a fake feed in place of the parse ran on Wikipedia: the floating badge (`1`, `+1`), list rows and a `GM_notification` all worked. So, reading the code as well, the three dead `@resource` images cost only the notification's icon, the favorites icon and the silent-mode tip picture.\n- SourceMonkey: `GM_getResourceURL` gave `\"\"` for all three, each logged once, and `GM_notification` with `image: \"\"` didn't throw."
+        }
+      ]
     },
     "412689": {
       "listing": {
@@ -62490,18 +62670,35 @@
         "playgardencitygames.com"
       ],
       "valid": {
-        "status": "invalid",
-        "error": "@resource sound_files (https://cdn.jsdelivr.net/gh/sickofit666/emoticons1@f6156302c4fb9d76a740faca5c0d54908f5212f7/sound_files.js): The file is larger than the 2 MB limit (in the script, line 20)",
+        "status": "ok",
         "warnings": [
-          "@icon https://cdn.jsdelivr.net/gh/sickofit666/emoticons@main/demon.png: The file is larger than the 128 KB limit (in the script, line 6)"
+          "@icon https://cdn.jsdelivr.net/gh/sickofit666/emoticons@main/demon.png: The file is larger than the 128 KB limit (in the script, line 6)",
+          "@resource sound_files (https://cdn.jsdelivr.net/gh/sickofit666/emoticons1@f6156302c4fb9d76a740faca5c0d54908f5212f7/sound_files.js): The file is larger than the 2 MB limit (in the script, line 20)",
+          "@resource image_files (https://cdn.jsdelivr.net/gh/sickofit666/emoticons1@b2f7ba154cec832880828706528755d08016b2fb/image_files.js): The file is larger than the 2 MB limit (in the script, line 21)",
+          "@resource champion_uniques (https://koc-cdn.popreach.com/fb/e2/src/pb/resource/champion_uniques.js): The server returned HTTP 404 (in the script, line 23)",
+          "@resource emoticons (https://cdn.jsdelivr.net/gh/sickofit666/emoticons1@b2f7ba154cec832880828706528755d08016b2fb/emoticons.js): The file is larger than the 2 MB limit (in the script, line 24)"
         ],
         "tags": [
-          "invalid:resource-too-large",
-          "icon-too-large"
+          "icon-too-large",
+          "resource-too-large",
+          "resource-dead-link"
         ],
-        "date": "2026-10-13",
+        "date": "2026-11-04",
         "version": "2.5.2"
-      }
+      },
+      "test": {
+        "status": "n/a",
+        "reason": "game",
+        "date": "2026-11-04",
+        "version": "2.5.2"
+      },
+      "notes": [
+        {
+          "date": "2026-11-04",
+          "version": "2.5.2",
+          "text": "Not run: Kingdoms of Camelot game bot that needs a game account."
+        }
+      ]
     },
     "412930": {
       "listing": {
@@ -65773,14 +65970,31 @@
         "*"
       ],
       "valid": {
-        "status": "invalid",
-        "error": "@resource css1 (https://cdn.jsdelivr.net/gh/sanzhixiaoxia/statics@main/toast.style.css): The server returned HTTP 404 (in the script, line 15)",
-        "tags": [
-          "invalid:resource-dead-link"
+        "status": "ok",
+        "warnings": [
+          "@resource css1 (https://cdn.jsdelivr.net/gh/sanzhixiaoxia/statics@main/toast.style.css): The server returned HTTP 404 (in the script, line 15)"
         ],
-        "date": "2026-10-13",
+        "tags": [
+          "resource-dead-link"
+        ],
+        "date": "2026-11-04",
         "version": "1.7.3"
-      }
+      },
+      "test": {
+        "status": "pass",
+        "date": "2026-11-04",
+        "version": "1.7.3"
+      },
+      "tags": [
+        "dead-asset"
+      ],
+      "notes": [
+        {
+          "date": "2026-11-04",
+          "version": "1.7.3",
+          "text": "On w3schools' HTML5 video page, the keys change `playbackRate` on both `<video>` elements: `x` steps down 0.1, `c` up 0.1, `z` resets to 1.0 (1 to 0.7, 0.8, 1, 1.1, 1.2). The script also adds a `Current speed：1.2` label next to the video (in the DOM; not seen in a screenshot).\n\n- Script: the header's description has `x` and `c` swapped: the code has `x` as `-`, `c` as `+`.\n- Script: `@resource css1` on jsDelivr returns 404, so `GM_addStyle(GM_getResourceText(\"css1\"))` adds an empty style and the `$.Toast` notice has no CSS. It stays in the DOM unstyled at `y`=5417, off screen, so the bottom right notice is lost in effect. The speed change is not affected.\n- The host's dead link is the cause, not SourceMonkey."
+        }
+      ]
     },
     "421454": {
       "listing": {
@@ -84741,18 +84955,31 @@
         "yandex.ru"
       ],
       "valid": {
-        "status": "invalid",
-        "error": "@resource katexCss (https://cdn.bootcdn.net/ajax/libs/KaTeX/0.16.6/katex.css): The server returned HTTP 404 (in the script, line 54)",
+        "status": "ok",
         "warnings": [
-          "Ignoring @match https://search.*.cf/search*, which uses \"*\" inside its host; \"*\" has to be the whole host or its first label, as in *.example.com (in the script, line 25)"
+          "Ignoring @match https://search.*.cf/search*, which uses \"*\" inside its host; \"*\" has to be the whole host or its first label, as in *.example.com (in the script, line 25)",
+          "@resource katexCss (https://cdn.bootcdn.net/ajax/libs/KaTeX/0.16.6/katex.css): The server returned HTTP 404 (in the script, line 54)"
         ],
         "tags": [
           "ignored-match",
-          "invalid:resource-dead-link"
+          "resource-dead-link"
         ],
-        "date": "2026-10-13",
+        "date": "2026-11-04",
         "version": "3.7.5"
-      }
+      },
+      "test": {
+        "status": "n/a",
+        "reason": "requires-login",
+        "date": "2026-11-04",
+        "version": "3.7.5"
+      },
+      "notes": [
+        {
+          "date": "2026-11-04",
+          "version": "3.7.5",
+          "text": "Not run: from reading the script, its core feature sends the question (taken from the search box, or typed) to outside AI services, and none works signed out or for free. The default route (Tencent Yuanbao, `hunyuan.tencent.com`) answers `UserId获取失败，请登录元宝` without a login, the OpenAI, Anthropic and similar routes need the user's API key, and the rest are third-party relays such as `api.binjie.fun`. It also sends each key-up in its input box to Baidu's suggestion endpoint when suggestions are on (the default). No page contents or cookies are sent automatically: asking takes a click unless the user turns on auto-click.\n\n- Missing resource: `katexCss` (`cdn.bootcdn.net`, 404) is only math formula styling, read in a `try` and passed to `GM_addStyle`, so it would cost only formula styling in answers."
+        }
+      ]
     },
     "460111": {
       "listing": {
@@ -90340,14 +90567,41 @@
         "mjai.ekyu.moe"
       ],
       "valid": {
-        "status": "invalid",
-        "error": "@resource js_vue (https://cdn.staticfile.org/vue/3.3.7/vue.global.min.js): The server returned HTTP 404 (in the script, line 23)",
-        "tags": [
-          "invalid:resource-dead-link"
+        "status": "ok",
+        "warnings": [
+          "@resource js_vue (https://cdn.staticfile.org/vue/3.3.7/vue.global.min.js): The server returned HTTP 404 (in the script, line 23)",
+          "@resource js_elementplus (https://cdn.staticfile.org/element-plus/2.4.1/index.full.min.js): The server returned HTTP 404 (in the script, line 24)",
+          "@resource js_layui (https://cdn.staticfile.org/layui/2.8.17/layui.min.js): The server returned HTTP 404 (in the script, line 25)",
+          "@resource js_cryptojs (https://cdn.staticfile.org/crypto-js/4.1.1/crypto-js.min.js): The server returned HTTP 404 (in the script, line 26)",
+          "@resource js_immutable (https://cdn.staticfile.org/immutable/4.3.4/immutable.min.js): The server returned HTTP 404 (in the script, line 27)",
+          "@resource js_localforage (https://cdn.staticfile.org/localforage/1.10.0/localforage.min.js): The server returned HTTP 404 (in the script, line 28)",
+          "@resource js_qunit (https://cdn.staticfile.org/qunit/2.20.0/qunit.min.js): The server returned HTTP 404 (in the script, line 29)",
+          "@resource css_elementplus (https://cdn.staticfile.org/element-plus/2.4.1/index.min.css): The server returned HTTP 404 (in the script, line 30)",
+          "@resource css_layui (https://cdn.staticfile.org/layui/2.8.17/css/layui.min.css): The server returned HTTP 404 (in the script, line 31)",
+          "@resource css_fontAwesome (https://cdn.staticfile.org/font-awesome/6.4.2/css/all.min.css): The server returned HTTP 404 (in the script, line 32)"
         ],
-        "date": "2026-10-13",
+        "tags": [
+          "resource-dead-link"
+        ],
+        "date": "2026-11-04",
         "version": "2.2.22.1"
-      }
+      },
+      "test": {
+        "status": "fail",
+        "blame": "script",
+        "date": "2026-11-04",
+        "version": "2.2.22.1"
+      },
+      "tags": [
+        "dom-at-start"
+      ],
+      "notes": [
+        {
+          "date": "2026-11-04",
+          "version": "2.2.22.1",
+          "text": "On `mjai.ekyu.moe` (the home page; it stops before any page-specific code, so a `/report/` page would go the same way) the script throws in a static initializer near its top and adds nothing.\n\n- Missing resources: all ten come from `cdn.staticfile.org`, which no longer answers (`No response from the server`, HTTP 404 earlier). They are its whole stack (Vue, Element Plus, layui, CryptoJS, immutable, localforage) and are injected as page scripts, so the script can't work without them in any manager.\n- Same in Tampermonkey (`--manager tm`): it warns `can't load @resource` for `js_immutable` and `js_cryptojs` and the script throws `CryptoJS is not defined` at load.\n- Script: under SourceMonkey it fails earlier, on `document.getElementsByTagName(\"head\")[0].appendChild` at `document-start` (`Cannot read properties of undefined (reading 'appendChild')`), before the first resource read. Tampermonkey ran late enough to have a `<head>` here. That would stop it under SourceMonkey even with the CDN back."
+        }
+      ]
     },
     "476012": {
       "listing": {
@@ -99673,14 +99927,31 @@
         "github.com"
       ],
       "valid": {
-        "status": "invalid",
-        "error": "@resource catppuccin-associations (https://raw.githubusercontent.com/PRO-2684/gadgets/refs/heads/main/github_plus/catppuccin/associations.json): The server returned HTTP 404 (in the script, line 24)",
-        "tags": [
-          "invalid:resource-dead-link"
+        "status": "ok",
+        "warnings": [
+          "@resource catppuccin-associations (https://raw.githubusercontent.com/PRO-2684/gadgets/refs/heads/main/github_plus/catppuccin/associations.json): The server returned HTTP 404 (in the script, line 24)",
+          "@resource catppuccin-icons (https://raw.githubusercontent.com/PRO-2684/gadgets/refs/heads/main/github_plus/catppuccin/icons.json): The server returned HTTP 404 (in the script, line 25)",
+          "@resource catppuccin-palette (https://raw.githubusercontent.com/PRO-2684/gadgets/refs/heads/main/github_plus/catppuccin/palette.json): The server returned HTTP 404 (in the script, line 26)"
         ],
-        "date": "2026-10-14",
+        "tags": [
+          "resource-dead-link"
+        ],
+        "date": "2026-11-04",
         "version": "0.7.0"
-      }
+      },
+      "test": {
+        "status": "fail",
+        "blame": "script",
+        "date": "2026-11-04",
+        "version": "0.7.0"
+      },
+      "notes": [
+        {
+          "date": "2026-11-04",
+          "version": "0.7.0",
+          "text": "On `github.com/jshute96/SourceMonkey`, signed out, the script's five menu commands register and then its body stops: `JSON.parse(GM_getResourceText(\"catppuccin-palette\"))` at line 880 throws `Unexpected end of JSON input`, so none of its GitHub features set up (no `ghp-` styles or elements on the page).\n\n- Script: the three `catppuccin-*` JSON resources are 404 at `raw.githubusercontent.com` (gone from the author's repo), and the script parses them at top level with no fallback, though only the off-by-default Catppuccin Icons option needs them. Its `GM_config` `@require` on github.com is 404 too, so this run used `--local`. Version 0.7.1 is out and drops the `@resource` lines.\n- Same in Tampermonkey (`--manager tm`): it warns `can't load @resource` and the script throws the same `Unexpected end of JSON input`.\n- A copy with `|| \"{}\"` after each of the three reads gets past that and mounts 17 `ghp-` styles; on this signed-out page it then throws on the `children` of a null element (line 1024, a menu button the signed-out header lacks).\n- SourceMonkey: gives `\"\"` without throwing and logs the error naming the resource and the 404."
+        }
+      ]
     },
     "511285": {
       "listing": {

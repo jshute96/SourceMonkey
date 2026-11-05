@@ -89,7 +89,8 @@ export interface GmInfoInput {
   // into the wrapper as a literal so `GM_getResourceText` and
   // `GM_getResourceURL` resolve synchronously without an SW round-
   // trip. Empty object when the script declares no `@resource`.
-  resources: Record<string, { b64: string; ct: string }>;
+  // `failed`: why a declared file didn't load. The getters answer "".
+  resources: Record<string, { b64: string; ct: string } | { failed: string }>;
 }
 
 // Single-value headers exposed verbatim on `GM_info.script`, under
