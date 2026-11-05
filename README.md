@@ -528,6 +528,10 @@ npm install -g sm-dev       # or: pnpm add -g sm-dev
 npm update -g sm-dev        # or: pnpm update -g --latest sm-dev
 ```
 
+- Inside a repo that has its own `sourcemonkey` or `sm-dev` dependency,
+  `sm-dev` runs that copy instead. Set `SM_DEV_NO_LOCAL=1` to run the
+  global one.
+
 #### Add `sourcemonkey` as a dependency in a userscript repo
 
 The `sourcemonkey` package provides `sm-dev`, plus the

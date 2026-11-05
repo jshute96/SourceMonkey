@@ -2,9 +2,10 @@
 #
 # `sm-dev` in this checkout. The same tool a repo of userscripts gets on
 # its PATH when it installs the `sourcemonkey` package: the package's
-# `bin` entry points at lib/harness/cli.js, which pnpm links into that
-# repo's node_modules/.bin. Here there is no such link, so this is it,
-# and the `sm-dev` package.json script runs it for `pnpm sm-dev`.
+# `bin` entry points at lib/harness/launcher.js (which runs cli.js),
+# and pnpm links it into that repo's node_modules/.bin. Here there is
+# no such link, so this is it, and the `sm-dev` package.json script
+# runs it for `pnpm sm-dev`.
 #
 #   scripts/sm-dev start userscripts/examples/gm-storage/gm-storage.user.js
 #   scripts/sm-dev --help

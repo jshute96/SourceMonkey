@@ -125,7 +125,14 @@ working on both), also add this to `package.json`:
   links it into `node_modules/.bin`). Run it as `pnpm sm-dev …` or
   `pnpm exec sm-dev …` (`npx sm-dev …` with npm).
 - Without installing it, run `npx sm-dev@latest …`.
-- Installed globally, run `sm-dev …`.
+- Installed globally, run `sm-dev …`. Inside a project that has its own
+  copy (a `sourcemonkey` or `sm-dev` dependency, or a SourceMonkey
+  checkout), it runs that copy, so it's the same version the project's
+  specs use.
+  - A project that lists one but hasn't installed it gets an error with
+    the install command.
+  - Set `SM_DEV_NO_LOCAL=1` to run the global copy anyway.
+  - `npx sm-dev@latest` always runs the version it downloaded.
 - In a SourceMonkey checkout, it is `scripts/sm-dev`, or `pnpm sm-dev`
   (a `package.json` script running it). `pnpm exec sm-dev` skips package
   scripts, and pnpm never links a package's own bin into itself, so there

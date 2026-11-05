@@ -18,6 +18,9 @@ Or install it globally, and run it as `sm-dev`:
 npm install -g sm-dev     # or: pnpm add -g sm-dev
 ```
 
+Inside a repo that has its own `sourcemonkey` or `sm-dev` dependency, the
+global `sm-dev` runs the repo's copy instead.
+
 In a repo of userscripts, install `sourcemonkey` instead. It gives the
 same `sm-dev` command, plus the Playwright test fixture and the agent
 skills for working with them:

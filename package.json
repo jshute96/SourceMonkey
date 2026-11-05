@@ -23,7 +23,7 @@
     "skills"
   ],
   "bin": {
-    "sm-dev": "./lib/harness/cli.js"
+    "sm-dev": "./lib/harness/launcher.js"
   },
   "engines": {
     "node": ">=22"

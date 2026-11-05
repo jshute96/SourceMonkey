@@ -48,6 +48,9 @@ npm install -g sm-dev     # or: pnpm add -g sm-dev
 sm-dev --help
 ```
 
+Inside a repo that has its own `sourcemonkey` or `sm-dev` dependency, the
+global `sm-dev` runs the repo's copy instead.
+
 Commands that launch a browser require Chromium. They'll report the command
 to install the required version, if it's not already installed.
 

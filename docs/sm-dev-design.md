@@ -42,6 +42,7 @@ flowchart LR
 
 | Module | Role |
 | --- | --- |
+| `launcher.ts` | The `sm-dev` bin: hands off to the project's own copy when there is one ([harness-guide.md](harness-guide.md#running-sm-dev)), else runs `cli.ts` |
 | `cli.ts` | The client: global options, sm-dev's own commands, the `Client` connection, starting runs |
 | `run.ts` | The run process. Its own module so the Node-only commands never load Playwright |
 | `runs.ts` | The registry of runs on this machine, and the client connection (`RunClient`). Node-only |

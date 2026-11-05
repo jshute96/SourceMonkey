@@ -18,7 +18,7 @@ One-line descriptions of every source file, grouped by directory.
 | `packages/sourcemonkey/README.md` | The `sourcemonkey` npm page: the tools, install, and a first run and test |
 | `pnpm-workspace.yaml` | pnpm workspace: the root `sourcemonkey` package plus `packages/sm-dev` |
 | `packages/sm-dev/package.json` | The `sm-dev` npm package, a wrapper over `sourcemonkey` so `npx sm-dev` works |
-| `packages/sm-dev/cli.js` | The wrapper's `sm-dev` command: imports and so runs `sourcemonkey`'s CLI |
+| `packages/sm-dev/cli.js` | The wrapper's `sm-dev` command: imports and so runs `sourcemonkey`'s launcher |
 | `packages/sm-dev/README.md` | The wrapper's npm page: what it is, and to install `sourcemonkey` in a repo instead |
 | `tsconfig.json` | TypeScript compiler config for the extension build |
 | `tsconfig.lib.json` | The `sourcemonkey` package build: every module plus the harness, with declarations, into `lib/` |
@@ -322,6 +322,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/tab-refs.ts` | Naming and picking a run's tabs (`T2`, target ids), the current tab, the dialog message |
 | `src/harness/wait.ts` | The `wait` command, when a tab has settled (loaded, scripts started, quiet), and when a load is done |
 | `src/harness/runs.ts` | The runs on this machine: record files, control sockets, and the client connection (`RunClient`) to one |
+| `src/harness/launcher.ts` | The `sm-dev` bin: runs the project's own copy of sm-dev when there is one, else its own CLI |
 | `src/harness/cli.ts` | The `sm-dev` client: global options, `start`, `attach`, `stop`, `exit`, `validate`, `match`, `clear`, `list`, `--stdin`, `--interactive`, `--version` |
 
 ## Userscripts (`userscripts/`)
@@ -614,6 +615,7 @@ unit tests.
 |------|-------------|
 | `tests/unit/harness/cdp-endpoint.test.mjs` | Unit tests for `cdpEndpoint`: the forms `sm-dev --browser` accepts |
 | `tests/unit/harness/eval-completion.test.mjs` | Unit tests for which statement of `eval` code becomes its `return` |
+| `tests/unit/harness/launcher.test.mjs` | Unit tests for the `sm-dev` launcher: which copy it runs, from where, and `SM_DEV_NO_LOCAL` |
 | `tests/unit/harness/run-log.test.mjs` | Unit tests for a run's log files: the timestamp format and unique names |
 | `tests/unit/harness/wait.test.mjs` | Unit tests for `wait`'s delays and the message when a tab doesn't settle |
 | `tests/unit/harness/path-args.test.mjs` | Unit tests for sm-dev's glob matching and file argument expansion |
