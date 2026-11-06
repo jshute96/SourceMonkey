@@ -55,6 +55,10 @@ SourceMonkey's command-line testing tool, `sm-dev`, runs on your own
 computer and controls a separate test browser that it launches. It
 sends nothing to SourceMonkey's developer.
 
+A copy from npm asks the npm registry about once a day for the newest
+version, which sends no data about you or your scripts, though npm sees
+your IP address. Set `SM_DEV_NO_UPDATE_CHECK=1` to turn that off.
+
 ## Changes and contact
 
 Changes to this policy are made in this file, and its history is in

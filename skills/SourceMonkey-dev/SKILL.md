@@ -897,6 +897,9 @@ node "${CLAUDE_SKILL_DIR}/scripts/gather-scripts.mjs" --out <temp dir> <source>.
   ask the person whether to update it as the message says. Building
   changes the code under other running sessions. If the run still
   started, keep working meanwhile.
+- **`--version` or `start` reports when a newer sm-dev is available**:
+  tell the person and give them the command it shows, if any. Don't
+  update unless they ask, since that can change behavior mid-task.
 - **The script seems stale**: check the reload lines after the save, or
   `update` (it skips files whose modification time hasn't changed; a
   `touch` forces it).

@@ -97,10 +97,14 @@ To use `sm-dev` outside a repo:
 - **Without installing anything:** `npx sm-dev@latest --help`. A bare
   `npx sm-dev` keeps running the version npx cached first.
 - **Installed globally:** `npm install -g sm-dev` (or
-  `pnpm add -g sm-dev`), then run `sm-dev`. Update it with the same
-  command and `sm-dev@latest`.
+  `pnpm add -g sm-dev`), then run `sm-dev`. Update it with
+  `npm update -g sm-dev` (or `pnpm update -g --latest sm-dev`).
 - The `sm-dev` package only runs the command from `sourcemonkey`.
 - `sm-dev --version` shows which copy runs, and where it's installed.
+- `sm-dev --version` and `start` also show when a newer version is out,
+  with the command that updates to it where sm-dev can tell how it was
+  installed. To check, sm-dev asks npm about
+  once a day. Set `SM_DEV_NO_UPDATE_CHECK=1` to turn that off.
 
 When you install from a checkout on disk (`file:../SourceMonkey`, while
 working on both), also add this to `package.json`:

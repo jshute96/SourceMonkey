@@ -510,6 +510,8 @@ Details: [docs/injection.md](docs/injection.md),
 
 `sm-dev` is installed through `npm`, and requires Node 22 or newer.
 
+The examples below write the command as plain `sm-dev`, however you run it.
+
 #### Run `sm-dev` without installing
 ```sh
 npx sm-dev@latest <command>
@@ -550,10 +552,13 @@ pnpm sm-dev                                 # or: npx sm-dev
 > after a release, `@latest` gives the previous one. Add
 > `--config.minimumReleaseAge=0` to get the new one sooner.
 
-#### `sm-dev` version
+#### `sm-dev` versions
 
 `sm-dev --version` shows the version that runs, and the directory it's
-installed in. The examples below write it as plain `sm-dev`.
+installed in.
+
+`sm-dev --version` and `sm-dev start` report when a newer version is
+available, providing the update command when possible.
 
 #### Install Chromium
 

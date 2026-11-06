@@ -43,7 +43,9 @@ flowchart LR
 | Module | Role |
 | --- | --- |
 | `launcher.ts` | The `sm-dev` bin: hands off to the project's own copy when there is one ([harness-guide.md](harness-guide.md#running-sm-dev)), else runs `cli.ts` |
+| `project-copy.ts` | Finds the copies of sourcemonkey around a directory, and the update command when it can tell how this one was installed |
 | `cli.ts` | The client: global options, sm-dev's own commands, the `Client` connection, starting runs |
+| `update-check.ts` | Notices a newer published sm-dev ([The update check](#the-update-check)) |
 | `run.ts` | The run process. Its own module so the Node-only commands never load Playwright |
 | `runs.ts` | The registry of runs on this machine, and the client connection (`RunClient`). Node-only |
 | `run-log.ts` | Each run's log file |
@@ -390,12 +392,60 @@ Command marks:
   path too, as `skills_dir`.
   - Without other commands or flags, `sm-dev --version` exits after printing
     the version.
+  - It also shows when a newer version is out. See
+    [The update check](#the-update-check).
 - Every command is checked before any runs.
   - A lone `start` with no `--detach`, `--stop-after-seconds`, `--stdin`,
     `--interactive`, or commands after it would stop its run at once.
     At a terminal it opens the prompt instead; elsewhere it is refused.
 - A name that isn't an `sm-dev` command but is a run command goes to
   the run. So does one argument of several lines, as a list.
+
+### The update check
+
+`update-check.ts` tells people when a newer sm-dev is published, from
+npm's `latest` tag.
+
+- **Who checks:** only published copies, which `lib/build-info.json`
+  marks `{"release":true}` (written by `scripts/pack-npm.sh`). A local
+  build updates through git.
+  - `SM_DEV_NO_UPDATE_CHECK=1`, or `CI` being set, turns it off.
+  - The Playwright harness doesn't check, since only the CLI does.
+- **No waiting:** commands only read `~/.cache/sm-dev/latest-version.json`
+  (`$XDG_CACHE_HOME` when set).
+  - A command that finds it a day old or missing starts a detached
+    process to refresh it, so the answer shows on a later command.
+  - Refreshes at once are harmless: each writes the same answer,
+    atomically.
+  - A failed fetch saves the time and keeps the earlier answer, and
+    reports nothing.
+- **A day's delay:** a version is announced once it's a day old. pnpm
+  skips newer ones, so the command shown would find nothing before then.
+- **Where it shows:**
+  - `--version`: a line on stderr, so a pipe reading the version gets
+    only that. Under `--json`, an `update` field instead.
+  - `start`: the first line, on stderr, from the client, so it stays out
+    of the run's log. It's the same under `--json`, since `start` has no
+    JSON result.
+- **The command it gives** (`updateCommand` in `project-copy.ts`) fits
+  the install, and is left out unless sm-dev positively identifies it.
+  The message then shows `Update it the way you installed it`.
+  - Package managers change their layouts, and a wrong command could
+    install a second copy, so nothing is assumed.
+  - Covered: npm and pnpm projects, npm and pnpm global installs, and
+    npx and `pnpm dlx` runs.
+  - A one-off npx or `pnpm dlx` run has nothing installed to update, so
+    the message shows ``Run it with `npx sm-dev@latest` `` instead.
+  - Not covered: yarn and bun projects, and a project's copy run from
+    outside the project.
+  - `npm update` stays inside `package.json`'s range, which on 0.x only
+    allows patch releases, so a project under npm gets
+    `npm install -D sourcemonkey@latest`.
+  - Global installs get an update command for the package installed.
+    It's the `sm-dev` wrapper when the script that started sm-dev is
+    outside the `sourcemonkey` package.
+  - On older pnpm, `pnpm update -g --latest` leaves the version as it is
+    and reports it's up to date. That happens on 12.6.0 but not 12.15.0.
 
 ### Which managers are installed ([browser-extensions.ts](../src/harness/browser-extensions.ts))
 
@@ -1370,6 +1420,8 @@ User-facing behavior is in [harness-guide.md](harness-guide.md).
   - In an installed copy (a userscript repo): `pnpm run build` in the
     checkout, then `pnpm install` there. `pnpm install` copies `lib/`
     without building it.
+  - In a published copy, whose `build-info.json` names no checkout: the
+    command from [The update check](#the-update-check).
 - After the version check, the run calls
   `chrome.userScripts.getScripts()` in the worker, which fails until
   "Allow User Scripts" is on.

@@ -8,7 +8,9 @@
 # package.json. Then this puts packages/sourcemonkey/README.md into the
 # `sourcemonkey` package as its README.md, in place of the repo's, which is
 # written for GitHub: npm shows the README inside the package, and pnpm
-# can't pack another.
+# can't pack another. It also replaces lib/build-info.json, which names the
+# checkout it was built from, with a mark that this copy is a release (see
+# src/harness/rebuild-advice.ts).
 
 set -euo pipefail
 
@@ -30,6 +32,7 @@ STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 tar -xzf "$PKG_TGZ" -C "$STAGE"
 cp packages/sourcemonkey/README.md "$STAGE/package/README.md"
+echo '{"release":true}' > "$STAGE/package/lib/build-info.json"
 # Extracting applied this shell's umask to the modes, so set them as npm
 # packs them: readable by all, directories and executables searchable.
 tar -czf "$PKG_TGZ" -C "$STAGE" --owner=0 --group=0 --numeric-owner \

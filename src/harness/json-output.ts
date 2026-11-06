@@ -296,6 +296,8 @@ export interface VersionData {
   dir: string;
   /** Its `skills/` directory. */
   skills_dir: string;
+  /** A newer published version, and the command that updates to it or runs it, if sm-dev is sure of one. */
+  update?: { latest: string; command?: string };
 }
 
 export interface StatusData {

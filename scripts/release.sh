@@ -230,6 +230,13 @@ for tgz in "$PKG_TGZ" "$WRAPPER_TGZ"; do
   fi
 done
 
+# The update check runs only in copies marked as a release, and would
+# otherwise stop with nothing to show for it.
+if [[ "$(tar -xOzf "$PKG_TGZ" package/lib/build-info.json)" != '{"release":true}' ]]; then
+  echo "$PKG_TGZ isn't marked as a release in lib/build-info.json."
+  exit 1
+fi
+
 # Check the packages with npm before anything is pushed.
 for tgz in "$PKG_TGZ" "$WRAPPER_TGZ"; do
   npm publish --dry-run "$tgz" >/dev/null 2>&1 \

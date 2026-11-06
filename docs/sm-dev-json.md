@@ -389,6 +389,10 @@ interface VersionData {
   version: string;    // the sourcemonkey package's version
   dir: string;        // the package directory sm-dev runs from
   skills_dir: string; // its skills/ directory
+  update?: {          // when a newer published version is known
+    latest: string;   // its version
+    command?: string; // the command that updates to it or runs it, if sm-dev is sure of one
+  };
 }
 ```
 

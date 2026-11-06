@@ -122,7 +122,7 @@ test('run from npx\'s cache, runs its own copy', (t) => {
   const harness = path.join(cache, '_npx', 'abc', 'lib', 'harness');
   fs.mkdirSync(harness, { recursive: true });
   fs.writeFileSync(path.join(cache, '_npx', 'abc', 'package.json'), '{"type":"module"}');
-  for (const f of ['launcher.js', 'output-style.js']) {
+  for (const f of ['launcher.js', 'output-style.js', 'project-copy.js']) {
     fs.copyFileSync(path.join(path.dirname(LAUNCHER), f), path.join(harness, f));
   }
   fs.writeFileSync(path.join(harness, 'cli.js'), `console.log('own');\n`);

@@ -36,6 +36,7 @@ import type { ManagerVerb } from './manager-actions.js';
 import type { ManagerControl } from './manager-commands.js';
 import { COMMAND_NAMES, MAX_TIMER_SECONDS, OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, TIMEOUT_FLAG, TIMEOUT_NEEDS_SECONDS, GLOBAL_FLAGS, VALUE_GLOBALS, commandHelp, commandNamed, commandSuggestion, commandSyntax, globalFlagMistake, helpTarget, helpText, timeoutSecondsMs, unsupportedCommand } from './command-list.js';
 import { readJsonFile } from './input-file.js';
+import { availableUpdate, refreshUpdateCacheIfDue, updateJson, updateNote } from './update-check.js';
 import { MANIFEST_FORMATS, checkManifest, manifestCommand, type ManifestFormat, type ManifestOptions } from './manifest-command.js';
 import { echoLine, err as errorLine, ERROR_PREFIX, paintOutput, quoted, SM_DEV_PREFIX, streamHasColor } from './output-style.js';
 // The roles for marked-up output, as S.id(...): their names are common locals here.
@@ -387,6 +388,11 @@ async function startCommand(opts: Opts, words: string[], client: Client): Promis
   const { urls, files, scripts, saved, found } = await checkStart(opts);
   // The background process: the run itself.
   if (detachedLog) return runHere(opts, { files, given: scripts, urls, saved, found }, client.runId);
+  // Here, not in the run, so it stays out of the run's log. First, so it
+  // still shows if the launch fails.
+  const version = ownVersion();
+  const update = updateShown ? null : availableUpdate(version);
+  if (update) writeErr(SM_DEV_PREFIX + S.warn(updateNote(update, version)));
   const { liveRuns, stopRun } = await import('./runs.js');
   const live = await liveRuns();
   // Stopped first, which also frees a tab for this one to reuse. The
@@ -1675,21 +1681,32 @@ async function attachCommand(opts: Opts, client: Client): Promise<number> {
 // copy installed in a repo. lib/harness/ holds this module.
 const PACKAGE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-// `--version`: the package's version and directory, where `skills/` and
-// the built extension (`dist/`) are.
-function printVersion(): void {
-  let version = 'unknown';
+function ownVersion(): string {
   try {
-    version = (JSON.parse(readFileSync(path.join(PACKAGE_DIR, 'package.json'), 'utf8')) as { version?: string }).version ?? version;
+    return (JSON.parse(readFileSync(path.join(PACKAGE_DIR, 'package.json'), 'utf8')) as { version?: string }).version ?? 'unknown';
   } catch {
-    // Left as unknown.
+    return 'unknown';
   }
+}
+
+// Set once `--version` has shown a newer version, so a `start` later on
+// the command line doesn't show it again.
+let updateShown = false;
+
+// `--version`: the package's version and directory, where `skills/` and
+// the built extension (`dist/`) are. A newer version goes to stderr, so
+// a pipe reading the version gets only that.
+function printVersion(): void {
+  const version = ownVersion();
   const skills = path.join(PACKAGE_DIR, 'skills');
+  const update = availableUpdate(version);
+  updateShown = update !== null;
   if (lineJson) {
-    print(jsonResult('version', { version, dir: PACKAGE_DIR, skills_dir: skills } satisfies VersionData));
+    print(jsonResult('version', { version, dir: PACKAGE_DIR, skills_dir: skills, ...(update ? { update: updateJson(update) } : {}) } satisfies VersionData));
     return;
   }
   print(S.ui`sm-dev ${version} from ${S.url(PACKAGE_DIR)}`);
+  if (update) writeErr(SM_DEV_PREFIX + S.warn(updateNote(update)));
 }
 
 const HELP_FLAGS = new Set(['--help', '-h']);
@@ -2144,6 +2161,7 @@ async function main(): Promise<void> {
     process.exitCode = printMistake(err);
     return;
   }
+  if (!detachedLog) refreshUpdateCacheIfDue();
   const commands = splitCommands(flags.rest);
   if (flags.version) {
     // With no commands, exit after printing it, without opening the

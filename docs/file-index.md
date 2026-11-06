@@ -298,7 +298,9 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/snapshot.ts` | `snapshot`'s element refs, the parts it shows (on screen, a selector's matches, `--find`), and `probe --css`'s suggested CSS selectors |
 | `src/harness/browser-lang.ts` | `sm-dev start --lang`: checks the tags and sets them on tabs; builds GM requests' `Accept-Language` |
 | `src/harness/browser-launch.ts` | `sm-dev --open-browser`: starts a browser that stays open, on a kept profile per port, unless one is up |
-| `src/harness/rebuild-advice.ts` | Says how to rebuild sm-dev, in the checkout or in the checkout an installed copy came from |
+| `src/harness/rebuild-advice.ts` | Gives the steps to rebuild or update sm-dev, by whether it's a local build or a published copy |
+| `src/harness/update-check.ts` | Notices a newer published sm-dev: the cache, its detached refresh, and the message |
+| `src/harness/project-copy.ts` | Finds the copies of sourcemonkey around a directory, and the update command when it can tell how this one was installed |
 | `src/harness/stuck-tabs.ts` | Before `sm-dev start` connects, names the tabs that don't answer (a dialog, say), and waits for them |
 | `src/harness/run.ts` | The run process `sm-dev start` spawns: open a browser, push the scripts into SourceMonkey, follow tabs, serve clients |
 | `src/harness/extension-launch.ts` | Launches Chromium with the built extension (or a fetched manager) on a temp profile: sm-dev's temp browser, and the e2e suites' browser |
@@ -620,6 +622,7 @@ unit tests.
 |------|-------------|
 | `tests/unit/harness/cdp-endpoint.test.mjs` | Unit tests for `cdpEndpoint`: the forms `sm-dev --browser` accepts |
 | `tests/unit/harness/eval-completion.test.mjs` | Unit tests for which statement of `eval` code becomes its `return` |
+| `tests/unit/harness/update-check.test.mjs` | Unit tests for the update check: what's announced, update commands, the refresh, and `--version`'s output |
 | `tests/unit/harness/launcher.test.mjs` | Unit tests for the `sm-dev` launcher: which copy it runs, from where, and `SM_DEV_NO_LOCAL` |
 | `tests/unit/harness/run-log.test.mjs` | Unit tests for a run's log files: the timestamp format and unique names |
 | `tests/unit/harness/wait.test.mjs` | Unit tests for `wait`'s delays and the message when a tab doesn't settle |
@@ -660,6 +663,7 @@ built extension loaded; fixtures in `tests/fixtures/harness.ts`.
 | `tests/harness/run-downloads.spec.ts` | Download lines from a run's tabs: a temp browser saves beside the run log, a connected browser by its own setting |
 | `tests/harness/page-commands.spec.ts` | The run commands that drive and read a page, in both worlds, with dialogs, quoting, and files |
 | `tests/harness/stack-lines.spec.ts` | sm-dev's `threw` reports and console lines name the `@require` or script line a stack frame came from |
+| `tests/harness/update-note.spec.ts` | `start` announcing a newer sm-dev: first, on stderr, and not in the run's log |
 | `tests/harness/wait.spec.ts` | `wait` in its forms, the actions settling on their own, `--nowait`, and what a busy page reports |
 | `tests/harness/browser-launch.spec.ts` | `sm-dev --open-browser`: a browser that outlives sm-dev, started once, and its profile's lock |
 | `tests/harness/manager-commands.spec.ts` | The `collection` and `script` verbs from the command line, with no run and in a run, text and `--json` |
