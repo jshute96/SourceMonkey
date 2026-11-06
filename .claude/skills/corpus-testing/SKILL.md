@@ -180,3 +180,7 @@ scripts"). `list --stale` and `results.html` flag a test whose `version`
 differs from the copy in `files/`. Re-test those the same way, leaving out
 the "Not run:" `n/a` records: `list --stale --test pass`, then `--test fail`
 and `--test inconclusive`.
+
+`list --test fail` includes `site-gone` failures, which no SourceMonkey fix or
+new copy of the script changes. Skip those when re-testing (`show ID` gives the
+blame), unless the site may have come back.

@@ -712,8 +712,8 @@
         "version": "0.8.0"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "0.8.0"
       },
@@ -756,8 +756,8 @@
         "version": "1.1.72"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.1.72"
       },
@@ -952,8 +952,8 @@
         "version": "0.9.20.0.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "0.9.20.0.1"
       },
@@ -1052,8 +1052,8 @@
       },
       "test": {
         "status": "n/a",
-        "reason": "site-gone",
-        "date": "2026-10-05",
+        "reason": "requires-login",
+        "date": "2026-11-05",
         "version": "1.7.7"
       },
       "notes": [
@@ -1061,6 +1061,11 @@
           "date": "2026-10-05",
           "version": "1.7.7",
           "text": "Command & Conquer Tiberium Alliances game servers are gone: `prodgame01`..`prodgame20.alliances.commandandconquer.com` have no DNS records. `tiberiumalliances.com` redirects to an EA product page, and `cncopt.com` is a parked \"domain may be for sale\" page."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.7.7",
+          "text": "Not shown to be gone, so this is back to requires-login. The game launches through an EA sign-in, and the `prodgameNN` hosts don't resolve without a session (see script 1986), so their missing DNS records don't show that the servers are gone. Confirming it would need an EA account."
         }
       ]
     },
@@ -1189,8 +1194,8 @@
         "version": "20140404a"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "20140404a"
       },
@@ -1234,8 +1239,8 @@
         "version": "0.9.7.4"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "0.9.7.4"
       },
@@ -1284,8 +1289,8 @@
         "version": "20140209a"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "20140209a"
       },
@@ -1328,8 +1333,8 @@
         "version": "1.0.0.3"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "1.0.0.3"
       },
@@ -1507,8 +1512,8 @@
         "version": "1.0.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.0.1"
       },
@@ -1550,8 +1555,8 @@
         "version": "1.5"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.5"
       },
@@ -1677,8 +1682,8 @@
         "version": "1.0"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.0"
       },
@@ -1720,8 +1725,8 @@
         "version": "0.9"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "0.9"
       },
@@ -1763,8 +1768,8 @@
         "version": "1.28"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.28"
       },
@@ -3266,8 +3271,8 @@
         "version": "2.4.9"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "2.4.9"
       },
@@ -3707,8 +3712,8 @@
         "version": "20140327b"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "20140327b"
       },
@@ -3757,8 +3762,8 @@
         "version": "20140519a"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "20140519a"
       },
@@ -3891,8 +3896,8 @@
         "version": "1.01"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.01"
       },
@@ -4058,8 +4063,8 @@
         "version": "13.0"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "13.0"
       },
@@ -4101,8 +4106,8 @@
         "version": "0.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "0.1"
       },
@@ -4418,8 +4423,8 @@
         "version": "0.3.5"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "0.3.5"
       },
@@ -4635,8 +4640,8 @@
         "version": "2.00"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "2.00"
       },
@@ -4678,8 +4683,8 @@
         "version": "2.22"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "2.22"
       },
@@ -4721,8 +4726,8 @@
         "version": "3.08"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "3.08"
       },
@@ -4764,8 +4769,8 @@
         "version": "1.54"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.54"
       },
@@ -4807,8 +4812,8 @@
         "version": "1.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.1"
       },
@@ -4850,8 +4855,8 @@
         "version": "1.27"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.27"
       },
@@ -4893,8 +4898,8 @@
         "version": "3.21"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "3.21"
       },
@@ -5127,8 +5132,8 @@
         "version": "0.7.5b"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "0.7.5b"
       },
@@ -5170,8 +5175,8 @@
         "version": "0.9.3"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "0.9.3"
       },
@@ -5386,8 +5391,8 @@
       },
       "test": {
         "status": "n/a",
-        "reason": "site-gone",
-        "date": "2026-10-05",
+        "reason": "requires-login",
+        "date": "2026-11-05",
         "version": "1.1.0"
       },
       "notes": [
@@ -5395,6 +5400,11 @@
           "date": "2026-10-05",
           "version": "1.1.0",
           "text": "Command & Conquer Tiberium Alliances game servers are gone: `prodgame01`..`prodgame20.alliances.commandandconquer.com` have no DNS records. `tiberiumalliances.com` redirects to an EA product page, and `cncopt.com` is a parked \"domain may be for sale\" page."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.1.0",
+          "text": "Not shown to be gone, so this is back to requires-login. The game launches through an EA sign-in, and the `prodgameNN` hosts don't resolve without a session (see script 1986), so their missing DNS records don't show that the servers are gone. Confirming it would need an EA account."
         }
       ]
     },
@@ -6062,8 +6072,8 @@
         "version": "1.2.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.2.1"
       },
@@ -6252,9 +6262,9 @@
         "version": "0.3b"
       },
       "test": {
-        "status": "n/a",
-        "reason": "requires-login",
-        "date": "2026-11-04",
+        "status": "fail",
+        "blame": "site-gone",
+        "date": "2026-11-05",
         "version": "0.3b"
       },
       "notes": [
@@ -6262,6 +6272,11 @@
           "date": "2026-11-04",
           "version": "0.3b",
           "text": "Not run: MTurk qualification pages need a worker account."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "0.3b",
+          "text": "Amazon Mechanical Turk is gone: `www.mturk.com` shows \"Mechanical Turk is no longer available\" and says it permanently closed on September 30, 2026. No account can reach the pages this script needs."
         }
       ]
     },
@@ -6524,9 +6539,9 @@
         "version": "2021.08.23.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "requires-login",
-        "date": "2026-10-10",
+        "status": "fail",
+        "blame": "site-gone",
+        "date": "2026-11-05",
         "version": "2021.08.23.1"
       },
       "notes": [
@@ -6534,6 +6549,11 @@
           "date": "2026-10-10",
           "version": "2021.08.23.1",
           "text": "`worker.mturk.com` redirects to Amazon sign-in (`amazon.com/ax/claim`), where the script is correctly skipped. On the public `www.mturk.com` landing page it installed and started with no errors, but there are no requester links (`requesterId=` / `/requesters/.../projects`) to annotate; those are only on the signed-in worker HIT lists."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2021.08.23.1",
+          "text": "Amazon Mechanical Turk is gone: `www.mturk.com` shows \"Mechanical Turk is no longer available\" and says it permanently closed on September 30, 2026. No account can reach the pages this script needs."
         }
       ]
     },
@@ -7012,8 +7032,8 @@
         "version": "1.5.11"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "1.5.11"
       },
@@ -7429,8 +7449,8 @@
         "version": "2022.10.23"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-04",
         "version": "2022.10.23"
       },
@@ -7873,8 +7893,8 @@
         "version": "5.00.22y"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "script",
         "date": "2026-10-05",
         "version": "5.00.22y"
       },
@@ -8055,8 +8075,8 @@
         "version": "0.0.8"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "0.0.8"
       },
@@ -8300,8 +8320,8 @@
         "version": "0.78.4"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "0.78.4"
       },
@@ -8386,8 +8406,8 @@
         "version": "1.0"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.0"
       },
@@ -8623,8 +8643,8 @@
         "version": "2019.08.19"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "2019.08.19"
       },
@@ -8810,8 +8830,8 @@
         "version": "0.2"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "0.2"
       },
@@ -9067,8 +9087,8 @@
         "version": "1.0.0"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.0.0"
       },
@@ -9110,8 +9130,8 @@
         "version": "1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1"
       },
@@ -9153,8 +9173,8 @@
         "version": "0.2"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "0.2"
       },
@@ -9196,8 +9216,8 @@
         "version": "1.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.1"
       },
@@ -9239,8 +9259,8 @@
         "version": "1.0"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.0"
       },
@@ -9626,8 +9646,8 @@
         "version": "1.4.9.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-14",
         "version": "1.4.9.1"
       },
@@ -10070,8 +10090,8 @@
         "version": "0.7"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "0.7"
       },
@@ -10118,8 +10138,8 @@
         "version": "1.10.07.06"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.10.07.06"
       },
@@ -10161,8 +10181,8 @@
         "version": "0.0.5"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "0.0.5"
       },
@@ -10251,8 +10271,8 @@
         "version": "0.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "0.1"
       },
@@ -10388,8 +10408,8 @@
         "version": "1.7.10"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.7.10"
       },
@@ -11011,8 +11031,8 @@
         "version": "1.0"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.0"
       },
@@ -11479,8 +11499,8 @@
         "version": "3.0c"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "3.0c"
       },
@@ -11933,8 +11953,8 @@
         "version": "1.08"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.08"
       },
@@ -11976,8 +11996,8 @@
         "version": "1.08"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.08"
       },
@@ -12019,8 +12039,8 @@
         "version": "1.06"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.06"
       },
@@ -12062,8 +12082,8 @@
         "version": "1.26"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.26"
       },
@@ -12105,8 +12125,8 @@
         "version": "1.02"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.02"
       },
@@ -12427,8 +12447,8 @@
         "version": "1.1.0.4"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.1.0.4"
       },
@@ -12517,8 +12537,8 @@
         "version": "1.0"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.0"
       },
@@ -13426,8 +13446,8 @@
         "version": "4.9.7"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "4.9.7"
       },
@@ -14344,8 +14364,8 @@
         "version": "4.1.4"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "4.1.4"
       },
@@ -14534,8 +14554,8 @@
         "version": "1.0"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.0"
       },
@@ -14957,8 +14977,8 @@
         "version": "0.0.1.20150803234200"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "script",
         "date": "2026-10-05",
         "version": "0.0.1.20150803234200"
       },
@@ -15132,8 +15152,8 @@
         "version": "1.3.4e"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.3.4e"
       },
@@ -15502,8 +15522,8 @@
         "version": "1.2.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "1.2.1"
       },
@@ -17948,8 +17968,8 @@
         "version": "2.2"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "2.2"
       },
@@ -18266,8 +18286,8 @@
         "version": "5.8"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "5.8"
       },
@@ -18468,8 +18488,8 @@
         "version": "2017.35"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "2017.35"
       },
@@ -18610,8 +18630,8 @@
         "version": "2.6.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "2.6.1"
       },
@@ -18653,11 +18673,14 @@
         "version": "1.1.2"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "script",
         "date": "2026-10-05",
         "version": "1.1.2"
       },
+      "tags": [
+        "domain-moved"
+      ],
       "notes": [
         {
           "date": "2026-10-05",
@@ -19064,8 +19087,8 @@
         "version": "0.0.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "0.0.1"
       },
@@ -20571,8 +20594,8 @@
         "version": "0.14.8"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "0.14.8"
       },
@@ -22168,8 +22191,8 @@
         "version": "2.2.0"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "2.2.0"
       },
@@ -22259,8 +22282,8 @@
         "version": "0.6.3"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "0.6.3"
       },
@@ -22962,8 +22985,8 @@
         "version": "0.3.15"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "0.3.15"
       },
@@ -23625,8 +23648,8 @@
         "version": "2.5.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "2.5.1"
       },
@@ -24116,8 +24139,8 @@
         "version": "2.3"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "2.3"
       },
@@ -24289,8 +24312,8 @@
         "version": "1.03"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-05",
         "version": "1.03"
       },
@@ -25057,8 +25080,8 @@
         "version": "1.4"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-13",
         "version": "1.4"
       },
@@ -25325,8 +25348,8 @@
         "version": "0.3.10"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "0.3.10"
       },
@@ -25642,8 +25665,8 @@
         "version": "1.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "1.1"
       },
@@ -25731,8 +25754,8 @@
         "version": "1.0.0"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "1.0.0"
       },
@@ -26160,8 +26183,8 @@
         "version": "0.2"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "0.2"
       },
@@ -26674,8 +26697,8 @@
         "version": "1.01.11"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "1.01.11"
       },
@@ -26848,8 +26871,8 @@
         "version": "1.0.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "1.0.1"
       },
@@ -27293,8 +27316,8 @@
         "version": "1.0 FULL RELEASE"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "1.0 FULL RELEASE"
       },
@@ -27718,8 +27741,8 @@
         "version": "0.65"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "0.65"
       },
@@ -29105,8 +29128,8 @@
         "version": "1.0.0-rc3"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "1.0.0-rc3"
       },
@@ -29717,8 +29740,8 @@
         "version": "1.0"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "1.0"
       },
@@ -30220,11 +30243,14 @@
         "version": "0.1.3"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "script",
         "date": "2026-10-06",
         "version": "0.1.3"
       },
+      "tags": [
+        "domain-moved"
+      ],
       "notes": [
         {
           "date": "2026-10-06",
@@ -30530,8 +30556,8 @@
         "version": "1.8.0"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "1.8.0"
       },
@@ -30746,8 +30772,8 @@
         "version": "1.0"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-13",
         "version": "1.0"
       },
@@ -31381,8 +31407,8 @@
         "version": "0.7"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "0.7"
       },
@@ -31883,8 +31909,8 @@
         "version": "3.04"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "3.04"
       },
@@ -32138,8 +32164,8 @@
         "version": "0.4"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "0.4"
       },
@@ -32336,8 +32362,8 @@
         "version": "0.6.0"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "0.6.0"
       },
@@ -32773,8 +32799,8 @@
         "version": "3.2.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "3.2.1"
       },
@@ -32866,8 +32892,8 @@
         "version": "3.3.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "3.3.1"
       },
@@ -32960,8 +32986,8 @@
         "version": "2.2.0"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "2.2.0"
       },
@@ -33205,8 +33231,8 @@
         "version": "0.21"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "0.21"
       },
@@ -33295,8 +33321,8 @@
         "version": "1.02"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "1.02"
       },
@@ -33387,8 +33413,8 @@
         "version": "3.2"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "3.2"
       },
@@ -33612,16 +33638,24 @@
         "version": "0.11"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
-        "date": "2026-10-06",
+        "status": "fail",
+        "blame": "script",
+        "date": "2026-11-05",
         "version": "0.11"
       },
+      "tags": [
+        "domain-moved"
+      ],
       "notes": [
         {
           "date": "2026-10-06",
           "version": "0.11",
           "text": "http://braains.io/ now redirects to https://indie.fun/play/tag-you-re-a-zombie; the braains.io game page the script targets (`#modd-shop-modal`, `#chat-box`) is gone."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "0.11",
+          "text": "`braains.io` redirects to `https://indie.fun/play/tag-you-re-a-zombie`, which answers with the title \"Tag, you're a ZOMBIE!\", so the game appears to have moved to a host this script's `@match` doesn't cover."
         }
       ]
     },
@@ -33987,8 +34021,8 @@
         "version": "1.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "1.1"
       },
@@ -34163,8 +34197,8 @@
         "version": "0.5"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "0.5"
       },
@@ -34623,8 +34657,8 @@
         "version": "2019.10.26v79"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "2019.10.26v79"
       },
@@ -34986,9 +35020,9 @@
         "version": "1.8.3"
       },
       "test": {
-        "status": "n/a",
-        "reason": "requires-login",
-        "date": "2026-10-13",
+        "status": "fail",
+        "blame": "site-gone",
+        "date": "2026-11-05",
         "version": "1.8.3"
       },
       "notes": [
@@ -34996,6 +35030,11 @@
           "date": "2026-10-13",
           "version": "1.8.3",
           "text": "Not run: every page it matches needs a signed-in account."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.8.3",
+          "text": "Amazon Mechanical Turk is gone: `www.mturk.com` shows \"Mechanical Turk is no longer available\" and says it permanently closed on September 30, 2026. No account can reach the pages this script needs."
         }
       ]
     },
@@ -35167,8 +35206,8 @@
         "version": "1.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-14",
         "version": "1.1"
       },
@@ -35463,8 +35502,8 @@
         "version": "2.7"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "script",
         "date": "2026-10-06",
         "version": "2.7"
       },
@@ -36618,8 +36657,8 @@
         "version": "22.11.13"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-14",
         "version": "22.11.13"
       },
@@ -37055,8 +37094,8 @@
         "version": "1.2.4.3"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "1.2.4.3"
       },
@@ -37282,9 +37321,9 @@
         "version": "2.4"
       },
       "test": {
-        "status": "n/a",
-        "reason": "bot-blocked",
-        "date": "2026-10-06",
+        "status": "fail",
+        "blame": "site-gone",
+        "date": "2026-11-05",
         "version": "2.4"
       },
       "notes": [
@@ -37292,6 +37331,11 @@
           "date": "2026-10-06",
           "version": "2.4",
           "text": "Targets `https://ebonus.gg/users/sign_in` (despite its KissAnime name). ebonus.gg is behind a Cloudflare bot check that stops a headed browser too, and plain `curl` gets no connection. Not run.\n- Script: its first-run data file comes from `cdn.rawgit.com` (now a 301 to jsDelivr), via a synchronous jQuery `$.ajax`."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2.4",
+          "text": "ebonus.gg is gone, rather than behind a bot check: its DNS now points at `8.8.8.8` (Google's DNS server, from both Google and Cloudflare resolvers), https fails the TLS handshake and http times out, in curl and a real browser."
         }
       ]
     },
@@ -37426,8 +37470,8 @@
         "version": "1.0"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "1.0"
       },
@@ -39131,9 +39175,9 @@
         "version": "0.53"
       },
       "test": {
-        "status": "n/a",
-        "reason": "requires-login",
-        "date": "2026-11-04",
+        "status": "fail",
+        "blame": "site-gone",
+        "date": "2026-11-05",
         "version": "0.53"
       },
       "notes": [
@@ -39141,6 +39185,11 @@
           "date": "2026-11-04",
           "version": "0.53",
           "text": "Not run: MTurk qualification pages need a worker account."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "0.53",
+          "text": "Amazon Mechanical Turk is gone: `www.mturk.com` shows \"Mechanical Turk is no longer available\" and says it permanently closed on September 30, 2026. No account can reach the pages this script needs."
         }
       ]
     },
@@ -39217,11 +39266,14 @@
         "version": "1.2"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "script",
         "date": "2026-10-06",
         "version": "1.2"
       },
+      "tags": [
+        "service-dead"
+      ],
       "notes": [
         {
           "date": "2026-10-06",
@@ -39592,9 +39644,9 @@
         "version": "1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "bot-blocked",
-        "date": "2026-10-06",
+        "status": "fail",
+        "blame": "site-gone",
+        "date": "2026-11-05",
         "version": "1"
       },
       "notes": [
@@ -39602,6 +39654,11 @@
           "date": "2026-10-06",
           "version": "1",
           "text": "Targets `https://ebonus.gg/earn-coins/watch`, a signed-in earning page. ebonus.gg is behind a Cloudflare bot check that stops a headed browser too, and plain `curl` gets no connection. Not run.\n- Script: `@grant none` and uses the page's `$`, so it depends on the site still shipping jQuery."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1",
+          "text": "ebonus.gg is gone, rather than behind a bot check: its DNS now points at `8.8.8.8` (Google's DNS server, from both Google and Cloudflare resolvers), https fails the TLS handshake and http times out, in curl and a real browser."
         }
       ]
     },
@@ -40465,11 +40522,14 @@
         "version": "1.02"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "script",
         "date": "2026-10-06",
         "version": "1.02"
       },
+      "tags": [
+        "service-dead"
+      ],
       "notes": [
         {
           "date": "2026-10-06",
@@ -41342,8 +41402,8 @@
         "version": "2019.4.3"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "2019.4.3"
       },
@@ -41475,8 +41535,8 @@
         "version": "1.2.0"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "1.2.0"
       },
@@ -43097,7 +43157,7 @@
       },
       "test": {
         "status": "n/a",
-        "reason": "site-gone",
+        "reason": "requires-login",
         "date": "2026-10-06",
         "version": "0.2"
       },
@@ -43105,7 +43165,7 @@
         {
           "date": "2026-10-06",
           "version": "0.2",
-          "text": "freebitco.in answers with a Cloudflare \"502: Bad gateway\" page (curl and a headless load, 2026-10-06), so there is no `#free_play_form_button` to click.\n- The free roll also needs a freebitco.in account, so it could not be tested even with the site up.\n- Not run against a live page; re-check if the site comes back (and then it is requires-login)."
+          "text": "freebitco.in answers with a Cloudflare \"502: Bad gateway\" page (curl and a headless load, 2026-10-06), so there is no `#free_play_form_button` to click.\n- The free roll also needs a freebitco.in account, so it could not be tested even with the site up.\n- Not run against a live page; re-check with an account if the site comes back."
         }
       ]
     },
@@ -43597,8 +43657,8 @@
         "version": "2.1.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "2.1.1"
       },
@@ -44386,9 +44446,9 @@
         "version": "1.3"
       },
       "test": {
-        "status": "n/a",
-        "reason": "bot-blocked",
-        "date": "2026-10-06",
+        "status": "fail",
+        "blame": "site-gone",
+        "date": "2026-11-05",
         "version": "1.3"
       },
       "notes": [
@@ -44396,6 +44456,11 @@
           "date": "2026-10-06",
           "version": "1.3",
           "text": "Not run: ebonus.gg is unreachable from the test browsers (Cloudflare bot check), and its \"watch fortnite\" earn-coins page needs an account anyway.\n- Script: auto-reloads every 170s and clicks the coin popups to farm site coins."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.3",
+          "text": "ebonus.gg is gone, rather than behind a bot check: its DNS now points at `8.8.8.8` (Google's DNS server, from both Google and Cloudflare resolvers), https fails the TLS handshake and http times out, in curl and a real browser."
         }
       ]
     },
@@ -44841,8 +44906,8 @@
         "version": "0.2"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "0.2"
       },
@@ -45994,8 +46059,8 @@
         "version": "2.042"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "2.042"
       },
@@ -47361,16 +47426,24 @@
         "version": "0.0.9"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
-        "date": "2026-10-07",
+        "status": "fail",
+        "blame": "script",
+        "date": "2026-11-05",
         "version": "0.0.9"
       },
+      "tags": [
+        "domain-moved"
+      ],
       "notes": [
         {
           "date": "2026-10-07",
           "version": "0.0.9",
           "text": "The script's only `@match`, `https://www.majsoul.com/1/`, is now a stub whose inline script sends the browser to `https://www.majsoul.com/`, which answers nginx \"404 Not Found\" (curl and a headless load, 2026-10-06).\n- SourceMonkey started it on `/1/` before the redirect; no errors, and `GameMgr` / `uiscript` (the game globals it patches) never existed.\n- The mod rewrites lobby UI classes to unlock characters and items, which would also need a Mahjong Soul account to see."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "0.0.9",
+          "text": "The game moved rather than closed: `https://game.maj-soul.com/1/` answers with the Mahjong Soul title, on a host this script's `@match` doesn't cover."
         }
       ]
     },
@@ -49063,8 +49136,8 @@
         "version": "3.3.2-b107"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-04",
         "version": "3.3.2-b107"
       },
@@ -49192,8 +49265,8 @@
         "version": "2.8"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-07",
         "version": "2.8"
       },
@@ -49966,8 +50039,8 @@
         "version": "0.1.5"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "0.1.5"
       },
@@ -50221,8 +50294,8 @@
         "version": "1.4.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "1.4.1"
       },
@@ -54316,8 +54389,8 @@
         "version": "1.7.5"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "1.7.5"
       },
@@ -55260,8 +55333,8 @@
         "version": "1.2.3"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "1.2.3"
       },
@@ -60054,8 +60127,8 @@
         "version": "0.1 alpha"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-07",
         "version": "0.1 alpha"
       },
@@ -60651,8 +60724,8 @@
         "version": "1.0"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "1.0"
       },
@@ -60871,8 +60944,8 @@
         "version": "0.2.6.2"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-04",
         "version": "0.2.6.2"
       },
@@ -61260,8 +61333,8 @@
         "version": "1.0"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-04",
         "version": "1.0"
       },
@@ -65125,8 +65198,8 @@
         "version": "0.9.5"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-10",
         "version": "0.9.5"
       },
@@ -66813,9 +66886,8 @@
         "version": "1.4"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
-        "date": "2026-10-03",
+        "status": "inconclusive",
+        "date": "2026-11-05",
         "version": "1.4"
       },
       "notes": [
@@ -66823,6 +66895,11 @@
           "date": "2026-10-03",
           "version": "1.4",
           "text": "`https://megaup.net/` doesn't load: in the shared visible browser the navigation failed to a Chrome error page, and curl gets no connection. `download.megaup.net` only answers with a Cloudflare challenge page, and without a live megaup.net file page there is no download page to reach."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.4",
+          "text": "Re-tested: the earlier site-gone result was wrong or temporary, since `https://megaup.net/` loads again (\"Upload Files - MegaUp\"). There's still no verdict, because no file page was available.\n\n- A made-up file URL (`/zzzzz/test.zip`) shows \"File Not Found\", with no `.download-timer` and no `seconds` global. No real file link was tried.\n- `download.megaup.net` stops the headless browser at a Cloudflare \"Performing security verification\" page, with no `#afterdownload`.\n- On those pages the script throws `seconds is not defined` on megaup.net and reads a missing `#afterdownload` on download.megaup.net. It assumes a file page and doesn't check, so this doesn't show whether it works on one."
         }
       ]
     },
@@ -69307,8 +69384,8 @@
         "version": "0.17"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-04",
         "version": "0.17"
       },
@@ -70434,8 +70511,8 @@
         "version": "2021.08.23.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "2021.08.23.1"
       },
@@ -71044,8 +71121,8 @@
         "version": "0.1 delta"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-07",
         "version": "0.1 delta"
       },
@@ -71824,8 +71901,8 @@
         "version": "3.0"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-10",
         "version": "3.0"
       },
@@ -72569,8 +72646,8 @@
         "version": "1.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-10",
         "version": "1.1"
       },
@@ -76260,8 +76337,8 @@
         "version": "2.6"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "2.6"
       },
@@ -77145,8 +77222,8 @@
         "version": "0.116"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "script",
         "date": "2026-10-02",
         "version": "0.116"
       },
@@ -77154,7 +77231,7 @@
         {
           "date": "2026-10-02",
           "version": "0.116",
-          "text": "Not testable now: the Pahe link chain is broken before any page the script handles.\n\n- pahe.plus is now a bare URL-shortener landing page; Pahe's posts (pahe.ink) link through `oii.la/...` instead.\n- `oii.la` answers with a 301 to `clksz.com/...`, which no `@match` covers, and `clksz.com` fails TLS (`ERR_SSL_PROTOCOL_ERROR` in both the headless and the shared browser; curl gets no response).\n- On pahe.plus itself the script started cleanly in sm-dev (headless) and had nothing to do."
+          "text": "The Pahe link chain is broken before any page the script handles.\n\n- pahe.plus is now a bare URL-shortener landing page; Pahe's posts (pahe.ink) link through `oii.la/...` instead.\n- `oii.la` answers with a 301 to `clksz.com/...`, which no `@match` covers, and `clksz.com` fails TLS (`ERR_SSL_PROTOCOL_ERROR` in both the headless and the shared browser; curl gets no response).\n- On pahe.plus itself the script started cleanly in sm-dev (headless) and had nothing to do."
         }
       ]
     },
@@ -77576,8 +77653,8 @@
         "version": "0.2"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-06",
         "version": "0.2"
       },
@@ -80385,11 +80462,14 @@
         "version": "2.0"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "script",
         "date": "2026-10-07",
         "version": "2.0"
       },
+      "tags": [
+        "domain-moved"
+      ],
       "notes": [
         {
           "date": "2026-10-07",
@@ -82309,11 +82389,14 @@
         "version": "3.0"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "script",
         "date": "2026-10-07",
         "version": "3.0"
       },
+      "tags": [
+        "domain-moved"
+      ],
       "notes": [
         {
           "date": "2026-10-07",
@@ -84459,7 +84542,7 @@
       },
       "test": {
         "status": "fail",
-        "blame": "script",
+        "blame": "site-gone",
         "date": "2026-10-11",
         "version": "1.1.3"
       },
@@ -85766,11 +85849,14 @@
         "version": "0.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "script",
         "date": "2026-10-03",
         "version": "0.1"
       },
+      "tags": [
+        "domain-moved"
+      ],
       "notes": [
         {
           "date": "2026-10-03",
@@ -89973,8 +90059,8 @@
         "version": "2.5"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-11",
         "version": "2.5"
       },
@@ -94549,8 +94635,8 @@
         "version": "2024-01-18"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "site-gone",
         "date": "2026-10-10",
         "version": "2024-01-18"
       },
@@ -94592,11 +94678,14 @@
         "version": "1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "fail",
+        "blame": "script",
         "date": "2026-10-10",
         "version": "1"
       },
+      "tags": [
+        "domain-moved"
+      ],
       "notes": [
         {
           "date": "2026-10-10",
@@ -94888,8 +94977,7 @@
         "version": "2.5"
       },
       "test": {
-        "status": "n/a",
-        "reason": "site-gone",
+        "status": "inconclusive",
         "date": "2026-09-29",
         "version": "2.5"
       },

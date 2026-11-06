@@ -9,7 +9,8 @@
   - Opened as a file:// page, Chrome won't let it fetch, so it asks you to pick
     corpus.json once and remembers the choice (see pickCorpus below).
   - Every link opens in a new tab, except the links between the table and
-    the summary (?summary), which switch views in place (see route below).
+    the summary (?summary), which switch views in place (see route below), and
+    the summary's own links, which set a filter in place.
     Both views share one filter bar, and the links keep its settings.
   - Each script's "Code" button opens this page as a viewer (?view=<id>), which
     reads the downloaded copy (corpus.json's `file`) and shows it as text. A
@@ -37,7 +38,8 @@
 * { box-sizing: border-box; }
 body { margin:0; padding:1.5rem 1rem 4rem; background:var(--bg); color:var(--fg);
        font:14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-h1 { font-size:1.4rem; margin:0 0 .25rem; }
+h1 { font-size:1.4rem; margin:0; }
+.title-row { display:flex; flex-wrap:wrap; align-items:center; gap:.25rem .75rem; margin-bottom:.25rem; }
 .sub { color:var(--muted); margin:0 0 1rem; }
 .controls { display:flex; flex-wrap:wrap; gap:.5rem 1rem; align-items:center; margin-bottom:.75rem; position:sticky; top:0;
             background:var(--bg); padding:.5rem 0; z-index:2; }
@@ -71,6 +73,7 @@ a.button:hover { border-color:var(--muted); }
 .summary-grid table { width:auto; }
 .summary-grid td { padding:.2rem .6rem; }
 .summary-grid td.num { min-width:3.5rem; }
+.summary-grid tr.active td { font-weight:700; }
 .code-links { display:flex; gap:.3rem; margin-top:.15rem; }
 h1 { overflow-wrap:anywhere; }
 #viewer .sub { display:flex; gap:.5rem; align-items:baseline; }
@@ -109,7 +112,10 @@ code { font-size:.9em; background:var(--head); padding:0 .25rem; border-radius:3
 </style>
 </head>
 <body>
-<h1>GreasyFork corpus results</h1>
+<div class="title-row">
+  <h1>GreasyFork corpus results</h1>
+  <a class="button" id="switch-view" href="?summary" target="_self" data-nav hidden></a>
+</div>
 <p class="sub" id="summary">Findings from <code>corpus.json</code>, recorded with <code>record-results.mjs</code>.</p>
 
 <div id="loader" hidden>
@@ -141,7 +147,6 @@ code { font-size:.9em; background:var(--head); padding:0 .25rem; border-radius:3
     <select id="notes-mode" autocomplete="off"><option value="hidden">hidden</option><option value="short" selected>short</option><option value="full">full</option></select></label>
   <button id="reload" title="Read corpus.json again">Reload</button>
   <button id="reset" title="Clear the filters and sorting, and show notes short">Reset</button>
-  <a class="button" id="switch-view" href="?summary" target="_self" data-nav></a>
   <span id="reload-status"></span>
   <span id="count"></span>
 </div>
@@ -424,6 +429,7 @@ const inSummary = () => new URLSearchParams(location.search).has('summary');
 function route() {
   const summary = inSummary();
   $('controls').hidden = false;
+  $('switch-view').hidden = false;
   $('summary-view').hidden = !summary;
   $('view').hidden = summary;
   // Notes only affect the table.
@@ -435,24 +441,36 @@ function route() {
 
 /**
  * One block per filter: each choice it offers, with how many of the filtered
- * scripts it matches, linked to the table with the current filters plus that
+ * scripts it matches, linked to the summary with the current filters plus that
  * choice (it replaces the filter's own setting; "all" clears it).
  */
 function renderSummary() {
-  const line = (label, count, choice, title = '') => '<tr><td><a href="?' + esc(viewParams(false, choice)) + '" target="_self" data-nav'
+  // A line is active when the filter bar is set to its choice, so "all" is active
+  // when that filter isn't set.
+  const isActive = (choice) => Object.entries(choice).every(([id, value]) => $(id).value === value);
+  const line = (label, count, choice, title = '', active = isActive(choice)) => '<tr' + (active ? ' class="active"' : '') + '><td><a href="?' + esc(viewParams(true, choice)) + '" target="_self" data-nav'
     + title + '>' + esc(label) + '</a></td><td class="num">' + count.toLocaleString('en-US') + '</td></tr>';
   const block = (title, lines) => '<section><h2>' + title + '</h2><table>' + lines.join('') + '</table></section>';
   const blocks = [['valid', 'Validation'], ['test', 'Testing'], ['tag', 'Tag']].map(([kind, title]) => {
     let choices = [...$(kind).options].map((o) => ({ value: o.value, label: o.textContent,
       count: shown.filter(({ d }) => matches(kind, o.value, d)).length }));
     // Tags have no natural order: most common first, after "all" and "(any tag)".
-    if (kind === 'tag') choices = [...choices.slice(0, 2), ...choices.slice(2).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))];
+    // By their count in the whole corpus, so a click on a line doesn't move the lines.
+    if (kind === 'tag') {
+      const total = (c) => rows.filter(({ d }) => matches(kind, c.value, d)).length;
+      const totals = new Map(choices.slice(2).map((c) => [c, total(c)]));
+      choices = [...choices.slice(0, 2), ...choices.slice(2).sort((a, b) => totals.get(b) - totals.get(a) || a.label.localeCompare(b.label))];
+    }
     return block(title, choices.map((c) => line(c.label, c.count, { [kind]: c.value }, titleAttr(kind, c.value))));
   });
-  // One line per year, oldest first, linked to the table with Min and Max year both set to it.
+  // One line per year, oldest first, linked with Min and Max year both set to it.
   const years = [...$('minYear').options].map((o) => o.value).filter(Boolean);
+  // All the years in a set range are active, and an open end reaches the last year on that side.
+  const minYear = $('minYear').value;
+  const maxYear = $('maxYear').value;
+  const inRange = (y) => Boolean(minYear || maxYear) && (!minYear || y >= minYear) && (!maxYear || y <= maxYear);
   blocks.push(block('Last update', [line('all', shown.length, { minYear: '', maxYear: '' }),
-    ...years.map((y) => line(y, shown.filter(({ d }) => yearOf(d) === y).length, { minYear: y, maxYear: y }))]));
+    ...years.map((y) => line(y, shown.filter(({ d }) => yearOf(d) === y).length, { minYear: y, maxYear: y }, '', inRange(y)))]));
   $('summary-grid').innerHTML = blocks.join('');
 }
 
@@ -461,13 +479,15 @@ document.addEventListener('click', (event) => {
   // Let the browser have middle-clicks and modified clicks (new tab, new window).
   if (!link || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
   event.preventDefault();
+  const summaryBefore = inSummary();
   try {
     history.pushState(null, '', link.href);
   } catch {
     location.href = link.href;   // Some file:// setups refuse it; load the page instead.
     return;
   }
-  scrollTo(0, 0);
+  // A summary link only changes a filter, so it keeps the reader's place.
+  if (inSummary() !== summaryBefore) scrollTo(0, 0);
   route();
 });
 window.addEventListener('popstate', () => { if (rows.length) route(); });

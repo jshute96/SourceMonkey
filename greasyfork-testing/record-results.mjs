@@ -32,7 +32,7 @@
 //   set ID [options]         record a finding:
 //                              --test pass|fail|inconclusive|n/a
 //                              --reason R   why it's n/a, with --test n/a only (see REASONS)
-//                              --blame B    whose fault a failure is (see BLAMES)
+//                              --blame B    what caused a failure (see BLAMES)
 //                              --note TEXT  markdown; --note-file PATH reads it from a file
 //                              --replace-note N  the note replaces note N (from 1, in the
 //                                           order show lists them) instead of adding one
@@ -97,7 +97,6 @@ const REASONS = [
   'bot-blocked',        // a bot check (captcha, Cloudflare, WAF) we can't get past, headed too
   'unsafe',             // we chose not to run it: it harvests credentials, spams, or drives accounts or money
   'game',               // a game cheat, bot or tool: can't be judged without playing, and might get an account banned
-  'site-gone',          // the target site no longer exists or answers
   'needs-interaction',  // only does something after a manual flow we can't script
   'not-web',            // targets local files, browser pages, or no real site
   'other-browser',      // relies on another browser's features (Firefox-only APIs, old Opera)
@@ -106,6 +105,7 @@ const REASONS = [
 const BLAMES = [
   'sourcemonkey',  // SourceMonkey lacks a feature or has a bug; file it in TODO.md
   'script',        // the script is broken or out of date against the current site
+  'site-gone',     // the target site no longer exists or answers, so the script can't work
   'unknown',
 ];
 
@@ -344,6 +344,7 @@ async function downloadedVersion(opts, id) {
 async function checkFinding(opts) {
   const [id] = opts.positional;
   if (!/^\d+$/.test(id ?? '')) throw new Error('The set command needs a numeric script id');
+  for (const tag of [...opts.tag, ...opts.untag]) refuseGoneTag(tag);
   oneOf(opts.test, TEST_STATUSES, 'test status');
   // Before the value checks, so a free-text reason on a fail says to use the
   // note, rather than listing the n/a reasons.
@@ -410,7 +411,6 @@ async function setFinding(opts) {
   const note = await checkFinding(opts);
   const [id] = opts.positional;
   const fileVersion = opts.version === undefined ? await downloadedVersion(opts, id) : undefined;
-  for (const tag of [...opts.tag, ...opts.untag]) refuseGoneTag(tag);
   const help = opts.tag.length ? readCorpusHelp() : null;
   await updateCorpus(opts.corpus, (corpus) => applyFinding(corpus, opts, { note, fileVersion, help }));
   console.info(`Updated ${id}`);

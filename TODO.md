@@ -309,6 +309,22 @@ gates, or the emitted wrap — the rate is the regression signal.
   parse failure in the corpus was one — see the item under "Injection
   payload" above, which now has a measured rate behind it.
 
+## Corpus downloads — follow-ups
+
+- **Delete a dependency's copy when its link is dead.** `download-scripts.mjs`
+  keeps the copy on disk whenever a download fails. With `--local`, which corpus
+  tests now use, a script whose `@require` has died still looks valid and runs,
+  while a fresh install would fail.
+  - Delete the `@require`, `@resource` or `@icon` copy on a 404 or 410. Keep it
+    on a 403, 429, 5xx or network error, which may pass or be a block.
+  - Files are stored by URL, so a deletion affects all scripts naming that URL.
+    The output should list each one, and they show up at the next `validate`.
+  - Deletion only happens when a file is re-fetched. To find dead links already
+    hiding, run `--force --include requires,resources,icons` once, which
+    re-downloads all the dependency files.
+  - Not urgent: on 2026-11-05, none of the 18 pinned GreasyFork URLs that answer
+    404 or 410 had a copy on disk. Other URLs weren't checked.
+
 ## Corpus test findings — compatibility gaps
 
 Gaps that made corpus scripts fail on their live sites (see

@@ -446,13 +446,14 @@ Beside `listing`, a record can hold:
 
 - **Test statuses:**
   - `pass`: the script does what it promises.
-  - `fail`: it doesn't. `--blame` says whose fault: `sourcemonkey`, `script`
-    (broken or out of date against the site), or `unknown`.
+  - `fail`: it doesn't. `--blame` gives the cause: `sourcemonkey`, `script`
+    (broken or out of date against the site), `site-gone` (the target site no
+    longer exists or answers), or `unknown`.
   - `inconclusive`: we ran it on its target site, but what it acts on never
     showed up (no ad served, the popup never appeared, a redesign not served
     to us), so there's no verdict. The note says what was missing.
   - `n/a`: we couldn't meaningfully try it. `--reason` is one of
-    `requires-login`, `paid`, `geo-blocked`, `bot-blocked`, `site-gone`,
+    `requires-login`, `paid`, `geo-blocked`, `bot-blocked`,
     `needs-interaction`, `not-web`, `other-browser`, `unsafe`, `game`,
     `other`.
   - An `n/a` can also record a script we chose not to run, with a note
@@ -497,13 +498,16 @@ never needs regenerating.
 - Min year and Max year limit the scripts to those last updated on GreasyFork
   in that range; "none" leaves that end open.
 - Summary shows each filter's choices (Validation, Testing, Tag) with how many
-  scripts are in each; tags are listed most common first.
+  scripts are in each; tags are listed most common first, over the whole corpus.
   - It has the same filter bar as the table, and counts only the scripts the
     filters match ("1500 of 2000 scripts").
   - Last update counts the scripts by the year of their last update, oldest
-    first; each year links to the table with Min and Max year set to it.
-  - Each line links to the table with the current filters plus that choice
-    (replacing that filter's own setting).
+    first; clicking a year sets Min and Max year to it.
+  - Clicking a line sets that filter to its choice (replacing that filter's own
+    setting) and stays on the summary. Full results shows the scripts the filters
+    match.
+  - The line for each filter's current setting is bold, which is "all" when
+    that filter isn't set. Last update makes all the years in the range bold.
   - Summary and Full results switch between the two views, keeping the
     filters. They switch in the same tab, so Back and Forward move between
     them; middle-click opens a new tab as usual.

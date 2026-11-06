@@ -215,7 +215,7 @@ Time-box each script to about 10-15 minutes.
 | Status | Means |
 |--------|-------|
 | `pass` | It does what it promises |
-| `fail` | It doesn't; give a blame |
+| `fail` | It doesn't; give a blame. This includes a target site that's gone (blame `site-gone`), though there's nothing to run it on |
 | `inconclusive` | It ran on its target site, but what it acts on never showed up (no ad served, the popup never appeared), so there's no verdict |
 | `n/a` | You didn't or couldn't run it meaningfully; give a reason |
 
@@ -248,8 +248,7 @@ that:
   leads to.
 - `game`: whether they accept the risk to their account, if it's theirs to take.
 
-Reasons nothing they could do would change (`site-gone`, `not-web`) only need
-reporting.
+Reasons nothing they could do would change (`not-web`) only need reporting.
 
 ## No side effects
 
@@ -269,6 +268,13 @@ A `fail` needs a blame:
 - `script`: broken or out of date against the current site, or broken in all
   managers. A `@grant none` (page-world) script blocked by the site's Trusted
   Types is the script's fault: all managers run it there.
+- `site-gone`: the target site no longer exists or answers, so the script can't
+  work for anyone.
+  - All its target sites must be gone, with evidence in the note: no DNS, a
+    parked domain, or a shutdown notice. An outage or error page from one check
+    isn't enough, since it may pass.
+  - A site that moved to a domain the script doesn't match is `script`, since
+    updating the script would fix it.
 - `unknown`: can't tell. Say what's missing.
 
 Blame follows the outcome, not the intent:

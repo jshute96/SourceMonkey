@@ -75,6 +75,8 @@ for (const [what, bad, message] of [
   ['a non-numeric id', { id: 's1', status: 'pass' }, /"id" field must be a numeric script id/],
   ['an unlisted script', { id: '99', status: 'pass' }, /No script 99/],
   ['an undefined tag', { id: '2', status: 'pass', tags: ['nope'] }, /isn't defined/],
+  ['the derived script-gone tag', { id: '2', status: 'pass', tags: ['script-gone'] }, /comes from listing\.gone_as_of/],
+  ['site-gone as an n/a reason', { id: '2', status: 'n/a', reason: 'site-gone', note: 'x' }, /Unknown reason/],
 ]) {
   test(`${what} refuses the whole file`, async () => {
     const before = await readFile(corpusFile, 'utf8');

@@ -43,7 +43,7 @@ read or import.
 | `safety.verdict` | `ok`, `questionable` or `unsafe`; see [safety](testing-scripts.md#2-read-it-and-assess-safety-if-untrusted) |
 | `safety.findings` | See below |
 | `status` | `pass`, `fail`, `inconclusive` or `n/a` |
-| `blame` | Only with `fail`: the manager under test (`sourcemonkey`, `tampermonkey` or `violentmonkey`), `script` or `unknown` |
+| `blame` | Only with `fail`: the manager under test (`sourcemonkey`, `tampermonkey` or `violentmonkey`), `script`, `site-gone` or `unknown` |
 | `reason` | Only with `n/a`: why, as one of the words below |
 | `summary` | See below |
 | `note` | See below. Needed unless the status is `pass` |
@@ -66,7 +66,6 @@ The three text fields answer different questions:
 - `unsafe`: not run, because the safety verdict was `unsafe`.
 - `game`: a game cheat, bot or tool, which can't be judged without playing and
   might get an account banned.
-- `site-gone`: the target site no longer exists or answers.
 - `needs-interaction`: only does something after a manual flow you can't script.
 - `not-web`: targets local files, browser pages, or no real site.
 - `other-browser`: relies on another browser's features.

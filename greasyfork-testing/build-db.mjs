@@ -134,7 +134,7 @@ CREATE TABLE ScriptResults (
   valid_date    TEXT,
   test_status   TEXT,  -- pass | fail | inconclusive | n/a; NULL when never tried
   test_reason   TEXT,  -- why a test was n/a
-  test_blame    TEXT,  -- whose fault a failure is
+  test_blame    TEXT,  -- what caused a failure
   test_date     TEXT,
   test_version  TEXT
 );

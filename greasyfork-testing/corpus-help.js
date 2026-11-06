@@ -25,7 +25,6 @@ var CORPUS_HELP = {
     "geo-blocked": "The site refuses our region.",
     "bot-blocked": "A bot check (a captcha, Cloudflare or a firewall) stopped the test browser, visible ones too.",
     "unsafe": "Not run on purpose: from its description or code it harvests credentials or private data, spams, or drives accounts or money.",
-    "site-gone": "The target site no longer exists or answers.",
     "needs-interaction": "Only does something after a manual flow we can't script.",
     "not-web": "Targets local files, browser pages, or no real site.",
     "other-browser": "Relies on a non-Chrome browser's features (Firefox-only APIs, old Opera).",
@@ -33,6 +32,7 @@ var CORPUS_HELP = {
     "other": "Another reason. The notes explain.",
     "sourcemonkey": "SourceMonkey's fault: a missing feature or a bug.",
     "script": "The script's fault: broken, or out of date against the current site.",
+    "site-gone": "The target site no longer exists or answers, so the script can't work.",
     "unknown": "Not yet known whose fault it is."
   },
   "tag": {
