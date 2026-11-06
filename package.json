@@ -1,6 +1,6 @@
 {
   "name": "sourcemonkey",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "A userscript manager Chrome extension that treats userscripts like source code, built and managed with real developer tools, including coding agents",
   "license": "MIT",
   "homepage": "https://github.com/jshute96/SourceMonkey",
