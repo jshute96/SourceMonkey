@@ -81,6 +81,30 @@ export function builtinTagEntry(help, tag) {
   return pattern && Object.hasOwn(help.tag, pattern) ? pattern : null;
 }
 
+/** GreasyFork's JSON API, which isn't behind its bot check. */
+export const API_ORIGIN = 'https://api.greasyfork.org';
+
+/** A script's API row as a corpus `listing` block, laid out as README.md describes. */
+export function listingBlock(row) {
+  const page = new URL(row.url);
+  // Existing records use the English page; the API gives the unlocalized one.
+  if (!/^\/[a-zA-Z-]+\/scripts\//.test(page.pathname)) page.pathname = `/en${page.pathname}`;
+  return {
+    name: row.name,
+    info_page: page.toString(),
+    script_url: row.code_url,
+    total_installs: row.total_installs ?? null,
+    daily_installs: row.daily_installs ?? null,
+    ratings_good: row.good_ratings ?? null,
+    ratings_ok: row.ok_ratings ?? null,
+    ratings_bad: row.bad_ratings ?? null,
+    created_date: row.created_at?.slice(0, 10) ?? null,
+    updated_date: row.code_updated_at?.slice(0, 10) ?? null,
+    // en-CA formats as YYYY-MM-DD, in local time.
+    as_of: new Date().toLocaleDateString('en-CA'),
+  };
+}
+
 /** The label for GreasyFork's top-installs listing, ranked by installs when last read. */
 export const TOP_LABEL = 'top2000';
 
@@ -116,6 +140,15 @@ export function listingRows(corpus) {
     .filter(([, record]) => record.listing)
     .map(([id, record]) => ({ id: Number(id), ...record.listing, rank: labelRank(record, TOP_LABEL) ?? null }))
     .sort((a, b) => rank(a) - rank(b) || a.id - b.id);
+}
+
+/**
+ * Whether a record's test ran on a different version than the copy downloaded
+ * now. `record.version` is what `validate` last read from that copy.
+ * results.html has its own copy of this check, since a page can't import this.
+ */
+export function hasStaleTest(record) {
+  return Boolean(record.test?.version && record.version && record.test.version !== record.version);
 }
 
 // Record keys in the order they are written, so a record reads the same way
@@ -240,6 +273,37 @@ function clampSegment(segment) {
   // readable rather than guaranteed-decodable; the hash keeps it unique.
   const prefix = segment.slice(0, keep).replace(/%[0-9a-fA-F]?$/, '');
   return prefix + marker + suffix;
+}
+
+/**
+ * Anything on `greasyfork.org` itself sits behind the same Cloudflare bot check
+ * as its HTML pages and always 403s us, but `update.greasyfork.org` serves
+ * the same bytes unprotected:
+ *   /scripts/<id>-<slug>/code/<File>.js → /scripts/<id>/<File>.js
+ *   /libraries/<name>/<ver>/<File>.js   → same path, mirror host
+ * Fetch from the mirror; the file is still stored under the URL the script
+ * actually references, so a lookup by @require URL finds it. A deleted script
+ * answers 410 on the mirror and is recorded as a dead link.
+ *
+ * The mirror ignores `?version=<n>` and serves the latest code, so a pinned URL
+ * becomes the mirror's own pinned form, /scripts/<id>/<n>/<File>.js.
+ */
+export function mirrorUrl(url) {
+  const pinned = (id, file) => {
+    const [name, query = ''] = file.split('?');
+    const version = /(?:^|&)version=(\d+)/.exec(query)?.[1];
+    return `https://update.greasyfork.org/scripts/${id}/${version ? `${version}/${name}` : file}`;
+  };
+  // The optional `/<locale>` segment is what you get from copying a URL out of
+  // the browser (greasyfork.org/en/scripts/…). Without it those 403 and, worse,
+  // earn host strikes that take the mirrorable URLs down with them.
+  const locale = '(?:/[a-z]{2}(?:-[A-Za-z]{2,4})?)?';
+  const code = new RegExp(`^https://greasyfork\\.org${locale}/scripts/(\\d+)[^/]*/code/(.+)$`).exec(url);
+  if (code) return pinned(code[1], code[2]);
+  const onMirror = /^https:\/\/update\.greasyfork\.org\/scripts\/(\d+)\/([^/]+\?.*\bversion=\d.*)$/.exec(url);
+  if (onMirror) return pinned(onMirror[1], onMirror[2]);
+  const library = new RegExp(`^https://greasyfork\\.org${locale}/(libraries/.+)$`).exec(url);
+  return library ? `https://update.greasyfork.org/${library[1]}` : null;
 }
 
 /**

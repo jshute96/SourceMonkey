@@ -21,9 +21,9 @@ skill in [`.claude/skills/corpus-testing/`](../.claude/skills/corpus-testing/SKI
 
 | File | In git | Contents | Written by | Read by |
 |------|:------:|----------|------------|---------|
-| `corpus.json` | yes | One record per script (its GreasyFork `listing` stats, plus test findings), and the hand-added tag definitions | `add-scripts.mjs` (listings), `record-results.mjs` (findings, tag definitions) | every tool |
+| `corpus.json` | yes | One record per script (its GreasyFork `listing` stats, plus test findings), and the hand-added tag definitions | `add-scripts.mjs` and `download-scripts.mjs --update` (listings), `record-results.mjs` (findings, tag definitions) | every tool |
 | `files/` | no | Downloaded scripts and their `@require` / `@resource` files (~270 MB) | `download-scripts.mjs` | `build-db.mjs`, `record-results.mjs` |
-| `download-report.json` | no | Last download run's counts and failures | `download-scripts.mjs` | you |
+| `download-report.json` | no | Last download run's counts and failures, and what `--update` changed | `download-scripts.mjs` | you |
 | `corpus.db` | no | SQLite database of listings, parsed headers, dependencies and findings; rebuilt from scratch each run | `build-db.mjs` | `render-analysis.mjs`, ad hoc SQL |
 | `analysis.sql` | yes | The queries behind `analysis.html` | you | `render-analysis.mjs` |
 | `analysis.html` | yes | Corpus statistics report | `render-analysis.mjs` | you |
@@ -38,7 +38,7 @@ from it.
 | Script | Reads | Writes | Does |
 |--------|-------|--------|------|
 | `add-scripts.mjs` | GreasyFork, `corpus.json` | `corpus.json` listings | [Finds script IDs](#adding-scripts) from IDs, URLs or pages, and compares or adds them |
-| `download-scripts.mjs` | `corpus.json` | `files/`, `download-report.json` | [Downloads](#downloading-the-scripts-themselves) each script, then its dependencies |
+| `download-scripts.mjs` | `corpus.json`, GreasyFork | `files/`, `download-report.json`, `corpus.json` listings (`--update`) | [Downloads](#downloading-the-scripts-themselves) each script, then its dependencies, or [updates](#updating-the-scripts) those that changed |
 | `record-results.mjs` | `corpus.json`, `files/` | `corpus.json` findings | **Records individual facts about one script at a time** (a test result, tag or note) as you learn them. [More](#test-results). Its `validate` subcommand is the one bulk step |
 | `build-db.mjs` | `corpus.json`, `files/` | `corpus.db` | [Loads everything into SQLite](#analysis-database) |
 | `validate-corpus.mjs` | `files/` | stdout, `--json` file | [Validates](#validating-the-corpus) every downloaded script offline; `record-results.mjs validate` runs it |
@@ -166,10 +166,13 @@ integer script ID. Each record's `listing` block holds:
 | `ratings_good` / `ratings_ok` / `ratings_bad` | `good_ratings` / `ok_ratings` / `bad_ratings` |
 | `created_date` | `created_at`, as YYYY-MM-DD |
 | `updated_date` | `code_updated_at`, as YYYY-MM-DD |
+| `as_of` | The date these were read, as YYYY-MM-DD. Absent on listings older than this field |
 
 Notes:
 
 - Counts are JSON numbers, or `null` when GreasyFork gives none.
+- A listing is read when its script is added and when `--update` downloads it,
+  so counts in different records can be from different dates.
 - GreasyFork listings show English-language results only by default. To
   include the rest, add `&filter_locale=0` to the listing URL.
 
@@ -186,9 +189,9 @@ URL, `@resource` URL and `@icon` URL found in the metadata blocks of what it jus
 downloaded. For icons, that's the one icon SourceMonkey would show.
 
 Options: `--corpus`, `--root`, `--count`, `--delay MS` (default 200),
-`--concurrency N` (default 1), `--force`, `--include PARTS` (a comma-separated list
-of `scripts`, `requires`, `resources`, `icons`, or `all`; default `all`),
-`--max-broken-hosts N` (default 5).
+`--concurrency N` (default 1), `--force`, `--update`, `--include PARTS` (a
+comma-separated list of `scripts`, `requires`, `resources`, `icons`, or `all`;
+default `all`), `--max-broken-hosts N` (default 5).
 
 `requires`, `resources` and `icons` are found in the headers of scripts already on
 disk, so `--include icons` alone needs the scripts from an earlier run.
@@ -200,6 +203,47 @@ own metadata-block parser from `dist/userscript-header.js`.
 tools import the compiled copy, and a stale `dist/` mis-parses silently: it once
 cost 26 scripts whose metadata blocks start with a UTF-8 BOM, which showed up
 only as an oddly long "no metadata block" list.
+
+### Updating the scripts
+
+```sh
+pnpm run build
+node greasyfork-testing/download-scripts.mjs --update
+node greasyfork-testing/record-results.mjs validate
+node greasyfork-testing/record-results.mjs list --stale        # the tests to repeat
+```
+
+`--update` asks the GreasyFork API about every script, and acts on those that
+changed:
+
+- **Scripts:** it downloads one whose version or last-update date differs. A copy
+  with no version to compare goes by the date alone.
+- **Listing:** it refreshes the `listing` block of each script it downloads, so
+  the counts match the copy and `as_of` gives their date. It keeps two fields:
+  - `script_url`: GreasyFork finds the code by ID whatever name the URL has, so
+    a renamed script keeps its path in `files/`.
+  - `name`: for one script, the API gives the author's language, where the
+    listings that added it gave the English name.
+- **Dependencies:** it re-downloads the `@require`, `@resource` and `@icon` files
+  of those scripts, even at a URL it already has, to match a fresh install.
+  - Files are stored by URL, so this also changes them for other scripts naming
+    the same URL. The output lists each one that changed.
+  - Dependencies of the other scripts stay as they are, so a test only goes
+    stale when its script changes. To refresh them all, use
+    `--force --include requires,resources,icons`.
+- **Failures:** a failed download keeps the copy on disk.
+  - A script GreasyFork no longer has is listed as gone, and its record and
+    copy stay.
+  - A script that failed keeps its old `listing`, so the next run tries it again.
+  - So does a script naming a file that failed with a 5xx, a network error or a
+    host cutoff, since those may pass. A 4xx or 403 doesn't hold back the listing,
+    since it would likely repeat on every run.
+  - A same-day upload is the exception to these retries: the version on disk is
+    new by then and the date matches, so the next run reads it as current.
+
+The output and `download-report.json` list what changed, including scripts
+changed with no new `@version`. `results.html` and `--stale` compare versions
+only, so they don't flag those scripts.
 
 ### On-disk layout
 
@@ -228,6 +272,7 @@ unprotected, so those fetch from the mirror:
 
 - `/scripts/<id>-<slug>/code/<File>.js` → `update…/scripts/<id>/<File>.js`
 - `/libraries/<name>/<ver>/<File>.js` → same path on the mirror host
+- `?version=<n>`, which the mirror ignores → `update…/scripts/<id>/<n>/<File>.js`
 
 The file is still stored under the URL the script references, so looking it up
 by `@require` URL works. A deleted script answers 410 on the mirror and is
@@ -415,7 +460,8 @@ Beside `listing`, a record can hold:
 - `fail`, `inconclusive` and `n/a` require a note saying what happened.
 - `date` defaults to today, and `version` to the `@version` of the copy in
   `files/` now (which can be newer than the one `validate` last recorded).
-  `results.html` flags a test whose `version` is older than the current copy.
+  `results.html` and `list --stale` flag a test whose `version` differs from the
+  current copy's.
 - A `sourcemonkey` failure should also get an entry in `TODO.md` (or a fix).
 
 ### Viewing results

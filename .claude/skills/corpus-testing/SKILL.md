@@ -170,6 +170,9 @@ For each one:
 - A script can fail for a second reason once the first is gone. Record that
   as its own failure, with its own blame.
 
-Results also go stale when the downloaded copy changes: `results.html`
-flags a test whose `version` differs from the copy in `files/`. Re-test
-those the same way.
+Results also go stale when the downloaded copy changes, as after
+`download-scripts.mjs --update` and `validate` (README: "Updating the
+scripts"). `list --stale` and `results.html` flag a test whose `version`
+differs from the copy in `files/`. Re-test those the same way, leaving out
+the "Not run:" `n/a` records: `list --stale --test pass`, then `--test fail`
+and `--test inconclusive`.

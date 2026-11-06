@@ -272,6 +272,7 @@ function rowData(id, record) {
   const sites = record.sites ?? [];
   const test = record.test;
   // A result recorded against a different copy than the one downloaded now.
+  // The same check as hasStaleTest in corpus.mjs, which a page can't import.
   const stale = test?.version && record.version && test.version !== record.version ? test.version : '';
   const entries = noteEntries(record);
   const noteText = entries.map((e) => (e.label ? e.label + ': ' : '') + e.text).join(' ');

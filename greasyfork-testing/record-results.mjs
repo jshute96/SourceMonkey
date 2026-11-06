@@ -18,6 +18,8 @@
 //   show ID                  print one record
 //   list [filters]           one line per script, in top2000 rank order, then by ID:
 //                              --untested  no test result yet
+//                              --stale     tested on a different version than the copy
+//                                          downloaded now, as of the last `validate`
 //                              --test S    test status S
 //                              --valid S   validation status S
 //                              --tag T     carries tag T (either source; repeatable)
@@ -73,7 +75,7 @@ import { resolveGrants } from '../dist/gm-api-catalog.js';
 import { describeDiagnostic } from '../dist/diagnostic-location.js';
 import { matchPatternProblem } from '../dist/url-match.js';
 import {
-  CORPUS_JSON, builtinTagEntry, checkRoot, findExisting, isBuiltinTag, labelRank, listingRows, patternTarget, printHelp, readCorpus,
+  CORPUS_JSON, builtinTagEntry, checkRoot, findExisting, hasStaleTest, isBuiltinTag, labelRank, listingRows, patternTarget, printHelp, readCorpus,
   readCorpusHelp, updateCorpus,
 } from './corpus.mjs';
 
@@ -118,7 +120,7 @@ const COMMAND_OPTIONS = {
   'validate': ['date'],
   'import-validation': ['base', 'date'],
   'show': [],
-  'list': ['untested', 'test', 'valid', 'tag', 'label', 'limit'],
+  'list': ['untested', 'stale', 'test', 'valid', 'tag', 'label', 'limit'],
   'set': ['test', 'reason', 'blame', 'note', 'note-file', 'replace-note', 'remove-note', 'tag', 'untag', 'version', 'date'],
   'import-results': ['date'],
   'tag': [],
@@ -135,7 +137,7 @@ function parseArgs(command, argv) {
     untag: [],
   };
   const repeatable = new Set(['tag', 'untag']);
-  const flags = new Set(['untested']);
+  const flags = new Set(['untested', 'stale']);
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (!arg.startsWith('--')) { opts.positional.push(arg); continue; }
@@ -539,14 +541,17 @@ async function list(opts) {
     if (shown >= limit) break;
     const record = corpus.scripts[row.id];
     if (opts.untested && record.test) continue;
+    if (opts.stale && !hasStaleTest(record)) continue;
     if (opts.test && record.test?.status !== opts.test) continue;
     if (opts.valid && record.valid?.status !== opts.valid) continue;
     // `--tag` is repeatable (for `set`); here every named tag must be present.
     const tags = [...(record.tags ?? []), ...(record.valid?.tags ?? [])];
     if (!opts.tag.every((tag) => tags.includes(tag))) continue;
     if (shown === 0) console.log(listLine(['ID', 'INSTALLS', 'VALID', 'TESTED', 'NAME']));
+    // With --stale, the name also shows which versions differ.
+    const name = opts.stale ? `${row.name}  (tested v${record.test.version}, now v${record.version})` : row.name;
     console.log(listLine([
-      String(row.id), String(row.total_installs ?? ''), record.valid?.status ?? '-', record.test?.status ?? '-', row.name,
+      String(row.id), String(row.total_installs ?? ''), record.valid?.status ?? '-', record.test?.status ?? '-', name,
     ]));
     shown++;
   }

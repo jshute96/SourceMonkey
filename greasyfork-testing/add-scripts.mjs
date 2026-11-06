@@ -53,9 +53,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { CORPUS_JSON, labelRank, printHelp, readCorpus, setLabel, updateCorpus } from './corpus.mjs';
-
-const API_ORIGIN = 'https://api.greasyfork.org';
+import { API_ORIGIN, CORPUS_JSON, labelRank, listingBlock, printHelp, readCorpus, setLabel, updateCorpus } from './corpus.mjs';
 
 // Pause between API requests, to be polite.
 const DELAY_MS = 200;
@@ -251,25 +249,6 @@ async function collectIds(opts, known) {
     ids.push(...found);
   }
   return [...new Set(ids)];
-}
-
-/** A script's API row as a corpus `listing` block, laid out as README.md describes. */
-function listingBlock(row) {
-  const page = new URL(row.url);
-  // Existing records use the English page; the API gives the unlocalized one.
-  if (!/^\/[a-zA-Z-]+\/scripts\//.test(page.pathname)) page.pathname = `/en${page.pathname}`;
-  return {
-    name: row.name,
-    info_page: page.toString(),
-    script_url: row.code_url,
-    total_installs: row.total_installs ?? null,
-    daily_installs: row.daily_installs ?? null,
-    ratings_good: row.good_ratings ?? null,
-    ratings_ok: row.ok_ratings ?? null,
-    ratings_bad: row.bad_ratings ?? null,
-    created_date: row.created_at?.slice(0, 10) ?? null,
-    updated_date: row.code_updated_at?.slice(0, 10) ?? null,
-  };
 }
 
 /**

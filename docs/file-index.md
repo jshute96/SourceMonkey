@@ -501,6 +501,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/parse-location.test.mjs` | Unit tests for probe selection and line mapping, driven by positions Chromium really reported |
 | `tests/unit/parse-check-node.test.mjs` | Unit tests for the Node parse checker: verdict, both probes' positions, and the two probe-selection routes |
 | `tests/unit/playwright-chromium.test.mjs` | The message for a missing Playwright Chromium build: the build wanted, those installed, the fix |
+| `tests/unit/download-update.test.mjs` | Drives `download-scripts.mjs --update` and `list --stale` as subprocesses against a local stand-in for GreasyFork |
 | `tests/unit/validate-corpus.test.mjs` | Drives the corpus validator as a subprocess over a hand-built offline dependency tree |
 | `tests/unit/diagnostic-location.test.mjs` | Unit tests for the diagnostic label + validator, especially what they do with a partial location |
 | `tests/unit/file-loader.test.mjs` | Unit tests for ref resolution (schemes, relative paths, traversal) and for the reason each resolve/fetch failure reports |
@@ -686,10 +687,10 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 | `greasyfork-testing/serve-results.mjs` | Serves `results.html`, `corpus.json`, `corpus-help.js` and the downloaded scripts on localhost, for the results page |
 | `greasyfork-testing/corpus-help.js` | One-sentence descriptions of corpus test statuses, reasons and built-in tags, the tooltips in `results.html` and the Greasy Fork userscript |
 | `greasyfork-testing/results.html` | Static page that reads `corpus.json` into a sortable, filterable table of findings, a summary of counts, and a code viewer |
-| `greasyfork-testing/download-scripts.mjs` | CLI that downloads the corpus's userscripts plus their `@require` / `@resource` dependencies into a URL-shaped tree |
+| `greasyfork-testing/download-scripts.mjs` | CLI that downloads or updates the corpus's userscripts plus their `@require` / `@resource` dependencies in a URL-shaped tree |
 | `greasyfork-testing/files/` | Downloaded userscripts, `@require` libraries, and `@resource` assets at `<host>/<url-path>`, plus `_location.json` (gitignored) |
-| `greasyfork-testing/download-report.json` | Last download run's counts, dead links, and failed URLs (gitignored) |
-| `greasyfork-testing/corpus.mjs` | Shared corpus helpers: locked atomic `corpus.json` updates, labels, URL↔on-disk-path mapping, `@match` parsing |
+| `greasyfork-testing/download-report.json` | Last download run's counts, dead links, failed URLs, and what `--update` changed (gitignored) |
+| `greasyfork-testing/corpus.mjs` | Shared corpus helpers: locked atomic `corpus.json` updates, labels, listing blocks, mirror URLs, URL↔on-disk-path mapping, `@match` parsing |
 | `greasyfork-testing/build-db.mjs` | Loads `corpus.json` and downloaded files into `corpus.db` (scripts, headers, match patterns, deps, findings) |
 | `greasyfork-testing/corpus.db` | SQLite database built from the corpus by `build-db.mjs` (gitignored) |
 | `greasyfork-testing/analysis.sql` | Annotated analysis queries over `corpus.db`, one `-- @report` block per table |
