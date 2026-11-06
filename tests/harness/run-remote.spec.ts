@@ -16,6 +16,7 @@ import { existsSync, readFileSync, readlinkSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { stuckTabs } from '../../lib/harness/stuck-tabs.js';
 import { launchDebugBrowser, openTab } from '../fixtures/debug-browser.js';
 import { test, expect } from '../fixtures/harness.js';
 
@@ -626,6 +627,10 @@ test('several stuck tabs, a dialog and a busy page, are all named, over a ws:// 
     await expect.poll(() => evaluate('location.href')).toBe(busy);
     await evaluate('setTimeout(() => { for (;;); }, 100)');
     ws.close();
+    // Once the loop is running: Chrome holds back a timer in a background
+    // tab, so the dialog's tab opening first could delay the loop past
+    // the run's first look at the tabs.
+    await expect.poll(async () => (await stuckTabs(`http://127.0.0.1:${setup.port}`)).map((t) => t.url), { timeout: 15_000 }).toContain(busy);
     const dialog = `${fixtureServer.baseUrl}/other.html`;
     await openForeignDialogTab(setup.port, dialog);
 

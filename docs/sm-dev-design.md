@@ -1991,6 +1991,12 @@ The run commands that drive and read a tab's page (`click`, `type`,
       (another connection set it). So when the detach changed the
       page's size, the size from before the first call is set back on
       a new lasting session.
+    - Chrome clears the override a moment after the detach. A page at
+      another size than before the first call gets up to two seconds
+      to change, so the comparison doesn't read the old size.
+    - A page gets a second to report its size, so a dialog or busy
+      script can't hold up the reset. Without an answer, the size stays
+      as it is.
   - It's apart from the run's own session, but emulation is the page's
     to share: an override a call sets wins over the run's.
   - With `--frame`, a session of its own for the command, detached

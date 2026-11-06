@@ -162,7 +162,13 @@ export class Violentmonkey implements ExternalManager {
   }
 
   private async options(): Promise<{ isApplied?: boolean; blacklist?: string }> {
-    return await this.call<{ isApplied?: boolean; blacklist?: string }>('GetAllOptions') ?? {};
+    // From 2.50, the answer is `[version, options]`.
+    const answer = await this.call<unknown>('GetAllOptions');
+    const options = Array.isArray(answer) ? answer[1] : answer;
+    if (options === null || typeof options !== 'object') {
+      throw new Error(`${this.label} ${this.version}'s GetAllOptions call gave no options, which sm-dev reads. This version may have changed it.`);
+    }
+    return options as { isApplied?: boolean; blacklist?: string };
   }
 }
 

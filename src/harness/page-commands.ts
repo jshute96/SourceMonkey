@@ -840,13 +840,20 @@ export function keyName(typed: string): string {
 
 // Each tab's lasting session for `cdp` calls, until `cdp --reset` or
 // the tab closes, with the page's size before its first call.
-const tabSessions = new WeakMap<Page, { session: CDPSession; size?: PageSize }>();
+// `restored`: `dropTabSession` set `size` on it as an override, which
+// the next detach clears.
+const tabSessions = new WeakMap<Page, { session: CDPSession; size?: PageSize; restored?: boolean }>();
 
 interface PageSize { width: number; height: number; deviceScaleFactor: number }
 
+// How long a page gets to report its size.
+const PAGE_SIZE_WAIT_MS = 1000;
+
 // The page's size as its window shows it, for `dropTabSession` to put back.
 function pageSize(page: Page): Promise<PageSize | undefined> {
-  return page.evaluate(() => ({ width: innerWidth, height: innerHeight, deviceScaleFactor: devicePixelRatio })).catch(() => undefined);
+  // A page showing a dialog or busy in a script doesn't answer, and
+  // `cdp --reset` must still end, to leave `accept` free to run.
+  return withTimeout(page.evaluate(() => ({ width: innerWidth, height: innerHeight, deviceScaleFactor: devicePixelRatio })), PAGE_SIZE_WAIT_MS).catch(() => undefined);
 }
 
 /**
@@ -869,6 +876,8 @@ async function tabSession(page: Page): Promise<CDPSession> {
 // open, it doesn't until the dialog is answered, which the run's next
 // command (`accept`) must be free to do.
 const DETACH_WAIT_MS = 1000;
+// How long it waits after that for a size override to come undone.
+const SIZE_SETTLE_MS = 2000;
 
 /**
  * Detaches `page`'s lasting `cdp` session, which undoes what its calls
@@ -878,8 +887,9 @@ const DETACH_WAIT_MS = 1000;
  * browser's launch set included (set from another connection, which
  * the run can't ask to set it again). So a page left at another size
  * than before the first call gets that size back, on a new lasting
- * session. Only when the detach changed it: a window a person resized
- * meanwhile keeps its size.
+ * session. Only when the detach changed it, so a window a person resized
+ * while no override was set keeps its size. One resized under an override
+ * goes back to the earlier size.
  */
 async function dropTabSession(page: Page): Promise<boolean> {
   const held = tabSessions.get(page);
@@ -888,12 +898,20 @@ async function dropTabSession(page: Page): Promise<boolean> {
   const attached = await pageSize(page);
   await Promise.race([held.session.detach().catch(() => undefined), new Promise<void>((r) => setTimeout(r, DETACH_WAIT_MS).unref())]);
   const before = held.size;
-  const now = await pageSize(page);
   const differs = (a?: PageSize, b?: PageSize): boolean => !!a && !!b && (a.width !== b.width || a.height !== b.height);
+  let now = await pageSize(page);
+  // Chrome finishes undoing an override a moment after the detach, so
+  // a page with an override known to be set gets time to change.
+  const overridden = held.restored === true || differs(attached, before);
+  const deadline = Date.now() + SIZE_SETTLE_MS;
+  while (overridden && now && !differs(now, attached) && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 50));
+    now = await pageSize(page);
+  }
   if (before && differs(now, attached) && differs(now, before)) {
     const session = await tabSession(page);
     await session.send('Emulation.setDeviceMetricsOverride', { ...before, mobile: false }).catch(() => undefined);
-    tabSessions.set(page, { session, size: before });
+    tabSessions.set(page, { session, size: before, restored: true });
   }
   return true;
 }

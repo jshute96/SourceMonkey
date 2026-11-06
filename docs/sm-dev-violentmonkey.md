@@ -48,9 +48,9 @@ manager about as well as under SourceMonkey (SM).
 - Calls start once the page has finished loading. A call made while
   its own scripts start can get its answer wrapped (`[result]`), as
   VM's pages get theirs.
-- Tried against VM 2.49.0. A message VM doesn't know gets no answer,
-  and the send fails; sm-dev turns that into an error naming the call
-  and the VM version.
+- Tried against VM 2.49.0 and 2.50.0. A message VM doesn't know gets no
+  answer, and the send fails; sm-dev turns that into an error naming the
+  call and the VM version.
 
 ### The calls
 
@@ -62,7 +62,7 @@ manager about as well as under SourceMonkey (SM).
 | Enable, disable | `UpdateScriptInfo {id, config: {enabled: 0 or 1}}` | |
 | Uninstall | `MarkRemoved {id, removed: true}` | To VM's recycle bin, from which it can be restored |
 | Remove for good | `RemoveScripts [ids]` | Only scripts in the recycle bin, so `MarkRemoved` comes first |
-| Read settings | `GetAllOptions` | `isApplied`, `blacklist` |
+| Read settings | `GetAllOptions` | `isApplied`, `blacklist`. From 2.50, the answer is `[version, options]` |
 | All scripts on or off | `SetOptions {isApplied}` | VM's own on/off switch, which leaves the extension on |
 | Scripts on `file://` pages | `SetOptions {blacklist}` | Without its `file://*/*` line |
 | Scripts that ran on a tab | `PopupShown` to the tab, then `InitPopup` | Only for the tab showing in its window. Later; see [Future and alternate work](#future-and-alternate-work) |
@@ -195,7 +195,7 @@ manager about as well as under SourceMonkey (SM).
   send its background, found in VM's source (open source, on GitHub).
 - They have kept their names across the versions the e2e driver has
   used (2.48.0, 2.49.0), but VM can rename or reshape them in any
-  release.
+  release. `GetAllOptions` changed its answer's form in 2.50.0.
 - So sm-dev names the call that failed and the VM version when one
   breaks, and the backend keeps them in one file.
 - If they break too often, see
@@ -206,7 +206,7 @@ manager about as well as under SourceMonkey (SM).
 Everything here can change in a VM release without notice. `Checked`
 says whether the version check below tries it.
 
-Where VM defines these (links are to v2.49.0, the version tried):
+Where VM defines these (links are to v2.49.0):
 
 - [`background/index.js`](https://github.com/violentmonkey/violentmonkey/blob/v2.49.0/src/background/index.js): `handleCommandMessage`,
   which dispatches the `{cmd, data}` messages.

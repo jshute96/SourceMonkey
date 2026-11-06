@@ -313,6 +313,8 @@ export interface StoredScriptLike {
     message: string;
     location?: DiagnosticLocationLike;
   }[];
+  // The `@resource`s that wouldn't load (`ResourceProblem`, src/external-files.ts).
+  resourceProblems?: { name: string; ref: string; url?: string; detail: string }[];
   requires?: {
     ref: string;
     url: string;

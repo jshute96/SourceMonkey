@@ -276,6 +276,11 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await size()).toEqual([375, 600]);
   await run('cdp --reset');
   await expect.poll(size).toEqual(before);
+  // Resetting the session that restored the size restores it again.
+  await run('cdp --reset');
+  await expect.poll(size).toEqual(before);
+  await new Promise((r) => setTimeout(r, 500));
+  expect(await size()).toEqual(before);
   await run('cdp --reset');
   // A call cut off by the page loading a new document succeeds; a later
   // call's own failure still fails, the navigation being over by then.
@@ -461,6 +466,21 @@ test('of multiple matches, click, hover, type and screenshot take the first visi
   // A page still loading may not have it yet, and says so.
   await page.evaluate(() => { document.open(); document.write('<title>x</title>'); });
   expect(await run('click .b')).toEqual([`[sm-dev] No element matches .b yet, since the page is still loading (${page.url()}). Use \`wait selector .b\` to wait for it.`]);
+});
+
+test('cdp --reset ends while the page is busy in a script', async ({ page, fixtureServer, host, attachment, loadScript }) => {
+  const script = await loadScript({ relativePath: 'idle.user.js', meta: { name: 'Idle', match: ['*://*/target.html'], grant: ['none'] }, body: '' });
+  await page.goto(`${fixtureServer.baseUrl}/target.html`);
+  const lines: string[] = [];
+  const tabs = [{ n: 1, page, link: attachment }];
+  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(plainLine(l)), stop: () => undefined };
+  await runConsoleCommand('cdp Emulation.setDeviceMetricsOverride {"width": 375, "height": 600, "deviceScaleFactor": 1, "mobile": false}', ctx);
+  await page.evaluate(() => { setTimeout(() => { const end = Date.now() + 8000; while (Date.now() < end); }, 0); });
+  lines.length = 0;
+  const started = Date.now();
+  await runConsoleCommand('cdp --reset', ctx);
+  expect(Date.now() - started).toBeLessThan(6000);
+  expect(lines[0]).toContain('Dropped the CDP session');
 });
 
 test('an Escape that leaves the page fullscreen says how to exit', async ({ page, fixtureServer, host, attachment, loadScript }) => {
