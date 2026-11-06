@@ -529,6 +529,34 @@ The next items came from the 2026-10-31 batch (the `top-rated` and
     survives into the download request. Otherwise, fetch in the worker
     and save the bytes, at least when forbidden headers are given.
 
+The next items came from re-testing newer script versions, checked with
+`sm-dev --manager tm` and `--manager vm` on YouTube (2026-11-05).
+
+- **`GM_addElement` throws for a script's `textContent` under Trusted
+  Types** (`gm-addelement-trusted-types`: 537017).
+  - In a page-world script, `GM_addElement(parent, 'script', {textContent})`
+    throws "This document requires 'TrustedScript' assignment".
+    `addElement` in `src/wrapper-gm-runtime.js` sets `el.textContent` in
+    the page world, before `insertNode` hands the element to the bridge.
+  - TM and VM insert the same element with no error. A copy that adds its
+    own `trustedTypes` default policy works under SourceMonkey.
+  - Possible fix, untried: set the text from the bridge, in the isolated
+    world, along with the insert. Check first that the page's Trusted
+    Types don't apply there. Our own policy may not work, since a site's
+    CSP can limit policy names.
+- **`document.head` is null for a `document-start` script on a fresh
+  load** (`dom-at-start`: 440613).
+  - `document.head.appendChild(...)` at the start of its setup throws, and
+    none of its changes apply. A `reload` in the same tab starts late
+    enough to have a `<head>`.
+  - TM ran it through on 3 loads of 3, and VM on 1 of 1. A copy using
+    `document.head || document.documentElement` works under SourceMonkey.
+  - Running at the true start is deliberate (see "`document-start` that
+    really runs first"), so waiting for `<head>` would give up what
+    scripts that hook the page need. Only worth revisiting if more scripts
+    show this: the other `dom-at-start` failures are blamed on the script,
+    though they may not all have been compared across managers.
+
 ## Cross-manager coverage
 
 - **VM doesn't inject into `file://` pages in the test profile**, so

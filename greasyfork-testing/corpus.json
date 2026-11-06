@@ -1,5 +1,6 @@
 {
   "tags": {
+    "ad-skip-click-ignored": "Skips YouTube ads with element.click(), which YouTube's skip button ignores though a real click works, in every manager",
     "anti-tamper": "The site detects the script's changes to built-ins (comparing Object.prototype with its own clean about:blank iframes, say) and stops working, in every manager",
     "beforescriptexecute": "Relies on Firefox's beforescriptexecute event, which Chrome never fires",
     "chrome-rejected-match": "A @match that SourceMonkey's checks accept but Chrome refuses (a malformed port, say), so Chrome rejects the whole registration and the script never runs, where Tampermonkey skips just that line",
@@ -8,11 +9,13 @@
     "dead-asset": "Loads an image, stylesheet or other asset from a URL that's gone (often an expired Discord attachment link), so its visible effect is missing in every manager",
     "dom-at-start": "Uses document.head or document.body at top level under @run-at document-start, before they exist; SourceMonkey runs at the true start, and Tampermonkey sometimes runs late enough to get away with it",
     "domain-moved": "Matches only a domain the site has left (like discordapp.com, now discord.com), so it never runs on the real pages",
+    "gm-addelement-trusted-types": "Uses GM_addElement to insert a script with textContent where the site enforces Trusted Types; SourceMonkey's GM_addElement throws, where Tampermonkey and Violentmonkey insert it",
     "gm-info-options": "Reads GM_info.script.options, which Tampermonkey provides and SourceMonkey doesn't",
     "gm-reassign": "Assigns to a granted GM_* name (GM_xmlhttpRequest = GM.xmlHttpRequest). Works in the page world since c2dbb1f; still throws under @inject-into content, where SourceMonkey declares those names const",
     "grant-by-group": "Calls a GM API it didn't grant whose group it did grant (GM.listValues with only GM_getValue), which Tampermonkey provides for the whole group and SourceMonkey doesn't",
     "grant-none-override": "Declares @grant none alongside other @grant lines, so in every manager it gets no GM APIs and throws on its first GM_* call",
     "http-only-match": "Matches only http:// on a site that now redirects to https, so it never runs on the real page in any manager",
+    "lang-path-redirect": "The site now redirects to a language-prefixed path (like /en/video/) that the script's @match doesn't cover, so it stops running right after the first load, in every manager",
     "manager-gated": "Refuses to run unless GM_info names a specific manager or version",
     "menu-no-callback": "Calls GM_registerMenuCommand with only a name (to show a divider like \"==== START ====\"), which Tampermonkey accepts without throwing and SourceMonkey rejects",
     "missed-dcl": "Does all its setup in a DOMContentLoaded listener while running at the default @run-at, after that event, so it never sets up in any manager",
@@ -2712,14 +2715,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-02",
-        "version": "2026.3"
+        "date": "2026-11-05",
+        "version": "2026.4.3"
       },
       "notes": [
         {
           "date": "2026-10-02",
           "version": "2026.3",
           "text": "Opened `thepiratebay.org/search.php?q=ubuntu` (headless):\n- The script redirected to `/browse.php`, replaced the page with its Bootstrap dark GUI (\"The Pirate Bay Cleaner\" title, navbar, category menu) and listed Recent Torrents from apibay.org, and stored its default settings.\n- Typing \"ubuntu\" in its search box and pressing Enter listed matching torrents (first: \"Ubuntu 22.04 LTS\"). No errors in the logs."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2026.4.3",
+          "text": "Re-tested v2026.4.3: still passes (headless). Opening `search.php?q=ubuntu` redirected to `/browse.php`, where it replaced the page with its Bootstrap dark GUI and listed Recent Torrents from apibay.org, and it stored its default settings. Searching \"ubuntu\" in its search box listed 100 rows (first: \"Ubuntu 22.04 LTS\"). No errors in the logs. No torrent was opened.\n- Not checked: the IMDb tooltip this version changed."
         }
       ]
     },
@@ -2863,16 +2871,20 @@
         "version": "2.4.1"
       },
       "test": {
-        "status": "fail",
-        "blame": "script",
-        "date": "2026-09-29",
-        "version": "2.3.8"
+        "status": "pass",
+        "date": "2026-11-05",
+        "version": "2.4.1"
       },
       "notes": [
         {
           "date": "2026-09-29",
           "version": "2.3.8",
           "text": "- Bing (headless), block list seeded as `|python.org:t|wikipedia.org:t|`, query 'python programming language': of 10 results only the 2 whose cite line is a bare host (www.python.org, docs.python.org) were collapsed to a block notice. The other 3 python.org and 2 wikipedia.org results stayed visible.\n- Script: Bing now shows cites as `https://en.wikipedia.org › wiki › ...`; the script takes `split('/')[2]` so the parsed host is `en.wikipedia.org › wiki › Python_(...)` and never matches.\n- Google (visible browser): result links are now `/goto?url=...` and titles are `a > h3`, so the script finds no host for any result (21 results tagged ghhresult, 0 with ghhhost, nothing hidden).\n- DuckDuckGo showed no results to the headless browser, not tested.\n- SourceMonkey: GM storage, menu command and UI worked: clicking the notice then Unblock on Bing removed python.org, GM_setValue hideyhosts = `|wikipedia.org:t|`."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2.4.1",
+          "text": "Re-tested v2.4.1: now passes, since it reads Google's new `/goto?url=` result links from their cite text. Block list seeded as `|python.org:t|wikipedia.org:t|`, query 'python programming language', in a visible Google Chrome with a new profile (headless and headed Chromium get captchas from these sites):\n- Google: 3 of 8 results collapsed to block notices (en.wikipedia.org and 2 www.python.org). The other 5 stayed visible with hosts parsed correctly.\n- DuckDuckGo: all 5 results from python.org and wikipedia.org collapsed. The other 5 stayed.\n- Startpage: 3 of 10 collapsed (www.python.org twice, en.wikipedia.org).\n- Clicking a notice then Unblock on Google set GM_setValue hideyhosts = `|python.org:t|`.\n- Script: Bing (headless) is still partly broken, as in v2.3.8. Only the 2 of 5 matching results whose cite is a bare host collapsed (www.python.org, docs.python.org). Cites like `https://en.wikipedia.org › wiki › ...` parse to the host `en.wikipedia.org › wiki › Python_(...)`, which never matches."
         }
       ]
     },
@@ -3324,14 +3336,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-03",
-        "version": "1.7.4.8"
+        "date": "2026-11-05",
+        "version": "1.7.5.1"
       },
       "notes": [
         {
           "date": "2026-10-03",
           "version": "1.7.4.8",
           "text": "Every host check is off by default, so the run seeded `Check_pixeldrain_dot_com_links` and `Check_drive_dot_google_dot_com_links` as true. A test page (served with `--from-saved` at `https://example.org/links.html`) had two made-up pixeldrain links and one made-up Google Drive link.\n- With autocheck on, the script sent a `GM_xmlhttpRequest` per link (each got 404). It marked all three `adead_link` and registered its Configuration and Check Links menu commands.\n- Only dead links were checked, since no known-live link was at hand. The request-and-match path that would mark a live link is the same one."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.7.5.1",
+          "text": "Re-tested v1.7.5.1: still passes, by the same check as before. `Check_pixeldrain_dot_com_links` and `Check_drive_dot_google_dot_com_links` seeded true, on a test page served with `--from-saved` at `https://example.org/links.html` with two made-up pixeldrain links and one made-up Google Drive link.\n- With autocheck on, it sent a `GM_xmlhttpRequest` per link (pixeldrain 404 twice, Drive 400) and gave all three links the `adead_link` class.\n- It registered its Configuration and Check Links menu commands. No errors.\n- As before, only dead links were checked, since no known-live link was at hand."
         }
       ]
     },
@@ -4480,14 +4497,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-03",
-        "version": "2026.06.01"
+        "date": "2026-11-05",
+        "version": "2026.08.18"
       },
       "notes": [
         {
           "date": "2026-10-03",
           "version": "2026.06.01",
           "text": "On a watch page (`jNQXAC9IVRw`, headless) the SaveTube bar appears under the player with a format menu (\"Low Definition MP4\", DASH video and audio streams, Page Link).\n- The script's `saver.videoList` holds 8 entries; a ranged fetch of each from the page returns 206 for the DASH video/audio streams.\n- The muxed \"Low Definition MP4\" URL returns 403, which looks like YouTube restricting that stream rather than a manager issue.\n- Script: logs \"Refused to set unsafe header User-Agent\" from its own page-world XHR; harmless."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2026.08.18",
+          "text": "Re-tested v2026.08.18: still passes. On `watch?v=jNQXAC9IVRw` (headless) the SaveTube bar appears at the bottom with a format menu.\n- `saver.videoList` holds 10 entries (Low Definition MP4, DASH video and audio, M3U8, Page Link). A ranged fetch of each from the page returns 206, and 200 for the M3U8. The muxed \"Low Definition MP4\" that returned 403 in the last test now returns 206.\n- Script: still logs \"Refused to set unsafe header User-Agent\" from its own page-world XHR; harmless.\n- Only YouTube was tried. Nothing was saved."
         }
       ]
     },
@@ -4535,14 +4557,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
-        "version": "2026.06.01"
+        "date": "2026-11-05",
+        "version": "2026.08.31"
       },
       "notes": [
         {
           "date": "2026-09-29",
           "version": "2026.06.01",
           "text": "- Page: YouTube watch page (jNQXAC9IVRw), sm-dev headless.\n- Script: replaced YouTube's player with its own panel (ViewTube logo, a format menu listing Low Definition MP4 and DASH video/audio variants, play/fullscreen buttons) and the video thumbnail.\n- Clicking the thumbnail created `video#vtVideo` with a googlevideo.com source; 3 s later it was playing (currentTime 3.5, readyState 4, no error).\n- Only YouTube was tried, not Dailymotion, Vimeo or IMDb."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2026.08.31",
+          "text": "Re-tested v2026.08.31: still passes. On `watch?v=jNQXAC9IVRw` (headless):\n- The script replaced YouTube's player with its panel, a format list of 10 entries and the thumbnail.\n- Clicking the thumbnail created `video#vtVideo` with a googlevideo.com source; 3 s later it was playing (currentTime 3.2, readyState 4, no error).\n- No script errors in `logs`. Only YouTube was tried, not Dailymotion, Vimeo or IMDb."
         }
       ]
     },
@@ -11325,14 +11352,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
-        "version": "1.14.24.1"
+        "date": "2026-11-05",
+        "version": "1.14.24.2"
       },
       "notes": [
         {
           "date": "2026-09-29",
           "version": "1.14.24.1",
           "text": "Tested with sm-dev (headless temp browser) on 4chan /g/.\n- `boards.4chan.org/g/`: started at document-start, stored its board config and archive list (GM_setValue), fetched a YouTube oEmbed title via GM_xmlhttpRequest (200). `<html>` got the `fourchan-x` classes and the `#header-bar`; 15 threads shown.\n- Thread page (44 posts): 42 backlinks added, thread updater (`#updater`, counting down) and thread watcher present.\n- Hovered the first reply quotelink: the quote preview `#qp` appeared with the quoted post's content."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.14.24.2",
+          "text": "Re-tested v1.14.24.2: still passes, in a headless temp browser on 4chan /g/.\n- Board page: `fourchan-x` classes on `<html>`, `#header-bar`, 15 threads. It stored its board config and fetched the archive list through GM_xmlhttpRequest (200).\n- Thread page (102 posts): 80 backlinks, `#updater` counting down, thread watcher present.\n- Hovered the first reply quotelink: the quote preview `#qp` appeared with the quoted post."
         }
       ]
     },
@@ -14805,14 +14837,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
-        "version": "3.6.8"
+        "date": "2026-11-05",
+        "version": "3.6.8.2"
       },
       "notes": [
         {
           "date": "2026-09-29",
           "version": "3.6.8",
           "text": "- Seeded `blacklistTags = [\"*Fluff*\"]` via `--values`; temp headless browser; gm4-polyfill @require.\n- Tag works listing (Sherlock (BBC TV 2010)): \"Bookmarks\" and \"Blacklist\" menus added to the nav; the 3 blurbs with Fluff tags got `data-stblbm-visibility=\"hide\"` with reasons (e.g. \"Tag: Domestic Fluff - Tag: Fluff and Smut\"), summaries hidden.\n- Work page (/works/93535881): \"Full Screen\" link and style panel added; picked colors=dark and Save: `styling` stored via GM.setValue, #workskin background became rgb(51,51,51), text rgb(225,225,225).\n- First run showed the \"Whitelist added\" GM.notification; \"Settings\" menu command registered.\n- The first load hit a Cloudflare 525 error page (no AO3 nav), where the script threw on a missing `#header ul.primary.navigation`; fine on reload.\n- sm-dev: the reported stack line numbers (453, 484) are offset from the script's own lines (318, 349), apparently counting the @require."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "3.6.8.2",
+          "text": "Re-tested v3.6.8.2: still passes, but only on saved copies of the pages, since the live site refused every browser this session.\n- Live: https://archiveofourown.org/ returned HTTP 418, title \"Request temporarily denied\", body \"The archive is down for maintenance\", to headless, `--headed`, a visible Google Chrome with an empty profile, and `curl`, over about 10 minutes. Can't tell whether that's real maintenance or a block of this address. On that page the script threw on the missing `#header ul.primary.navigation`, as it did on a Cloudflare error page in the earlier test.\n- Saved copies from the Wayback Machine (a 2025 tag listing, and work 161294 from 2025-08), `--from-saved --offline`, so the 2025 markup was tested and not today's. `blacklistTags` seeded as the JSON string `\"[\\\"*Fluff*\\\"]\"`, which is how the script stores it.\n- Tag listing (Zutara Fluff Exchange 2020): \"Bookmarks\" and \"Blacklist\" menus added to the nav; all 11 blurbs got `data-stblbm-visibility=\"hide\"`. A second listing with no Fluff tags hid none. \"Settings\" menu command registered.\n- Work page: \"Full Screen\" link and style panel added; picked colors=dark and Save: `styling` stored via GM.setValue, #workskin background became rgb(51,51,51), text rgb(225,225,225)."
         }
       ]
     },
@@ -16552,8 +16589,8 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-01",
-        "version": "2026.08.01.1"
+        "date": "2026-11-05",
+        "version": "2026.10.03.1"
       },
       "notes": [
         {
@@ -16565,6 +16602,11 @@
           "date": "2026-10-01",
           "version": "2026.08.01.1",
           "text": "Re-tested after #27 (GM_xmlhttpRequest responses have readyState 4): now passes.\n- Bing (headless), 'python programming language': the icon request loaded (`_remoteicons_` stored, 42K chars), and the Baidu / Google switch buttons (`gb-button`) appear beside the search box.\n- Result links are direct (python.org, wikipedia.org); a `--noscript` tab has `bing.com/ck/a?...` redirects.\n- No errors in `logs`.\n- Tag kept: the script's onload still checks `response.readyState !== 4`, so it passes only because of the fix."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2026.10.03.1",
+          "text": "Re-tested v2026.10.03.1: still passes. On Bing (headless), 'python programming language':\n- The icon request loaded (`_remoteicons_` stored, 42910 chars), and the Baidu and Google switch buttons (`gb-button`) show beside the search box in a screenshot.\n- All 10 result links are direct (python.org, wikipedia.org). All 10 in a `--noscript` tab are `bing.com/ck/a?...` redirects.\n- No errors in `logs`. The onload handlers still check `response.readyState !== 4`, so this relies on SourceMonkey's readyState 4."
         }
       ]
     },
@@ -16648,14 +16690,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
-        "version": "6.19"
+        "date": "2026-11-05",
+        "version": "6.20"
       },
       "notes": [
         {
           "date": "2026-09-29",
           "version": "6.19",
           "text": "- Page: https://www.youtube.com/results?search_query=me+at+the+zoo, headless temp browser (sm-dev), signed out.\n- Signed-out YouTube shows no watch-progress bars (none appeared even after playing a video to 94%), so one watched bar was simulated: a `.ytThumbnailOverlayProgressBarHostWatchedProgressBarSegment` with width 100% added to the 2nd result's thumbnail.\n- Script: its 3 masthead buttons render. Toggle click 1: GM value `YTHWV_STATE_search = \"dimmed\"`, that result got `YT-HWV-WATCHED-DIMMED` (opacity 0.3). Click 2: `\"hidden\"`, result `display: none`, the other 8 still shown. Settings button opens the GM_config frame.\n- The subscriptions page it mainly targets needs a login and wasn't tried."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "6.20",
+          "text": "Re-tested v6.20: still passes, signed out on the search page. A simulated watched bar (`.ytThumbnailOverlayProgressBarHostWatchedProgressBarSegment`, width 100%) was added to the 2nd result, since signed-out YouTube shows none.\n- Masthead buttons render. Click 1: `YTHWV_STATE_search = \"dimmed\"`, result opacity 0.3. Click 2: `\"hidden\"`, result `display: none`, the other 13 still shown.\n- Shorts toggle stored `YTHWV_STATE_SHORTS_search = \"dimmed\"`. Settings opened the GM_config frame (950x542). No errors.\n\nThe subscriptions page needs a login and wasn't tried."
         }
       ]
     },
@@ -17218,15 +17265,24 @@
         "version": "113"
       },
       "test": {
-        "status": "pass",
-        "date": "2026-10-02",
-        "version": "112"
+        "status": "fail",
+        "blame": "script",
+        "date": "2026-11-05",
+        "version": "113"
       },
+      "tags": [
+        "sends-browsing-data"
+      ],
       "notes": [
         {
           "date": "2026-10-02",
           "version": "112",
           "text": "Tested in the real extension (`--extension`) in the shared visible browser, since metacritic.com answers headless Chrome and sm-dev's Node requests with a Cloudflare challenge (403).\n\n- On IMDb `title/tt1375666` (Inception), after accepting its privacy notice, the box `#mcdiv123` showed metacritic.com/movie/inception: Metascore 74 (42 critic reviews) and user score 8.8.\n- Script: on a Bandcamp album (Carrie & Lowell) it shows nothing: Metacritic's search API returns 0 results for music (`mcoTypeId=4`), while movies (`mcoTypeId=2`) still work."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "113",
+          "text": "Re-tested v113: now fails. On IMDb `title/tt1375666` (Inception) in a visible Google Chrome with a new profile (headed Chromium got IMDb's \"Let's confirm you are human\"), with the script's terms accepted by seeding `gdpr: true`:\n- The script found the Metacritic link and fetched metacritic.com/movie/inception (200), but the box shows only `ShowMetacriticRatings: Error occured in extractHoverFromFullPage()`, with no scores. It logs `Error parsing HTML: TypeError: Cannot read properties of null (reading 'remove')` and `Cutting failed`.\n- Script: the parser calls `doc.querySelector('.user-score').remove()`. The movie, TV and game pages all have 0 `.user-score`, `.product-hero__scores` and `.reviews-overview__details`, in the script's fetched copy and in a `--noscript` tab of the movie page. That tab does show the real score (Metascore 74), so the site is up and has changed its markup.\n- SourceMonkey: no issue. All 4 requests succeeded, with no permission prompts.\n- Tag added: `sends-browsing-data`. It POSTed `m=imdb.com/title/tt1375666/&a=https://www.metacritic.com/movie/inception` to `met.acritic.workers.dev/r.php`. The script discloses this in `@antifeature tracking` and a consent prompt shown before it does anything."
         }
       ]
     },
@@ -19046,14 +19102,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-10",
-        "version": "1.2.2"
+        "date": "2026-11-05",
+        "version": "1.2.4"
       },
       "notes": [
         {
           "date": "2026-10-10",
           "version": "1.2.2",
           "text": "On community.wanikani.com topic pages, level-60 avatar flairs turn gold.\n- `/t/userscript-wanikani-open-framework/28549`: 3 `.avatar-flair-level-60-lifetime` flairs get the gold `linear-gradient(45deg, rgb(242, 215, 12) ...)` background and color `rgb(223, 170, 11)`; a `--noscript` tab of the same page shows background `none`, color `rgb(0, 0, 0)`.\n- The burned-item styling on www.wanikani.com item and level pages needs an account (burned status is per user), so it wasn't checked."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.2.4",
+          "text": "Re-tested v1.2.4: still passes. On community.wanikani.com, `/t/userscript-wanikani-open-framework/28549` (now redirects to `/t/installing-wanikani-open-framework/28549`): 3 `.avatar-flair-level-60-lifetime` flairs get the gold `linear-gradient(45deg, rgb(242, 215, 12) ...)` background and color `rgb(223, 170, 11)`; a `--noscript` tab of the same page shows background `none`, color `rgb(0, 0, 0)`.\n- On www.wanikani.com the style was added (`--color-burned` reads `#fbc550`). The burned-item styling itself needs an account (burned status is per user), so it wasn't checked."
         }
       ]
     },
@@ -26514,14 +26575,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
-        "version": "2026.2.6.1"
+        "date": "2026-11-05",
+        "version": "2026.9.29.1"
       },
       "notes": [
         {
           "date": "2026-09-29",
           "version": "2026.2.6.1",
           "text": "On Wikipedia \"Elephant\", the \"Open Gallery\" menu command opened its viewer with all 39 page images, full-size versions and sizes fetched via `GM_xmlhttpRequest`, arrow keys stepping through them. The first run also opened its guide page in a new tab (`GM_openInTab`), as intended. The hover float bar on images did not appear in a quick try (not pursued)."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2026.9.29.1",
+          "text": "Re-tested v2026.9.29.1: still passes, on Wikipedia \"Elephant\" in a headless temp browser.\n- The \"Open Gallery\" menu command opened the viewer with 38 images, its sizes and full versions requested with `GM_xmlhttpRequest` (all 200), and ArrowRight stepped from 1 / 38 to 3 / 38.\n- The main view showed Wikipedia's 250px thumbnails (`250 x 375`, `naturalWidth` 250), not larger versions. The earlier note reports full-size versions; not pursued. Wikipedia now serves images from `thumb.wikimedia.org`, which may be why.\n- The first run opened `pv.hoothin.com/first-run` in a new tab, as before."
         }
       ]
     },
@@ -29699,14 +29765,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
-        "version": "0.10.5"
+        "date": "2026-11-05",
+        "version": "0.10.6"
       },
       "notes": [
         {
           "date": "2026-09-29",
           "version": "0.10.5",
           "text": "Tested on https://www.ptt.cc/bbs/PC_Shopping/M.1790656305.A.642.html (article with 40 imgur links).\n- Script: replaced PTT's embeds with 41 `.ptt-imgur-fix` blocks (40 imgur + 1 i.verb.tw); a `--noscript` control tab had 1 `.richcontent` and no imgur embeds.\n- Script: lazy loading works; the top image loaded from i.imgur.com with `referrerpolicy=no-referrer` (1110x1474), and scrolling halfway marked more targets `lazy-load-end` (2 to 4).\n- Menu command \"PTT Imgur Fix - Configure\" registered. Not tested: albums (off by default), term.ptt.cc."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "0.10.6",
+          "text": "Re-tested v0.10.6: still passes, on the same article (40 imgur links), in a headless temp browser.\n- Script: 41 `.ptt-imgur-fix` blocks; a `--noscript` control tab had 0 of them and 1 `.richcontent`.\n- The top image loaded from i.imgur.com with `referrerpolicy=no-referrer` (1110 wide). Scrolling halfway took `lazy-load-end` from 2 to 4.\n- Menu command \"PTT Imgur Fix - Configure\" registered. Not tested: albums (off by default), term.ptt.cc."
         }
       ]
     },
@@ -30108,8 +30179,8 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-12",
-        "version": "2026.06.09.00"
+        "date": "2026-11-05",
+        "version": "2026.10.28.00"
       },
       "notes": [
         {
@@ -30121,6 +30192,11 @@
           "date": "2026-10-12",
           "version": "2026.06.09.00",
           "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the top frame no longer throws `SDK_INITIALIZED is not defined`. The \"WME Utils - Bootstrap\" require got past its `await SDK_INITIALIZED` and logged `WME SDK initialized (SDK v0 on WME v2.370-...)`, after WazeWrap initialized, with no errors in 5 s more. The features still need a login."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2026.10.28.00",
+          "text": "Re-tested v2026.10.28.00: still passes. On the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, headless temp browser), WME v2.378.\n- It logged `WMEPH: Initializing SDK and categories...`, WazeWrap initialized, and the Bootstrap require logged `WME SDK initialized`, with no errors in 5 s more, in any frame.\n- The features still need a login."
         }
       ]
     },
@@ -31508,14 +31584,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
-        "version": "1.4.72"
+        "date": "2026-11-05",
+        "version": "1.4.75"
       },
       "notes": [
         {
           "date": "2026-09-29",
           "version": "1.4.72",
           "text": "Pages: youtube.com/watch?v=jNQXAC9IVRw, then youtube.com/results?search_query=me+at+the+zoo (headless temp browser, sm-dev).\n- Script: visiting the watch page stored `watchedVideos` with entry jNQXAC9IVRw (GM_setValue).\n- Script: on the search results, the `ytd-video-renderer` for that video got class `watched` with the green background (rgb(204, 238, 204)); the style sheet was inserted via a Trusted Types policy without errors.\n- Menu \"Display History Statistics\" opened an alert reporting 1 entry.\n- Not tested: Backup (download) and Restore (file picker) menus."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.4.75",
+          "text": "Re-tested v1.4.75: still passes. Visiting `jNQXAC9IVRw` stored `watchedVideos` with that entry. On the search results its `ytd-video-renderer` got class `watched` with the green background (rgb(204, 238, 204)). Menu \"Display History Statistics\" opened an alert reporting 1 entry. No errors.\n\nNot tested: Backup and Restore menus."
         }
       ]
     },
@@ -32419,8 +32500,8 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-11",
-        "version": "3.8.7"
+        "date": "2026-11-05",
+        "version": "3.9.0"
       },
       "notes": [
         {
@@ -32432,6 +32513,11 @@
           "date": "2026-10-11",
           "version": "3.8.7",
           "text": "Re-tested after f3d2c5c (`GM` not frozen): now passes, unchanged copy. On `https://www.pixiv.net/tags/landscape` (temp browser, logged out): \"Preview enable succeed!\", 40 thumbnails tagged `pp-control`. After closing its welcome overlay (`#pps-close`), hovering one opened `.pp-main` (1018x573) with the `i.pximg.net` `..._p0_master1200.jpg` image (1200 wide). Keeping `gm-frozen`: GM_config's storage polyfill still relies on it."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "3.9.0",
+          "text": "Re-tested v3.9.0: still passes. On `https://www.pixiv.net/tags/landscape` (temp browser, logged out): \"Preview enable succeed!\", 41 `[illustId]` thumbnails. After closing its welcome overlay (`#pps-close`), hovering one opened `.pp-main` (1018x696) showing `i.pximg.net/..._p0_master1200.jpg` (1200 wide, loaded). No errors."
         }
       ]
     },
@@ -35560,14 +35646,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-02",
-        "version": "13.2.x GA"
+        "date": "2026-11-05",
+        "version": "13.3 GA"
       },
       "notes": [
         {
           "date": "2026-10-02",
           "version": "13.2.x GA",
           "text": "On a watch page (`watch?v=0e3GPea1Tyg`, which has SponsorBlock segments):\n- The floating button appears at the right; clicking it shows the menu with Download 1 to 6. Download 1 opened a tab at `https://y2mate.stream/convert/?videoId=0e3GPea1Tyg` (that site didn't load; third-party, not judged).\n- SponsorBlock: seeking to 862s, inside the sponsor segment 861.1-869.8, jumped to 869.86 within 2s.\n- The ad-hiding style elements were added. No ad played in the headless profile, so ad skipping wasn't seen. No script errors in `logs`."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "13.3 GA",
+          "text": "Re-tested v13.3 GA: still passes. On `watch?v=0e3GPea1Tyg`:\n- The floating button is there; clicking it shows the menu with Download 1 to 6.\n- SponsorBlock: 11 segments loaded; seeking to 862, inside the sponsor segment 861.1-869.8, jumped to 869.857 within 2s.\n- The ad-hiding style elements were added. No ad played, so ad skipping wasn't seen. No script errors in `logs`.\n- Script: Download 1 opens `y2mate.stream/convert/?videoId=...` as before, but that now redirects through `filter.explorads.com` and `live.onlidex.com` to `midnightmanga.com`, an unrelated site, not a downloader. Downloads 2, 4 and 5 point at unrelated-looking domains (`caregiverjobs.co.za`, `fashionmaya.pl`, `lefroidnormand.fr`); these weren't opened."
         }
       ]
     },
@@ -36552,8 +36643,8 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-12",
-        "version": "3.3.1"
+        "date": "2026-11-05",
+        "version": "4.0.1"
       },
       "notes": [
         {
@@ -36565,6 +36656,11 @@
           "date": "2026-10-12",
           "version": "3.3.1",
           "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the top frame no longer throws `SDK_INITIALIZED is not defined`. The \"WME Utils - Bootstrap\" require got past its `await SDK_INITIALIZED` and logged `WME SDK initialized (SDK v0 on WME v2.370-...)`, after WazeWrap initialized. The features still need a login.\n- It still throws `SDK_INITIALIZED is not defined` in the sign-in iframe, which has no SDK; Tampermonkey does the same there."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "4.0.1",
+          "text": "Re-tested v4.0.1: still passes. On the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, headless temp browser), WME v2.378.\n- The top frame started with no errors: WazeWrap initialized, and the Bootstrap require logged `WME SDK initialized (SDK v0 on WME v2.378-6-g016d6916f4)`.\n- It still throws `SDK_INITIALIZED is not defined` in the sign-in iframe, which has no SDK, as noted before.\n- The features still need a login."
         }
       ]
     },
@@ -40070,14 +40166,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-06",
-        "version": "0.0.2.1523310876"
+        "date": "2026-11-05",
+        "version": "0.0.3.1922935421634"
       },
       "notes": [
         {
           "date": "2026-10-06",
           "version": "0.0.2.1523310876",
           "text": "Opened `watch?v=dQw4w9WgXcQ&t=30s`: the script replaced it with `&t=1s` and the video played from the start (currentTime 21 about 20s later). A `--noscript` tab kept `&t=30s`."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "0.0.3.1922935421634",
+          "text": "Re-tested v0.0.3.1922935421634: still passes. Opening `watch?v=dQw4w9WgXcQ&t=30s` (headless), the script now sets `t=0` (it was `t=1s`) and reloads; YouTube then drops the parameter. The video played from the start (12.5 s about 10 s later). A `--noscript` tab kept `&t=30s` and was at 33.5 s."
         }
       ]
     },
@@ -41075,8 +41176,8 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-12",
-        "version": "2025.10.09.001"
+        "date": "2026-11-05",
+        "version": "2026.09.09.001"
       },
       "notes": [
         {
@@ -41088,6 +41189,11 @@
           "date": "2026-10-12",
           "version": "2025.10.09.001",
           "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) it logged `ClickSaver: Translations loaded.` on the first try (no more `jQuery not ready` retries), then WazeWrap initialized and the Bootstrap require logged `WME SDK initialized`. The click-saving features still need a login."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2026.09.09.001",
+          "text": "Re-tested v2026.09.09.001: still passes. On the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, headless temp browser), WME v2.378.\n- It logged `ClickSaver: Translations loaded.` on the first try, then WazeWrap initialized and the Bootstrap require logged `WME SDK initialized`. No errors in any frame.\n- Script: the WME SDK warns that it uses the deprecated `sync` mode.\n- The click-saving features still need a login."
         }
       ]
     },
@@ -41167,8 +41273,8 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-12",
-        "version": "2026.04.14.00"
+        "date": "2026-11-05",
+        "version": "2026.10.23.00"
       },
       "notes": [
         {
@@ -41180,6 +41286,11 @@
           "date": "2026-10-12",
           "version": "2026.04.14.00",
           "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, temp browser) the top frame no longer throws `SDK_INITIALIZED is not defined`. The \"WME Utils - Bootstrap\" require got past its `await SDK_INITIALIZED` and logged `WME SDK initialized (SDK v0 on WME v2.370-...)`, after WazeWrap initialized. The features still need a login.\n- It still throws `SDK_INITIALIZED is not defined` in the sign-in iframe, which has no SDK; Tampermonkey does the same there."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2026.10.23.00",
+          "text": "Re-tested v2026.10.23.00: still passes. On the logged-out editor (`https://www.waze.com/en-US/editor/?env=usa`, headless temp browser), WME v2.378.\n- The top frame started with no errors: WazeWrap initialized, and the Bootstrap require logged `WME SDK initialized`.\n- It still throws `SDK_INITIALIZED is not defined` in the sign-in iframe, which has no SDK, as noted before.\n- The features still need a login."
         }
       ]
     },
@@ -45876,16 +45987,20 @@
         "version": "2.15"
       },
       "test": {
-        "status": "fail",
-        "blame": "script",
-        "date": "2026-09-29",
-        "version": "2.10"
+        "status": "pass",
+        "date": "2026-11-05",
+        "version": "2.15"
       },
       "notes": [
         {
           "date": "2026-09-29",
           "version": "2.10",
           "text": "Page: youtube.com/watch?v=jNQXAC9IVRw (headless temp browser, sm-dev), MAIN world (@grant none).\n- Script: logged `[ytp-rotate] 2.10 (en-us)` but never `ready`; no `#rotate-btn` in the player controls after the video had played 19 s.\n- Script: it waits forever for `document.querySelector(\"ytd-player\").player_`, which YouTube no longer sets (`\"player_\" in ytdPlayer` is false). The player object now lives at `ytdPlayer.polymerController.player_`.\n- Outdated for the current YouTube markup; not a SourceMonkey issue (the script runs in the page world, where the property is simply absent)."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2.15",
+          "text": "Re-tested v2.15: now passes (v2.10 failed waiting for `ytd-player.player_`). It now finds `.html5-video-player`. On `watch?v=jNQXAC9IVRw` (headless) it logged `[ytp-rotate:player] ready` and added `#rotate-btn` to the controls. Clicking it took the video's transform from `none` to a 90 degree matrix, scaled to fit, and clicking again to 180 degrees. The video kept playing."
         }
       ]
     },
@@ -45968,14 +46083,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-02",
-        "version": "10.3.2"
+        "date": "2026-11-05",
+        "version": "10.3.6"
       },
       "notes": [
         {
           "date": "2026-10-02",
           "version": "10.3.2",
           "text": "On `en.wikipedia.org/wiki/Earth` (headless), touch swipes sent over CDP (`Input.dispatchTouchEvent`) ran the script's gestures:\n- Up then down (↑↓, \"回到底部\") scrolled from 0 to the bottom (scrollY 45878 of 45878).\n- Down then up (↓↑, \"回到顶部\") scrolled back to 0.\n- No errors in the logs."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "10.3.6",
+          "text": "Re-tested v10.3.6: still passes. On `en.wikipedia.org/wiki/Earth` (headless), touch swipes sent over CDP (`Input.dispatchTouchEvent`) ran the script's gestures:\n- Up then down (↑↓, \"回到底部\") scrolled from 0 to the bottom (scrollY 46476 of 46476).\n- Down then up (↓↑, \"回到顶部\") scrolled back to 0.\n- No errors in the logs."
         }
       ]
     },
@@ -50924,8 +51044,8 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-01",
-        "version": "0.5.3"
+        "date": "2026-11-05",
+        "version": "0.5.7"
       },
       "notes": [
         {
@@ -50942,6 +51062,11 @@
           "date": "2026-10-01",
           "version": "0.5.3",
           "text": "Re-tested after d19602a (sm-dev run-at gates wait for `<body>`): now passes. sm-dev in the shared visible browser, logged out, `showStats` seeded on.\n- 20 loads of `/s?k=...` search pages (12 `open`s of new queries, 8 `reload`s): no `appendChild` error on any, the stats box was there every time, and no `sp-sponsored-result` items were left.\n- Removed counts on fresh queries were 17 to 28 per page. On repeated reloads of one query Amazon served fewer ads (\"Removed: 1\"); a `--noscript` tab on that page also had only 1 sponsored label."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "0.5.7",
+          "text": "Re-tested v0.5.7: still passes. Headed temp browser, logged out, `showStats` seeded on.\n- 8 loads of `/s?k=...` search pages (the first gave Amazon's own \"Sorry! Something went wrong!\" page, then 6 new queries and 1 reload): the stats box showed Removed 18 to 24 on each, such as \"Sponsored product: 18, Sponsored video: 1, More results header: 3, Rufus: 2\" for gaming chair.\n- No visible `.puis-sponsored-label-text` was left. A `--noscript` tab on gaming chair had 13 of them and 60 results, against 48 results with the script.\n- No `appendChild` or other errors. Its menu commands register, now four (Logging, Stats, Force all results, Classic pagination)."
         }
       ]
     },
@@ -53729,14 +53854,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
-        "version": "1.4.17"
+        "date": "2026-11-05",
+        "version": "1.4.22"
       },
       "notes": [
         {
           "date": "2026-09-29",
           "version": "1.4.17",
           "text": "Tested with sm-dev (headless) on https://apod.nasa.gov/apod/astropix.html.\n- Hovering the linked 960px thumbnail showed `#mpiv-popup.mpiv-show` with the full `Shrimp_Pawel_2048.jpg` (natural 2048x2560, shown scaled to 571x714).\n- Menu \"MPIV: configure\" opened the config dialog (shadow-root host on body).\n- Script: on Wikipedia (Red_panda) the popup never shows. Its CSP sniffer throws `item.includes is not a function` because Wikipedia's CSP has only `default-src`, so `src.img` and `src.media` alias one array and the second pass meets RegExps it already made. Script bug, would happen in any manager.\n- `@grant GM_getValues` is ignored by SourceMonkey but never called by the script."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.4.22",
+          "text": "Re-tested v1.4.22: still passes, and the Wikipedia failure is gone. Headless temp browser.\n- https://apod.nasa.gov/apod/astropix.html now redirects to https://science.nasa.gov/apod/. Hovering the day's image showed `#mpiv-popup.mpiv-show` with a larger version (natural 1280x912, shown at 1002x714).\n- Menu \"MPIV: configure\" opened the config dialog (shadow-root host).\n- https://en.wikipedia.org/wiki/Red_panda: hovering the infobox thumbnail now shows the original `upload.wikimedia.org` file (natural 9323x6215, shown 1071 wide), with no errors logged. The earlier `item.includes is not a function` no longer appears."
         }
       ]
     },
@@ -53775,15 +53905,21 @@
         "version": "0.1.7"
       },
       "test": {
-        "status": "pass",
-        "date": "2026-10-02",
-        "version": "0.1.5"
+        "status": "fail",
+        "blame": "script",
+        "date": "2026-11-05",
+        "version": "0.1.7"
       },
       "notes": [
         {
           "date": "2026-10-02",
           "version": "0.1.5",
           "text": "On `https://soundcloud.com/forss/flickermood` the script caught a `client_id` from the page's own XHRs, resolved the track and added a \"Download\" button to the track toolbar (logs `got clientId`, `result {...}`, `attached`).\n- Clicking it (after closing the sign-in modal and cookie banner that covered it) fetched the progressive stream and piped it into StreamSaver: its service worker registered and the page got the download iframe `maple3142.github.io/StreamSaver.js/soundcloud.com/809302/Flickermood.mp3`."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "0.1.7",
+          "text": "Re-tested v0.1.7: now fails. On `https://soundcloud.com/forss/flickermood` the script caught a `client_id`, resolved the track and added its \"Download\" button (log `lscd attached`). Clicking it saved `Flickermood.mp3`, but that file is not audio.\n- The file is 19443 bytes of text starting `#EXTM3U`, with 22 `#EXTINF` segments; `file` calls it an M3U playlist.\n- Script: this version picks the `hls` transcoding and pipes the response of its URL straight into StreamSaver. That response is the playlist (`application/vnd.apple.mpegurl`); nothing fetches the segments. This track's transcodings are all `hls`, with no progressive stream as the old note saw.\n- The same code path runs in any manager, so SourceMonkey is not the cause."
         }
       ]
     },
@@ -54133,8 +54269,8 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-11",
-        "version": "1.0.33"
+        "date": "2026-11-05",
+        "version": "1.1.2"
       },
       "notes": [
         {
@@ -54146,6 +54282,11 @@
           "date": "2026-10-11",
           "version": "1.0.33",
           "text": "Re-tested after aab036d (scripts run in the page world by default): now passes. Unmodified copy, headless, on `manhuagui.com/comic/1128/9771.html`: no `$ is not defined`.\n\n- `d` went to page 2 (`#p=2`); `w` (next chapter) went to 9772.html; `s` there (previous chapter) came back to 9771.html. (`s` on 9771 itself leaves `#`: vol. 1 has no previous chapter, its `prevC` link is `#`.)\n- Kept `needs-page-globals`: it still calls the page's `$` without `unsafeWindow`, and passes because of the fix."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.1.2",
+          "text": "Re-tested v1.1.2: still passes. Headless, on `manhuagui.com/comic/1128/9771.html`: no `$ is not defined`; the page's jQuery is reached from the default page world.\n- `d` went to page 2 (`#p=2`), `a` back to page 1 (`#p=1`), `w` (next chapter) to 9772.html, and `s` there (previous chapter) back to 9771.html.\n- Only the manhuagui branch was exercised, as before."
         }
       ]
     },
@@ -55060,8 +55201,8 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-11",
-        "version": "4.15.1"
+        "date": "2026-11-05",
+        "version": "4.16.1"
       },
       "notes": [
         {
@@ -55073,6 +55214,11 @@
           "date": "2026-10-11",
           "version": "4.15.1",
           "text": "Re-tested after aab036d/52f830e (page-world default, sandbox `window` like TM/VM): now passes, headless, script as written.\n- On `https://www.pixiv.net/en/users/11` there was no `customElements` error now. It showed its first-run help, and the bottom-left entry icon opened a grid of the account's works (`1/651`), thumbnails loading.\n- Kept `needs-custom-elements`: the script uses the page's `customElements`, so it passes only because of the fix."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "4.16.1",
+          "text": "Re-tested v4.16.1: still passes. On `https://www.pixiv.net/en/users/11`, no `customElements` error. It showed its first-run help, and after closing that the bottom-left entry icon opened the grid of the account's works (`1/681`), thumbnails loading and its loader finishing images in turn.\n- It has no `@noframes`, so it also starts in each of pixiv's ad iframes (\"EHVP:in iframe\" warnings), which is harmless."
         }
       ]
     },
@@ -56722,16 +56868,20 @@
         "version": "1.7.1"
       },
       "test": {
-        "status": "fail",
-        "blame": "script",
-        "date": "2026-10-02",
-        "version": "1.6.0"
+        "status": "pass",
+        "date": "2026-11-05",
+        "version": "1.7.1"
       },
       "notes": [
         {
           "date": "2026-10-02",
           "version": "1.6.0",
           "text": "On `google.com/search?q=mountain+lake&udm=2` (shared browser), no thumbnail got a dimensions label: 0 `.sid-dims` for 100 results, and still 0 after scrolling loaded 200.\n- Script: the first pass runs from `handleUrlChange()` before `const createSVG` is initialized, so every result throws `ReferenceError: Cannot access 'createSVG' before initialization` (a JavaScript TDZ error, the same in every manager).\n- Script: out of date against the current results page. The `W_jd` data walk still finds the image URL, but results no longer contain an `h3` to attach the label to, and results loaded by scrolling go into a second mosaic wrapper outside `#rso`, which neither the selector nor the observer covers."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.7.1",
+          "text": "Re-tested v1.7.1: now passes, since the `createSVG` and `h3` problems are fixed. On `google.com/search?q=mountain+lake&udm=2` in a visible Google Chrome with a new profile (headed Chromium got Google's `/sorry` captcha, which is not the script's fault):\n- All 100 first-page results got a `.sid-dims` label (the first shows `1024 × 1024`).\n- Clicking a label opened the full-size lightbox (`.sid-backdrop show`, image from the result's site).\n- Script: scrolling loaded 300 results in 3 mosaic wrappers, and the label count stayed at 100. `showDims` reads only the first wrapper, and the observer watches only `#rso`, so this is the same in every manager.\n- Script: on Google's interstitial first load, which has no `#rso`, it throws `parameter 1 is not of type 'Node'` (line 313). Harmless: Google then reloads the page, and that run works."
         }
       ]
     },
@@ -58679,14 +58829,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-02",
-        "version": "3.1.0.35946"
+        "date": "2026-11-05",
+        "version": "3.1.3.34401"
       },
       "notes": [
         {
           "date": "2026-10-02",
           "version": "3.1.0.35946",
           "text": "On a watch page the header is unstuck by default (`#masthead-container` position `absolute`; `fixed` in a `--noscript` tab). Its settings page at `/fix-settings` renders with all its tabs; unticking \"Unstick header bar\" and saving showed \"Settings saved\", stored `unfix_header: false` and went back to the video, where the header was `fixed` again. No errors in `logs`."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "3.1.3.34401",
+          "text": "Re-tested v3.1.3.34401: still passes. On a watch page (headless) `#masthead-container` is `absolute`. `/fix-settings` renders with all its tabs. Unticking \"Unstick header bar\" and saving showed the \"Settings saved\" alert, stored `unfix_header: false` and went back to the video, where the header was `fixed`. No thrown errors.\n- Script: saving goes back in history, so opening `/fix-settings` directly ends on `about:blank`."
         }
       ]
     },
@@ -60072,10 +60227,9 @@
         "version": "28.1.1"
       },
       "test": {
-        "status": "fail",
-        "blame": "script",
-        "date": "2026-10-01",
-        "version": "27.3.0"
+        "status": "pass",
+        "date": "2026-11-05",
+        "version": "28.1.1"
       },
       "notes": [
         {
@@ -60092,6 +60246,11 @@
           "date": "2026-10-01",
           "version": "27.3.0",
           "text": "sm-dev re-checked after d19602a (`document-start` code and its `@require`s wait for `<html>`): the sm-dev jQuery error is gone. Shared visible browser, not signed in.\n- 13 loads (8 title pages, 5 reloads): no `createElement` error; `jQuery.fn.jquery` was \"3.5.1\" in the script's world; the script logged its start and then the anti-bot skip on every load, as in the extension. Result unchanged."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "28.1.1",
+          "text": "Re-tested v28.1.1: now passes. The old `challenge.js` check is gone; it now skips only pages containing `gokuProps`, the real challenge page.\n- In the headed temp browser (Chromium) IMDb served its \"Let's confirm you are human\" page on each load, and the script rightly logged \"Anti-bot JS challenge detected\" and did nothing.\n- In a visible Google Chrome with a new empty profile, not signed in, the challenge passed by itself: the script skipped it, then started on the real page, on https://www.imdb.com/title/tt0111161/.\n- It ran its main functions, fetched with `GM_xmlhttpRequest` (api.graphql.imdb.com, omdbapi.com, letterboxd.com, rottentomatoes.com, metacritic.com, all 200) and added `#scout_rating_table` (82, 92, 89, -, 92; the Rotten Tomatoes user score shows `-`) and 9 site icons. A `--noscript` tab had no table.\n- It registered its Settings menu command and showed its own \"Bug detected: Chrome/Chromium\" notification, which it shows for any Chrome. No errors."
         }
       ]
     },
@@ -60860,14 +61019,22 @@
       "test": {
         "status": "fail",
         "blame": "script",
-        "date": "2026-10-04",
-        "version": "1.2"
+        "date": "2026-11-05",
+        "version": "1.4"
       },
+      "tags": [
+        "ad-skip-click-ignored"
+      ],
       "notes": [
         {
           "date": "2026-10-04",
           "version": "1.2",
           "text": "The script ran without errors and added its 12 hiding `<style>`s. Over 15 watch-page loads (headless) a preroll ad came up once, on kJQP7kiw5Fk: 5s+ after load the player still had `.ad-showing`, with the ad's `ytp-ad-player-overlay-layout` card visible. Neither that nor the current ad UI's classes are in its hide list, and its skip clicker looks for `ytp-ad-skip-button` / `ytp-ad-preview-text`, which the ad's DOM didn't have.\n- Script: out of date against YouTube's current ad markup (2020 version). Couldn't catch a skippable ad to watch the click."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.4",
+          "text": "Re-tested v1.4: now fails for a new reason. It has the current `.ytp-skip-ad-button` selector (v1.2 didn't), but YouTube ignores its `elm.click()`.\n- On `watch?v=kJQP7kiw5Fk` (headless, prerolls about 1 load in 4) a 15 s ad showed the skip button. A listener counted 85 of the script's clicks on it, and at 8.5 s the ad was still playing, `.ad-showing` set, button visible.\n- A real click from sm-dev on that button skipped the ad at once, to the 281 s video.\n- `--manager tm` behaved the same: 81 clicks, ad still playing at 11.7 s of 30 s.\n- It added its 17 hide `<style>`s, but they don't cover the ad's `ytp-ad-player-overlay-layout` card, which stays visible."
         }
       ]
     },
@@ -62009,8 +62176,8 @@
       "test": {
         "status": "fail",
         "blame": "script",
-        "date": "2026-10-02",
-        "version": "1.1.0-GitHub"
+        "date": "2026-11-05",
+        "version": "1.3.4-GitHub"
       },
       "tags": [
         "service-dead"
@@ -62020,6 +62187,11 @@
           "date": "2026-10-02",
           "version": "1.1.0-GitHub",
           "text": "On `https://soundcloud.com/forss/flickermood` the script added its \"Download\" button to the toolbar, but clicking it only cycles \"Downloading .\" forever.\n- Script: the `fetch` to its download service `https://api.modlabs.cc/scr/forss/flickermood` fails with `net::ERR_SSL_PROTOCOL_ERROR`; `curl` gets an SSL \"wrong version number\" from that host too. The service is gone, so it fails in any manager."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.3.4-GitHub",
+          "text": "Re-tested v1.3.4-GitHub: still fails, for the same reason. On `https://soundcloud.com/forss/flickermood` it added its \"Download\" button (`#scr-download-button`) to the toolbar.\n- Clicking it logged `[Soundcloud Download Button] Failed to fetch`, with `net::ERR_SSL_PROTOCOL_ERROR` for `https://api.modlabs.cc/scr/forss/flickermood`. This version then resets the button rather than cycling forever.\n- `curl` gets an SSL \"wrong version number\" from that host too, so it fails in any manager."
         }
       ]
     },
@@ -62167,10 +62339,9 @@
         "version": "2.6.41"
       },
       "test": {
-        "status": "fail",
-        "blame": "script",
-        "date": "2026-10-11",
-        "version": "2.6.39"
+        "status": "pass",
+        "date": "2026-11-05",
+        "version": "2.6.41"
       },
       "notes": [
         {
@@ -62182,6 +62353,11 @@
           "date": "2026-10-11",
           "version": "2.6.39",
           "text": "Re-tested after c2dbb1f (`window.GM_*` for granted functions) on github.com/sharkdp/bat: still fails, for the script's release code only.\n- SourceMonkey: fixed. The Feedback menu command now opens both tabs (`GM_openInTab` to github.com/XIU2/UserScript and the greasyfork feedback page), no error.\n- Works: README page gets 7 `.XIU2-RF` Raw mirrors; repo home gets 30 `.fileDownLink`; the Code dropdown now gets 5 clone/SSH mirrors (GitHub has `#repo-title-component` again).\n- Script: Release mirrors still 0 `.XIU2-RS` on /releases; calling its `addRelease()` throws `Cannot read properties of null (reading 'insertAdjacentHTML')` (the asset link has no next sibling). A newer 2.6.41 exists upstream; this tests 2.6.39."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2.6.41",
+          "text": "Re-tested v2.6.41: now passes on github.com/sharkdp/bat; the release code that failed under 2.6.39 is fixed.\n- Releases: 12 `.XIU2-RS` blocks with 72 mirror links, 6 per asset (`https://github.ednovas.xyz/https://github.com/sharkdp/bat/releases/download/...`), and no error. The script now finds the insertion point with `parentElement.parentElement.nextElementSibling`.\n- README page: 7 `.XIU2-RF` Raw mirrors. Repo home: 30 `.fileDownLink`.\n- Code dropdown: 5 clone mirrors (`.XIU2-GC`) and mirrored ZIP links.\n- The Feedback menu command opens both tabs, with no error.\n- Mirror links were checked for being added, not downloaded through."
         }
       ]
     },
@@ -64335,14 +64511,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
-        "version": "2026.08.01.1"
+        "date": "2026-11-05",
+        "version": "2026.10.03.1"
       },
       "notes": [
         {
           "date": "2026-09-29",
           "version": "2026.08.01.1",
           "text": "Tested with sm-dev (headless) on https://en.wikipedia.org/wiki/Red_panda.\n- Article paragraphs got the script's font stack (`\"Microsoft YaHei UI\", system-ui, ...`), text-shadow `rgba(124,124,124,0.867) 0 0 0.75px` and text-stroke 0.015px (the defaults).\n- Menu shows the settings, exclude-site and advanced commands; \"Font Rendering Settings\" opened the settings panel (custom element with shadow root), matching the defaults above."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2026.10.03.1",
+          "text": "Re-tested v2026.10.03.1: still passes, on https://en.wikipedia.org/wiki/Red_panda in a headless temp browser.\n- Article paragraphs got the font stack (`\"Microsoft YaHei UI\", system-ui, ...`), text-shadow `rgba(124,124,124,0.867) 0 0 0.75px` and text-stroke 0.015px. A `--noscript` tab shows `sans-serif`, no shadow and 0 stroke.\n- The menu shows the settings, exclude-site and advanced commands. \"Font Rendering Settings\" opened the panel, with the same values.\n- It synced its rules from f9y4ng.github.io (200, 2427 rules logged)."
         }
       ]
     },
@@ -64899,8 +65080,8 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-13",
-        "version": "2.3.31"
+        "date": "2026-11-05",
+        "version": "2.3.32"
       },
       "notes": [
         {
@@ -64912,6 +65093,11 @@
           "date": "2026-10-13",
           "version": "2.3.31",
           "text": "Re-tested after the @connect prompt change: the earlier worry no longer applies; still a pass.\n\n- The script's only `GM_xmlhttpRequest` use (block or unblock a user, POST/DELETE `https://www.zhihu.com/api/v4/members/<id>/actions/block`) goes to the page's own origin, which SourceMonkey allows with no `@connect` and no prompt, as Tampermonkey 4 does.\n- Checked in a headed temp browser on www.zhihu.com/question/19550225: Zhihu served its 40362 \"request abnormal\" page there too, so the page features weren't re-checked. From the script's scope, a harmless GET to that block URL went out with no prompt and loaded (405, wrong method), so the script's own request would reach Zhihu.\n- Blocking itself still needs a login, so not tested."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2.3.32",
+          "text": "Re-tested v2.3.32: still passes on what a signed-out browser can reach.\n\n- Question pages are out of reach signed out: a headed temp browser got error 40362, and a visible Chrome with an empty profile was sent to `/account/unhuman` and `/signin` (direct URLs and links from `/explore` alike). So the question time, author block and collapsing answers weren't re-checked.\n- On `zhuanlan.zhihu.com/p/25228075` in that Chrome: the script put the full time (`发布于 2017-02-13 21:15 ，编辑于 2017-02-27 17:25`) in `.Post-Header`, and there's no login modal. A `--noscript` tab has only `编辑于 ...` at the bottom of the article and a login modal. Links matching my highlighted-link selector dropped from 50 to 11.\n- `/explore` loads with its 20 menu commands registered and no errors.\n- Script: on the login-block page `question_time` throws `Cannot read properties of null (reading 'insertAdjacentHTML')` (line 1561), since that page has no question header; harmless.\n- Blocking a user needs a login, so not tested."
         }
       ]
     },
@@ -65614,14 +65800,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
-        "version": "2.3.1"
+        "date": "2026-11-05",
+        "version": "3.0.1"
       },
       "notes": [
         {
           "date": "2026-09-29",
           "version": "2.3.1",
           "text": "Tested on https://myanimelist.net/topanime.php (logged out).\n- Script: logged \"New anime\" for all 50 entries, fetched each anime page and inserted 38 bold English-title divs above the ranking titles (e.g. \"Frieren: Beyond Journey's End\"); the rest have no separate English title on MAL (e.g. id 1, Cowboy Bebop, stored as \"\").\n- Script: titles are cached via GM.setValue `anime`; after a reload no \"New anime\" lines were logged and the same 38 titles were shown from the cache."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "3.0.1",
+          "text": "Re-tested v3.0.1: still passes. On https://myanimelist.net/topanime.php (logged out):\n- Script: fetched the anime pages and showed English titles above the Japanese ones on 40 of 50 ranking rows (e.g. \"Frieren: Beyond Journey's End\"), storing them via GM.setValue `anime`; after a reload the stored timestamp didn't change and the titles were still shown.\n- Script (new in 3.x): a one-time \"New title language options\" notice, not shown again after a reload, and a Language menu in the nav. English only showed just \"Frieren: Beyond Journey's End\", Japanese only \"Sousou no Frieren\", and the first option both. The choice is stored in `titleDisplayMode` and survived a reload.\n- The site's Quantcast consent dialog covers the nav until answered; removing it from the DOM by hand left clicks stopped before they reached the page, so answer it instead."
         }
       ]
     },
@@ -66339,10 +66530,9 @@
         "version": "8.1.0"
       },
       "test": {
-        "status": "fail",
-        "blame": "script",
-        "date": "2026-10-13",
-        "version": "7.6.8"
+        "status": "pass",
+        "date": "2026-11-05",
+        "version": "8.1.0"
       },
       "notes": [
         {
@@ -66359,6 +66549,11 @@
           "date": "2026-10-13",
           "version": "7.6.8",
           "text": "Re-tested after the @connect prompt change: now fails, because GreasyFork's by-site API changed. No @connect prompt is involved (greasyfork.org is declared).\n- en.wikipedia.org/wiki/Red_panda (headless), menu \"Inject Userscript+\": `GET greasyfork.org/scripts/by-site/wikipedia.org.json?language=all` returned 200 HTML (no redirect to api.greasyfork.org), and the script logged \"Invalid data received from the server, check internet connection\". Badge stays at 0.\n- curl gives the same: with `Accept: */*` greasyfork.org serves HTML and api.greasyfork.org answers 406; only `Accept: application/json` gets JSON. The script sends no Accept header.\n- A scratch copy adding `Accept: application/json` reached api.greasyfork.org, but the answer is `[]`; curl gets `[]` for wikipedia.org, youtube.com and github.com too, so the API returns nothing for any site right now.\n- Script: blame `script` (its source site's API, in any manager). Tag `connect-subdomain` kept: it still relies on the bare `greasyfork.org` covering api.greasyfork.org when the redirect happens."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "8.1.0",
+          "text": "Re-tested v8.1.0: now passes. The earlier failure from GreasyFork's API change is fixed. Headless temp browser, https://en.wikipedia.org/wiki/Red_panda, menu \"Inject Userscript+\".\n- The script now asks `https://api.greasyfork.org/scripts/by-site/wikipedia.org.json?language=all` directly (200, covered by the bare `@connect greasyfork.org`). curl gets real listings from it again with `Accept: application/json`, 88 KB for wikipedia.org.\n- The badge shows 100, and clicking it opens the wikipedia.org list with names, authors, daily installs and Install buttons.\n- The `Illegal invocation` rejection from the earlier notes no longer shows."
         }
       ]
     },
@@ -66518,14 +66713,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
-        "version": "1.5.1"
+        "date": "2026-11-05",
+        "version": "1.5.2"
       },
       "notes": [
         {
           "date": "2026-09-29",
           "version": "1.5.1",
           "text": "Page: youtube.com/watch?v=jNQXAC9IVRw (headless temp browser, sm-dev).\n- Script: `#more-speeds` row of 24 buttons (×.25 to ×16) inserted after the video title.\n- Clicking ×2.25 set the video's playbackRate to 2.25; ×8 set it to 8."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.5.2",
+          "text": "Re-tested v1.5.2: still passes. On `jNQXAC9IVRw`, `#more-speeds` shows 24 buttons (×.25 to ×16) in `#title-row`. Clicking ×2.25 set the video's playbackRate to 2.25; ×8 set it to 8. No errors."
         }
       ]
     },
@@ -67299,16 +67499,20 @@
         "version": "0.0.14"
       },
       "test": {
-        "status": "fail",
-        "blame": "script",
-        "date": "2026-10-04",
-        "version": "0.0.13"
+        "status": "pass",
+        "date": "2026-11-05",
+        "version": "0.0.14"
       },
       "notes": [
         {
           "date": "2026-10-04",
           "version": "0.0.13",
           "text": "On a `bluemediafiles.com/url-generator.php?url=...` link from an IGG game page (headed), the script started and at once navigated to `/get-url.php?url=<decoded>`, which redirected to the igg-games.com home page instead of the file host.\n- A `--noscript` tab on the same link counted down and went to the real host (`gofile.io/d/...`).\n- Script: its regex still matches the page's obfuscated `generateDownloadUrl` code, but the captured `_0x44b739` value is now a different string (`//`), so the decoded key is wrong. GreasyFork has a newer 0.0.14."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "0.0.14",
+          "text": "Re-tested v0.0.14: now passes. On a `bluemediafiles.com/url-generator.php?url=...` link from an IGG game page (headed), the script started and went straight to the file host's page (`megaup.net/.../Dirt.Clicker.rar`); the whole `open` command took 3.9 s. A `--noscript` tab on the same link showed the \"will be generated in 5s\" countdown first, and reached the same host page later. Its regex matches the page's obfuscated code again, and the wrong-key redirect to the igg-games.com home page is gone. No file was downloaded."
         }
       ]
     },
@@ -67622,14 +67826,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-13",
-        "version": "1.1.1"
+        "date": "2026-11-05",
+        "version": "1.2.0"
       },
       "notes": [
         {
           "date": "2026-10-13",
           "version": "1.1.1",
           "text": "On https://downloads.khinsider.com/game-soundtracks/album/tetris-gb (18 files, 21 MB MP3):\n- SourceMonkey: all three `@require`s loaded, including `https://unpkg.com/file-saver` (no `.js` suffix, served via redirect): `zip.ZipWriter` and `saveAs` were functions in the `@inject-into page` script.\n- Clicking \"click to download\" opened the script's format dialog (MP3, FLAC); OK on MP3 fetched all 18 tracks with `GM.xmlHttpRequest` from vgmtreasurechest.com (all 200, no permission prompt), and FileSaver's `saveAs` saved `Tetris.zip` (22.1 MB, 18 MP3s). The page showed \"Album successfully downloaded\"."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.2.0",
+          "text": "Re-tested v1.2.0: still passes. On `tetris-gb` (18 tracks), all `@require`s loaded (`zip.ZipWriter` and `saveAs` are functions). Clicking \"click to download\" opened the format dialog (MP3, FLAC). OK on MP3 fetched the metadata, cover images and all 18 tracks with `GM.xmlHttpRequest` from vgmtreasurechest.com (all 200, no prompt). It saved `Tetris.zip` (28 MB, 29 entries: `Metadata.txt`, images and tracks), and the page showed \"Album successfully downloaded\"."
         }
       ]
     },
@@ -68104,14 +68313,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-14",
-        "version": "2.1.6"
+        "date": "2026-11-05",
+        "version": "2.1.8"
       },
       "notes": [
         {
           "date": "2026-10-14",
           "version": "2.1.6",
           "text": "On rezka.ag (home and a film page) the script started with no errors, read all its settings, added its `hc-*` body classes (`hc-style hc-hide-ads ...`) and its settings tumbler on the home page. The film page lost the top brand banner, the right-hand ad and VK sidebar, and was restyled wider; a `--noscript` tab kept them. The player didn't load in either headless tab, so the player features weren't checked.\n- It asks to connect to greasyfork.org (its script page, for a version check); allowed."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2.1.8",
+          "text": "Re-tested v2.1.8: still passes. On rezka.ag (home and a film page), the script started with no errors and read all its settings, adding its `r4-*` body classes (`r4-style r4-hide-ads ...`) and its settings tumbler. The greasyfork.org version check returned 200 with no permission prompt, since `@connect greasyfork.org` is now declared.\n- The film page lost the top brand banner and the VK sidebar, and its info column took the full width; a `--noscript` tab kept them.\n- The player didn't start a `video` in either headless tab, so the player features weren't checked."
         }
       ]
     },
@@ -69999,14 +70213,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-03",
-        "version": "1.27.1-2025.11.15"
+        "date": "2026-11-05",
+        "version": "1.29.4-2026.08.24"
       },
       "notes": [
         {
           "date": "2026-10-03",
           "version": "1.27.1-2025.11.15",
           "text": "Logged out, on public tweets (x.com/NASA/status/2105727882588807607 with 2 photos, .../2106024496511512682 with a video):\n- Adds its download button to each photo and video (16 `ujs-*` elements for 2 photos).\n- Clicking a photo button fetched `pbs.twimg.com/media/HTkMyiSXwAAO5Rt?format=jpg&name=orig` and saved the blob as `[twitter] MartiansOfMars—2026.10.01—...—HTkMyiSXwAAO5Rt.jpg`; the video button resolved the 1920x1080 `video.twimg.com/...mp4` and saved it the same way.\n- Script: on logged-out x.com (the new Tailwind app) the button sits under the site's \"View media\" overlay link, so a real hover/click can't reach it; tested with `element.click()`. Also threw `Cannot read properties of null (reading '0')` in `videoHandler` (line 812) on one video. Both are layout mismatches with the logged-out app; logged-in untested."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.29.4-2026.08.24",
+          "text": "Re-tested v1.29.4: still passes, signed out in a headless temp browser, on the same public tweets. X did not block it.\n- Photo tweet: 24 `ujs-*` elements, 3 download buttons. `element.click()` on one saved a `[twitter] NASA` file ending `HTkMyiSXwAAO5Rt.jpg` (202 KB), marked `ujs-downloaded`.\n- Video tweet: the first button saved a `[twitter] NASA` file ending `SYDqrYKLjiJ1jfHv.mp4` (21.9 MB, the 1920x1080 file).\n- Script: on signed-out x.com the buttons measure 0x0 at opacity 0, and a real `click` reports the element hidden, so a person can't reach them there. Signed in untested.\n- Script: still throws `Cannot read properties of null (reading '0')` in `videoHandler` (line 817, 5 times on the video tweet). The download works anyway."
         }
       ]
     },
@@ -70375,14 +70594,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
-        "version": "1.0.29"
+        "date": "2026-11-05",
+        "version": "1.0.30"
       },
       "notes": [
         {
           "date": "2026-09-29",
           "version": "1.0.29",
           "text": "On www.bing.com (compared against a tab without the script): the footer, headline, trivia, `.below_sbox` and `.vs` blocks are hidden, the search placeholder is cleared, and page scrolling is locked (`overflowY: hidden`). Several other targeted ids (`#est_switch`, `#id_rh`, `#sa_ai_block`, ...) are not on the current page, so those rules are dead.\n\nOne secondary feature fails, by the script: `SearchBoxEditor` runs 10ms after load and throws `Cannot read properties of null (reading style)`, because Bing builds `#sb_form` from script later (it is not in the served HTML). So the transparent search-box styling never applies. The same race exists in any manager.\n\nThe script re-runs its whole pass every 1ms forever (`setInterval(..., 1)`), which keeps rewriting the placeholder, so the page never looks settled to sm-dev."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.0.30",
+          "text": "Re-tested v1.0.30: still passes, and the old `SearchBoxEditor` error is gone. On www.bing.com (headless), against a `--noscript` tab:\n- `#footer`, `#headline`, `.hp_trivia_inner`, `.below_sbox` and `.vs` are `display: none` (block or inline-block in the control).\n- The search placeholder is empty (\"Search the web\" in the control), and page scrolling is locked (`overflowY: hidden`, `scroll` in the control).\n- `SearchBoxEditor` now waits for the box with a MutationObserver. It logs that it finished, and `#sb_form` gets its inline background style. No errors in `logs`.\n- Script: it still re-runs its pass every 1ms (`setInterval(..., 1)`), so `start` reports that the page never settled."
         }
       ]
     },
@@ -70660,14 +70884,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
-        "version": "2025.02.24.0"
+        "date": "2026-11-05",
+        "version": "2026.10.05.0"
       },
       "notes": [
         {
           "date": "2026-09-29",
           "version": "2025.02.24.0",
           "text": "Page: youtube.com/watch?v=jNQXAC9IVRw (headless temp browser, sm-dev), MAIN world at document-start.\n- Script: page `setTimeout`/`setInterval`/`clear*` replaced by the wrapper (toString no longer native), the `#a-f` animation helper and `#afscript` style inserted, duplicate-run key set.\n- The page kept working: the video was playing (currentTime 5.8 s), and a page setTimeout(50) still fired.\n- Not measured: actual CPU savings. `@unwrap` is ignored by SourceMonkey, with no visible effect here."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2026.10.05.0",
+          "text": "Re-tested v2026.10.05.0: still passes. On `watch?v=jNQXAC9IVRw` (headless) the page's `setTimeout` is the script's wrapper (`function () { [native code] }`, a bound function, where the native one names itself), and the `#a-f` helper is inserted. The video was playing (currentTime 9.6 s) and a page `setTimeout(50)` fired after 81 ms. No errors in `logs`.\n- Script: the `#afscript` style from the old note is no longer present.\n- Not measured: actual CPU savings."
         }
       ]
     },
@@ -71291,14 +71520,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-02",
-        "version": "5.1.0"
+        "date": "2026-11-05",
+        "version": "5.2.0"
       },
       "notes": [
         {
           "date": "2026-10-02",
           "version": "5.1.0",
           "text": "Opened `bing.com/search?q=hello&form=QBLH&sp=-1&pq=hello&sc=8-5&cvid=ABC123&fbclid=xyz` (headless). The address became `search?q=hello&rdr=1&rdrig=...`, with every tracking parameter gone. A `--noscript` tab kept them all (`...&fbclid=xyz&rdr=1&rdrig=...`)."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "5.2.0",
+          "text": "Re-tested v5.2.0: still passes. Opened `bing.com/search?q=hello&form=QBLH&sp=-1&pq=hello&sc=8-5&cvid=ABC123&fbclid=xyz` (headless). The address became `search?q=hello&rdr=1&rdrig=...`, with every tracking parameter gone. A `--noscript` tab kept them all (`...&fbclid=xyz&rdr=1&rdrig=...`)."
         }
       ]
     },
@@ -73457,14 +73691,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
-        "version": "3.1.5"
+        "date": "2026-11-05",
+        "version": "3.2.2"
       },
       "notes": [
         {
           "date": "2026-09-29",
           "version": "3.1.5",
           "text": "On a logged-out watch page (`dQw4w9WgXcQ`) the script fetched `returnyoutubedislikeapi.com` and put a dislike count (\"519K\") in a `span#text` inside the visible dislike button. A tab without the script shows no count there.\n\nNot tried: clicking like or dislike, which submits a vote to the API (a side effect), and Shorts or mobile pages."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "3.2.2",
+          "text": "Re-tested v3.2.2: still passes. On a logged-out watch page (`dQw4w9WgXcQ`) the visible dislike button shows \"521K\" (94 px wide); a `--noscript` tab shows no count (56 px wide). No errors in `logs`.\n\nNot tried: voting (a side effect), Shorts or mobile pages."
         }
       ]
     },
@@ -73960,8 +74199,8 @@
       "test": {
         "status": "fail",
         "blame": "script",
-        "date": "2026-10-03",
-        "version": "11.2.0"
+        "date": "2026-11-05",
+        "version": "11.2.1"
       },
       "tags": [
         "service-dead"
@@ -73971,6 +74210,11 @@
           "date": "2026-10-03",
           "version": "11.2.0",
           "text": "The redirects fire at document-start, but the hard-coded alternative front-end instances are dead:\n- en.wikipedia.org/wiki/Red_panda went to `https://wikiless.org/wiki/Red_panda?lang=en`, which shows \"404 Not Found\".\n- A Bing search for \"red panda\" went to `https://search.mdosch.de/search?q=red%20panda&categories=general`: \"502 Bad Gateway\".\n- SourceMonkey: no issue; `location.replace` from the page-world script worked on each site."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "11.2.1",
+          "text": "Re-tested v11.2.1: still fails, for the same reason. The redirects fire at document-start, but the instances they go to don't work (headless):\n- en.wikipedia.org/wiki/Red_panda went to `wikiless.org/wiki/Red_panda?lang=en`: \"404 Not Found\".\n- A Bing search went to `search.mdosch.de/search?q=red%20panda&categories=general`: \"502 Bad Gateway\".\n- reddit.com went to `reddit.invak.id`: timed out.\n- quora.com went to `qr.vern.cc`: certificate error (\"Your connection is not private\").\n- youtube.com went to `yewtu.be`: \"Automated verification failed\". This instance may work for a person, so it doesn't show it's dead.\n- SourceMonkey: no issue; `location.replace` from the page-world script worked on each site."
         }
       ]
     },
@@ -74159,14 +74403,10 @@
         "version": "0.8.8"
       },
       "test": {
-        "status": "fail",
-        "blame": "script",
-        "date": "2026-10-11",
-        "version": "0.8.0-bata.17"
+        "status": "pass",
+        "date": "2026-11-05",
+        "version": "0.8.8"
       },
-      "tags": [
-        "service-dead"
-      ],
       "notes": [
         {
           "date": "2026-10-03",
@@ -74177,6 +74417,11 @@
           "date": "2026-10-11",
           "version": "0.8.0-bata.17",
           "text": "Re-tested after f3d2c5c (`GM` not frozen): the Proxy invariant error is gone, but it still fails for the earlier second reason (service down).\n- SourceMonkey: the unchanged copy started cleanly on `https://misskey.io/@misskey_io`. Keeping `gm-frozen`: its `GM` Proxy still relies on it.\n- Opening an image (`#pswp` viewer) showed its translate button; clicking it fetched the image (200), then `POST https://api.cotrans.touhou.ai/task/upload/v1` returned 500 and the script threw parsing \"Internal Server Error\" as JSON."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "0.8.8",
+          "text": "Re-tested v0.8.8: now passes. The Cotrans service answers again, so `service-dead` is removed, and the script's image finder works on the current Pixiv.\n- Pixiv, `/en/artworks/150323557`: its Translate button appeared on the artwork, with \"Translate all (2)\" below. Clicking it fetched the original from `i.pximg.net` (200), `POST api.cotrans.touhou.ai/task/upload/v1` returned 200, and after about 30 s it fetched the `r2.cotrans.touhou.ai/mask/...png` mask. The Japanese text in the image was replaced by English (\"pixiv New Items 7. 9 Month\"), and its button became a revert icon.\n- Misskey, `misskey.io/@misskey_io`: in the `.pswp` image viewer its button appeared and the same flow ran (upload 200, status 200, mask 200), ending at the revert icon. That photo had no text to replace."
         }
       ]
     },
@@ -74965,14 +75210,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
-        "version": "1.9.37.132"
+        "date": "2026-11-05",
+        "version": "1.9.37.134"
       },
       "notes": [
         {
           "date": "2026-09-29",
           "version": "1.9.37.132",
           "text": "Tested with sm-dev (headless). On first run it fetched the AutoPagerize rules from wedata.net via GM_xmlhttpRequest (200) and notified \"Pagetual rules updated\".\n- https://blog.codinghorror.com/: about 5s after load it found the next link; scrolling to the bottom appended page 2 with a \"Page 2\" separator bar. Articles went from 3 to 27, page height 12535 to 19119px.\n- Script: on https://news.ycombinator.com/ page 2 failed with HTTP 415. Pagetual's same-origin page fetch sends `Content-Type: text/html` on a GET, and HN rejects that; a plain page `fetch` of the same URL gets 200. Would happen in any manager.\n- SourceMonkey: on https://lobste.rs/ page 2 was blocked by the page's CSP (`default-src 'none'`, no connect-src). The script names `unsafeWindow`, so SM runs it in the MAIN world (by design, docs/injection.md), where its same-origin `fetch` is subject to page CSP. Not checked whether TM or VM behave differently here."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.9.37.134",
+          "text": "Re-tested v1.9.37.134: still passes, the same checks in a headless temp browser.\n- https://blog.codinghorror.com/: scrolling to the bottom appended page 2 with a \"Page 2\" bar. Articles went from 3 to 27, page height 12379 to 18989px.\n- Script: https://news.ycombinator.com/ page 2 still fails with HTTP 415 (from its `Content-Type` on a GET; see the earlier note).\n- SourceMonkey: https://lobste.rs/ page 2 is still blocked by the page's CSP (`default-src 'none'`), since the script runs in the MAIN world. Not checked under other managers.\n- Script: the first-run rule update no longer works. `wedata.net` doesn't resolve (curl gives the same), and the mirror `hoothin.github.io/UserScripts/Pagetual/items_all.json` answers 200 with an empty body, so it logs \"Failed to update\" for both and `rules` stays `[]`. The sites above work from its built-in detection without them."
         }
       ]
     },
@@ -76130,15 +76380,24 @@
         "version": "2.3.8"
       },
       "test": {
-        "status": "pass",
-        "date": "2026-09-29",
-        "version": "2.3.6"
+        "status": "fail",
+        "blame": "sourcemonkey",
+        "date": "2026-11-05",
+        "version": "2.3.8"
       },
+      "tags": [
+        "dom-at-start"
+      ],
       "notes": [
         {
           "date": "2026-09-29",
           "version": "2.3.6",
           "text": "Tested with sm-dev (headless) on https://www.youtube.com/watch?v=dQw4w9WgXcQ, with a `--noscript` control tab.\n- Script: logged every `[YTPD]` step through \"done\"; views and date (\"1,821,515,823 views • Oct 24, 2009\") moved under the title, the uploader row moved above the description, and SHOW MORE / Show less toggle bars added.\n- Clicking SHOW MORE expanded the description (86 px to 1961 px) and swapped to Show less; Show less collapsed it back to 86 px.\n- Clicking the description body no longer expands it (the control tab does expand on the same click)."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2.3.8",
+          "text": "Re-tested v2.3.8: now fails on a fresh load under SourceMonkey.\n- Script: the async setup's first line (`document.head.appendChild(styles_channel)`, line 459) runs at `@run-at document-start` and throws \"Cannot read properties of null (reading 'appendChild')\". No `[YTPD]` lines, no `.desc_toggles`, no `.views-and-date`. Same on a new tab to the results page.\n- SourceMonkey: a `reload` in the same tab starts late enough to have a `<head>`: all `[YTPD]` steps through \"done\"; views and date moved up, Show more expands the description (86 px to 2153 px), Show less collapses it to 86 px.\n- Tampermonkey (`--manager tm`): 3 loads of 3 ran through \"done\" with the layout applied. Violentmonkey: 1 load of 1, same.\n- A copy under SourceMonkey changed only to `(document.head||document.documentElement).appendChild(...)` works on a fresh load.\n- The previous copy isn't kept, so whether line 459 is new in this version is unknown."
         }
       ]
     },
@@ -77698,8 +77957,8 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-13",
-        "version": "1.3.6"
+        "date": "2026-11-05",
+        "version": "1.3.7"
       },
       "tags": [
         "connect-undeclared"
@@ -77724,6 +77983,11 @@
           "date": "2026-10-13",
           "version": "1.3.6",
           "text": "Re-tested after the @connect prompt change: still passes.\n\n- `--headed` temp browser, `--lang zh-CN`, on `/video/7686031550974686118` (13.6 s video). The download icon (`.btnClickDownload`) was added; clicked from `eval` as before.\n- SourceMonkey: one prompt, for `v3-web-prime.douyinvod.com` (the HEAD to the video file). After `connect allow`: HEAD, then the blob GET with no second prompt, then `GM_download` saved a 4.0 MB MP4 (4087953 bytes), all within 1 s.\n- Asked permission for: `v3-web-prime.douyinvod.com` only. The CDN host differs between tests (`v5-dy-ov-experiment.zjcdn.com` last time), so users may be asked again for other videos.\n- `connect-undeclared` kept as a description: it works only after the user accepts the prompt."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.3.7",
+          "text": "Re-tested v1.3.7: still passes.\n\n- `--headed` temp browser, `--lang zh-CN`, signed out. `/video/7686031550974686118` redirected to `jingxuan?modal_id=7696065451926867235` (a 12-minute video), and the script added `.btnClickDownload` there. Clicked from `eval`, as in earlier tests.\n- SourceMonkey: one prompt, for `v26-webf.douyinvod.com` (the HEAD to the video file). After `connect allow`: HEAD, then the blob GET with no second prompt, then `GM_download` logged \"Blob 方式下载成功\" (blob download succeeded). The saved file was a 104 MB MP4 with a valid header.\n- `connect-undeclared` stays: it works only after the user accepts the prompt, and the CDN host differs again from earlier tests."
         }
       ]
     },
@@ -82028,14 +82292,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-02",
-        "version": "6.2.2"
+        "date": "2026-11-05",
+        "version": "6.5.1"
       },
       "notes": [
         {
           "date": "2026-10-02",
           "version": "6.2.2",
           "text": "On a watch page the rounded design is reverted, compared with a `--noscript` tab:\n- search box corners 2px (control 40px), player corners 0 (control 12px), page background `#f9f9f9` (control white);\n- `yt.config_` flags set (`web_rounded_thumbnails` and `web_watch_rounded_player_large` false).\nScript: its \"restore Explore tab\" part threw \"parameter 1 is not of type 'Node'\" twice: `waitForElm` observes `document.body` at document-start, before there is one, so it would fail in any manager. Its action-button fix threw \"reading 'contents'\" (`ytd-watch-flexy.data` has a different shape now)."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "6.5.1",
+          "text": "Re-tested v6.5.1: still passes. On a watch page, compared with a `--noscript` tab:\n- search box corners 2px (control 40px), `ytd-app` background `#f9f9f9` (control white);\n- `yt.config_` flags `web_rounded_thumbnails` and `web_watch_rounded_player_large` false (control unset and true).\n- Script: the same two errors as before: `waitForElm` observing `document.body` at document-start (\"parameter 1 is not of type 'Node'\", twice), and \"reading 'contents'\" in `updateBtns`."
         }
       ]
     },
@@ -82494,14 +82763,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-11",
-        "version": "10.2.3.3"
+        "date": "2026-11-05",
+        "version": "11.0.1"
       },
       "notes": [
         {
           "date": "2026-10-11",
           "version": "10.2.3.3",
           "text": "On https://one.sigmally.com/ (headless) the script started, logged its banner and \"Loaded chart / colorPicker / jszip\", and restyled the menu: dark theme, \"Mod by Cursed\" under the title, a Tag field, player counts in the server list (\"US-1 26/200\"), Main/Party chat tabs and a \"Client Ping\" readout.\n- Script: it first shows a full-screen promo of its own, \"SigMod is finished... Nemsis, a new game\"; its close button appears after 3 s and closed it.\n- The gear (Settings) opened the \"SigMod Client\" window (Home, Macros, Game, Name, Themes, Gallery, Friends). Ticking Quick access > Mass set `#showMass` checked.\n- Script: one error of its own, `Couldn't fetch blocked chat data.` (a page-world `fetch` to its server).\n- Macros and in-game visuals need a live match, not joined."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "11.0.1",
+          "text": "Re-tested v11.0.1: still passes. On `https://one.sigmally.com/`, headless.\n- Script: it logged `SigMod v11.0.1 initialized` and all its features as mounted, restyled the menu (\"SigMod v11.0.1 by Cursed\" under the title, Tag field, player counts like \"US-1 63/200\", Main/Party chat tabs, \"Client Ping\" readout).\n- The full-screen promo and the `Couldn't fetch blocked chat data.` error from v10 are gone.\n- The gear (Settings) opened its window, now with a sidebar (Home, Controls, Appearance, Friends, Misc). Ticking Quick access > Mass set `#showMass` checked.\n- No errors in the log. Macros and in-game visuals need a live match, not joined."
         }
       ]
     },
@@ -84831,8 +85105,8 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-11",
-        "version": "2.4.4"
+        "date": "2026-11-05",
+        "version": "2.5.5"
       },
       "notes": [
         {
@@ -84844,6 +85118,11 @@
           "date": "2026-10-11",
           "version": "2.4.4",
           "text": "Re-tested after the GM value store change (the worker keeps each script's values in memory, numbers every write, and pages send writes a microtask after making them instead of after a 150 ms debounce): now passes.\n- Same steps (GUI tab, ToS ticked, then `lichess.org/analysis`): the GUI left \"WAITING FOR INSTANCES...\" and showed the lichess board (\"Chess (1 engine), lichess.org\") within seconds, as under Tampermonkey. No extra GUI tab was opened.\n- One-way cross-tab latency (`GM_setValue` in the lichess tab until `GM_getValue` in the GUI tab changes): 2-5 ms over 6 writes, was 155-240 ms.\n- The value caches stay in step: both tabs' `GM_listValues()` and the worker's `values` held the same 6 keys (was 657 keys in one tab against 8 stored).\n- Keeps the `value-sync-latency` tag: it passes because of this fix."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2.5.5",
+          "text": "Re-tested v2.5.5: still passes. Same steps, logged out: GUI tab (`psyyke.github.io/A.C.A.S/app/`), ticked the ToS box and clicked \"Kickstart A.C.A.S\", then opened `lichess.org/analysis` (no other players).\n- The GUI left \"Waiting for instances...\" and showed \"Chess (1 engine), lichess.org\" with a board within seconds. No extra GUI tab was opened.\n- One-way cross-tab latency (`GM_setValue` in the lichess tab until `GM_getValue` in the GUI tab changes): 1-4 ms over 6 writes.\n- Both tabs' `GM_listValues()` held the same 9 keys, before and after deleting a test key.\n- No errors in the log."
         }
       ]
     },
@@ -85463,14 +85742,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-02",
-        "version": "2.5"
+        "date": "2026-11-05",
+        "version": "2.5.2"
       },
       "notes": [
         {
           "date": "2026-10-02",
           "version": "2.5",
           "text": "- Page: https://www.youtube.com/watch?v=aqz-KE-bpKQ, headless temp browser (sm-dev).\n- Works: its tool row under the player (thumbnail, repeat, MP4/MP3, PiP, screenshot...) and its hidden settings panel are built, settings and watch-time counters are stored. \"Repeat video\" set `video.loop` to true.\n- Works: with `likeDislikeBar` on, it fetched Return YouTube Dislike data and showed the bar (\"Likes: 110,000 | Dislikes: 18,611\").\n- Script: the dislike count on the Dislike button never appears. `videoDislike` waits for `#below > ytd-watch-metadata > div`, which current YouTube no longer has (missing in a `--noscript` tab too).\n- Download buttons not judged (third-party service)."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2.5.2",
+          "text": "Re-tested v2.5.2: still passes, same as v2.5. On `watch?v=aqz-KE-bpKQ`:\n- Its tool row under the player (18 buttons) and hidden settings are built; settings and watch-time counters are stored. \"Repeat video\" set `video.loop` to true.\n- With `likeDislikeBar` on (set in `ytSettingsMDCM`, then reload), it fetched Return YouTube Dislike data and showed the bar (\"Likes: 110,000 | Dislikes: 18,658\", 85.5% / 14.5%).\n- Script: the dislike count on the Dislike button still never appears. `videoDislike` waits for `#below > ytd-watch-metadata > div`, which isn't on the page.\n- Download buttons not judged (third-party service). The script logs \"Run (v2.5.1)\" though its header says 2.5.2."
         }
       ]
     },
@@ -86889,15 +87173,24 @@
         "version": "1.6"
       },
       "test": {
-        "status": "pass",
-        "date": "2026-10-04",
-        "version": "1.5"
+        "status": "fail",
+        "blame": "script",
+        "date": "2026-11-05",
+        "version": "1.6"
       },
+      "tags": [
+        "domain-moved"
+      ],
       "notes": [
         {
           "date": "2026-10-04",
           "version": "1.5",
           "text": "Logged out, on a public image note (`/explore/6a7fc1e8...` from the explore feed) the right-side cover / copy / download buttons appear.\n\n- Hovering the cover button shows the preview image (an `xhscdn.com` cover URL read from `unsafeWindow.__INITIAL_STATE__`).\n- The download button saved `朋友们这是虫子吗.zip` holding the note's 2 JPEGs (117 KB and 139 KB, valid JPEG headers), built with the `@require`d JSZip.\n- On a user profile page the bottom toolbar appears, but \"获取作品链接\" says 未找到任何作品: logged out, the site gives the 10 listed notes an empty `id`, so that feature needs a login.\n- Copy caption not checked (no clipboard in headless)."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.6",
+          "text": "Re-tested v1.6: now fails, because the site moved.\n\n- From this network `https://www.xiaohongshu.com/explore` answers 302 to `https://www.rednote.com/explore` (seen with curl too), and note URLs redirect the same way, so the script's only `@match`, `https://www.xiaohongshu.com/*`, never covers the final page. No `started` line appeared. This redirect may depend on region: users in China may still get the old domain.\n- A copy with `@match https://www.rednote.com/*` started and logged `小红书浏览助手初始化成功`, but on a public image note added no `#xhs-helper-buttons` and no toolbar: its note-page check is hardcoded to `^https://www\\.xiaohongshu\\.com/explore/` (line 129), and rednote serves notes at `/discovery/item/`. So it needs a real update, not just a `@match` line."
         }
       ]
     },
@@ -86944,8 +87237,8 @@
       "test": {
         "status": "fail",
         "blame": "sourcemonkey",
-        "date": "2026-10-02",
-        "version": "1.0.11"
+        "date": "2026-11-05",
+        "version": "1.0.13"
       },
       "tags": [
         "unsupported-grant:GM_cookie"
@@ -86955,6 +87248,11 @@
           "date": "2026-10-02",
           "version": "1.0.11",
           "text": "Tested in sm-dev in the shared visible browser (Reddit blocks headless), signed out, on r/MorbidReality, which shows Reddit's \"Mature Content / Yes, I'm Over 18\" interstitial.\n\n- Script: its first statement after the blur fix calls `GM_cookie.set` to write an `over18` cookie, and SourceMonkey has no `GM_cookie`, so it throws `GM_cookie is not defined` (line 24). The MutationObserver that removes the modals and blurs is never set up, and the interstitial stays.\n- A copy with `GM_cookie.set` replaced by a `document.cookie` write ran clean; after a reload the interstitial was gone and the subreddit's posts showed. Tampermonkey provides `GM_cookie.set`, so the script would work there.\n- The test `over18` cookie was removed afterwards."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.0.13",
+          "text": "Re-tested v1.0.13: still fails for the same reason, now at the script's first statement. Signed out on r/MorbidReality in a headed temp browser, with `reload`s to get past Reddit's \"Prove your humanity\" page.\n- SourceMonkey: `GM_cookie is not defined` (line 22, `GM_cookie.list`). The MutationObserver is never set up: no `over18` cookie, the Mature Content text stays, and no posts showed (0 `shreddit-post`, the page title was Reddit's home title).\n- Tampermonkey (`--manager tm`), same file and page: `over18` set, 28 posts, 0 of 25 blurred, no Mature Content text.\n- A copy with `GM_cookie` replaced by a `document.cookie` write, under SourceMonkey: the same as Tampermonkey (28 posts, 0 of 25 blurred, no Mature Content text), no errors.\n- Known gap: SourceMonkey has no `GM_cookie` (the `unsupported-grant:GM_cookie` tag)."
         }
       ]
     },
@@ -87582,8 +87880,8 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-11",
-        "version": "1.87.1"
+        "date": "2026-11-05",
+        "version": "1.88.0"
       },
       "notes": [
         {
@@ -87595,6 +87893,11 @@
           "date": "2026-10-11",
           "version": "1.87.1",
           "text": "Re-tested after aab036d (granted scripts run in the page world by default): now passes. On `codeforces.com/problemset/problem/4/A` (headed temp browser; Cloudflare blocks headless) there is no \"JQuery is not loaded\" loop: the \"Codeforces Better! 设置\" (settings) button, the update / success alerts, Translate / Markdown / copy buttons on each statement section, and VJudge and Luogu links (both `GM_xmlhttpRequest` 200) all appear. The script still relies on page globals and passes only because of the fix, so `needs-page-globals` stays."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.88.0",
+          "text": "Re-tested v1.88.0: still passes on `codeforces.com/problemset/problem/4/A` (headed temp browser).\n- No \"JQuery is not loaded\" loop, and no errors in the log.\n- The \"Codeforces Better! 设置\" (settings) button, the update alert's 我知道了 button, and Translate / Markdown / copy buttons on the statement sections all appear.\n- VJudge and Luogu links were added (`GM_xmlhttpRequest` 200 for both). Its `versions.json` and subscriptions requests also gave 200."
         }
       ]
     },
@@ -87905,14 +88208,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
-        "version": "1.0.1"
+        "date": "2026-11-05",
+        "version": "1.0.4"
       },
       "notes": [
         {
           "date": "2026-09-29",
           "version": "1.0.1",
           "text": "Tested on greasyfork.org (headless).\n- Its @require (GM_config from a github.com release) now 404s live, so SourceMonkey (like any manager) refuses to install it from the network. Tested with the corpus's local copy (sm-dev `--local greasyfork-testing/files/github.com/PRO-2684`).\n- Script page: 8 heading anchors (`a.anchor`), an outline list in an aside, a \"Short link\" paragraph with Copy link, and 4 config menu commands registered.\n- Script list: searching `youtube sort:total` navigated to `?q=youtube&sort=total_installs` (search syntax works).\n- Code toolbar: only for `pre > code` blocks; the /code page's `pre` has none, so no toolbar there (expected)."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.0.4",
+          "text": "Re-tested v1.0.4: still passes (headless, local copy of the codeberg.org `@require`).\n- Script page: 8 heading anchors (`a.anchor`), the outline list in an aside, the Short link paragraph, and 4 config menu commands.\n- Script list: searching `youtube sort:total` navigated to `?q=youtube&sort=total_installs`.\n- That result page got Cloudflare's check, headed too, where the script throws at line 1205 (`nav.querySelector` on a null `#nav-user-info`) because the check page has no site header. Script pages and `/en/scripts` load without the check and without the error."
         }
       ]
     },
@@ -88475,8 +88783,8 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
-        "version": "0.14.8"
+        "date": "2026-11-05",
+        "version": "0.14.11"
       },
       "notes": [
         {
@@ -88488,6 +88796,11 @@
           "date": "2026-09-29",
           "version": "0.14.8",
           "text": "Tested with sm-dev (headless) on https://www.youtube.com/watch?v=dQw4w9WgXcQ, with a `--noscript` control tab, scrolling the comments into view in both.\n- Script: all first 10 comment authors show display names (\"Lexer\", \"Hengchuan Zhang\", \"ryue.\") where the control shows handles (\"@ochkalov\", \"@hengchuanzhang9299\", \"@unidentifried\"); links still point to the handles.\n- Comments only loaded after `scrollIntoView()` on `ytd-comments` (YouTube lazy-loading); `scrollTo` and a mouse-wheel event left the section empty."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "0.14.11",
+          "text": "Re-tested v0.14.11: still passes. On `dQw4w9WgXcQ`, after `scrollIntoView()` on `ytd-comments`, all first 10 comment authors show display names (\"Boonkdanf\", \"Candy Cake\", \"LK\") where a `--noscript` tab shows handles (\"@Oatman69\", \"@candycake9531\", \"@LK-ht7qz\"); links still point to the handles. No errors."
         }
       ]
     },
@@ -88955,14 +89268,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
-        "version": "0.102.27"
+        "date": "2026-11-05",
+        "version": "0.102.35"
       },
       "notes": [
         {
           "date": "2026-09-29",
           "version": "0.102.27",
           "text": "- Page: popout live chat of a live stream (`/live_chat?is_popout=1&v=Ml516GINt7s`), opened as the top-level page since sm-dev injects into the top frame only. Tested in the shared visible browser: headless Chrome gets YouTube's \"older version of your browser\" page for live chat, with or without the script.\n- Script: started in MAIN world and logged its setup groups (font pre-rendering, \"Data Manipulation Boost = true\", ticker hacks with `USE_ADVANCED_TICKING::START`, `lcaProto.createComponent_ is found`). No errors thrown by the script.\n- Chat kept working with it: 73 messages rendered, new ones kept arriving (74 to 75 in 10 s).\n- Script: three of its integrity checks failed (`fnIntegrity=false` for `cProto.dataChanged`, `mclp.clearList`, `mclp.showNewItems_`), so those particular patches are skipped against current YouTube code. The speed-up itself was not measured."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "0.102.35",
+          "text": "Re-tested v0.102.35: still passes. Popout live chat as the top-level page, in a headed browser (headless gets YouTube's old-browser page for live chat). It started in MAIN world and logged its setup groups (font pre-rendering, `Data Manipulation Boost = true`, `USE_ADVANCED_TICKING::START`, `lcaProto.createComponent_ is found`), with nothing thrown.\n- On a busy stream (`-cY310RQd1o`) chat rendered 62 messages, rising to 69 with a new last message after 20 s.\n- Script: integrity checks still fail for `cProto.dataChanged` and `mclp.showNewItems_`, so those patches are skipped. The speed-up itself was not measured."
         }
       ]
     },
@@ -90120,8 +90438,8 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
-        "version": "3.3.9"
+        "date": "2026-11-05",
+        "version": "3.4.1"
       },
       "notes": [
         {
@@ -90133,6 +90451,11 @@
           "date": "2026-10-01",
           "version": "3.3.9",
           "text": "sm-dev re-checked after d19602a (`document-start` waits for `<html>`): the sm-dev `documentElement.lang` error is gone. Headless `--temp-browser`, 12 loads of `/en/scripts?q=...` (4 fresh starts, 4 queries, 4 reloads): no errors; on `q=bot` 100 of 100 script items were blacklisted and hidden, and 100 install buttons were added."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "3.4.1",
+          "text": "Re-tested v3.4.1: still passes, on `greasyfork.org/en/scripts` (headed temp browser).\n- 27 of the list's items got the `blacklisted` class and are `display: none`, and 100 install buttons were added. Same counts after 3 reloads, with no errors, so the earlier `documentElement.lang` error stays gone.\n- The old page, `?q=bot`, now gets Cloudflare's \"Just a moment...\" check in headless and headed temp browsers, with a `--noscript` tab too, so the unfiltered list was used instead."
         }
       ]
     },
@@ -90239,14 +90562,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-02",
-        "version": "0.42.25"
+        "date": "2026-11-05",
+        "version": "0.43.12"
       },
       "notes": [
         {
           "date": "2026-10-02",
           "version": "0.42.25",
           "text": "On a watch page it loaded in the page world and logged its fixes being applied (ShadyDOM, key extraction, `web_emulated_idle_callback`, transcript segments, `FIX_doIdomRender` for several elements). Its hooks are in place: `window.getComputedStyle` is its wrapper and `originalAddJob` is set. The video played, an in-app navigation to another video worked, and `logs` had no errors from it. A performance gain was not measured."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "0.43.12",
+          "text": "Re-tested v0.43.12: still passes. On `watch?v=dQw4w9WgXcQ` (headless) it logged its fixes (ShadyDOM, key extraction, transcript segments, `FIX_doIdomRender`, `FIX_DOM_IF OK`). `window.getComputedStyle` is its wrapper and `originalAddJob` is a function. The video played (11.7 s), and clicking a related video navigated in-app to another video, which played (5 s). No thrown errors.\n- Script: logs one self-check error, `yt engine changed 0xDA30`, meaning one of its patches no longer matches current YouTube code. Nothing visible broke.\n- A performance gain was not measured."
         }
       ]
     },
@@ -91305,8 +91633,8 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-13",
-        "version": "4.2.5"
+        "date": "2026-11-05",
+        "version": "4.3.4"
       },
       "notes": [
         {
@@ -91323,6 +91651,11 @@
           "date": "2026-10-15",
           "version": "4.2.5",
           "text": "Re-tested the menu after SourceMonkey began showing a script's repeated menu caption once per tab, across frames, with a click running every registration of it (as Tampermonkey does). Pages: MDN's `flower.mp4` and w3schools' html5_video.asp, headless temp browser.\n\n- `menu` lists each command once: 5 collapsed, 16 after \"Expand menu 「Global Settings」\". The previous note's \"each menu command is listed twice\" no longer holds.\n  - On w3schools, where it runs in hundreds of ad iframes, the 5 still show once each, not once per frame.\n- \"Expand menu\" asked to confirm, stored `_h5player_enhance_unfoldMenu = true` and reloaded into the expanded menu.\n  - One click shows the confirm twice: the script registers the caption twice in the page, and both run. Accepting the second would flip the setting back. Its parent script 381682 shows both confirms under Tampermonkey too.\n- Not fired on the ad-heavy page: with 381682's same code, a tab-opening command there opens a tab per frame (123 under Tampermonkey)."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "4.3.4",
+          "text": "Re-tested v4.3.4: still passes, in a headless temp browser.\n- Speed hotkey: `c` `c` over the MDN video set the real playbackRate (read through a fresh iframe's getter) to 1.4.\n- Tab id: `GM_getTab` gave `{\"tabId\":1}`, and a second tab `{\"tabId\":2}`; `GM_getTabs` listed two. `window.GM_getTab`, `GM_getValue` and `GM_registerMenuCommand` are functions.\n- Cross-tab: after `Shift+P` opened picture-in-picture in T1, 3 `c` presses in T2 (w3schools, another site) took T1 from 1.4 to 2 and T2 to 1.6.\n- `menu` lists each of its 5 commands once. Expand menu stores `_h5player_enhance_unfoldMenu = true` after its confirm; a run seeded with that value lists 16 commands, including \"Collapse menu\".\n- One click still shows its confirm twice (\"Expand menu\", then \"Collapse menu\"), as the earlier note describes."
         }
       ]
     },
@@ -93204,14 +93537,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-03",
-        "version": "5.4"
+        "date": "2026-11-05",
+        "version": "5.6"
       },
       "notes": [
         {
           "date": "2026-10-03",
           "version": "5.4",
           "text": "On `watch?v=dQw4w9WgXcQ` the download button (`#ydd-download`, title YT5S) and options toggle appear next to Subscribe, and the Settings menu command registers.\n\n- Clicking it stored `yt5sUrl` and opened yt5s.in, where the script filled `#txt-url`, deleted the value and pressed the site's button. yt5s listed the video (3:33) with MP4 formats from 360p to 2160p.\n- sm-dev: yt5s.in runs a Cloudflare Turnstile check, so in `--temp-browser` the search returns nothing (also with no script). It worked in the shared visible browser."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "5.6",
+          "text": "Re-tested v5.6: still passes. On `watch?v=dQw4w9WgXcQ`:\n- The download button (`#ydd-download`, title YT5S) and options toggle appear; the Settings menu command registers.\n- Clicking it stored `yt5sUrl` and opened yt5s.in, where the script filled `#txt-url`, deleted the value and pressed the site's button. yt5s listed MP4 from 360p to 2160p and MP3/M4A audio with sizes. Nothing was downloaded.\n- sm-dev: yt5s.in runs a Cloudflare Turnstile check. In the headless and `--headed` temp browsers the script's part ran but no formats came back. It worked in a visible Google Chrome with a new empty profile."
         }
       ]
     },
@@ -94212,9 +94550,9 @@
       },
       "test": {
         "status": "fail",
-        "blame": "sourcemonkey",
-        "date": "2026-10-04",
-        "version": "2.4.6"
+        "blame": "script",
+        "date": "2026-11-05",
+        "version": "2.4.4"
       },
       "tags": [
         "setclipboard-callback"
@@ -94224,6 +94562,11 @@
           "date": "2026-10-04",
           "version": "2.4.6",
           "text": "Downloads of image notes work; link extraction copies but never confirms, because SourceMonkey ignores `GM_setClipboard`'s callback. Tested logged out, with `disclaimer: true` seeded, after closing the site's login popup.\n\n- Image note (2 images): hover the floating icon, \"Download Note Files\", the image picker lists both, \"Start Download\" saved a zip with the two JPEGs (117 KB, 139 KB).\n- Explore feed: \"Extract Recommended Note Links\" lists 32 notes; \"Extract Links\" calls `GM_setClipboard(urls, \"text\", cb)` and shows its \"copied to clipboard\" toast only from `cb`. No toast appeared in 8 s.\n- SourceMonkey: `GM_setClipboard(\"x\", \"text\", cb)` resolved but `cb` never ran; `gm-bindings.ts` defines it as `function (text, type)`. Tampermonkey documents `GM_setClipboard(data, info, cb)` and calls `cb`.\n- Script: a video note fails with `Failed to fetch` five times: logged out, every stream's `masterUrl` and `backupUrls` are `http://` (`sns-video-zl` / `sns-bak-v10.xhscdn.com`), so the fetch is blocked as mixed content in any manager.\n- SourceMonkey runs it in the page world (`@grant unsafeWindow`), so its `fetch` is the site's wrapped one; a native `fetch` of the same `http://` URL failed the same way."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2.4.4",
+          "text": "Re-tested v2.4.4 (the downloaded copy, lower than the 2.4.6 noted earlier; SourceMonkey reports 2.5.1 at the update URL): now fails, for a new reason. Signed out, `disclaimer: true` seeded, after closing the site's captcha and login dialogs without solving them. `www.xiaohongshu.com` now redirects to `www.rednote.com`, which the script also matches.\n\n- Video note: now works. \"Download Note Files\" saved a 111.9 MB MP4 with a valid header; the earlier mixed-content failure is gone.\n- Script: image note (4 images): the picker lists all 4, but \"Start Download\" fails with `Failed to fetch` five times each. Its `fetch` to `ci.xiaohongshu.com` sends a 135-byte `accept` header, over the 128-byte CORS safelist limit, so Chrome sends a preflight and `ci.xiaohongshu.com` answers OPTIONS with 404. Reproduced with the page's own `fetch` and no manager involved: that exact header fails, while a shorter `accept` or none gets 200 and a 190 KB JPEG.\n- Script: `/explore` now redirects to `/`, which no `@match` covers, so \"Extract Recommended Note Links\" never appears. On a profile page, \"Extract Published Note Links\" gives the script's own sign-in message.\n- SourceMonkey: `GM_setClipboard('x', 'text', cb)` still never calls `cb` (checked from the script's scope), so `setclipboard-callback` stays. Link extraction couldn't reach that call signed out."
         }
       ]
     },
@@ -94824,8 +95167,8 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-12",
-        "version": "5.0.8"
+        "date": "2026-11-05",
+        "version": "5.0.9"
       },
       "notes": [
         {
@@ -94837,6 +95180,11 @@
           "date": "2026-10-12",
           "version": "5.0.8",
           "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; on r/MorbidReality, signed out, in a headed temp browser (the first attempt got Reddit's reCAPTCHA page; a second fresh browser got through).\n\n- SourceMonkey: the unmodified copy ran with no errors. `customElements` is the page's registry now, so its `waitDefined` hooks applied: after a reload all 3 `shreddit-blurred-container`s had `blurred: false`, and the \"Unblur\" button was in the header.\n- Both managers now show a \"Mature Content\" dialog (\"Yes, I'm Over 18\" or \"Log In\") over the page. Its `configured-xpromo-modal` context is `bypassable_xpromo_nsfw_bypassable_desktop`, which isn't in the script's block list, so the script lets it through. Tampermonkey (`--manager tm`) gave the same: posts unblurred, the button there, the same dialog shown. Version 5.0.9 is out and may handle it.\n- Kept `needs-page-globals`: the script still uses the page's `customElements` without `unsafeWindow`, and passes only because scripts now run in the page world."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "5.0.9",
+          "text": "Re-tested v5.0.9: still passes, signed out on r/MorbidReality in a headed temp browser (Reddit's \"Prove your humanity\" page came first; one `reload` got past it).\n- SourceMonkey: no errors; 0 of 25 `shreddit-blurred-container`s blurred, 28 posts, `#rnu-trigger` in the header, `over18` cookie set.\n- Script: 5.0.9 does not handle the \"Mature Content\" dialog the last note asked about. It still covers the page (`configured-xpromo-bypassable_xpromo_nsfw_bypassable_desktop`, not in the script's block list), with the body at `overflow: hidden`, and it stopped a real click on the Unblur button, so its menu was not opened.\n- The script still uses the page's `customElements` without `unsafeWindow`, so it relies on scripts running in the page world."
         }
       ]
     },
@@ -96199,14 +96547,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
-        "version": "2.1.6"
+        "date": "2026-11-05",
+        "version": "2.1.10"
       },
       "notes": [
         {
           "date": "2026-09-29",
           "version": "2.1.6",
           "text": "Tested with sm-dev in the shared visible browser (Reddit blocks headless), on an r/AskReddit thread.\n- Script: started at document-start, stored its settings (GM_setValue), and restyled the page: `pp_` classes on the logo, sidebar, feed and user panel, a comment search box, a scroll-to-top button, and a row of comment sort buttons (Best, Top, New, Controversial, Old, Q&A) replacing the dropdown.\n- Clicked \"New\": URL became `?sort=new`, \"New\" marked active, and top-level comments listed newest first (05:42, 04:49, 04:33, 03:56 UTC). Clicked \"Best\" again to restore."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2.1.10",
+          "text": "Re-tested v2.1.10: still passes. Signed out on an r/AskReddit thread, in a headed temp browser (Reddit's \"Prove your humanity\" page came first; one `reload` got past it).\n- Script: `pp_` classes on the logo, user panel, feed and sidebar, a scroll-to-top button, and sort buttons (Best, Top, New, Controversial, Old, Q&A) with the dropdown hidden. It stored its databases with GM_setValue.\n- Clicked New: URL became `?sort=new`, New marked active, top-level comments newest first (05:17, 04:50, 04:20, 03:33, 03:26 UTC). Clicked Best to restore.\n- Script: threw `Cannot read properties of null (reading 'querySelector')` in `renderCommentBookmark` (line 3059) on comments, where Reddit's menu has no `.save-comment-menu-button`, apparently because it's signed out. That skips the script's comment bookmark and its context-menu additions. Tampermonkey's page looked the same (the same `pp_` classes, 6 sort buttons), though a TM run doesn't report the throw.\n- Script: logged a 403 from `/r/AskReddit/api/link_flair_v2.json`, signed out.\n- The comment search box is Reddit's own `pdp-comment-search-input`, which the script only relabels; there is no `pp_` search element."
         }
       ]
     },
@@ -97240,8 +97593,8 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-13",
-        "version": "25.14"
+        "date": "2026-11-05",
+        "version": "26.4.23"
       },
       "notes": [
         {
@@ -97253,6 +97606,11 @@
           "date": "2026-10-13",
           "version": "25.14",
           "text": "Re-tested after the GM_xmlhttpRequest compatibility changes (2026-10-13, uncommitted): passes, because of the fix (`GM.xmlHttpRequest` returns a Promise), so `gm-xhr-promise` stays.\n- On https://www.milkywayidle.com/ the log shows `fetchMarketJSON fetch success 200`, then `fetch end with response status: 200` and the parsed `{marketData, timestamp}`. `localStorage.MWITools_marketAPI_json` holds 119,042 characters (was empty).\n- In the script's world, `GM.xmlHttpRequest({url, method: 'GET'})` gives a Promise with `abort` on it, resolving to a response with status 200."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "26.4.23",
+          "text": "Re-tested v26.4.23: still passes. The game pages still need an account, so same checks as before.\n- On `https://www.milkywayidle.com/` it fetched `game_data/marketplace.json` through `GM.xmlHttpRequest` (200), and `localStorage.MWITools_marketAPI_json` holds 114,900 characters.\n- Script: this version wraps the request in its own Promise with callbacks, so it no longer relies on `GM.xmlHttpRequest` returning a Promise.\n- On the public combat simulator it adds its \"Import solo/group\" button; importing needs character data saved from the game.\n- No errors in the log."
         }
       ]
     },
@@ -98278,14 +98636,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-02",
-        "version": "2026.01.14"
+        "date": "2026-11-05",
+        "version": "2026.01.14.1"
       },
       "notes": [
         {
           "date": "2026-10-02",
           "version": "2026.01.14",
           "text": "On a watch page (`watch?v=0e3GPea1Tyg`, best quality 1080p) the script and its helper API `@require` load in the page world and log \"Attempting to set resolution: hd2160\"; the player plays at 1080p, the highest available (a `--noscript` tab also chose 1080p).\n- In the player's Quality menu the script adds its \"Quality 4K >\" header; it slides to its own list (8K to 144p). Choosing 480p saved `targetResolution: large`. After a reload the player was at 480p (`large`), so the preference applies.\n- Script: settings go to `localStorage` (`YTHD_settings`), not GM storage. The helper never sets `features.storage`, so it always uses its localStorage path in every manager.\n- The helper replaces the page's `window.GM` with a Proxy over the script's `GM`. Reading a property through it from the page throws a Proxy invariant TypeError, because SourceMonkey's `GM` properties are read-only and non-configurable. Neither the script nor the helper reads through it, so nothing breaks."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2026.01.14.1",
+          "text": "Re-tested v2026.01.14.1: still passes. On `watch?v=0e3GPea1Tyg` (headless, best quality 1080p) it logs `Attempting to set resolution: hd2160`, and the player plays at `hd1080`, the highest available.\n- In the player's Quality menu it adds its \"Quality 4K >\" header, which opens its own list (8K to 144p). Choosing 480p saved `targetResolution: large` in `localStorage`. After a reload the player was at `large`.\n- The old note's `window.GM` proxy detail was not re-checked."
         }
       ]
     },
@@ -98910,15 +99273,24 @@
         "version": "0.1.5"
       },
       "test": {
-        "status": "pass",
-        "date": "2026-10-02",
-        "version": "0.1.4"
+        "status": "fail",
+        "blame": "script",
+        "date": "2026-11-05",
+        "version": "0.1.5"
       },
+      "tags": [
+        "lang-path-redirect"
+      ],
       "notes": [
         {
           "date": "2026-10-02",
           "version": "0.1.4",
           "text": "On www.bilibili.com/video/BV1e2eS69ES3 (headless, en-US) the script logged `CDN=upos-sz-mirroraliov.bilivideo.com` and rewrote `__playinfo__`: dash video URLs and the media fetched came from `upos-sz-mirroraliov.bilivideo.com`, and the video played (readyState 4). A `--noscript` tab fetched from `upos-hz-mirrorakam.akamaized.net` / `upos-sz-mirrorcosov.bilivideo.com`. Its \"CDN Switcher\" checkbox was added to the player settings panel, and the menu command registered.\n\n- sm-dev: `__playinfo__` was already set at document-start, so it took its \"Directly modify\" branch rather than the property hook."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "0.1.5",
+          "text": "Re-tested v0.1.5: now fails, because Bilibili's URLs changed.\n\n- Headless temp browser, signed out. `/video/BV1e2eS69ES3` starts the script, then about 5 s later the page really navigates (navigation type `navigate`, referrer the old URL) to `/en/video/BV1e2eS69ES3/`, or `/zh-Hans/video/...` with `--lang zh-CN`. `match` reports no `@match` covers that, `status` shows the script not active, and `menu` is empty.\n- The final page's `__playinfo__` and media came from `upos-sz-mirrorcosov.bilivideo.com`, not the script's `upos-sz-mirrorali(ov)`, as in a `--noscript` tab. So the promised switch doesn't happen.\n- A copy adding `@match https://www.bilibili.com/*/video/*` works: it runs on `/en/video/`, and `__playinfo__` and the media all come from `upos-sz-mirroraliov.bilivideo.com`, the video plays (readyState 4), and the menu has its command.\n- The redirect might depend on region or being signed out; it came with both languages here."
         }
       ]
     },
@@ -98999,14 +99371,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-02",
-        "version": "5.0.217"
+        "date": "2026-11-05",
+        "version": "5.1.1"
       },
       "notes": [
         {
           "date": "2026-10-02",
           "version": "5.0.217",
           "text": "On a watch page the right column becomes a tab box (Info, 5.1K comments, Videos; Playlist hidden). Clicking the comments tab made it active and showed the comments in the side panel (20 threads loaded, 342x591 at the right). No errors in `logs`. It runs in the page world, since it uses `unsafeWindow` without granting it."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "5.1.1",
+          "text": "Re-tested v5.1.1: still passes. On `jNQXAC9IVRw` the right column is a tab box (Info, 10M comments, Videos; Playlist hidden). Clicking comments made it active with 20 threads loaded (334x591 at the right). No errors.\n- Its own `trustedTypes.createPolicy('default', ...)` is why its `GM_addElement` script insert works, unlike 537017."
         }
       ]
     },
@@ -99095,14 +99472,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-04",
-        "version": "1.2"
+        "date": "2026-11-05",
+        "version": "1.3"
       },
       "notes": [
         {
           "date": "2026-10-04",
           "version": "1.2",
           "text": "Logged out, on novel https://www.pixiv.net/novel/show.php?id=29299642 (1960 characters) the script added its \"Download this novel\" button; clicking it saved `29299642_Wasn't That a Date_.txt` (4884 bytes, the novel text).\n\n- On series https://www.pixiv.net/novel/series/16576320 (2 novels) its series button appeared, and the menu command \"Download this series (combined into one file without any information)\" saved an 8395-byte `.txt` with both parts.\n- All seven menu commands registered."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.3",
+          "text": "Re-tested v1.3: still passes, logged out.\n- On novel `show.php?id=29299642`, its \"Download this novel\" button saved `29299642_Wasn't That a Date_.txt` (4884 bytes, as before).\n- On series `16576320`, its \"Download this novel series\" button appeared, and the menu command \"Download this series (combined into one file without any information)\" saved an 8395-byte `.txt`, as before.\n- All seven menu commands registered."
         }
       ]
     },
@@ -99374,14 +99756,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-14",
-        "version": "26.10.0"
+        "date": "2026-11-05",
+        "version": "26.11.0"
       },
       "notes": [
         {
           "date": "2026-10-14",
           "version": "26.10.0",
           "text": "On the public archive page for January 2023 (`/archive/2023/` redirects there), the script added a C$ value under 32 of the 39 pet rows (`.pet-value`, values like `3-5C$`, `0.25-0.5C$`, `0.5-1C$`). No errors in the log. Trade, group and pound pages need a signed-in account and weren't tried."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "26.11.0",
+          "text": "Re-tested v26.11.0: still passes. On the public archive page for January 2023 (`/archive/2023/` redirects there), the script added 32 C$ values (`.pet-value`, like `3-5C$`, `0.25-0.5C$`). No errors in the log. Trade, group and pound pages need a signed-in account and weren't tried."
         }
       ]
     },
@@ -100100,14 +100487,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-02",
-        "version": "2.8.2"
+        "date": "2026-11-05",
+        "version": "2.8.4"
       },
       "notes": [
         {
           "date": "2026-10-02",
           "version": "2.8.2",
           "text": "- Page: https://www.youtube.com/watch?v=aqz-KE-bpKQ (Big Buck Bunny 4K), headless temp browser.\n- sm-dev: the player settings menu gets \"Preferred Premium\" and \"Preferred Quality < 1080p >\" items, and its page-world helper (an inline `<script>`) runs. Choosing 720p there switched the player to 720p60 and stored `preferred_quality = 720`; after a reload the player started at `hd720`. A `--noscript` tab also plays at `hd1080`, so the 1080 default alone proved nothing.\n- Real extension (`--extension`), since the helper is an inline script inserted from the user-script world: it ran (its `ythdp-elements` node exists). With the page's `setPlaybackQualityRange` wrapped to log, a `resize` event made the script call it with `hd1080` and the player switched from `large` to `hd1080`; choosing 720p in the menu called it with `hd720` and the player followed.\n- In the extension run the player sat at `large` until that `resize`: the video was already playing when the script attached its `playing` listener. That may be the run's late start under `--extension` rather than the extension itself."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2.8.4",
+          "text": "Re-tested v2.8.4: still passes. On `aqz-KE-bpKQ`:\n- The player settings menu has \"Preferred Premium\" and \"Preferred Quality < 1080p >\"; the page-world helper's `ythdp-elements` node exists.\n- Clicking the left arrow stored `preferred_quality = 720`, the menu showed \"< 720p >\" and the player switched from `hd1080` to `hd720`. After a reload the player stayed at `hd720`. No errors."
         }
       ]
     },
@@ -100146,16 +100538,20 @@
         "version": "0.7.1"
       },
       "test": {
-        "status": "fail",
-        "blame": "script",
-        "date": "2026-11-04",
-        "version": "0.7.0"
+        "status": "pass",
+        "date": "2026-11-05",
+        "version": "0.7.1"
       },
       "notes": [
         {
           "date": "2026-11-04",
           "version": "0.7.0",
           "text": "On `github.com/jshute96/SourceMonkey`, signed out, the script's five menu commands register and then its body stops: `JSON.parse(GM_getResourceText(\"catppuccin-palette\"))` at line 880 throws `Unexpected end of JSON input`, so none of its GitHub features set up (no `ghp-` styles or elements on the page).\n\n- Script: the three `catppuccin-*` JSON resources are 404 at `raw.githubusercontent.com` (gone from the author's repo), and the script parses them at top level with no fallback, though only the off-by-default Catppuccin Icons option needs them. Its `GM_config` `@require` on github.com is 404 too, so this run used `--local`. Version 0.7.1 is out and drops the `@resource` lines.\n- Same in Tampermonkey (`--manager tm`): it warns `can't load @resource` and the script throws the same `Unexpected end of JSON input`.\n- A copy with `|| \"{}\"` after each of the three reads gets past that and mounts 17 `ghp-` styles; on this signed-out page it then throws on the `children` of a null element (line 1024, a menu button the signed-out header lacks).\n- SourceMonkey: gives `\"\"` without throwing and logs the error naming the resource and the 404."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "0.7.1",
+          "text": "Re-tested v0.7.1: now passes signed out; the `@resource` files moved to codeberg.org, so `JSON.parse(GM_getResourceText(...))` no longer stops the body. This run used the local copies.\n- `github.com/jshute96/SourceMonkey`: 17 `ghp-` styles mount and the 5 menu commands register.\n- Releases on `github.com/sharkdp/bat/releases`: expanding v0.26.0's assets marks 21 rows `.ghp-release-asset`, with uploader and download count (`@github-actions 2001 DL`).\n- With values seeded: Catppuccin Icons (Mocha) adds 48 icons on the repo home, and Extended User Info adds its rows on `github.com/sharkdp` (`Public: 123 repos, 38 gists`, Node ID).\n- Script: the Custom Menu Icon setup throws `Cannot read properties of null (reading 'children')` at line 959 on repo pages, since the signed-out header lacks that button, and also throws from the same setup (through line 372) on a user page. The other features still run; the option is empty by default.\n- Not confirmed: Extended Repo Info (off by default) added 0 rows on the README blob page, not looked into further. Signed-in features can't be judged here."
         }
       ]
     },
@@ -100666,14 +101062,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-14",
-        "version": "2.6.9"
+        "date": "2026-11-05",
+        "version": "2.6.13"
       },
       "notes": [
         {
           "date": "2026-10-14",
           "version": "2.6.9",
           "text": "Signed out, on `bsky.app/profile/bsky.app`: the script adds a \"Download image\" button to each image (13 on the first screen, 20 on the Discover feed). Clicking the first saved `@bsky.app-bsky-3mxu3hsnebc2v-0.jpg` (a 1200x1600 JPEG) and recorded it in `dl_history`. Its menu commands register, and a \"What's New\" popup shows on first run. No video post came up in the feed, so video download was not tried."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2.6.13",
+          "text": "Re-tested v2.6.13: still passes, signed out in a headless temp browser, on `bsky.app/profile/bsky.app`.\n- 38 \"Download image\" buttons and 59 script buttons in all. A real click on the first saved `@whysharksmatter.bsky.social-bsky-3mzlal2hpds2u-0.jpg` (a 2000x1500 JPEG) and recorded it in `dl_history`.\n- Its menu commands register (Settings, View History, Export History, Download All Visible Media, Copy Diagnostic Report), and the What's New popup shows for 2.6.13.\n- Video download still not tried: no video post came up, and the profile's Videos URL redirected the signed-out browser to the home page."
         }
       ]
     },
@@ -101097,16 +101498,20 @@
         "version": "1.1.0"
       },
       "test": {
-        "status": "fail",
-        "blame": "script",
-        "date": "2026-10-02",
-        "version": "0.8.6"
+        "status": "pass",
+        "date": "2026-11-05",
+        "version": "1.1.0"
       },
       "notes": [
         {
           "date": "2026-10-02",
           "version": "0.8.6",
           "text": "Script: out of date against the current gofile.io. On `/home` and on `/d/<id>` pages the script logs `[Gofile Enhanced] #index_main not found.` and stops, so its sidebar buttons never appear.\n- The current site shell has `#app`, `#sidebar`, `#fm-root` and no `#index_main` or `#index_sidebar`, and no `appdata` global (in the page or the script's world), which the script also reads for the folder contents.\n- No live public folder was found to test with (four `/d/` links from a GitHub README all say \"This content does not exist\"), but the missing anchor is in the page shell, not the folder view."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.1.0",
+          "text": "Re-tested v1.1.0: now passes; it was rewritten for the current gofile.io. On a public folder `https://gofile.io/d/ZMPpvORo` (headed, reached from an IGG link), its \"GoFile Enhanced\" bar appeared above the file list.\n- Selecting the file showed its Download button, with the menu Direct, ABDM, Aria2, IDM.\n- IDM saved `ZMPpvORo.ef2` (162 bytes), holding the file's `store-na-phx-1.gofile.io/download/...` link and the `accountToken` cookie.\n- No file from the folder was downloaded, so Direct, ABDM and Aria2 weren't run, and neither were password-protected folders.\n- On `/home` the site's own page shows \"Page not found\" and no bar, which isn't the script's doing."
         }
       ]
     },
@@ -102760,8 +103165,8 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-12",
-        "version": "47.0"
+        "date": "2026-11-05",
+        "version": "47.4"
       },
       "notes": [
         {
@@ -102773,6 +103178,11 @@
           "date": "2026-10-12",
           "version": "47.0",
           "text": "Re-tested on the page-world-default branch (scripts run in the page world with a sandbox window): now passes; logged out, headless, on `/games/920587237/Adopt-Me`.\n\n- SourceMonkey: the unmodified copy showed its \"Rolocate Update\" dialog and the SmartSearch navbar box. After the dialog's \"Exit (Refresh)\", the games-page setup ran with no `Roblox is not defined` error: the page's `Roblox.GameLauncher.joinGameInstance` is now the script's async wrapper, and its `_robloxJoinInterceptorInitialized` is true.\n- The server filter buttons still can't be checked logged out: the Servers tab shows \"There are currently no running games.\", as before.\n- Kept `needs-page-globals`: the script still reads the page's `Roblox` without `unsafeWindow`, and passes only because scripts now run in the page world."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "47.4",
+          "text": "Re-tested v47.4: still passes. Logged out, headless, on `/games/920587237/Adopt-Me`.\n- It showed its \"Rolocate Update V47.4\" dialog. After \"Exit (Refresh)\", the games-page setup ran with no `Roblox is not defined` error: the page's `Roblox.GameLauncher.joinGameInstance` is now the script's async wrapper, and its server hop button is on the page.\n- Typing \"adopt me\" in the SmartSearch navbar box fetched `apis.roblox.com/search-api/omni-search` and game icons through `GM_xmlhttpRequest` (all 200).\n- Script: `multiget-place-details` gets a 401 logged out, handled with no error.\n- The server filter still can't be checked logged out: the Servers tab shows \"There are currently no running games.\", as before."
         }
       ]
     },
@@ -104563,14 +104973,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
-        "version": "2025.101.8"
+        "date": "2026-11-05",
+        "version": "2026.100.0"
       },
       "notes": [
         {
           "date": "2026-09-29",
           "version": "2025.101.8",
           "text": "Tested on en.wikipedia.org/wiki/Userscript (sm-dev, @grant none so MAIN world, document-start).\n- Script: page-world setTimeout/setInterval/requestAnimationFrame are replaced (setTimeout.toString() no longer native); duplicate-run marker window.nzsxclvflluv = true.\n- Wrapped timers still work: setTimeout(50) fired after 49 ms, setInterval(20) ticked 11 times in 210 ms, rAF callback got a numeric timestamp.\n- A --noscript control tab keeps the native setTimeout.\n- The energy saving itself is not measurable here; tested that the wrapping is installed and harmless."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2026.100.0",
+          "text": "Re-tested v2026.100.0: still passes, on en.wikipedia.org/wiki/Userscript in a headless temp browser.\n- `setTimeout`, `setInterval` and `requestAnimationFrame` are replaced, with the marker `window.nzsxclvflluv = true`. A `--noscript` tab keeps native `setTimeout`.\n- Wrapped timers work: `setTimeout(50)` fired after 51 ms, `setInterval(20)` ticked 10 times in 210 ms, and the rAF callback got a numeric timestamp.\n- The energy saving itself isn't measurable here."
         }
       ]
     },
@@ -105464,15 +105879,24 @@
         "version": "3.0.1"
       },
       "test": {
-        "status": "pass",
-        "date": "2026-09-29",
-        "version": "2.5.2"
+        "status": "fail",
+        "blame": "sourcemonkey",
+        "date": "2026-11-05",
+        "version": "3.0.1"
       },
+      "tags": [
+        "gm-addelement-trusted-types"
+      ],
       "notes": [
         {
           "date": "2026-09-29",
           "version": "2.5.2",
           "text": "Page: youtube.com/watch?v=jNQXAC9IVRw, logged out, sm-dev headless. Spot-checked a few of its many features.\n- Ran in MAIN world (`@grant unsafeWindow`) with no errors; both `@require`s loaded; `GM_xmlhttpRequest` to raw.githubusercontent.com (locale) and returnyoutubedislikeapi.com returned 200 (all hosts are in `@connect`).\n- Return YouTube Dislike: dislike button shows \"448K\" (`.ytp-plus-dislike-text--regular`).\n- Settings gear added to the masthead; clicking it opens the YouTube+ settings modal (Zen Styles, Thumbnail Hover Preview, Hide Voice Search, ...).\n- Zen styles applied: `#voice-search-button` display none, masthead background transparent.\n- The right-side tab view (`#right-tabs`) was not present in this layout; not investigated further."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "3.0.1",
+          "text": "Re-tested v3.0.1: now fails, since the tab view, its headline feature, doesn't appear. The earlier spot-check passes, and the earlier note's missing `#right-tabs` is explained here.\n- Still working on `jNQXAC9IVRw`: dislike button shows \"452K\", `.yp-settings-button` opens the settings modal, `#voice-search-button` hidden, masthead background transparent.\n- SourceMonkey: `GM_addElement(parent, 'script', {textContent})` at `injectTabviewCore` throws \"Failed to set the 'textContent' property on 'HTMLScriptElement': This document requires 'TrustedScript' assignment\", at `__gm-runtime.js`. `addElement` in `src/wrapper-gm-runtime.js` sets `el.textContent` in the page world, before handing the insert to the bridge. No `#right-tabs`.\n- Tampermonkey and Violentmonkey: same check, no error, `#right-tabs` with Info, 10M, Videos, Playlist.\n- A copy under SourceMonkey with a `trustedTypes` default policy added at the top: `#right-tabs` present, and the comments tab shows 20 threads."
         }
       ]
     },
@@ -106482,14 +106906,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-31",
-        "version": "4.4.7.9"
+        "date": "2026-11-05",
+        "version": "4.4.8.0"
       },
       "notes": [
         {
           "date": "2026-10-31",
           "version": "4.4.7.9",
           "text": "On a Nikkei Asia article (`asia.nikkei.com/business/companies/chinese-shipping-coal-stocks-outperform-ai-as-earnings-outlooks-diverge`), the script removed `#paywall-offer` and filled the article from the page's `__NEXT_DATA__`: 13 visible paragraphs over 80 chars (3606 chars of article text). A `--noscript` tab showed the paywall offer and 2 such paragraphs (216-char preview).\n- On a Canberra Times story it removed the gradient mask and unhid the hidden blocks, but the site no longer serves the article body (only the first paragraph is in the DOM), so the text stayed cut off there.\n- Script: its `*://*.com/*` style matches make it start in every ad and sync iframe on news pages (dozens per page)."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "4.4.8.0",
+          "text": "Re-tested v4.4.8.0: still passes. On the same Nikkei Asia article (headless), `#paywall-offer` is gone and the article has 13 visible paragraphs over 80 chars (3525 chars). A `--noscript` tab shows the paywall offer and 2 such paragraphs (379 chars).\n- No errors in `logs`.\n- sm-dev: with the script, `start` reported the page didn't finish loading within 40s. The article text was in place when checked straight after. The control tab's load time wasn't measured, so the cause isn't known.\n- SourceMonkey logged a warning that 4.4.8.1 is already at the update URL."
         }
       ]
     },
@@ -108165,14 +108594,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-10",
-        "version": "26.1.1"
+        "date": "2026-11-05",
+        "version": "26.4.1"
       },
       "notes": [
         {
           "date": "2026-10-10",
           "version": "26.1.1",
           "text": "On https://gemini.google.com/app (logged out) the script started, registered `⚙️ Settings` and `🔔 Notifications`, fetched its fonts and notification gist (jsdelivr, gist.github.com, 200), and showed two notifications (guide, update to 26.4.0).\n\n- It added its prompt buttons in the composer (`button[data-testid=\"composer-button-prompts\"]`); the main one opened its menu (\"No saved prompts.\").\n- Adding a prompt (title \"Greeting\", text \"Translate this sentence into French\") stored `Prompts`. Picking it from the menu put the text into Gemini's editor (`div.ql-editor`). Nothing was sent.\n- Script: on https://chatgpt.com/ logged out it added no button: its ChatGPT selector `#prompt-textarea` doesn't exist there; the logged-out composer is `textarea#mobile-composer-prompt`."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "26.4.1",
+          "text": "Re-tested v26.4.1: still passes. On https://gemini.google.com/app (logged out) it started, registered `⚙️ Settings` and `🔔 Notifications`, fetched its fonts and notification gist (200), and showed two notifications, which had to be closed since they covered the composer.\n- It added its prompt buttons (`button[data-testid=\"composer-button-prompts\"]`); the main one opened its menu (\"No saved prompts.\").\n- Adding a prompt (title \"Greeting\", text \"Translate this sentence into French\") stored `Prompts`. Picking it from the menu put the text into Gemini's editor (`div.ql-editor`). Nothing was sent.\n- Script: on https://chatgpt.com/ logged out it still adds no button: its selectors (`div#prompt-textarea`, ProseMirror) don't exist there; the logged-out composer is `textarea#mobile-composer-prompt`."
         }
       ]
     },
@@ -110422,14 +110856,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-14",
-        "version": "1.0.4"
+        "date": "2026-11-05",
+        "version": "1.1.1"
       },
       "notes": [
         {
           "date": "2026-10-14",
           "version": "1.0.4",
           "text": "On the \"Stardew Valley VERY Expanded\" collection page (shared `--open-browser` browser; a `--headed` temp browser got Cloudflare's \"Verify you are human\" check on the second page load), the script fetched the mod list from Nexus's GraphQL API and added its panel: \"Download all mods, 100 mods\", matching the page's 100 mods. Its menu's \"Select mods to download\" opened a modal with 100 mod checkboxes, and Select all gave \"100 mods selected\".\n- Downloads not tested: Nexus needs a signed-in account for them."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.1.1",
+          "text": "Re-tested v1.1.1: still passes on the \"Stardew Valley VERY Expanded\" collection page, in a visible Google Chrome with a new empty profile (the headed temp browser got Cloudflare's \"Just a moment...\" check, where the script's GraphQL fetch fails with `Failed to fetch`).\n- The panel shows \"Download all mods, 104 mods\", matching the page's own 104 mods, with the mandatory and optional buttons.\n- The \"Select mods…\" button, now directly on the panel, opens a modal listing the mods with file names, sizes and requirements. Select all gave \"104 files · 458.77 MB\".\n- No script errors on this page. Downloads not tested: Nexus needs a signed-in account for them."
         }
       ]
     },
@@ -111093,14 +111532,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-31",
-        "version": "7.7.7"
+        "date": "2026-11-05",
+        "version": "7777777"
       },
       "notes": [
         {
           "date": "2026-10-31",
           "version": "7.7.7",
           "text": "On https://de.wikipedia.org/wiki/Hauskatze (browser language en-US), the script translated the visible page to English on load with no action: 11 `GM_xmlhttpRequest` calls to translate.googleapis.com / translate-pa.googleapis.com (all 200, covered by `@connect`), and German text runs between links became English (\"In Germany, domestic cats are the most commonly kept pets.\"), with headings in the contents list too. A translate button sat at the bottom right.\n- Script: it translates text node by node, so sentences broken by links come out half German, half English."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "7777777",
+          "text": "Re-tested v7777777: still passes, on https://de.wikipedia.org/wiki/Hauskatze (browser language en-US) in a headless temp browser.\n- With no action it translated the visible page: 41 `GM_xmlhttpRequest` POSTs to `translate-pa.googleapis.com/v1/translateHtml` (all 200, covered by `@connect`). \"Body characteristics\" replaced the German heading, and the contents list changed the same way. The translate button sits at the bottom right.\n- Script: still translates node by node, so sentences broken by links come out half German, half English (\"der FalbkatzeIt is among the most popular Heimtieren\")."
         }
       ]
     },
@@ -112166,14 +112610,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-10",
-        "version": "6.6.7"
+        "date": "2026-11-05",
+        "version": "6.6.8"
       },
       "notes": [
         {
           "date": "2026-10-10",
           "version": "6.6.7",
           "text": "On https://www.bigmodel.cn/glm-coding the script started at document-start in the page world (`@grant none`) and logged its startup lines; afterwards `JSON.parse` in the page was its wrapper.\n\n- It promises to re-enable greyed-out buy buttons in the page only (no change to the backend).\n- No plan was sold out at test time, but the waitlist \"提交\" (submit) button was disabled with `is-disabled` in a `--noscript` tab, and enabled (no `disabled`, class `is-disabled` removed) with the script.\n- No purchase or submit was clicked."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "6.6.8",
+          "text": "Re-tested v6.6.8: still passes.\n\n- On https://www.bigmodel.cn/glm-coding the script started at document-start in the page world and logged its startup lines; `JSON.parse` in the page is its wrapper afterwards.\n- The waitlist \"提交\" (submit) button is enabled with no `is-disabled` class. In a `--noscript` tab it is `disabled` with `is-disabled`, and an empty button there is also disabled.\n- No plan was sold out at test time (\"立即订阅\" enabled in both tabs), so the sold-out rewrite wasn't seen acting.\n- No purchase or submit was clicked."
         }
       ]
     },
@@ -113122,14 +113571,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-11",
-        "version": "12.7"
+        "date": "2026-11-05",
+        "version": "13.4"
       },
       "notes": [
         {
           "date": "2026-10-11",
           "version": "12.7",
           "text": "Tested on openguessr.com (logged out), single-player World round.\n- The round's panorama iframe (`#PanoramaIframe`) showed `location=-3.98003747,103.17846573`. The script read the same coordinates and reverse-geocoded them via `GM_xmlhttpRequest` to nominatim (200): \"Lahat, South Sumatra, Indonesia\".\n- `Tab` opened its Hotkeys Settings panel; `v` put the address in the site logo; `x` added a map marker at exactly the panorama coordinates.\n- No errors. SourceMonkey runs it in the page world (it names `unsafeWindow` without granting it), which its prototype and `WebSocket` hooks need.\n- GeoGuessr, WorldGuessr and the other sites not checked (GeoGuessr needs an account)."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "13.4",
+          "text": "Re-tested v13.4: still passes. On openguessr.com, logged out, single-player World round; no multiplayer.\n- The panorama iframe, now `#panorama-iframe`, showed `location=46.938808031664074,7.500227010934507`. The script read the same coordinates and reverse-geocoded them via `GM_xmlhttpRequest` to nominatim (200): \"Dennigkofenweg, Muri bei Bern, Bern, Switzerland\".\n- `Tab` opened its Hotkeys Settings panel; `v` put the address in the site logo; `x` added a map marker at exactly the panorama coordinates.\n- No errors. GeoGuessr, WorldGuessr and the other sites not checked."
         }
       ]
     },
@@ -113729,15 +114183,24 @@
         "version": "2026.09.29"
       },
       "test": {
-        "status": "pass",
-        "date": "2026-10-04",
-        "version": "2026.05.14"
+        "status": "fail",
+        "blame": "script",
+        "date": "2026-11-05",
+        "version": "2026.09.29"
       },
+      "tags": [
+        "trusted-types"
+      ],
       "notes": [
         {
           "date": "2026-10-04",
           "version": "2026.05.14",
           "text": "On a watch page (dQw4w9WgXcQ), hovering the video showed the round download button (42x42 at 444,83, top center of the 897x505 player). Pressing it opened a tab on `tenzaa.com/en-US/youtube?url=https://www.youtube.com/watch?v=dQw4w9WgXcQ`.\n- Script: that page is a list of third-party downloader sites (dltkk.to, yt2.to, vdwn.cloud) showing the video's URL to copy, in Chinese despite the `en-US` path. It produces no download link itself.\n- SourceMonkey: reported a newer version (2026.09.29) at the update URL; tested the corpus copy (2026.05.14)."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2026.09.29",
+          "text": "Re-tested v2026.09.29: now fails. This version replaces the tenzaa.com link with an in-page parser.\n- On `watch?v=dQw4w9WgXcQ` the script throws at start: `Failed to set the 'innerHTML' property on 'Element': This document requires 'TrustedHTML' assignment`, from `overlay.innerHTML = ...` at line 639, before its hover handling is set up. Hovering the video leaves `#tenzaa-aio-btn` at `display: none`, 0x0.\n- Same under Tampermonkey and Violentmonkey: the button stays hidden and `#snapwc-overlay` is missing; Violentmonkey shows the same error.\n- On TikTok (no Trusted Types) it starts and builds the overlay, but the page redirected to \"Log in\", so the hover button couldn't be reached. Calling `startParseFlow` directly opened the modal and gave a network error: `api.snapwc.com` could not be reached (curl gets a TLS error too, for `snapwc.com` as well), so the parser itself wasn't seen working."
         }
       ]
     },
@@ -113929,12 +114392,9 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-04",
-        "version": "9.9.15"
+        "date": "2026-11-05",
+        "version": "9.9.39"
       },
-      "tags": [
-        "sends-browsing-data"
-      ],
       "notes": [
         {
           "date": "2026-10-04",
@@ -113945,6 +114405,11 @@
           "date": "2026-10-04",
           "version": "9.9.15",
           "text": "Privacy: on the pages it matches (Bilibili, Iwara and similar video sites) it POSTs each page's URL, title and thumbnail to its own server (`/api/catalog/report-browser-meta` on its worker URL), at most once per cooldown, beyond what showing its overlay needs."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "9.9.39",
+          "text": "Re-tested v9.9.39: passes on YouTube, where the launcher works; the Bilibili check used last time now doesn't show it.\n- YouTube `watch?v=dQw4w9WgXcQ`: the \"Enable StripView\" launcher appears. Clicking it queried `/api/resolve` (404, video not in its catalog) and it turned into \"No StripView video · Retry\", as the code intends. `sv_update_dismissed_ver` was seeded to skip the update prompt.\n- Script: on Bilibili the launcher stays `sv-launcher-hidden`. From this machine, with `en` or `zh-CN` languages, the site's own code moves `/video/BV...` to `/en/video/...` or `/zh-Hans/video/...` (also with no script running), and `isVideoPage` only accepts `^/video/`. Same under Violentmonkey. Visitors who aren't sent to a locale path weren't tested.\n- The overlay itself wasn't seen: no video known to be in its catalog was tried.\n- Privacy: `sends-browsing-data` removed. Loading a page no longer POSTs its URL, title and thumbnail; that report now runs only after the user starts a real overlay. A launcher click still sends the page URL to `/api/resolve` and watch statistics to `/api/view-events` (204 here), under a random stored viewer ID."
         }
       ]
     },
@@ -114128,14 +114593,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-14",
-        "version": "0.0.7.5"
+        "date": "2026-11-05",
+        "version": "0.0.7.6"
       },
       "notes": [
         {
           "date": "2026-10-14",
           "version": "0.0.7.5",
           "text": "On a watch page (dQw4w9WgXcQ) the script started, added its gear button and toolbar under the player, and stored its settings.\n- The gear opened the \"YouTube Tools\" panel. Turning on Dislikes, Like vs Dislike bar and Hide Sidebar saved to `ytSettingsMDCM` and applied live: `#secondary` went `display: none`, and the like/dislike bar showed \"Likes: 19,489,926 | Dislikes: 521,505\" (97.4% / 2.6%) from returnyoutubedislikeapi.com.\n- Script: the dislike count on the Dislike button never appeared. `videoDislike()` is gated on `#below > ytd-watch-metadata > div`, which the current watch page lacks.\n- The downloader (third-party converter sites) was not tried."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "0.0.7.6",
+          "text": "Re-tested v0.0.7.6: still passes. On `watch?v=dQw4w9WgXcQ` the script started, added its gear button and toolbar under the player, and stored its settings.\n- The gear opened its panel. Turning on Dislikes, Like vs Dislike bar and Hide Sidebar saved to `ytSettingsMDCM` and applied live: `#secondary` went `display: none`, and the bar showed \"Likes: 19,492,546 | Dislikes: 521,575\" (97.4% / 2.6%) from returnyoutubedislikeapi.com.\n- Script: the dislike count on the Dislike button still never appears. `videoDislike()` is gated on `#below > ytd-watch-metadata > div`, which isn't on the page.\n- The downloader (third-party converter sites) was not tried."
         }
       ]
     },
@@ -115847,14 +116317,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-14",
-        "version": "0.5.1"
+        "date": "2026-11-05",
+        "version": "0.5.3"
       },
       "notes": [
         {
           "date": "2026-10-14",
           "version": "0.5.1",
           "text": "On a YouTube watch page (`dQw4w9WgXcQ`) the script replaces the Download button with its own split button and adds one to the player bar. The arrow opens a \"Download routes\" dialog with 7 routes.\n- Test sends a `GM_xmlhttpRequest` GET to each route's site and marks them Available. SSYouTube redirects to `us.savefrom.net`, which its `@connect` lines don't cover: after `connect allow` it is Available too (before, the request timed out and it showed Unavailable). The default route and test results are saved in `ytdr:settings`.\n- Download opens `https://saveanyyoutube.com/watch?v=dQw4w9WgXcQ` in a new tab via `GM_openInTab`.\n- Only tested on YouTube."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "0.5.3",
+          "text": "Re-tested v0.5.3: still passes. On `watch?v=dQw4w9WgXcQ` the script adds its split button and one in the player bar; the arrow opens \"Download routes\" with 7 routes.\n- Test sends a `GM_xmlhttpRequest` GET to each route's site, marks them Available and saves to `ytdr:settings`. SSYouTube redirects to `us.savefrom.net`, which its `@connect` lines don't cover: unanswered, the request times out and it shows Unavailable; after `connect allow` it shows Available.\n- Download opens `https://saveanyyoutube.com/watch?v=dQw4w9WgXcQ` in a new tab via `GM_openInTab`, and that page loaded with the video embedded.\n- Only tested on YouTube."
         }
       ]
     },
@@ -117434,14 +117909,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-14",
-        "version": "3.9.0"
+        "date": "2026-11-05",
+        "version": "4.2.0"
       },
       "notes": [
         {
           "date": "2026-10-14",
           "version": "3.9.0",
           "text": "Signed out, on `x.com/jack/status/20`: the script adds its download button (⬇, `.BetterX-dl-btn`, with a `guest-actions` class) to the image reply. Clicking it fetched `pbs.twimg.com/media/...?name=orig` through `GM_xmlhttpRequest` (200) and saved `derbederdusler_1770888775830262034.jpg` (a 1080x786 JPEG).\n- Script: the BetterX badge and panel (the timeline history, Alt+X) never show signed out. `boot()` appends `#BetterX-root` to `<body>` as soon as the body exists, and the signed-out X page (now with no `data-testid` attributes and no `#react-root`) drops it while it renders: `state.rootEl` ends up detached and Alt+X toggles a panel that is not in the page. Under Tampermonkey (`--manager tm`) `#BetterX-root` is missing on the same page too, while the download button works. The signed-in X app may differ; not judged.\n- Profiles (`x.com/NASA`) show no posts signed out, so the feed features (ad and bot hiding, history) could not be judged."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "4.2.0",
+          "text": "Re-tested v4.2.0: still passes, signed out in a headless temp browser, on `x.com/jack/status/20`.\n- The ⬇ button (`.BetterX-dl-btn`) fetched `pbs.twimg.com/media/...?name=orig` through `GM_xmlhttpRequest` (200) and saved `derbederdusler_1770888775830262034.jpg` (a 1080x786 JPEG).\n- Changed since 3.9.0: the badge can now show signed out. `#BetterX-root` was in the page after each of 4 reloads and on 1 of 3 first loads in a new browser, with the badge showing \"Total 0 · Unread0\". Alt+X opened the 520px panel and a badge click closed it.\n- Script: on the other 2 first loads `#BetterX-root` was missing (`state.rootEl` detached, as in the last note), while the download button still worked.\n- Feed features (ad and bot hiding, history) still can't be judged signed out."
         }
       ]
     },
@@ -117529,14 +118009,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-31",
-        "version": "28.47"
+        "date": "2026-11-05",
+        "version": "28.50"
       },
       "notes": [
         {
           "date": "2026-10-31",
           "version": "28.47",
           "text": "On `en.wikipedia.org/wiki/Cat`, `Alt+Shift+H` turned on \"Selection mode ON - Click element to hide\". Clicking the CentralNotice banner text opened the picker, and its Hide button saved `hider_site_en.wikipedia.org` with that `p` selector; the text vanished and stayed hidden after a reload. No errors logged.\n- sm-dev: the picker is in a shadow root `snapshot --find` doesn't reach, so its Hide button was clicked at a point over `cdp`."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "28.50",
+          "text": "Re-tested v28.50: still passes, on `en.wikipedia.org/wiki/Cat` in a headless temp browser.\n- `Alt+Shift+H` turned on selection mode. Clicking the article's first paragraph opened the picker, and its Hide button saved `hider_site_en.wikipedia.org = [\"#mwGg\"]`.\n- The paragraph is gone in a screenshot and stayed gone after a reload, with the next paragraph moved up. It hides by collapsing the element with `max-height: 0` and `position: absolute`, not `display: none`, so `offsetHeight` isn't a test for it.\n- No errors logged.\n- sm-dev: the picker is in a shadow root `snapshot --find` doesn't reach, so its Hide button was clicked at a point over `cdp`."
         }
       ]
     },
@@ -117573,14 +118058,19 @@
       "test": {
         "status": "fail",
         "blame": "script",
-        "date": "2026-10-31",
-        "version": "16.4"
+        "date": "2026-11-05",
+        "version": "17.1"
       },
       "notes": [
         {
           "date": "2026-10-31",
           "version": "16.4",
           "text": "On the detector page `www.detectadblock.com` (no ad blocker in the test browser), the script makes the page report \"You're blocking ads\"; a `--noscript` tab reports \"You're allowing ads\".\n- Script: it counts 7 blocked requests (`uad_blocked_total = 7`) and stops the page's bait `adblockanalytics.com/google-adsense.js` from loading, so the bait element `#nqoybpxnanylgvpfpbz` is never created.\n- Tampermonkey: same \"You're blocking ads\" result."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "17.1",
+          "text": "Re-tested v17.1: still fails, for the same reason, in a headless temp browser on `www.detectadblock.com` (no ad blocker in the browser).\n- The page reports \"You're blocking ads\" with the script, and \"You're allowing ads\" in a `--noscript` tab.\n- Script: it counts 10 blocked requests (`uad_blocked_total = 10`), and the bait element `#nqoybpxnanylgvpfpbz` is never created. A `--noscript` tab has that element.\n- Tampermonkey: same \"You're blocking ads\" result, no bait element."
         }
       ]
     },
@@ -117654,14 +118144,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-14",
-        "version": "1.22.1"
+        "date": "2026-11-05",
+        "version": "1.24.0"
       },
       "notes": [
         {
           "date": "2026-10-14",
           "version": "1.22.1",
           "text": "Tested on duck.ai (headed; no account needed). The script logged its start and added its round export button (`#m365-export-btn`) at the bottom right.\n- Sent one prompt; duck.ai then showed a bot challenge before answering, so the chat holds only the user message.\n- Clicking the export button downloaded `Reply with just the word hello..md`: a Markdown file with the model (`gpt-6-luna`), the time, the URL and the user message, matching the chat duck.ai saved in IndexedDB.\n- No errors in the log. Other sites need accounts and weren't tried."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.24.0",
+          "text": "Re-tested v1.24.0: still passes. On duck.ai (headed; no account needed) the script logged its start and added its export button (`#m365-export-btn`).\n- Sent one prompt and accepted duck.ai's Continue step. duck.ai stayed on \"Generating response\", so the chat held only the user message.\n- Clicking the button downloaded `Reply with just the word hello..md`: Markdown with the model (`gpt-6-luna`), the time, the URL and the user message.\n- No errors in the log. The assistant-reply path wasn't checked, and other sites need accounts and weren't tried."
         }
       ]
     },
@@ -118406,14 +118901,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-14",
-        "version": "1.1.0"
+        "date": "2026-11-05",
+        "version": "1.2.0"
       },
       "notes": [
         {
           "date": "2026-10-14",
           "version": "1.1.0",
           "text": "On a Pinkbike tire review (headed; headless got a Cloudflare block page), `i` scrolled to the first article photo (scrollY 0 to 583, photo top at 613 minus the 30px buffer), `i` again to the next (1602), and `Shift+I` back to 583. The `@require`d keyboard-shortcuts library loaded and logged its key list."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.2.0",
+          "text": "Re-tested v1.2.0: still passes. On an Orbea Rise first-ride article, in a visible Google Chrome with an empty profile (a second navigation in `--headed` Chromium got a Cloudflare block; a first load there worked):\n- `i` scrolled to the first photo (scrollY 0 to 743, photo top at 773 minus the 30px buffer), `i` again to the next media, a video (log `@ y=1744`, scrollY 1714), and `Shift+I` back to 743.\n- The `@require`d keyboard-shortcuts library loaded and logged its key list. No errors."
         }
       ]
     },
@@ -118489,14 +118989,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-14",
-        "version": "1.2.2"
+        "date": "2026-11-05",
+        "version": "1.2.3"
       },
       "notes": [
         {
           "date": "2026-10-14",
           "version": "1.2.2",
           "text": "On a Red Bull Hardline video article (38 comments, 18 replies), `--headed` (headless got a Cloudflare \"Attention Required\" page):\n- `c` scrolled to `.news-comments-container`; `j`, `j` stepped to the first two comments, `m` to the next root (cm4253073), `j` into its reply, `p` back to the parent, whose text then sat 32px from the top of the viewport.\n- `p` on a root logged \"nowhere to go\", as intended. No errors."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.2.3",
+          "text": "Re-tested v1.2.3: still passes. Same article (141 comments, 82 replies), in a visible Google Chrome with an empty profile:\n- `c` scrolled to `.news-comments-container` (its top at 0, scrollY 19196); `j`, `j` went to the first comment and its reply (cm4263980, cm4264020), each with its text about 32px from the viewport top.\n- `m` went to the next root (cm4263963, scrollY 21593), `j` into its reply (21683), `p` back to the parent (21593).\n- `p` on a root logged \"nowhere to go\", as intended. No errors."
         }
       ]
     },
@@ -118742,14 +119247,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-14",
-        "version": "1.2.2"
+        "date": "2026-11-05",
+        "version": "1.2.3"
       },
       "notes": [
         {
           "date": "2026-10-14",
           "version": "1.2.2",
           "text": "On a 674-comment story (item?id=50088935), with both remote `@require` libraries loaded: `c` jumped to the first comment, `j` `j` stepped to depth 1 and depth 2, `h` went to the next depth-2 sibling, `p` back to its depth-1 parent, and `m` to the next root comment, which ended at top=0 in the viewport (scrollY 37385). Depths from `td.ind[indent]` matched each move."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.2.3",
+          "text": "Re-tested v1.2.3: still passes. Headless, on a 612-comment story (item?id=50378228), with both `@require` libraries loaded from the downloaded copies:\n- `c` went to the first comment (depth 0, top=0, scrollY 393); `j`, `j` to depth 1 and depth 2; `h` to the next depth-2 sibling; `p` to its depth-1 parent; `m` to the next root comment, which ended at top=0 (scrollY 10294, once its smooth scroll was done).\n- Depths from `td.ind[indent]` matched each move. No errors."
         }
       ]
     },
@@ -118827,14 +119337,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-14",
-        "version": "1.2.1"
+        "date": "2026-11-05",
+        "version": "1.2.2"
       },
       "notes": [
         {
           "date": "2026-10-14",
           "version": "1.2.1",
           "text": "On a 2026-10-14 politics article (headless, signed out), `c` opened the comments drawer (20 `article[data-comment-id]` cards).\n- `j` / `k` / `h` / `m` each logged a jump to the expected comment and moved the drawer (`scrollTop` 0 to 418, 730, 862); the target landed 56px below the drawer top, under the filter bar.\n- After expanding a reply, `j` reached it, `p` and `r` went to its parent card, and `p` on a top-level comment logged \"nowhere to go\".\n- No errors from the script in `logs`."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.2.2",
+          "text": "Re-tested v1.2.2: still passes. On a 2026-11-05 politics article (headless, signed out), `c` logged \"comments not shown yet, opening\" and opened the drawer (20 `article[data-comment-id]` cards).\n- `j` / `j` / `k` / `h` / `m` each logged the expected comment and moved `scrollTop` (0, 418, 598, 418, 598, 852); the target landed 56px below the drawer top, under the filter bar.\n- With the Top filter and a thread's replies shown, `j` stepped through replies (at 56px each), `p` from a reply went to its parent card, and `p` and `r` on that top-level comment logged \"nowhere to go\".\n- No errors from the script in `logs`."
         }
       ]
     },
@@ -118869,14 +119384,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-14",
-        "version": "1.0.7"
+        "date": "2026-11-05",
+        "version": "1.0.8"
       },
       "notes": [
         {
           "date": "2026-10-14",
           "version": "1.0.7",
           "text": "On a Verge article (Tesla Roadster, 60 comments loaded), `c` opened the Coral comments drawer and the script saw the shadow-root stream mount. `j`, `j`, `j`, `p`, `m`, `k` each logged a target and moved the drawer's scroll (0, 645, 768, 1202, 1610, 1467); after `k` the target comment sat flush at the drawer top. Both `@require`d libraries loaded; no errors."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.0.8",
+          "text": "Re-tested v1.0.8: still passes. Headless, on the Sam Altman RAM comments article, `c` opened the Coral comments drawer and the script logged the shadow-root stream mounting; a second `c` went to the first comment (19 loaded).\n- `j` x3, `p`, `m`, `k` each logged a target and moved the drawer (`scrollTop` 645, 790, 930, 1096, then 1199, 1096), with the target flush at the drawer top. `p` on a top-level comment logged \"nowhere to go\".\n- On a reply (index 6, `scrollTop` 1571), `p` went to its parent (index 5, 1344), and `m` to the next root (index 7, 2047).\n- The refresh pill didn't appear, so its dismissal wasn't exercised. Both `@require`d libraries loaded; no errors."
         }
       ]
     },
@@ -118911,14 +119431,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-14",
-        "version": "1.0.4"
+        "date": "2026-11-05",
+        "version": "1.0.5"
       },
       "notes": [
         {
           "date": "2026-10-14",
           "version": "1.0.4",
           "text": "Headed (headless gets \"Your access has been blocked\"). On an article, `c` clicked the comments button; signed out, the site first showed a two-page \"Introducing Discussions\" intro, and after Done the drawer opened with 262 Coral comments in its shadow root.\n- `c`, `j` x3, `p`, `m`, `k` each logged the expected move (`p` returned to the comment `j` had passed, `m` went to the next root comment), and the drawer scrolled each one to 55px from its top, just under the sticky header (`headerOffset()` 55.5)."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.0.5",
+          "text": "Re-tested v1.0.5: still passes. Headed, on an article; signed out, `c` clicked the comments button and the site first showed its two-page \"Introducing Discussions\" intro, and after Done the drawer opened with 92 Coral comments in its shadow root.\n- `c`, `j` x3, `p`, `m`, `k` each logged the expected move (`p` returned to the comment `j` had passed, `m` went to the next root comment), and the drawer scrolled each one to 54-56px from its top, just under the sticky header (`scrollTop` 191, 650, 824, 1336, 824, 1827, 1536).\n- No errors."
         }
       ]
     },
@@ -119200,17 +119725,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-14",
-        "version": "3.2"
+        "date": "2026-11-05",
+        "version": "4.2"
       },
-      "tags": [
-        "sends-browsing-data"
-      ],
       "notes": [
         {
           "date": "2026-10-14",
           "version": "3.2",
           "text": "On pixeldrain.com/ (a matched site with no popup of its own), a test overlay `div` with `z-index: 2147483647` and an `antiadblock` class div were added, and `body` set to `overflow: hidden`. Both divs went to `display: none` and `body` overflow back to `auto`. In a `--noscript` tab the same overlay stayed `display: block` and overflow `hidden`.\n- Script: its MutationObserver throws on most added elements (`'[data-c409df689-card], [data-*-card]' is not a valid selector`, line 238). Harmless: the z-index and attribute checks run first. Fails the same in every manager.\n- The shortlink auto-continue part (tpi.li, ouo.io and others) was not tested: it needs a live shortlink. On tpi.li and oii.la it sends the shortlink URL to the author's Cloudflare worker to look up a cached destination."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "4.2",
+          "text": "Re-tested v4.2: still passes, against test elements as before, since pixeldrain.com has no popup of its own. It was rewritten since v3.2, so the elements follow what the new code looks for: the generic z-index and `antiadblock` class checks of the old test are gone from it.\n- On pixeldrain.com/ (headless) I added a `div[role=dialog][aria-modal=true]`, a `div[data-shb=1]`, a custom element whose open shadow root says \"Adblocker detected\", and `body` overflow `hidden`. Within 400ms all three were removed and overflow was `auto`. `window.open` returned null and `alert` was replaced.\n- In a `--noscript` tab all three stayed, with overflow `hidden`.\n- The old invalid-selector error is gone, with no errors in `logs`.\n- Tag removed: `sends-browsing-data`. The worker lookup is gone from the code. `GM_xmlhttpRequest` and `@connect shortlinks.fdyzen.workers.dev` remain in the header, but nothing calls it.\n- The shortlink auto-continue part was not tested: it needs a live shortlink.\n- Script: it removes any `div[role=dialog][aria-modal=true]` on its sites, which could include real dialogs."
         }
       ]
     },
@@ -120035,14 +120562,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-14",
-        "version": "1.0.8"
+        "date": "2026-11-05",
+        "version": "1.0.9"
       },
       "notes": [
         {
           "date": "2026-10-14",
           "version": "1.0.8",
           "text": "On a custom-domain Substack post (astralcodexten.com/p/ai-safety-is-not-a-corporate-plot, matched by `https://*/p/*`), 50 comments loaded signed out. `c` jumped to the first comment (scrollY 0 to 13140, with one logged drift correction), then `j`, `j`, `p`, `m`, `k` each logged the expected move; the final comment sat at 72px, exactly under the 72px navbar."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.0.9",
+          "text": "Re-tested v1.0.9: still passes, signed out on the same custom-domain post, in a headless temp browser.\n- `c` jumped to the first comment (scrollY 0 to 13140, with one logged drift correction), then `j`, `j`, `p`, `m`, `k` each logged the expected move, with the keys about 1.5s apart.\n- After the final `k`, the comment's content sat at 72px, under the navbar (the `#comment-<id>` anchor itself is 96px above that). With the keys pressed back to back it ended about 72px higher, near the top of the window."
         }
       ]
     },
@@ -120362,14 +120894,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-14",
-        "version": "1.0.2"
+        "date": "2026-11-05",
+        "version": "1.0.5"
       },
       "notes": [
         {
           "date": "2026-10-14",
           "version": "1.0.2",
           "text": "On a watch page in a headed 1693x905 window the script moved the description, comments and related videos into its right-hand `#right-tabs` panel (Info / 2.4M / Videos). Clicking Videos made it active and showed 20 related videos. The \"Setting\" menu command opened its settings dialog, and an in-player ad's \"Sponsored\" label was struck through (ad labeling).\n- Script: at the headless default 1280x720 the tab panel sat partly off screen (x 1126 to 1481), so test it at a wider window."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.0.5",
+          "text": "Re-tested v1.0.5: still passes. On a watch page in a headed 1693x905 window, its `#right-tabs` panel holds the description, comments and related videos (Info / 2.4M / Videos), on screen at x 1199 to 1646. Clicking Videos made it active and showed 20 related videos. The \"Setting\" menu command opened its settings dialog, and ad text (\"Sponsored\", the desktop-app promo) was struck through (ad labeling). No thrown errors."
         }
       ]
     },
@@ -121320,14 +121857,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-14",
-        "version": "2.6.0"
+        "date": "2026-11-05",
+        "version": "2.6.1"
       },
       "notes": [
         {
           "date": "2026-10-14",
           "version": "2.6.0",
           "text": "On a YouTube watch page (`jNQXAC9IVRw`, \"Me at the zoo\") the script adds a floating NoBsDL Download button. Clicking it sends one `GM_xmlhttpRequest` to `nobsdl.com/api/video-info` and opens a panel listing 2 MP4 and 3 MP3 formats with sizes. Choosing 144p MP4 (~0.5 MB) starts a job on NoBsDL, polls its status, and the browser saves `Me_at_the_zoo.mp4`; `savedCount` is set to 1.\n- Script: it sends the video's URL to nobsdl.com, which is its stated feature. Only tested on YouTube."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2.6.1",
+          "text": "Re-tested v2.6.1: still passes. On `watch?v=jNQXAC9IVRw` the script adds its floating NoBsDL Download button. Clicking it sends one `GM_xmlhttpRequest` to `nobsdl.com/api/video-info` and opens a panel listing 2 MP4 and 3 MP3 formats with sizes. Choosing 144p MP4 (~0.5 MB) starts a job, polls its status, and the browser saves `Me_at_the_zoo.mp4`; `savedCount` is set to 1.\n- Script: it sends the video's URL to nobsdl.com, its stated feature. Only tested on YouTube.\n- SourceMonkey reported a newer version (2.7.1) at the update URL; tested the corpus copy."
         }
       ]
     },
@@ -121559,14 +122101,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-31",
-        "version": "0.0.3"
+        "date": "2026-11-05",
+        "version": "0.0.4"
       },
       "notes": [
         {
           "date": "2026-10-31",
           "version": "0.0.3",
           "text": "On live room huya.com/333003, signed out: the script selected `蓝光20M` (marked `请先登录`, \"log in first\") and the video played at 1920x1080. A `--noscript` control stayed on `流畅` at 800x450, with the three 蓝光 options still locked."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "0.0.4",
+          "text": "Re-tested v0.0.4: still passes.\n\n- Signed out, on live room huya.com/1113: the script selected `蓝光8M` (marked `请先登录`, \"log in first\") and the video played at 1920x1080. A `--noscript` control stayed on `流畅` at 800x450, with the locked options unselected.\n- Rooms 222523, 13142 and 99101 also ended on their top locked option (蓝光20M, 蓝光6M, 蓝光16M), and rooms offering no locked option were left alone.\n- Room 333003 from the earlier test is offline now (`TT_ROOM_DATA.state` is `OFF`), so a different room was used."
         }
       ]
     },
@@ -122405,14 +122952,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-31",
-        "version": "2.9.2"
+        "date": "2026-11-05",
+        "version": "2.9.4"
       },
       "notes": [
         {
           "date": "2026-10-31",
           "version": "2.9.2",
           "text": "On a tab page (Smells Like Teen Spirit, `s269`) the layout changed as promised, compared with a `--noscript` tab:\n- The nav bar (`_bottomBarWide`, `#tablist`) moved to a fixed 48px bar at the top (top 0); in the control it is a floating bar at top 644.\n- `#tab-controls` became a full-width 64px bar at the bottom (top 656) instead of the floating panel at the lower right.\n- The Songsterr Plus button is hidden, and the script's video/audio toggle (`#sgd-mine-wrapper`) was added to the bar. No errors in the logs."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2.9.4",
+          "text": "Re-tested v2.9.4: still passes. On a tab page (Smells Like Teen Spirit, `s269`, headed) the layout changed as promised, compared with a `--noscript` tab:\n- The nav bar (`_bottomBarWide`, `#tablist`) is a fixed 48px bar at the top (top 0); in the control it is a floating bar at top 680.\n- `#tab-controls` is a full-width 64px fixed bar at the bottom (top 692 of 756); in the control it is 0px high and static.\n- The Songsterr Plus button is hidden (visible in the control), and the script's video/audio toggle (`#sgd-mine-wrapper`) is in the bar. No errors in the logs."
         }
       ]
     },
@@ -122539,8 +123091,8 @@
       "test": {
         "status": "fail",
         "blame": "script",
-        "date": "2026-10-14",
-        "version": "2.23.2"
+        "date": "2026-11-05",
+        "version": "2.23.3"
       },
       "tags": [
         "trusted-types"
@@ -122550,6 +123102,11 @@
           "date": "2026-10-14",
           "version": "2.23.2",
           "text": "On a watch page (dQw4w9WgXcQ, headed) the script throws over and over from `build()` (line 1418, via `mount` / `updateInner`): `Failed to set the 'innerHTML' property on 'Element': This document requires 'TrustedHTML' assignment`. Its `#ytr-root` metadata block is never added, so no old layout appears.\n- Script: YouTube enforces Trusted Types and the script assigns plain strings to `innerHTML`. Under Tampermonkey (`--manager tm`) it fails the same way, with no `#ytr-root`."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2.23.3",
+          "text": "Re-tested v2.23.3: still fails, the same way. On `watch?v=dQw4w9WgXcQ` (headed) it throws repeatedly from `build()` (line 1425, via `mount` / `updateInner`): `This document requires 'TrustedHTML' assignment`. `#ytr-root` is never added. Under Tampermonkey (`--manager tm`) it fails the same way, with no `#ytr-root`."
         }
       ]
     },
@@ -122966,14 +123523,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-31",
-        "version": "1.4"
+        "date": "2026-11-05",
+        "version": "1.5.2"
       },
       "notes": [
         {
           "date": "2026-10-31",
           "version": "1.4",
           "text": "On an artist page (`/en/users/4729811/artworks`, signed out) the script added a \"Sort by popularity\" button. Clicking it moved to `?sort=popular`, showed a progress panel (\"351 / 470\") while it fetched counts, then re-ordered the works grid by bookmarks: the first nine works had 64264, 43429, 40458, 28553, 27934, 27467, 27377, 21851 and 21710 bookmarks (checked with `/ajax/illust/<id>`). Without the sort the grid starts with the newest work, 151489567.\n- Its `fetch` hook, installed at document-start, caught pixiv's list requests.\n- Not checked: the search page's own popularity sort, which signed-out visitors don't get."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.5.2",
+          "text": "Re-tested v1.5.2: still passes. On `/en/users/4729811/artworks`, signed out, its \"Sort by popularity\" button moved to `?sort=popular`, fetched counts, and re-ordered the works grid by bookmarks: 64308, 43490, 40509, 28556, 27956, 27488, 27394, 21869, 21730 for the first nine works (checked with `/ajax/illust/<id>`).\n- Not checked: the search page's own popularity sort, which signed-out visitors don't get."
         }
       ]
     },
@@ -124407,14 +124969,19 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-31",
-        "version": "2.13.6"
+        "date": "2026-11-05",
+        "version": "2.14.6"
       },
       "notes": [
         {
           "date": "2026-10-31",
           "version": "2.13.6",
           "text": "On https://github.com/jshute96/userscripts the UI is in Chinese from its local word list (header menus 产品/开发者, repo tabs 代码/议题/拉取请求, 关于, 发行版, file times 5 个月前), and the README paragraphs were translated online (\"我的用户脚本存储库 ...\").\n- Script: of its online sources only Google (translate.googleapis.com, 200) worked; Tencent transmart was unreachable, Bing's auth gave 404 and Youdao returned HTML, and it fell through to Google each time. No permission prompts. Translations are cached with `GM_setValue`."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2.14.6",
+          "text": "Re-tested v2.14.6: still passes on https://github.com/jshute96/userscripts (headless).\n- UI in Chinese: header menus 产品/开发者, repo tabs 代码/议题/拉取请求, 关于, file times 3 天前. 7 menu commands register.\n- README translation is now off by default (`translateReadme: false`), behind an added \"翻译 README\" button. Clicking it translated the README (\"我的用户脚本存储库\", \"这些是我的一些用户脚本...\").\n- Script: of its online sources Google (translate.googleapis.com, 200) worked; Tencent transmart was unreachable, Bing's auth gave 404 and Youdao returned HTML, and it fell through to Google. No permission prompts and no errors."
         }
       ]
     },
