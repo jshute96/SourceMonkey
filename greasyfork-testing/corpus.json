@@ -6134,7 +6134,8 @@
         "ratings_ok": 0,
         "ratings_bad": 0,
         "created_date": "2014-08-09",
-        "updated_date": "2022-03-05"
+        "updated_date": "2022-03-05",
+        "gone_as_of": "2026-11-05"
       },
       "labels": [
         {
@@ -9810,7 +9811,8 @@
         "ratings_ok": 0,
         "ratings_bad": 0,
         "created_date": "2014-12-11",
-        "updated_date": "2014-12-11"
+        "updated_date": "2014-12-11",
+        "gone_as_of": "2026-11-05"
       },
       "labels": [
         {
@@ -16156,7 +16158,8 @@
         "ratings_ok": 0,
         "ratings_bad": 0,
         "created_date": "2015-10-04",
-        "updated_date": "2015-10-04"
+        "updated_date": "2015-10-04",
+        "gone_as_of": "2026-11-05"
       },
       "labels": [
         {
@@ -22094,7 +22097,8 @@
         "ratings_ok": 0,
         "ratings_bad": 1,
         "created_date": "2016-04-20",
-        "updated_date": "2016-04-20"
+        "updated_date": "2016-04-20",
+        "gone_as_of": "2026-11-05"
       },
       "labels": [
         {
@@ -37866,7 +37870,8 @@
         "ratings_ok": 0,
         "ratings_bad": 2,
         "created_date": "2018-01-10",
-        "updated_date": "2018-01-10"
+        "updated_date": "2018-01-10",
+        "gone_as_of": "2026-11-05"
       },
       "labels": [
         {
@@ -75044,7 +75049,8 @@
         "ratings_ok": 0,
         "ratings_bad": 0,
         "created_date": "2022-01-23",
-        "updated_date": "2022-01-23"
+        "updated_date": "2022-01-23",
+        "gone_as_of": "2026-11-05"
       },
       "labels": [
         {
@@ -75130,7 +75136,8 @@
         "ratings_ok": 6,
         "ratings_bad": 13,
         "created_date": "2022-01-27",
-        "updated_date": "2022-03-09"
+        "updated_date": "2022-03-09",
+        "gone_as_of": "2026-11-05"
       },
       "labels": [
         {
@@ -76983,7 +76990,8 @@
         "ratings_ok": 3,
         "ratings_bad": 10,
         "created_date": "2022-04-05",
-        "updated_date": "2023-03-28"
+        "updated_date": "2023-03-28",
+        "gone_as_of": "2026-11-05"
       },
       "labels": [
         {
@@ -77073,7 +77081,8 @@
         "ratings_ok": 13,
         "ratings_bad": 5,
         "created_date": "2022-04-12",
-        "updated_date": "2026-07-20"
+        "updated_date": "2026-07-20",
+        "gone_as_of": "2026-11-05"
       },
       "labels": [
         {
@@ -90510,7 +90519,8 @@
         "ratings_ok": 0,
         "ratings_bad": 0,
         "created_date": "2023-09-15",
-        "updated_date": "2023-11-17"
+        "updated_date": "2023-11-17",
+        "gone_as_of": "2026-11-05"
       },
       "labels": [
         {
@@ -90993,7 +91003,8 @@
         "ratings_ok": 9,
         "ratings_bad": 11,
         "created_date": "2023-10-07",
-        "updated_date": "2025-12-12"
+        "updated_date": "2025-12-12",
+        "gone_as_of": "2026-11-05"
       },
       "labels": [
         {
@@ -98251,7 +98262,8 @@
         "ratings_ok": 17,
         "ratings_bad": 23,
         "created_date": "2024-06-17",
-        "updated_date": "2025-06-19"
+        "updated_date": "2025-06-19",
+        "gone_as_of": "2026-11-05"
       },
       "labels": [
         {
@@ -98696,7 +98708,8 @@
         "ratings_ok": 2,
         "ratings_bad": 3,
         "created_date": "2024-07-08",
-        "updated_date": "2025-12-13"
+        "updated_date": "2025-12-13",
+        "gone_as_of": "2026-11-05"
       },
       "labels": [
         {
@@ -99789,7 +99802,8 @@
         "ratings_ok": 0,
         "ratings_bad": 3,
         "created_date": "2024-09-03",
-        "updated_date": "2024-09-27"
+        "updated_date": "2024-09-27",
+        "gone_as_of": "2026-11-05"
       },
       "labels": [
         {
@@ -101145,7 +101159,8 @@
         "ratings_ok": 1,
         "ratings_bad": 4,
         "created_date": "2024-11-12",
-        "updated_date": "2024-11-12"
+        "updated_date": "2024-11-12",
+        "gone_as_of": "2026-11-05"
       },
       "labels": [
         {
@@ -102894,7 +102909,8 @@
         "ratings_ok": 1,
         "ratings_bad": 2,
         "created_date": "2025-01-29",
-        "updated_date": "2025-01-29"
+        "updated_date": "2025-01-29",
+        "gone_as_of": "2026-11-05"
       },
       "labels": [
         {
@@ -106400,7 +106416,8 @@
         "ratings_ok": 5,
         "ratings_bad": 3,
         "created_date": "2025-07-24",
-        "updated_date": "2025-07-24"
+        "updated_date": "2025-07-24",
+        "gone_as_of": "2026-11-05"
       },
       "labels": [
         {
@@ -108408,7 +108425,8 @@
         "ratings_ok": 0,
         "ratings_bad": 0,
         "created_date": "2025-10-04",
-        "updated_date": "2026-10-14"
+        "updated_date": "2026-10-14",
+        "gone_as_of": "2026-11-05"
       },
       "labels": [
         {
@@ -108855,7 +108873,8 @@
         "ratings_ok": 11,
         "ratings_bad": 3,
         "created_date": "2025-10-21",
-        "updated_date": "2025-11-22"
+        "updated_date": "2025-11-22",
+        "gone_as_of": "2026-11-05"
       },
       "labels": [
         {
@@ -109636,7 +109655,8 @@
         "ratings_ok": 2,
         "ratings_bad": 8,
         "created_date": "2025-12-29",
-        "updated_date": "2026-05-28"
+        "updated_date": "2026-05-28",
+        "gone_as_of": "2026-11-05"
       },
       "labels": [
         {
@@ -110377,7 +110397,8 @@
         "ratings_ok": 1,
         "ratings_bad": 12,
         "created_date": "2026-01-20",
-        "updated_date": "2026-07-24"
+        "updated_date": "2026-07-24",
+        "gone_as_of": "2026-11-05"
       },
       "labels": [
         {
@@ -113741,7 +113762,8 @@
         "ratings_ok": 0,
         "ratings_bad": 1,
         "created_date": "2026-04-18",
-        "updated_date": "2026-04-18"
+        "updated_date": "2026-04-18",
+        "gone_as_of": "2026-11-05"
       },
       "labels": [
         {
@@ -113898,7 +113920,8 @@
         "ratings_ok": 0,
         "ratings_bad": 1,
         "created_date": "2026-04-28",
-        "updated_date": "2026-07-14"
+        "updated_date": "2026-07-14",
+        "gone_as_of": "2026-11-05"
       },
       "labels": [
         {
@@ -122181,7 +122204,8 @@
         "ratings_ok": 0,
         "ratings_bad": 0,
         "created_date": "2026-10-09",
-        "updated_date": "2026-10-09"
+        "updated_date": "2026-10-09",
+        "gone_as_of": "2026-11-05"
       },
       "labels": [
         {
@@ -122733,7 +122757,8 @@
         "ratings_ok": 0,
         "ratings_bad": 0,
         "created_date": "2026-10-14",
-        "updated_date": "2026-10-14"
+        "updated_date": "2026-10-14",
+        "gone_as_of": "2026-11-05"
       },
       "labels": [
         {

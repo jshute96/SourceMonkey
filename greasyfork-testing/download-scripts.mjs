@@ -23,9 +23,10 @@
 //   --update           ask GreasyFork which scripts changed, and re-download only
 //                      those, with all their @require, @resource and @icon files,
 //                      refreshing their `listing` blocks but for `name` and
-//                      `script_url`. It lists what changed, and takes neither
-//                      --force nor --include. Run `record-results.mjs validate`
-//                      afterwards
+//                      `script_url`. It lists what changed, marks scripts
+//                      GreasyFork no longer has with `gone_as_of`, and takes
+//                      neither --force nor --include. Run
+//                      `record-results.mjs validate` afterwards
 //   --api-origin URL   the GreasyFork API server --update reads each script's
 //                      current version and listing data from (default
 //                      https://api.greasyfork.org; the tests point it at a
@@ -55,7 +56,7 @@ import { getValue, parseHeader, getValues } from '../dist/userscript-header.js';
 import { iconRefFromHeader } from '../dist/script-icon.js';
 import {
   API_ORIGIN, CORPUS_JSON, dependencyUrlFor, checkRoot, exists, listingBlock, listingRows, mirrorUrl, readCorpus, readDownloaded,
-  resolveTarget, updateCorpus, urlToPath, printHelp,
+  resolveTarget, today, updateCorpus, urlToPath, printHelp,
 } from './corpus.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -538,8 +539,9 @@ async function update(opts) {
     }
   }
 
-  // A listing changes only with its download, so its counters and `as_of` date
-  // describe the copy on disk, and a run's diff shows only the scripts it updated.
+  // A listing's API data changes only with its download, so its counters and
+  // `as_of` date describe the copy on disk, and a run's diff shows only the
+  // scripts it updated, apart from `gone_as_of` marks.
   //
   // A script keeps its old listing when the run aborted, or when a file it names
   // failed in a way that may pass. The next run then sees it as changed, and
@@ -550,6 +552,15 @@ async function update(opts) {
   // would likely repeat on every run.
   const refreshed = aborted(report) ? [] : saved.filter((entry) => !changes.heldBack.includes(entry));
   await updateCorpus(opts.corpus, (live) => {
+    // These marks come from the API's answers, so they stand even if the run
+    // aborted. `gone_as_of` keeps the date a script was first found gone, and a
+    // script that's back loses it, even when its listing is held back.
+    for (const { id } of check.gone) {
+      if (live.scripts[id]?.listing) live.scripts[id].listing.gone_as_of ??= today();
+    }
+    for (const { id } of [...check.current, ...check.outdated]) {
+      if (live.scripts[id]?.listing) delete live.scripts[id].listing.gone_as_of;
+    }
     for (const { id, listing } of refreshed) {
       if (live.scripts[id]) live.scripts[id].listing = listing;
     }

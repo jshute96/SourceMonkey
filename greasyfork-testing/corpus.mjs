@@ -81,6 +81,11 @@ export function builtinTagEntry(help, tag) {
   return pattern && Object.hasOwn(help.tag, pattern) ? pattern : null;
 }
 
+/** Today's date as YYYY-MM-DD, in local time. */
+export function today() {
+  return new Date().toLocaleDateString('en-CA');
+}
+
 /** GreasyFork's JSON API, which isn't behind its bot check. */
 export const API_ORIGIN = 'https://api.greasyfork.org';
 
@@ -100,8 +105,7 @@ export function listingBlock(row) {
     ratings_bad: row.bad_ratings ?? null,
     created_date: row.created_at?.slice(0, 10) ?? null,
     updated_date: row.code_updated_at?.slice(0, 10) ?? null,
-    // en-CA formats as YYYY-MM-DD, in local time.
-    as_of: new Date().toLocaleDateString('en-CA'),
+    as_of: today(),
   };
 }
 

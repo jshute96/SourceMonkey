@@ -62,6 +62,7 @@ CREATE TABLE Scripts (
   ratings_bad    INTEGER,
   created_date   TEXT,
   updated_date   TEXT,
+  gone_as_of     TEXT,     -- when GreasyFork was found to no longer have it; NULL when it does
   size           INTEGER,  -- bytes on disk; NULL when the body wasn't downloaded
   local_filename TEXT      -- relative to the download root; NULL when absent
 );
@@ -191,8 +192,8 @@ async function main() {
   const insertScript = db.prepare(`
     INSERT INTO Scripts (id, name, info_page, script_url, total_installs, daily_installs,
                          ratings_good, ratings_ok, ratings_bad, created_date, updated_date,
-                         size, local_filename)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+                         gone_as_of, size, local_filename)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const insertHeader = db.prepare(`
     INSERT INTO ScriptHeaders (script_id, header_field, header_field_full, header_field_suffix, argument)
     VALUES (?, ?, ?, ?, ?)`);
@@ -239,7 +240,7 @@ async function main() {
       row.total_installs, row.daily_installs,
       row.ratings_good, row.ratings_ok, row.ratings_bad,
       row.created_date, row.updated_date,
-      facts.size, facts.local_filename,
+      row.gone_as_of ?? null, facts.size, facts.local_filename,
     );
     stats.scripts++;
     insertFindings(id, corpus.scripts[id]);

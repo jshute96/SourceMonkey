@@ -88,7 +88,7 @@ h1 { overflow-wrap:anywhere; }
 .s-invalid, .s-fail, .s-toolerror { color:var(--bad); font-weight:600; }
 .s-na, .s-inconclusive { color:var(--na); font-weight:600; }
 .detail, .stamp { color:var(--muted); font-size:.85em; }
-.stale { color:var(--na); font-size:.85em; }
+.stale, .gone { color:var(--na); font-size:.85em; }
 /* Notes show in a full-width row under the script's row; the Notes column only toggles it. */
 /* .toggle is the Notes column's Show/Hide; .small shares its look. */
 .toggle, .small { padding:0 .4rem; font-size:.85em; white-space:nowrap; }
@@ -266,6 +266,9 @@ function notesHtml(entries) {
   }).join('');
 }
 
+// Shown on a script GreasyFork no longer has. The search box finds this text too.
+const GONE_LABEL = 'gone from GreasyFork';
+
 function rowData(id, record) {
   const listing = record.listing;
   const tags = [...(record.valid?.tags ?? []), ...(record.tags ?? [])];
@@ -279,13 +282,14 @@ function rowData(id, record) {
   return {
     // The top-installs order, kept as that label's rank.
     rank: record.labels?.find((entry) => entry.label === 'top2000')?.rank, id: Number(id), name: listing.name, url: listing.info_page, file: record.file,
-    installs: listing.total_installs, updated: listing.updated_date, version: record.version ?? '',
+    installs: listing.total_installs, updated: listing.updated_date, gone: listing.gone_as_of ?? '', version: record.version ?? '',
     sites, valid: record.valid?.status ?? '', tags,
     // Validation said something: an error, or warnings on a valid script.
     validMessages: Boolean(record.valid?.error || record.valid?.warnings?.length),
     test: test?.status ?? '', detail: test?.reason ?? test?.blame ?? '', tested: test?.date ?? '', stale,
     noteText, notesHtml: notesHtml(entries),
-    search: (id + ' ' + listing.name + ' ' + sites.join(' ') + ' ' + tags.join(' ') + ' ' + noteText).toLowerCase(),
+    search: (id + ' ' + listing.name + ' ' + sites.join(' ') + ' ' + tags.join(' ') + ' ' + noteText +
+      (listing.gone_as_of ? ' ' + GONE_LABEL : '')).toLowerCase(),
   };
 }
 
@@ -324,7 +328,8 @@ function rowElement(d) {
   tr.innerHTML =
     '<td class="num">' + (d.rank ?? '') + '</td>' +
     '<td class="num"><a href="' + esc(d.url) + '">' + d.id + '</a></td>' +
-    '<td class="name">' + esc(d.name) + codeLinks(d) + '</td>' +
+    '<td class="name">' + esc(d.name) + codeLinks(d) +
+      (d.gone ? '<div class="gone" title="Found on ' + esc(d.gone) + ' by download-scripts.mjs --update. The downloaded copy is kept.">' + GONE_LABEL + '</div>' : '') + '</td>' +
     '<td class="num">' + (d.installs ?? '').toLocaleString('en-US') + '</td>' +
     '<td class="nowrap">' + esc(d.updated) + '</td>' +
     '<td class="version">' + esc(d.version) + '</td>' +
@@ -391,6 +396,7 @@ function show(corpus, source) {
     count((d) => d.test === 'inconclusive') + ' inconclusive',
     count((d) => d.test === 'n/a') + ' not testable',
     count((d) => d.test === '') + ' untested',
+    count((d) => d.gone) + ' ' + GONE_LABEL,
   ].join(' · ') + '. From <code>' + esc(source) + '</code>, recorded with <code>record-results.mjs</code>.';
   setOptions($('test'), 'test', [['', 'all'], ['tested', 'tested'], ['untested', 'untested'], ['pass', 'pass'], ['fail', 'fail'], ['inconclusive', 'inconclusive'], ['n/a', 'n/a']],
     [...new Set(data.filter((d) => d.detail).map((d) => d.test + ':' + d.detail))].sort());

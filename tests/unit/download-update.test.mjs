@@ -1,5 +1,5 @@
-// `download-scripts.mjs --update` and `record-results.mjs list --stale`, run
-// as the real CLIs against a local stand-in for GreasyFork's API and file host.
+// `download-scripts.mjs --update` and `record-results.mjs list --stale` and
+// `--gone`, run as the real CLIs against a local stand-in for GreasyFork's API and file host.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -288,7 +288,87 @@ test('--update treats an API answer about another script as gone', async (t) => 
   const { stdout } = await env.run();
 
   assert.match(stdout, /gone {4}1 Script 1/);
-  assert.deepEqual(env.load().scripts[1].listing, corpus.scripts[1].listing);
+  const { gone_as_of: goneAsOf, ...listing } = env.load().scripts[1].listing;
+  assert.match(goneAsOf, /^\d{4}-\d{2}-\d{2}$/);
+  assert.deepEqual(listing, corpus.scripts[1].listing, 'the rest of the listing stays');
+});
+
+test('--update marks a gone script, keeps the first date, and clears the mark when it returns', async (t) => {
+  const env = await setup(t);
+  const corpus = { tags: {}, scripts: {} };
+  env.addScript(corpus, 1, { version: '1.0' });
+  env.addScript(corpus, 2, { version: '1.0' });
+  env.addScript(corpus, 3, { version: '1.0' });
+  env.addScript(corpus, 4, { version: '1.0' });
+  corpus.scripts[2].listing.gone_as_of = '2026-01-02';
+  corpus.scripts[3].listing.gone_as_of = '2026-01-02';
+  corpus.scripts[4].listing.gone_as_of = '2026-01-02';
+  env.save(corpus);
+  env.routes.delete('/en/scripts/1.json');
+  env.routes.delete('/en/scripts/2.json');
+  // 3 is back with nothing new. 4 is back with a new version, and a file failing
+  // in a way that may pass holds back its listing.
+  const dep = `// @require ${env.origin}/dep.js\n`;
+  env.routes.set('/4.user.js', script('2.0', dep));
+  env.routes.set('/dep.js', 503);
+  env.routes.set('/en/scripts/4.json', env.apiRow(4, '2.0', '2026-06-01'));
+
+  await env.run();
+
+  const { scripts } = env.load();
+  assert.match(scripts[1].listing.gone_as_of, /^\d{4}-\d{2}-\d{2}$/, 'a newly gone script gets a date');
+  assert.notEqual(scripts[1].listing.gone_as_of, '2026-01-02');
+  assert.equal(scripts[2].listing.gone_as_of, '2026-01-02', 'a script still gone keeps its first date');
+  assert.equal(scripts[3].listing.gone_as_of, undefined, 'a returned script loses the mark');
+  assert.equal(scripts[4].listing.gone_as_of, undefined, 'even with its listing held back');
+  assert.equal(scripts[4].listing.updated_date, '2026-01-01');
+});
+
+test('--update saves gone marks from the answers it got before aborting', async (t) => {
+  const env = await setup(t);
+  const corpus = { tags: {}, scripts: {} };
+  env.addScript(corpus, 1, { version: '1.0' });
+  env.addScript(corpus, 2, { version: '1.0' });
+  env.addScript(corpus, 3, { version: '1.0' });
+  env.addScript(corpus, 4, { version: '1.0' });
+  corpus.scripts[2].listing.gone_as_of = '2026-01-02';
+  corpus.scripts[3].listing.gone_as_of = '2026-01-02';
+  env.save(corpus);
+  env.routes.delete('/en/scripts/1.json');
+  env.routes.set('/en/scripts/3.json', 400);
+  env.routes.set('/en/scripts/4.json', 429);
+
+  const failure = await env.run().catch((err) => err);
+  assert.equal(failure.code, 1, 'the run aborted');
+
+  const { scripts } = env.load();
+  assert.match(scripts[1].listing.gone_as_of, /^\d{4}-\d{2}-\d{2}$/, 'a gone answer marks the script');
+  assert.equal(scripts[2].listing.gone_as_of, undefined, 'a normal answer clears the mark');
+  assert.equal(scripts[3].listing.gone_as_of, '2026-01-02', 'a failed answer changes nothing');
+});
+
+test('list --gone shows only gone scripts, and other filters treat them like any others', async (t) => {
+  const env = await setup(t);
+  const corpus = { tags: {}, scripts: {} };
+  env.addScript(corpus, 1, { version: '1.0' });
+  env.addScript(corpus, 2, { version: '1.0' });
+  corpus.scripts[1].listing.gone_as_of = '2026-01-02';
+  env.save(corpus);
+  const list = async (...args) => (await execFileAsync(process.execPath, [
+    path.join(tools, 'record-results.mjs'), 'list', ...args, '--corpus', env.corpusFile, '--root', env.root,
+  ])).stdout;
+
+  const gone = await list('--gone');
+  assert.match(gone, /Script 1 {2}\(gone as of 2026-01-02\)/);
+  assert.doesNotMatch(gone, /Script 2/);
+
+  const untested = await list('--untested');
+  assert.match(untested, /Script 2/);
+  assert.match(untested, /Script 1 {2}\(gone as of 2026-01-02\)/);
+
+  const both = await list('--untested', '--gone');
+  assert.match(both, /Script 1/);
+  assert.doesNotMatch(both, /Script 2/);
 });
 
 test('--update stops the check at a 429, and downloads nothing', async (t) => {

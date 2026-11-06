@@ -20,6 +20,8 @@
 //                              --untested  no test result yet
 //                              --stale     tested on a different version than the copy
 //                                          downloaded now, as of the last `validate`
+//                              --gone      GreasyFork no longer has it, as of the
+//                                          last `download-scripts.mjs --update`
 //                              --test S    test status S
 //                              --valid S   validation status S
 //                              --tag T     carries tag T (either source; repeatable)
@@ -76,7 +78,7 @@ import { describeDiagnostic } from '../dist/diagnostic-location.js';
 import { matchPatternProblem } from '../dist/url-match.js';
 import {
   CORPUS_JSON, builtinTagEntry, checkRoot, findExisting, hasStaleTest, isBuiltinTag, labelRank, listingRows, patternTarget, printHelp, readCorpus,
-  readCorpusHelp, updateCorpus,
+  readCorpusHelp, today, updateCorpus,
 } from './corpus.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -109,18 +111,13 @@ const BLAMES = [
 // docs/supported-headers.md. A script declaring one may behave differently.
 const IGNORED_HEADERS = ['exclude-match', 'run-in', 'sandbox', 'top-level-await', 'unwrap', 'webrequest'];
 
-function today() {
-  // en-CA formats as YYYY-MM-DD, in local time.
-  return new Date().toLocaleDateString('en-CA');
-}
-
 // The options each command takes, beyond --corpus and --root. Anything else is
 // refused, so a typo (`--tst pass`) can't silently record half a finding.
 const COMMAND_OPTIONS = {
   'validate': ['date'],
   'import-validation': ['base', 'date'],
   'show': [],
-  'list': ['untested', 'stale', 'test', 'valid', 'tag', 'label', 'limit'],
+  'list': ['untested', 'stale', 'gone', 'test', 'valid', 'tag', 'label', 'limit'],
   'set': ['test', 'reason', 'blame', 'note', 'note-file', 'replace-note', 'remove-note', 'tag', 'untag', 'version', 'date'],
   'import-results': ['date'],
   'tag': [],
@@ -137,7 +134,7 @@ function parseArgs(command, argv) {
     untag: [],
   };
   const repeatable = new Set(['tag', 'untag']);
-  const flags = new Set(['untested', 'stale']);
+  const flags = new Set(['untested', 'stale', 'gone']);
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (!arg.startsWith('--')) { opts.positional.push(arg); continue; }
@@ -541,6 +538,7 @@ async function list(opts) {
     if (shown >= limit) break;
     const record = corpus.scripts[row.id];
     if (opts.untested && record.test) continue;
+    if (opts.gone && !row.gone_as_of) continue;
     if (opts.stale && !hasStaleTest(record)) continue;
     if (opts.test && record.test?.status !== opts.test) continue;
     if (opts.valid && record.valid?.status !== opts.valid) continue;
@@ -549,7 +547,10 @@ async function list(opts) {
     if (!opts.tag.every((tag) => tags.includes(tag))) continue;
     if (shown === 0) console.log(listLine(['ID', 'INSTALLS', 'VALID', 'TESTED', 'NAME']));
     // With --stale, the name also shows which versions differ.
-    const name = opts.stale ? `${row.name}  (tested v${record.test.version}, now v${record.version})` : row.name;
+    const remarks = [];
+    if (opts.stale) remarks.push(`tested v${record.test.version}, now v${record.version}`);
+    if (row.gone_as_of) remarks.push(`gone as of ${row.gone_as_of}`);
+    const name = remarks.length ? `${row.name}  (${remarks.join('; ')})` : row.name;
     console.log(listLine([
       String(row.id), String(row.total_installs ?? ''), record.valid?.status ?? '-', record.test?.status ?? '-', name,
     ]));

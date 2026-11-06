@@ -76,6 +76,9 @@ node $R list --label L --untested --valid ok  # one collection, in its rank orde
 untested, sort by Updated) or in `corpus.db` (`Scripts.updated_date`, after
 `build-db.mjs`).
 
+`list` marks scripts GreasyFork no longer has with `(gone as of DATE)`, and
+`list --gone` shows only those. Their downloaded copies still run.
+
 - Prefer valid scripts updated in the last few years; older ones are mostly
   broken against today's sites, which teaches little about SourceMonkey.
 - Skip what can't be judged without side effects or an account: game cheats

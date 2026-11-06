@@ -167,6 +167,7 @@ integer script ID. Each record's `listing` block holds:
 | `created_date` | `created_at`, as YYYY-MM-DD |
 | `updated_date` | `code_updated_at`, as YYYY-MM-DD |
 | `as_of` | The date these were read, as YYYY-MM-DD. Absent on listings older than this field |
+| `gone_as_of` | Not from the API: the date `--update` first found GreasyFork no longer has the script. Absent while it does |
 
 Notes:
 
@@ -232,8 +233,10 @@ changed:
     stale when its script changes. To refresh them all, use
     `--force --include requires,resources,icons`.
 - **Failures:** a failed download keeps the copy on disk.
-  - A script GreasyFork no longer has is listed as gone, and its record and
-    copy stay.
+  - A script GreasyFork no longer has is listed as gone and marked with
+    `gone_as_of` in its `listing`, and its record and copy are kept. `--update`
+    keeps checking it, and removes the mark if the script comes back.
+  - `list --gone` shows these scripts, and `results.html` marks them.
   - A script that failed keeps its old `listing`, so the next run tries it again.
   - So does a script naming a file that failed with a 5xx, a network error or a
     host cutoff, since those may pass. A 4xx or 403 doesn't hold back the listing,
@@ -395,6 +398,7 @@ R=greasyfork-testing/record-results.mjs
 node $R validate                       # offline-validate every downloaded script, import verdicts
 node $R list --untested --valid ok --limit 20
 node $R list --label awesome-userscripts --untested   # one collection, in its rank order
+node $R list --gone                    # scripts GreasyFork no longer has
 node $R show 14178                     # one record as JSON; its path under files/ on stderr
 node $R set 14178 --test pass --note "Redirect links rewritten on a bing.com search"
 node $R set 14178 --test fail --blame sourcemonkey --note-file /tmp/why.md
