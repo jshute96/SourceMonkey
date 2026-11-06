@@ -236,7 +236,8 @@ changed:
   - A script GreasyFork no longer has is listed as gone and marked with
     `gone_as_of` in its `listing`, and its record and copy are kept. `--update`
     keeps checking it, and removes the mark if the script comes back.
-  - `list --gone` shows these scripts, and `results.html` marks them.
+  - `list --gone` shows these scripts, and `list --not-gone` leaves them out.
+    They also carry the `script-gone` tag (see [Derived tags](#derived-tags)).
   - A script that failed keeps its old `listing`, so the next run tries it again.
   - So does a script naming a file that failed with a 5xx, a network error or a
     host cutoff, since those may pass. A 4xx or 403 doesn't hold back the listing,
@@ -346,7 +347,7 @@ way SourceMonkey does (`pnpm run build` first).
 | `ScriptHeaders` | Every metadata line: `header_field`, `header_field_full`, `header_field_suffix`, `argument` |
 | `ScriptMatches` | Every `@match` / `@include` line, decomposed into `shape`, `scheme`, `host_pattern`, `site`, and per-component wildcard flags |
 | `ScriptResults` | Validation status and error, and test status, reason, blame, date and version, for each record with findings (warnings and sites stay in `corpus.json`) |
-| `ScriptTags` | Every tag, with `source` `validation` (derived) or `manual` |
+| `ScriptTags` | Every tag stored in `corpus.json`, with `source` `validation` (derived) or `manual` |
 | `ScriptLabels` | Every label, with its `rank` when it has one |
 | `ScriptNotes` | Every dated note |
 
@@ -399,6 +400,7 @@ node $R validate                       # offline-validate every downloaded scrip
 node $R list --untested --valid ok --limit 20
 node $R list --label awesome-userscripts --untested   # one collection, in its rank order
 node $R list --gone                    # scripts GreasyFork no longer has
+node $R list --untested --not-gone     # leave those out; works with any other filter
 node $R show 14178                     # one record as JSON; its path under files/ on stderr
 node $R set 14178 --test pass --note "Redirect links rewritten on a bing.com search"
 node $R set 14178 --test fail --blame sourcemonkey --note-file /tmp/why.md
@@ -589,6 +591,10 @@ support but that don't make it invalid:
 - `ignored-header:@<tag>`: a header another manager acts on and SourceMonkey
   ignores ([supported-headers.md](../docs/supported-headers.md)).
 
+`script-gone` is derived separately, from `listing.gone_as_of`, and isn't stored
+in `corpus.json` as a tag. `results.html` and `list --tag` treat it like any other
+tag. `corpus.db` has `Scripts.gone_as_of` instead.
+
 ### Hand-added tags
 
 Hand-added `tags` are for what only running the script shows, such as an
@@ -597,7 +603,8 @@ unsupported feature the checks can't see.
 - Each is defined in `corpus.json`'s `tags`, with a one-sentence description
   that `results.html` and `show-test-results.user.js` show as its tooltip.
 - `set --tag` takes only a defined tag, or a built-in one (from
-  `corpus-help.js`) as what made the test fail.
+  `corpus-help.js`) as what made the test fail. It refuses `script-gone`, as do
+  `set --untag` and `tag merge`.
 - `record-results.mjs tag` manages the definitions: `list`, `add`, `update`
   (the description), `rename`, `merge` (one tag's uses onto another) and
   `remove`. It refuses built-in names.

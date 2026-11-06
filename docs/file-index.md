@@ -501,7 +501,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/unit/parse-location.test.mjs` | Unit tests for probe selection and line mapping, driven by positions Chromium really reported |
 | `tests/unit/parse-check-node.test.mjs` | Unit tests for the Node parse checker: verdict, both probes' positions, and the two probe-selection routes |
 | `tests/unit/playwright-chromium.test.mjs` | The message for a missing Playwright Chromium build: the build wanted, those installed, the fix |
-| `tests/unit/download-update.test.mjs` | Drives `download-scripts.mjs --update` and `list --stale` and `--gone` as subprocesses against a local stand-in for GreasyFork |
+| `tests/unit/download-update.test.mjs` | Drives `download-scripts.mjs --update` and `list --stale`, `--gone` and `--not-gone` as subprocesses against a local stand-in for GreasyFork |
 | `tests/unit/validate-corpus.test.mjs` | Drives the corpus validator as a subprocess over a hand-built offline dependency tree |
 | `tests/unit/diagnostic-location.test.mjs` | Unit tests for the diagnostic label + validator, especially what they do with a partial location |
 | `tests/unit/file-loader.test.mjs` | Unit tests for ref resolution (schemes, relative paths, traversal) and for the reason each resolve/fetch failure reports |

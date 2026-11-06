@@ -77,7 +77,8 @@ untested, sort by Updated) or in `corpus.db` (`Scripts.updated_date`, after
 `build-db.mjs`).
 
 `list` marks scripts GreasyFork no longer has with `(gone as of DATE)`, and
-`list --gone` shows only those. Their downloaded copies still run.
+`list --gone` shows only those. Their downloaded copies still run. Add
+`--not-gone` to any `list` to leave them out, as when picking scripts to test.
 
 - Prefer valid scripts updated in the last few years; older ones are mostly
   broken against today's sites, which teaches little about SourceMonkey.

@@ -155,6 +155,20 @@ export function hasStaleTest(record) {
   return Boolean(record.test?.version && record.version && record.test.version !== record.version);
 }
 
+/** The built-in tag for a script GreasyFork no longer has, derived from `listing.gone_as_of`. */
+export const GONE_TAG = 'script-gone';
+
+/**
+ * All of a record's tags: hand-added, from validation, and derived. results.html
+ * derives GONE_TAG the same way, since a page can't import this.
+ */
+export function recordTags(record) {
+  return [
+    ...(record.tags ?? []), ...(record.valid?.tags ?? []),
+    ...(record.listing?.gone_as_of ? [GONE_TAG] : []),
+  ];
+}
+
 // Record keys in the order they are written, so a record reads the same way
 // whichever tool last touched it and a diff shows only what changed.
 const RECORD_KEYS = ['listing', 'labels', 'version', 'file', 'sites', 'valid', 'test', 'tags', 'notes'];

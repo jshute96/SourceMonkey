@@ -1,5 +1,5 @@
-// `download-scripts.mjs --update` and `record-results.mjs list --stale` and
-// `--gone`, run as the real CLIs against a local stand-in for GreasyFork's API and file host.
+// `download-scripts.mjs --update` and `record-results.mjs list --stale`, `--gone`
+// and `--not-gone`, run as the real CLIs against a local stand-in for GreasyFork's API and file host.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -347,7 +347,7 @@ test('--update saves gone marks from the answers it got before aborting', async 
   assert.equal(scripts[3].listing.gone_as_of, '2026-01-02', 'a failed answer changes nothing');
 });
 
-test('list --gone shows only gone scripts, and other filters treat them like any others', async (t) => {
+test('list --gone and --not-gone select on the mark, and other filters treat gone scripts like any others', async (t) => {
   const env = await setup(t);
   const corpus = { tags: {}, scripts: {} };
   env.addScript(corpus, 1, { version: '1.0' });
@@ -369,6 +369,32 @@ test('list --gone shows only gone scripts, and other filters treat them like any
   const both = await list('--untested', '--gone');
   assert.match(both, /Script 1/);
   assert.doesNotMatch(both, /Script 2/);
+
+  const notGone = await list('--untested', '--not-gone');
+  assert.match(notGone, /Script 2/);
+  assert.doesNotMatch(notGone, /Script 1/);
+
+  await assert.rejects(list('--gone', '--not-gone'), /Pass --gone or --not-gone, not both/);
+
+  const tagged = await list('--tag', 'script-gone');
+  assert.match(tagged, /Script 1/);
+  assert.doesNotMatch(tagged, /Script 2/);
+
+  const results = async (...args) => (await execFileAsync(process.execPath, [
+    path.join(tools, 'record-results.mjs'), ...args, '--corpus', env.corpusFile, '--root', env.root,
+  ])).stdout;
+  assert.match(await results('tag', 'list'), /\b1 {2}script-gone/, 'tag list counts it');
+
+  // Derived from the mark, so it can't be stored on a record.
+  const before = fs.readFileSync(env.corpusFile, 'utf8');
+  const byHand = /The script-gone tag comes from listing\.gone_as_of/;
+  await assert.rejects(results('set', '2', '--tag', 'script-gone'), byHand);
+  await assert.rejects(results('set', '1', '--untag', 'script-gone'), byHand);
+  await results('tag', 'add', 'my-tag', 'A tag.');
+  const defined = fs.readFileSync(env.corpusFile, 'utf8');
+  assert.notEqual(defined, before);
+  await assert.rejects(results('tag', 'merge', 'my-tag', 'script-gone'), byHand);
+  assert.equal(fs.readFileSync(env.corpusFile, 'utf8'), defined, 'the refusals change nothing');
 });
 
 test('--update stops the check at a 429, and downloads nothing', async (t) => {

@@ -88,7 +88,7 @@ h1 { overflow-wrap:anywhere; }
 .s-invalid, .s-fail, .s-toolerror { color:var(--bad); font-weight:600; }
 .s-na, .s-inconclusive { color:var(--na); font-weight:600; }
 .detail, .stamp { color:var(--muted); font-size:.85em; }
-.stale, .gone { color:var(--na); font-size:.85em; }
+.stale { color:var(--na); font-size:.85em; }
 /* Notes show in a full-width row under the script's row; the Notes column only toggles it. */
 /* .toggle is the Notes column's Show/Hide; .small shares its look. */
 .toggle, .small { padding:0 .4rem; font-size:.85em; white-space:nowrap; }
@@ -208,6 +208,10 @@ function helpFor(kind, value) {
   return HELP[kind]?.[value] ?? '';
 }
 const titleAttr = (kind, value) => { const t = helpFor(kind, value); return t ? ' title="' + esc(t) + '"' : ''; };
+/** A tag's tooltip in a script's row, which for GONE_TAG also gives that script's date. */
+const tagTitle = (tag, d) => (tag === GONE_TAG
+  ? ' title="' + esc(helpFor('tag', tag) + ' Found gone on ' + d.gone + '.') + '"'
+  : titleAttr('tag', tag));
 
 // ---------- Building rows from corpus.json ----------
 
@@ -266,12 +270,13 @@ function notesHtml(entries) {
   }).join('');
 }
 
-// Shown on a script GreasyFork no longer has. The search box finds this text too.
-const GONE_LABEL = 'gone from GreasyFork';
+// The tag for a script GreasyFork no longer has, derived from `gone_as_of` as
+// recordTags does in corpus.mjs, which a page can't import.
+const GONE_TAG = 'script-gone';
 
 function rowData(id, record) {
   const listing = record.listing;
-  const tags = [...(record.valid?.tags ?? []), ...(record.tags ?? [])];
+  const tags = [...(record.valid?.tags ?? []), ...(record.tags ?? []), ...(listing.gone_as_of ? [GONE_TAG] : [])];
   const sites = record.sites ?? [];
   const test = record.test;
   // A result recorded against a different copy than the one downloaded now.
@@ -288,8 +293,7 @@ function rowData(id, record) {
     validMessages: Boolean(record.valid?.error || record.valid?.warnings?.length),
     test: test?.status ?? '', detail: test?.reason ?? test?.blame ?? '', tested: test?.date ?? '', stale,
     noteText, notesHtml: notesHtml(entries),
-    search: (id + ' ' + listing.name + ' ' + sites.join(' ') + ' ' + tags.join(' ') + ' ' + noteText +
-      (listing.gone_as_of ? ' ' + GONE_LABEL : '')).toLowerCase(),
+    search: (id + ' ' + listing.name + ' ' + sites.join(' ') + ' ' + tags.join(' ') + ' ' + noteText).toLowerCase(),
   };
 }
 
@@ -328,14 +332,13 @@ function rowElement(d) {
   tr.innerHTML =
     '<td class="num">' + (d.rank ?? '') + '</td>' +
     '<td class="num"><a href="' + esc(d.url) + '">' + d.id + '</a></td>' +
-    '<td class="name">' + esc(d.name) + codeLinks(d) +
-      (d.gone ? '<div class="gone" title="Found on ' + esc(d.gone) + ' by download-scripts.mjs --update. The downloaded copy is kept.">' + GONE_LABEL + '</div>' : '') + '</td>' +
+    '<td class="name">' + esc(d.name) + codeLinks(d) + '</td>' +
     '<td class="num">' + (d.installs ?? '').toLocaleString('en-US') + '</td>' +
     '<td class="nowrap">' + esc(d.updated) + '</td>' +
     '<td class="version">' + esc(d.version) + '</td>' +
     '<td class="sites" title="' + esc(d.sites.join(', ')) + '">' + esc(sites) + '</td>' +
     '<td class="' + cls(d.valid) + '"' + titleAttr('valid', d.valid) + '>' + esc(d.valid) + '</td>' +
-    '<td class="tags">' + d.tags.map((t) => '<span' + titleAttr('tag', t) + '>' + esc(t) + '</span>').join('') + '</td>' +
+    '<td class="tags">' + d.tags.map((t) => '<span' + tagTitle(t, d) + '>' + esc(t) + '</span>').join('') + '</td>' +
     '<td><span class="' + cls(d.test) + '"' + titleAttr('test', d.test) + '>' + esc(d.test) + '</span>' +
       (d.detail ? ' <span class="detail"' + titleAttr('detail', d.detail) + '>' + esc(d.detail) + '</span>' : '') +
       (d.stale ? '<div class="stale" title="Tested against a different version than the one downloaded now">tested v' + esc(d.stale) + '</div>' : '') + '</td>' +
@@ -396,7 +399,7 @@ function show(corpus, source) {
     count((d) => d.test === 'inconclusive') + ' inconclusive',
     count((d) => d.test === 'n/a') + ' not testable',
     count((d) => d.test === '') + ' untested',
-    count((d) => d.gone) + ' ' + GONE_LABEL,
+    count((d) => d.gone) + ' gone',
   ].join(' · ') + '. From <code>' + esc(source) + '</code>, recorded with <code>record-results.mjs</code>.';
   setOptions($('test'), 'test', [['', 'all'], ['tested', 'tested'], ['untested', 'untested'], ['pass', 'pass'], ['fail', 'fail'], ['inconclusive', 'inconclusive'], ['n/a', 'n/a']],
     [...new Set(data.filter((d) => d.detail).map((d) => d.test + ':' + d.detail))].sort());

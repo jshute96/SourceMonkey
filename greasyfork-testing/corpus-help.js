@@ -2,10 +2,11 @@
 // blames) and built-in tags mean, one sentence each: the tooltips in
 // results.html and show-test-results.user.js. Reasons and blames mirror
 // REASONS and BLAMES in record-results.mjs. The built-in tags are the ones
-// `record-results.mjs validate` derives; hand-added tags are defined in
-// corpus.json instead (`record-results.mjs tag add`). A `prefix:*` tag entry
-// describes all tags `prefix:<name>` (the validator's
-// `unsupported-grant:GM_cookie`, say), with `{name}` replaced by the name.
+// the tools derive: from `record-results.mjs validate`, and `script-gone` from
+// `gone_as_of`. Hand-added tags are defined in corpus.json instead
+// (`record-results.mjs tag add`). A `prefix:*` tag entry describes all tags
+// `prefix:<name>` (the validator's `unsupported-grant:GM_cookie`, say), with
+// `{name}` replaced by the name.
 //
 // A script file rather than JSON so results.html can load it opened from
 // disk too. Keep the object strict JSON (double quotes, no trailing comma,
@@ -35,6 +36,7 @@ var CORPUS_HELP = {
     "unknown": "Not yet known whose fault it is."
   },
   "tag": {
+    "script-gone": "GreasyFork no longer has this script.",
     "unsupported-grant:*": "Grants {name}, which SourceMonkey doesn't provide, so it is undefined at runtime. (Validation warning)",
     "ignored-header:*": "Uses {name}, which another manager acts on and SourceMonkey ignores. (Validation warning)",
     "malformed-grant": "A @grant line that isn't an API name (some scripts use them as comments). (Validation warning)",

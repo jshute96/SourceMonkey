@@ -22,9 +22,10 @@
 //                                          downloaded now, as of the last `validate`
 //                              --gone      GreasyFork no longer has it, as of the
 //                                          last `download-scripts.mjs --update`
+//                              --not-gone  leaves out the scripts --gone shows
 //                              --test S    test status S
 //                              --valid S   validation status S
-//                              --tag T     carries tag T (either source; repeatable)
+//                              --tag T     carries tag T (from any source; repeatable)
 //                              --label L   carries label L (`add-scripts.mjs`), listed
 //                                          in that label's rank order
 //                              --limit N
@@ -59,9 +60,10 @@
 //   tag remove NAME          drop a tag's definition, once no script uses it
 //   help                     print this (so does --help or -h, anywhere)
 //
-// Built-in tags are the ones `validate` derives, described in corpus-help.js.
-// `set --tag` can give one to a test (as what made it fail), but `tag` can't
-// define or change them.
+// Built-in tags are the ones the tools derive, described in corpus-help.js:
+// from `validate`, and `script-gone` from `listing.gone_as_of`. `set --tag` can
+// give one to a test (as what made it fail), except `script-gone`, but `tag`
+// can't define or change them.
 //
 // Global, before or after the command: --corpus PATH (default corpus.json here),
 // --root PATH (download root).
@@ -77,8 +79,8 @@ import { resolveGrants } from '../dist/gm-api-catalog.js';
 import { describeDiagnostic } from '../dist/diagnostic-location.js';
 import { matchPatternProblem } from '../dist/url-match.js';
 import {
-  CORPUS_JSON, builtinTagEntry, checkRoot, findExisting, hasStaleTest, isBuiltinTag, labelRank, listingRows, patternTarget, printHelp, readCorpus,
-  readCorpusHelp, today, updateCorpus,
+  CORPUS_JSON, GONE_TAG, builtinTagEntry, checkRoot, findExisting, hasStaleTest, isBuiltinTag, labelRank, listingRows, patternTarget, printHelp, readCorpus,
+  readCorpusHelp, recordTags, today, updateCorpus,
 } from './corpus.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -117,7 +119,7 @@ const COMMAND_OPTIONS = {
   'validate': ['date'],
   'import-validation': ['base', 'date'],
   'show': [],
-  'list': ['untested', 'stale', 'gone', 'test', 'valid', 'tag', 'label', 'limit'],
+  'list': ['untested', 'stale', 'gone', 'not-gone', 'test', 'valid', 'tag', 'label', 'limit'],
   'set': ['test', 'reason', 'blame', 'note', 'note-file', 'replace-note', 'remove-note', 'tag', 'untag', 'version', 'date'],
   'import-results': ['date'],
   'tag': [],
@@ -134,7 +136,7 @@ function parseArgs(command, argv) {
     untag: [],
   };
   const repeatable = new Set(['tag', 'untag']);
-  const flags = new Set(['untested', 'stale', 'gone']);
+  const flags = new Set(['untested', 'stale', 'gone', 'not-gone']);
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (!arg.startsWith('--')) { opts.positional.push(arg); continue; }
@@ -150,8 +152,17 @@ function parseArgs(command, argv) {
   if (opts.note !== undefined && opts['note-file'] !== undefined) {
     throw new Error('Pass --note or --note-file, not both');
   }
+  if (opts.gone && opts['not-gone']) throw new Error('Pass --gone or --not-gone, not both');
   if (opts.limit !== undefined && !(Number(opts.limit) >= 1)) throw new Error('The --limit option must be a positive number');
   return opts;
+}
+
+/**
+ * `script-gone` only means what `listing.gone_as_of` says, so it can't be stored
+ * on a record, where it could claim a live script is gone or outlast the mark.
+ */
+function refuseGoneTag(tag) {
+  if (tag === GONE_TAG) throw new Error(`The ${GONE_TAG} tag comes from listing.gone_as_of, so it can't be changed by hand`);
 }
 
 function oneOf(value, allowed, what) {
@@ -399,6 +410,7 @@ async function setFinding(opts) {
   const note = await checkFinding(opts);
   const [id] = opts.positional;
   const fileVersion = opts.version === undefined ? await downloadedVersion(opts, id) : undefined;
+  for (const tag of [...opts.tag, ...opts.untag]) refuseGoneTag(tag);
   const help = opts.tag.length ? readCorpusHelp() : null;
   await updateCorpus(opts.corpus, (corpus) => applyFinding(corpus, opts, { note, fileVersion, help }));
   console.info(`Updated ${id}`);
@@ -539,11 +551,12 @@ async function list(opts) {
     const record = corpus.scripts[row.id];
     if (opts.untested && record.test) continue;
     if (opts.gone && !row.gone_as_of) continue;
+    if (opts['not-gone'] && row.gone_as_of) continue;
     if (opts.stale && !hasStaleTest(record)) continue;
     if (opts.test && record.test?.status !== opts.test) continue;
     if (opts.valid && record.valid?.status !== opts.valid) continue;
     // `--tag` is repeatable (for `set`); here every named tag must be present.
-    const tags = [...(record.tags ?? []), ...(record.valid?.tags ?? [])];
+    const tags = recordTags(record);
     if (!opts.tag.every((tag) => tags.includes(tag))) continue;
     if (shown === 0) console.log(listLine(['ID', 'INSTALLS', 'VALID', 'TESTED', 'NAME']));
     // With --stale, the name also shows which versions differ.
@@ -570,13 +583,13 @@ function tagUses(corpus) {
 }
 
 /**
- * How many scripts carry each built-in tag, from validation or by hand, keyed
+ * How many scripts carry each built-in tag, derived or added by hand, keyed
  * by its corpus-help.js entry: a `prefix:*` entry counts all its tags.
  */
 function builtinTagUses(corpus, help) {
   const uses = new Map();
   for (const record of Object.values(corpus.scripts)) {
-    const entries = new Set([...(record.valid?.tags ?? []), ...(record.tags ?? [])].map((tag) => builtinTagEntry(help, tag)));
+    const entries = new Set(recordTags(record).map((tag) => builtinTagEntry(help, tag)));
     for (const entry of entries) if (entry) uses.set(entry, (uses.get(entry) ?? 0) + 1);
   }
   return uses;
@@ -679,6 +692,7 @@ async function tagCommand(opts) {
       want(2, 'FROM INTO');
       const [from, into] = args;
       if (from === into) throw new Error('The tags to merge are the same');
+      refuseGoneTag(into);
       const changed = await updateCorpus(opts.corpus, (corpus) => {
         defined(corpus, from);
         // INTO may be built in: a hand-added tag that turns out to be one the validator derives.
