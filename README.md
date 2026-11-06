@@ -590,7 +590,9 @@ See [docs/harness-guide.md](docs/harness-guide.md) to use it, and
 For coding agents, the package ships skills in `skills/`:
 
 - [SourceMonkey-dev](skills/SourceMonkey-dev/SKILL.md): recipes for
-  developing and testing with these tools.
+  developing and testing userscripts with these tools. It also covers testing
+  any script from a file, URL, directory or page of links, with a safety check
+  first.
 - [SourceMonkey-userscripts](skills/SourceMonkey-userscripts/SKILL.md):
   the workflow for building a script, and tips for things sites do that
   break scripts (single-page apps, React, CSP-sandboxed pages, and more).

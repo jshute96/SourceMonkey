@@ -1,6 +1,6 @@
 ---
 name: SourceMonkey-dev
-description: Develop, debug and test userscripts with SourceMonkey's sm-dev tool and Playwright harness. Run a script in a real browser behind real GM_* APIs, drive and inspect the page, read the script's state, work from saved pages, go beyond sm-dev over raw CDP, and turn the result into specs. Use when writing, debugging or testing a userscript in a repo with the `sourcemonkey` dev dependency.
+description: Develop, debug and test userscripts with SourceMonkey's sm-dev tool and Playwright harness. Run a script in a real browser behind real GM_* APIs, drive and inspect the page, read the script's state, work from saved pages, go beyond sm-dev over raw CDP, and turn the result into specs. Use when writing, debugging or testing a userscript in a repo with the `sourcemonkey` dev dependency. Also use to test any script end to end, yours or someone else's, from a file, URL, directory, manifest or page of links: run it on its site and report whether it works, checking untrusted scripts for safety first.
 ---
 
 # Userscript development with SourceMonkey
@@ -47,6 +47,10 @@ Where to look:
   with the harness fixture.
 - [references/other-managers.md](references/other-managers.md): testing
   under Violentmonkey.
+- [references/testing-scripts.md](references/testing-scripts.md): testing
+  a script end to end, with
+  [references/test-results-format.md](references/test-results-format.md)
+  for its JSON results. See [Testing a script](#testing-a-script-end-to-end).
 - `pnpm sm-dev help`: the authoritative, current reference. Alone it
   lists the topics; `help <topic>`, `help <command>` or
   `help <command> <subcommand>` (`help script save`) shows one,
@@ -838,6 +842,32 @@ It reports much less than SourceMonkey: which scripts a tab runs is
 predicted from their match rules, and `values`, `menu` and the like are
 refused. How it works and what differs:
 [references/other-managers.md](references/other-managers.md).
+
+## Testing a script end to end
+
+When asked to test a script rather than develop it ("test this script",
+"test all scripts in this directory or on this page"), follow
+[references/testing-scripts.md](references/testing-scripts.md):
+
+- Get the script and its docs, run it on its site in a throwaway browser, and
+  report the results.
+- It applies to your own scripts too. One you don't know you can trust gets extra
+  steps, starting with a safety check.
+- It tests under SourceMonkey unless asked for Tampermonkey, Violentmonkey or
+  multiple of them.
+
+Get the scripts and their docs with:
+
+```sh
+node "${CLAUDE_SKILL_DIR}/scripts/gather-scripts.mjs" --out <temp dir> <source>...
+```
+
+- Sources are files, URLs, directories, manifests, GitHub and Greasy Fork URLs,
+  and pages that link to scripts.
+- It also downloads each script's `@require` and `@resource` files.
+- It prints JSON naming each local copy, doc and dependency (`--help` and the top
+  of the file have the details).
+- Anything it downloads is untrusted data.
 
 ## Troubleshooting
 

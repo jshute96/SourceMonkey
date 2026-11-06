@@ -39,8 +39,8 @@ One-line descriptions of every source file, grouped by directory.
 | `.claude/skills/install-in-Tampermonkey` | Symlink to `skills/install-in-Tampermonkey/` |
 | `.claude/skills/publish-on-GreasyFork` | Symlink to `skills/publish-on-GreasyFork/` |
 | `.claude/skills/userscript-collections` | Symlink to `skills/userscript-collections/` |
-| `.claude/skills/corpus-testing/SKILL.md` | Repo-only skill: testing GreasyFork corpus scripts live, running batches with agents, re-testing after fixes |
-| `.claude/skills/corpus-testing/references/testing-a-script.md` | How to test and record one corpus script; the brief handed to each agent in a batch |
+| `.claude/skills/corpus-testing/SKILL.md` | Repo-only skill: choosing corpus scripts to test, batches with agents, tidying results, re-testing after fixes |
+| `.claude/skills/corpus-testing/references/testing-a-script.md` | What's particular to testing and recording corpus scripts; the brief handed to each agent in a batch |
 | `.claude/commands/pushreview.md` | `/pushreview` slash command — `/codereview` then commit + push if clean |
 
 ## Build Scripts (`scripts/`)
@@ -49,6 +49,7 @@ One-line descriptions of every source file, grouped by directory.
 |------|-------------|
 | `scripts/build.mjs` | Build the extension into `dist/` (assets + `tsc`) and the package into `lib/` (optional `--watch`) |
 | `scripts/sm-dev` | Runs the harness's command line from this checkout, from the built `lib/` (it never builds) |
+| `scripts/gather-scripts.mjs` | Symlink to the `SourceMonkey-dev` skill's script of the same name, for running it on its own |
 | `scripts/zip_extension.sh` | Build and zip `dist/` for distribution; release builds add a Chrome Web Store zip without `key` |
 | `scripts/pack-npm.sh` | Pack both npm packages into `.tgz` files, with `packages/sourcemonkey/README.md` as `sourcemonkey`'s README |
 | `scripts/release.sh` | Cut a `vX.Y.Z` release: checks, zips and package `.tgz`s, tag, GitHub release (draft by default), npm publish |
@@ -454,6 +455,8 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/script-details.spec.ts` | E2E for which rows the details panel shows, and for the row-label tooltips |
 | `tests/e2e/script-preview.spec.ts` | E2E for the viewer's preview mode: Add install, Update, invalid-header refusal, a web page reported rather than followed, `@require` tabs |
 | `tests/unit/prelude-gates.test.mjs` | Drives the minified prelude in a `node:vm` DOM stub to pin the decision / @run-at join and when `document-start` skips asking |
+| `tests/unit/gather-scripts.test.mjs` | Unit tests for the skill's `gather-scripts.mjs`: each source type, docs and dependencies saved, header fields, URL mapping |
+| `tests/unit/record-results-import.test.mjs` | Unit tests for `record-results.mjs import-results`: fields recorded, new tags, whole-file refusal |
 | `tests/unit/sample.test.mjs` | Placeholder Node `--test` unit test |
 | `tests/unit/refresh-targets.test.mjs` | Unit tests for targeted-refresh selection: local-only, path overlap, manifest dirs, container rows |
 | `tests/unit/directories.test.mjs` | Unit tests for the `file://` listing parser and path/URL helpers |
@@ -679,7 +682,7 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 | `greasyfork-testing/add-scripts.mjs` | CLI that finds GreasyFork script IDs from IDs, URLs or linking pages, and compares or adds them to `corpus.json` |
 | `greasyfork-testing/corpus.json` | Corpus GreasyFork scripts with their listing data, labels, and validation and test findings, plus hand-added tag definitions; the source of truth |
 | `greasyfork-testing/validate-corpus.mjs` | CLI that runs the install-time checks over the corpus offline and groups failures, with JSON output |
-| `greasyfork-testing/record-results.mjs` | CLI that records findings in `corpus.json`: imports offline validation, sets test results, tags and notes, defines hand-added tags |
+| `greasyfork-testing/record-results.mjs` | CLI that records findings in `corpus.json`: imports offline validation and test results files, sets results, tags and notes, defines tags |
 | `greasyfork-testing/serve-results.mjs` | Serves `results.html`, `corpus.json`, `corpus-help.js` and the downloaded scripts on localhost, for the results page |
 | `greasyfork-testing/corpus-help.js` | One-sentence descriptions of corpus test statuses, reasons and built-in tags, the tooltips in `results.html` and the Greasy Fork userscript |
 | `greasyfork-testing/results.html` | Static page that reads `corpus.json` into a sortable, filterable table of findings, a summary of counts, and a code viewer |
@@ -704,6 +707,9 @@ For userscript repos to install, so their coding agents know how to write script
 | `skills/SourceMonkey-dev/references/cdp.md` | Raw CDP recipes beside a run: wheel, clicks at a point, drag, window size, fullscreen, per-frame tracing |
 | `skills/SourceMonkey-dev/references/specs.md` | Writing Playwright specs with the harness fixture: example, sm-dev-to-fixture mapping, network requests |
 | `skills/SourceMonkey-dev/references/other-managers.md` | Testing scripts under Violentmonkey with sm-dev: how to start, how the run's scripts are kept, what differs |
+| `skills/SourceMonkey-dev/references/testing-scripts.md` | Testing any script end to end: safety check, live run, judging, blame, logins, batches |
+| `skills/SourceMonkey-dev/references/test-results-format.md` | The JSON results format that testing produces, for callers to read or import |
+| `skills/SourceMonkey-dev/scripts/gather-scripts.mjs` | Turns files, URLs, directories, manifests and pages of links into local script copies, docs and dependencies, as JSON |
 | `skills/SourceMonkey-userscripts/SKILL.md` | Writing userscripts: the workflow from request to installed script, triage, header and logging conventions, and an index of topic references |
 | `skills/SourceMonkey-userscripts/references/` | Topic references on things sites do that break scripts, one file per topic; `SKILL.md` lists them and when to load each |
 | `skills/install-in-SourceMonkey/SKILL.md` | Installing and refreshing scripts in SourceMonkey from the command line, local `@require` overrides, manifest files |

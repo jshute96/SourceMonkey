@@ -334,9 +334,11 @@ sqlite3 greasyfork-testing/corpus.db < greasyfork-testing/analysis.sql
 SourceMonkey's install checks, and whether it works when run on its target
 site. `record-results.mjs` is the only tool that writes these findings.
 
-How to test scripts (the method, blame rules, tags, running batches with
-agents, and re-testing after a fix) is in the `corpus-testing` skill,
+How to test corpus scripts (tags, running batches with agents, and re-testing
+after a fix) is in the `corpus-testing` skill,
 [`.claude/skills/corpus-testing/`](../.claude/skills/corpus-testing/SKILL.md).
+The method and blame rules, for any script, are in the `SourceMonkey-dev` skill's
+[`references/testing-scripts.md`](../skills/SourceMonkey-dev/references/testing-scripts.md).
 
 **`record-results.mjs` records individual facts into the corpus**: one
 script's test result, tag or note, as you (or an agent) learn it. It doesn't
@@ -356,6 +358,7 @@ node $R tag add needs-webgl "Draws with WebGL, which the test browser lacks"   #
 node $R set 14178 --tag needs-webgl
 node $R set 14178 --replace-note 1 --note "Better wording"   # notes number from 1, in the order show lists them
 node $R set 14178 --remove-note 2
+node $R import-results results.json    # results from the testing method's JSON format, each `id` a script id
 ```
 
 `validate` needs a build (`pnpm run build`), like the other tools.

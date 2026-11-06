@@ -36,6 +36,14 @@
 //                                           defined (`tag add`) or built in
 //                              --version V  default: the @version of the copy in files/ now
 //                              --date D     default: today (YYYY-MM-DD)
+//   import-results FILE      record each result in a results JSON file, as `set` would
+//                            (the format is in the SourceMonkey-dev skill, in
+//                            references/test-results-format.md). Each result's `id`
+//                            is its script id. Takes --date. Checks the whole file
+//                            before recording anything, defines tags from its
+//                            `newTags`, and adds a note each time, so import a
+//                            file only once. Needs a blame for a fail and a reason
+//                            for an n/a, and takes only sourcemonkey results.
 //   tag list                 the built-in tags, then the hand-added ones, each
 //                            with how many scripts carry it and its description,
 //                            then any tag in use that has no definition
@@ -112,6 +120,7 @@ const COMMAND_OPTIONS = {
   'show': [],
   'list': ['untested', 'test', 'valid', 'tag', 'label', 'limit'],
   'set': ['test', 'reason', 'blame', 'note', 'note-file', 'replace-note', 'remove-note', 'tag', 'untag', 'version', 'date'],
+  'import-results': ['date'],
   'tag': [],
 };
 
@@ -321,7 +330,8 @@ async function downloadedVersion(opts, id) {
   return (header && getValue(header, 'version')?.trim()) || undefined;
 }
 
-async function setFinding(opts) {
+/** Refuses a finding that makes no sense, before anything is written. Returns its note. */
+async function checkFinding(opts) {
   const [id] = opts.positional;
   if (!/^\d+$/.test(id ?? '')) throw new Error('The set command needs a numeric script id');
   oneOf(opts.test, TEST_STATUSES, 'test status');
@@ -344,45 +354,143 @@ async function setFinding(opts) {
   if (!opts.test && !note && !removing && !opts.tag.length && !opts.untag.length) {
     throw new Error('Nothing to set. Pass --test, --note, --remove-note, --tag or --untag.');
   }
+  return note;
+}
 
+/** Write one checked finding into the corpus, which the caller holds the lock on. */
+function applyFinding(corpus, opts, { note, fileVersion, help }) {
+  const [id] = opts.positional;
+  const removing = opts['remove-note'] !== undefined;
   const date = opts.date ?? today();
+  const record = corpus.scripts[id];
+  if (!record) throw new Error(`No script ${id} in the corpus`);
+  // Checked here, under the lock, so a tag another writer just added counts.
+  for (const tag of opts.tag) {
+    if (!Object.hasOwn(corpus.tags, tag) && !isBuiltinTag(help, tag)) {
+      throw new Error(`No tag "${tag}" is defined. Define it first with \`tag add ${tag} DESCRIPTION\`.`);
+    }
+  }
+  const version = opts.version ?? fileVersion ?? record.version;
+  const stamp = version ? { date, version } : { date };
+  if (opts.test) {
+    record.test = { status: opts.test };
+    if (opts.reason) record.test.reason = opts.reason;
+    if (opts.blame) record.test.blame = opts.blame;
+    Object.assign(record.test, stamp);
+  }
+  if (opts['replace-note'] !== undefined) {
+    const at = noteIndex(record, opts['replace-note'], '--replace-note');
+    record.notes[at] = { ...stamp, text: note };
+  } else if (note) (record.notes ??= []).push({ ...stamp, text: note });
+  if (removing) {
+    const at = noteIndex(record, opts['remove-note'], '--remove-note');
+    record.notes.splice(at, 1);
+    if (!record.notes.length) delete record.notes;
+  }
+  if (opts.tag.length || opts.untag.length) {
+    const tags = new Set(record.tags ?? []);
+    for (const tag of opts.tag) tags.add(tag);
+    for (const tag of opts.untag) tags.delete(tag);
+    if (tags.size) record.tags = [...tags].sort();
+    else delete record.tags;
+  }
+}
+
+async function setFinding(opts) {
+  const note = await checkFinding(opts);
+  const [id] = opts.positional;
   const fileVersion = opts.version === undefined ? await downloadedVersion(opts, id) : undefined;
   const help = opts.tag.length ? readCorpusHelp() : null;
-  await updateCorpus(opts.corpus, (corpus) => {
-    const record = corpus.scripts[id];
-    if (!record) throw new Error(`No script ${id} in the corpus`);
-    // Checked here, under the lock, so a tag another writer just added counts.
-    for (const tag of opts.tag) {
-      if (!Object.hasOwn(corpus.tags, tag) && !isBuiltinTag(help, tag)) {
-        throw new Error(`No tag "${tag}" is defined. Define it first with \`tag add ${tag} DESCRIPTION\`.`);
-      }
-    }
-    const version = opts.version ?? fileVersion ?? record.version;
-    const stamp = version ? { date, version } : { date };
-    if (opts.test) {
-      record.test = { status: opts.test };
-      if (opts.reason) record.test.reason = opts.reason;
-      if (opts.blame) record.test.blame = opts.blame;
-      Object.assign(record.test, stamp);
-    }
-    if (opts['replace-note'] !== undefined) {
-      const at = noteIndex(record, opts['replace-note'], '--replace-note');
-      record.notes[at] = { ...stamp, text: note };
-    } else if (note) (record.notes ??= []).push({ ...stamp, text: note });
-    if (removing) {
-      const at = noteIndex(record, opts['remove-note'], '--remove-note');
-      record.notes.splice(at, 1);
-      if (!record.notes.length) delete record.notes;
-    }
-    if (opts.tag.length || opts.untag.length) {
-      const tags = new Set(record.tags ?? []);
-      for (const tag of opts.tag) tags.add(tag);
-      for (const tag of opts.untag) tags.delete(tag);
-      if (tags.size) record.tags = [...tags].sort();
-      else delete record.tags;
+  await updateCorpus(opts.corpus, (corpus) => applyFinding(corpus, opts, { note, fileVersion, help }));
+  console.info(`Updated ${id}`);
+}
+
+/**
+ * Refuses a result in a results file, in terms of the file's fields rather than
+ * `set`'s flags. The method's format asks for more than `set` does: importing is
+ * where agents' results land, and the results page filters on these fields.
+ */
+function checkResult(result, seen) {
+  const { id, status, reason, blame, note, manager, tags } = result;
+  if (id === undefined || id === null) throw new Error('The "id" field is missing');
+  if (!/^\d+$/.test(String(id))) throw new Error(`The "id" field must be a numeric script id, not ${id}`);
+  if (seen.has(String(id))) throw new Error('This script has more than one result in the file');
+  seen.add(String(id));
+  // The corpus records whether a script works under SourceMonkey.
+  if (manager && manager !== 'sourcemonkey') throw new Error(`The corpus only records sourcemonkey results, not ${manager}`);
+  if (!status) throw new Error('The "status" field is missing');
+  if (reason && status !== 'n/a') throw new Error('The "reason" field only goes with status n/a. Explain other results in the note.');
+  if (blame && status !== 'fail') throw new Error('The "blame" field only goes with status fail');
+  if (status === 'fail' && !blame) throw new Error('A fail result needs a "blame" field');
+  if (status === 'n/a' && !reason) throw new Error('An n/a result needs a "reason" field');
+  if (note !== undefined && note !== null && typeof note !== 'string') throw new Error('The "note" field must be text');
+  if (['fail', 'inconclusive', 'n/a'].includes(status) && !note?.trim()) throw new Error(`A ${status} result needs a "note" field saying what happened`);
+  if (tags !== undefined && tags !== null && !Array.isArray(tags)) throw new Error('The "tags" field must be a list');
+}
+
+/**
+ * Record a results file from the testing method in the SourceMonkey-dev skill.
+ * Everything is checked first: a bad result halfway through would otherwise
+ * leave the earlier ones recorded, and importing again would repeat their notes.
+ */
+async function importResults(opts) {
+  const [file] = opts.positional;
+  if (!file) throw new Error('The import-results command needs the results JSON file');
+  const parsed = JSON.parse(await readFile(file, 'utf8'));
+  if (!Array.isArray(parsed?.results)) throw new Error(`The file ${file} has no "results" list`);
+  const newTags = parsed.newTags ?? {};
+  const seen = new Set();
+  parsed.results.forEach((result, index) => {
+    try {
+      checkResult(result, seen);
+    } catch (err) {
+      throw new Error(`Result ${result.id ?? `number ${index + 1}`}: ${err.message}`);
     }
   });
-  console.info(`Updated ${id}`);
+  const findings = parsed.results.map((result) => ({
+    ...opts,
+    positional: [String(result.id)],
+    test: result.status,
+    reason: result.reason ?? undefined,
+    blame: result.blame ?? undefined,
+    note: result.note ?? undefined,
+    version: result.version ?? undefined,
+    tag: result.tags ?? [],
+    untag: [],
+  }));
+
+  const corpus = await readCorpus(opts.corpus);
+  const help = readCorpusHelp();
+  for (const [name, text] of Object.entries(newTags)) {
+    if (!TAG_NAME.test(name)) throw new Error(`The tag name "${name}" isn't short kebab-case (like dead-asset)`);
+    if (!String(text).trim()) throw new Error(`The new tag "${name}" has no description`);
+  }
+  const prepared = [];
+  for (const finding of findings) {
+    const [id] = finding.positional;
+    const check = async () => {
+      const note = await checkFinding(finding);
+      if (!corpus.scripts[id]) throw new Error(`No script ${id} in the corpus`);
+      for (const tag of finding.tag) {
+        if (!Object.hasOwn(corpus.tags, tag) && !isBuiltinTag(help, tag) && !Object.hasOwn(newTags, tag)) {
+          throw new Error(`The tag "${tag}" isn't defined here or in the file's newTags`);
+        }
+      }
+      const fileVersion = finding.version === undefined ? await downloadedVersion(finding, id) : undefined;
+      prepared.push({ finding, note, fileVersion });
+    };
+    await check().catch((err) => { throw new Error(`Result ${id}: ${err.message}`); });
+  }
+
+  // One write, so that a failure leaves none of the file recorded.
+  await updateCorpus(opts.corpus, (live) => {
+    // Two agents can both define a tag; the first description stays.
+    for (const [name, text] of Object.entries(newTags)) {
+      if (!Object.hasOwn(live.tags, name) && !isBuiltinTag(help, name)) live.tags[name] = String(text).trim();
+    }
+    for (const { finding, note, fileVersion } of prepared) applyFinding(live, finding, { note, fileVersion, help });
+  });
+  console.info(`Imported ${scriptCount(findings.length)}`);
 }
 
 /** Where note `which` (a number from 1) is in the record's notes. */
@@ -615,6 +723,7 @@ async function main() {
       return importValidation(opts, JSON.parse(await readFile(opts.positional[0], 'utf8')));
     }
     case 'set': return setFinding(opts);
+    case 'import-results': return importResults(opts);
     case 'show': return show(opts);
     case 'list': return list(opts);
     case 'tag': return tagCommand(opts);

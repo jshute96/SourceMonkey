@@ -9,7 +9,9 @@ The corpus (`greasyfork-testing/`) is the 2000 most-installed
 GreasyFork scripts plus others added since, downloaded, with a record per
 script in `corpus.json`.
 Testing a script means running the downloaded copy on its target site with
-`sm-dev`, judging whether it does what it promises, and recording that.
+`sm-dev`, judging whether it does what it promises, and recording that. The
+method is in the `SourceMonkey-dev` skill; this skill adds choosing scripts,
+recording results in the corpus, and keeping them tidy.
 
 Where things are:
 
@@ -17,9 +19,11 @@ Where things are:
   validation, the record format, statuses and blames, the results page. Read
   its "Test results" section once, and its "Adding scripts" section before
   adding any.
-- [references/testing-a-script.md](references/testing-a-script.md): how to
-  test one script and record it. Hand this file to each agent in a batch.
-- The `SourceMonkey-dev` skill: how to drive `sm-dev` itself.
+- [references/testing-a-script.md](references/testing-a-script.md): what's
+  particular to testing and recording corpus scripts. Hand this file to each
+  agent in a batch.
+- The `SourceMonkey-dev` skill: how to drive `sm-dev`, and in its
+  `references/testing-scripts.md`, how to test a script.
 - The `SourceMonkey-friction` skill: log tool friction when the work is done.
 - `results.html` (served by `serve-results.mjs`, or any static server for
   the folder): the results table, with each tag's description as its tooltip.
@@ -83,28 +87,22 @@ untested, sort by Updated) or in `corpus.db` (`Scripts.updated_date`, after
     sites, `--reason paid` for paid-feature unlocks.
   - `--reason game` for game cheats, bots and tools.
   - `--reason other` for anything else.
-- Don't run scripts that look risky, for example ones that look like
-  they'd collect or send out private data; record them as `n/a --reason
-  unsafe` instead. Corpus scripts are untrusted; see "Untrusted scripts" in
-  [references/testing-a-script.md](references/testing-a-script.md).
-  Having a result, they drop out of `list --untested`.
+- Don't run scripts that look risky or harmful, for example ones that collect or send
+  out private data; record them as `n/a --reason unsafe` instead, with a note
+  saying what looked dangerous. Corpus scripts are untrusted;
+  `references/testing-scripts.md` in the `SourceMonkey-dev` skill gives what to
+  look for. Having a result, they drop out of `list --untested`.
+- Do run ones that are only questionable: the test browser has no accounts
+  signed in.
 - Group a batch by site (YouTube, search engines, scripts that run on every
   site...), so each agent learns one site.
 
 ## Running a batch with parallel agents
 
-For more than a handful of scripts, split them across background agents,
-about 6-10 scripts each.
-
-Limit how many run at once. Each agent drives its own browser, and
-browser games (WebGL, canvas) keep a CPU core busy.
-- Run about one agent per CPU core (`nproc`), and fewer for game-heavy
-  groups. Queue the rest, and start the next when one reports.
-- A run that dies or is force-stopped can leave its temp browser's
-  Chrome behind, holding memory. Look for `chrome` processes with
-  `--user-data-dir=/tmp/sm-dev-extension-*` whose parent is init (PID
-  1). Nothing can reach them, and they ignore SIGTERM, so `kill -9`
-  them.
+For more than a handful of scripts, split them across background agents, as
+"Many scripts" in the `SourceMonkey-dev` skill's
+`references/testing-scripts.md` describes (batch size, how many at once,
+cleaning up leftover browsers).
 
 In each agent's prompt:
 
@@ -113,8 +111,8 @@ In each agent's prompt:
 - Tell it to read
   [references/testing-a-script.md](references/testing-a-script.md) first.
 - Add site hints (which sites block headless, which to avoid).
-- Tell it to record its own results with `record-results.mjs` (safe to
-  run in parallel).
+- Tell it to record its own results with `record-results.mjs import-results`
+  (safe to run in parallel).
 - Tell it not to edit results.html, TODO.md or the friction log, but to
   report new tags, SourceMonkey gaps and friction back to you.
 
