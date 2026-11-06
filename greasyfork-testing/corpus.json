@@ -8814,9 +8814,8 @@
         "version": "2.0"
       },
       "test": {
-        "status": "n/a",
-        "reason": "unsafe",
-        "date": "2026-10-04",
+        "status": "pass",
+        "date": "2026-11-05",
         "version": "2.0"
       },
       "notes": [
@@ -8824,6 +8823,11 @@
           "date": "2026-10-04",
           "version": "2.0",
           "text": "Not run, judged unsafe from its description: it injects cookie strings taken from a Wireshark capture into any page (\"Inject Cookie String From Wireshark Dump\"), a session-hijacking tool."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2.0",
+          "text": "Re-tested under the current safety rule (earlier `n/a unsafe`): temp headless browser, no accounts, only the fake cookie `sm_test_cookie=hello`.\n\n- On https://example.com/, `document.cookie` started empty. Alt then C showed the dialog, and `Cookie: sm_test_cookie=hello` was entered.\n- OK showed the alert \"All Cookies Have Been Written\" and hid the dialog. `document.cookie` then gave `sm_test_cookie=hello`, and CDP showed it with path `/`, so the `Cookie: ` prefix was stripped.\n- Alt then C reopened the dialog and Cancel hid it.\n- SourceMonkey: the dialog's inline `onclick` handlers and the `unsafeWindow` global with no `@grant` both worked, so no comparison with another manager was needed.\n- Script: `@exclude https?://gmail.com/*` and the mail.google.com line are globs that don't match, so `match` shows it running on mail.google.com. Gmail itself wasn't opened."
         }
       ]
     },
@@ -15104,16 +15108,24 @@
         "version": "1.0"
       },
       "test": {
-        "status": "n/a",
-        "reason": "unsafe",
-        "date": "2026-10-04",
+        "status": "fail",
+        "blame": "script",
+        "date": "2026-11-05",
         "version": "1.0"
       },
+      "tags": [
+        "needs-site-jquery"
+      ],
       "notes": [
         {
           "date": "2026-10-04",
           "version": "1.0",
           "text": "Not run, judged unsafe from its description and code: it imports Netflix cookies (\"Netflix - Import Cookie Premium\") to sign in with someone else's session."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.0",
+          "text": "Re-tested under the current safety rule (earlier `n/a unsafe`): temp headless browser, no accounts.\n\n- On https://www.netflix.com/login and the home page, the script threw `$ is not defined` at its first `$` (line 43), and `#cookie_text` never appeared.\n- It has no `@require`, and Netflix no longer loads jQuery: `eval --page typeof $` gave `undefined` on both pages.\n- `--manager vm` gave the same error on the login page, with no `#cookie_text`.\n- With no paste box, nothing was pasted and no cookie was written, not even the fake one. No account or session was involved."
         }
       ]
     },
@@ -59919,8 +59931,8 @@
       },
       "test": {
         "status": "n/a",
-        "reason": "unsafe",
-        "date": "2026-10-10",
+        "reason": "requires-login",
+        "date": "2026-11-05",
         "version": "5.2.6"
       },
       "notes": [
@@ -59928,6 +59940,11 @@
           "date": "2026-10-10",
           "version": "5.2.6",
           "text": "Bulk-deletes the user's own Discord messages through the account, so it drives an account and wasn't exercised beyond startup.\n- Started on https://discord.com/channels/@me (redirects to the login page) with no errors, and added its `#undiscord` window to the body. Its toolbar button needs a logged-in channel."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "5.2.6",
+          "text": "Reason changed from unsafe. It deletes the user's own messages, as it promises, and its toolbar button needs a signed-in channel, so its real feature can't be checked without an account."
         }
       ]
     },
@@ -74297,8 +74314,8 @@
       },
       "test": {
         "status": "n/a",
-        "reason": "unsafe",
-        "date": "2026-10-04",
+        "reason": "requires-login",
+        "date": "2026-11-05",
         "version": "1.6"
       },
       "notes": [
@@ -74306,6 +74323,11 @@
           "date": "2026-10-04",
           "version": "1.6",
           "text": "Not run, judged unsafe from its description and code: it reads the user's Discord account token (\"Get your Discord token quickly\"). A token gives full control of an account, and we don't run untrusted code that handles credentials."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.6",
+          "text": "Reason changed from unsafe. From its code, it only shows the token to the user in a `prompt` and sends it nowhere. It reads `localStorage` on `discord.com/channels/*`, so checking it needs a signed-in account. Not run."
         }
       ]
     },
@@ -88159,9 +88181,8 @@
         "version": "3.6"
       },
       "test": {
-        "status": "n/a",
-        "reason": "unsafe",
-        "date": "2026-10-10",
+        "status": "pass",
+        "date": "2026-11-05",
         "version": "3.6"
       },
       "notes": [
@@ -88169,6 +88190,11 @@
           "date": "2026-10-10",
           "version": "3.6",
           "text": "Not run: unsafe from its description and code. It adds an icon on Bing that opens up to 40 Bing searches of random words in new tabs and closes them after 15 seconds, to farm Microsoft Rewards points. That drives a real account's rewards, which we don't do with untrusted code (and the points only count signed in)."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "3.6",
+          "text": "Re-tested under the current safety rule (earlier `n/a unsafe`): temp headless browser, no accounts. Only the smallest count (5) was run, so the 40-search run and points weren't checked; points need a signed-in account.\n\n- On https://www.bing.com/search?q=weather, the orange icon opened the panel. With 5 chosen and predefined words, the search button opened tabs for car, cat, bus, dog and book, 5.5 to 6.4s apart. All 5 closed together 21s after the last opened, which is its 15s plus the delay after the last tab.\n- The tabs' URLs and the script's start in each were checked, not what Bing showed in them.\n- Script: on the Bing home page the icon has no z-index and sits under `.hp_top_cover_dim`: it isn't visible, and `click` reports it covered. It only works from results pages.\n- Script: the word and sentence modes weren't run, to keep the searches small. The word API answers (200 from the page). api.quotable.io no longer resolves, so the code would search `fallback` each time in sentence mode."
         }
       ]
     },
@@ -89087,15 +89113,20 @@
       },
       "test": {
         "status": "n/a",
-        "reason": "unsafe",
-        "date": "2026-10-10",
-        "version": "2.9.3"
+        "reason": "requires-login",
+        "date": "2026-11-05",
+        "version": "3.0.7"
       },
       "notes": [
         {
           "date": "2026-10-10",
           "version": "2.9.3",
           "text": "Not run. It auto-completes Chaoxing coursework and exams (videos, chapter tests, homework, exams) for a signed-in student account, sending the questions to a third-party paid answer bank (wanjuantiku.com), and it runs on every site (`@match *://*/*`)."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "3.0.7",
+          "text": "Reason changed from unsafe. It's a coursework and exam tool for a signed-in student account, which the corpus files under requires-login. Not run."
         }
       ]
     },
@@ -98166,16 +98197,21 @@
         "version": "V9.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "unsafe",
-        "date": "2026-10-10",
-        "version": "V8.0"
+        "status": "fail",
+        "blame": "script",
+        "date": "2026-11-05",
+        "version": "V9.1"
       },
       "notes": [
         {
           "date": "2026-10-10",
           "version": "V8.0",
           "text": "Not run. A Microsoft Rewards farmer: on bing.com it runs about 40 automated searches with random pauses to earn points on the signed-in account, fetching search terms from `gumengya.com`. That drives an account, which the corpus rules don't allow."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "V9.1",
+          "text": "Re-tested under the current safety rule (earlier `n/a unsafe`): temp headless browser, no accounts. The full run and points weren't checked; points need a signed-in account.\n\n- The menu command 开始搜索任务 (start search task) reloaded Bing and ran the first search, with the title `[1 / 19] ...` and `search_cnt` 1. About 35s later it ran a second search, then logged 这是用户手动搜索 (this is a manual search) and did nothing more for the remaining 113s of the run. `search_cnt` stayed 1.\n- Script: it has no `@noframes` or frame check, so it also runs in Bing's same-origin `/identity/idtokenv2` iframe. That copy takes the page for the Bing home page, finds `ms_script_search` in the tab's shared sessionStorage, removes it, and opens the Rewards dashboard in a new tab. Without the flag, the next search page doesn't continue the loop.\n- The new tab landed on the login.live.com sign-in page. It was closed without signing in, so the Rewards page code never ran.\n- `--manager vm` did the same on its first search: the iframe's log lines match, the tab's flag read `null`, and the title showed `[1 / 19]`.\n- Not known: whether a signed-in Bing page loads that iframe too."
         }
       ]
     },
@@ -100967,10 +101003,9 @@
         "version": "1.1.15"
       },
       "test": {
-        "status": "n/a",
-        "reason": "unsafe",
-        "date": "2026-10-10",
-        "version": "1.1.14"
+        "status": "pass",
+        "date": "2026-11-05",
+        "version": "1.1.15"
       },
       "tags": [
         "sends-browsing-data"
@@ -100980,6 +101015,11 @@
           "date": "2026-10-10",
           "version": "1.1.14",
           "text": "Not run. A coupon and affiliate script that runs on all pages (`*://*/*` plus shopping-site regexes):\n- Sends the current page URL (`url=encodeURIComponent(location.href)`) with its queries to `oversea.mimixiaoke.com` (`/api/coupon/query`, `/api/detect/coupon`, `/api/detect/info`).\n- On search engines (Google and others) it posts result lists to `/api/engine/screen`.\n- Clicking a coupon sends the browser through server-supplied, base64-obscured redirect links (`jtmate.com/mid/redirect`), likely affiliate tagging."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.1.15",
+          "text": "Re-tested under the current safety rule (earlier `n/a unsafe`): runs and shows coupons. The page URL question is answered: unrelated pages do send it, but only when a 30-minute cache has expired, not on every page.\n- Script: on an Amazon search page (`--headed`; headless got \"Page Not Found\") a coupon panel opens by itself with coupon codes and a Cash back tab. A product page gets a floating badge reading 15, a Price Comparison box with a QR code, and a History bar. The codes shown for a USB charger were for DREAM PAIRS shoes, and I didn't test any at checkout.\n- Sent from unrelated pages, watched from the extension's service worker over CDP:\n  - example.com, fresh install: `GET oversea.mimixiaoke.com/api/load/conf?origin=support&v=1.0.1&no=10&url=https%3A%2F%2Fexample.com%2F%3Fsm_test%3D1&hash=init`. The full URL with its query string, then a second request with `url=https://www.aliexpress.com`, whose response fills the cache.\n  - example.org next: nothing sent while the cache was fresh.\n  - example.org with the cache time set back 31 minutes: the same request with `url=https%3A%2F%2Fexample.org%2Fpage3%3Fsm_test%3D3%26q%3Dprivate`.\n- Sent on Amazon, a supported site, on each page load:\n  - `POST /api/detect/info` and, when the panel opens, `/api/detect/coupon`, each with `{platform, title, url, lang, marketplace, currency, v, version, no, token}`: the page title and full URL.\n  - `GET /api/coupon/query?ids=<ASIN>&url=<page URL>` on product pages.\n  - `POST jtmate.com/api/certificate` with body `null`.\n- Sent on Bing: `POST /api/engine/screen` with the result links' displayed URLs (10 of them). The body has no search terms, though `/api/load/conf` carries the search URL when the cache has expired.\n- Script: clicking a coupon's Copy (once) copied the code and opened a background tab through `jtmate.com/mid/disclosure` to `amazon.com/?&linkCode=ll2&tag=defaultid0f4-20&...`, the affiliate tag, which closed itself after 10 seconds (`active:false, close:true, pause:10000` from the server). The Amazon home page, not the product.\n- No cookies or page contents beyond titles were seen going out."
         }
       ]
     },
@@ -101443,15 +101483,20 @@
       },
       "test": {
         "status": "n/a",
-        "reason": "unsafe",
-        "date": "2026-10-10",
-        "version": "2.3"
+        "reason": "requires-login",
+        "date": "2026-11-05",
+        "version": "2.4"
       },
       "notes": [
         {
           "date": "2026-10-10",
           "version": "2.3",
           "text": "Not judged: its main feature auto-completes Edgenuity coursework (guesses answers, skips videos, auto-clicks through activities) for a student account. Checked what can be seen logged out:\n- `student.edgenuity.com` redirects to the `auth.edgenuity.com` login page. The script started there and threw `Cannot read properties of null (reading 'style')` in `addDeepaiIframes` (line 1021), since it expects Edgenuity's `#wrap` element. It throws the same way on every page without one, brainly.com included; this is the script, not SourceMonkey.\n- On brainly.com the `/app/ask` search page showed no results to the headless browser (no `search-item-facade-wrapper`), and a second tab got a Cloudflare \"Verify you are human\" check, so the Brainly redirect part couldn't be checked.\n- SourceMonkey reports a newer version (2.4) at the update URL."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2.4",
+          "text": "Reason changed from unsafe. It's a coursework tool for a student account, on a course site that redirects to a login page, as the note above shows."
         }
       ]
     },
@@ -104105,9 +104150,8 @@
         "version": "2025-09-14"
       },
       "test": {
-        "status": "n/a",
-        "reason": "unsafe",
-        "date": "2026-10-10",
+        "status": "inconclusive",
+        "date": "2026-11-05",
         "version": "2025-09-14"
       },
       "notes": [
@@ -104115,6 +104159,16 @@
           "date": "2026-10-10",
           "version": "2025-09-14",
           "text": "Not run. Beyond shortlink skipping, it auto-clicks through paid-to-click and ad pages (`ourcoincash.xyz/ptc*`, `gwaher.com/ptc`, `freepayz.com/framed-ads`, `bitcotasks.com` leads) and Vietnamese betting-site redirectors (vn88, fb88, m88).\n- It runs inside reCAPTCHA frames and, with a user-supplied key, sends captcha images to third-party solvers (`api.nocaptchaai.com`, `iconcaptcha-solver.vercel.app`)."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2025-09-14",
+          "text": "Re-tested under the current safety rule (earlier `n/a unsafe`): safety read `questionable` (traffic-code automation on betting hosts, opt-in captcha solver and PTC clicking), so run in a headless temp browser with no accounts. API keys stayed empty and \"Opens PTC links\" stayed off.\n\n- `www.youtube.com/redirect?q=https://example.com/`: the script went straight to `example.com`. A `--noscript` tab stayed on the \"Are you sure you want to leave YouTube?\" page, with `#invalid-token-redirect-goto-site-button` present.\n- `www.facebook.com/flx/warn/?u=https://example.com/`: reached `example.com`; the `--noscript` tab stayed on \"Leaving Facebook\".\n- The skip happens with \"Auto-Redirect to Social Media\" off, since a second always-on handler clicks the same buttons when the referrer is empty. The setting therefore adds little.\n- \"Configuration\" menu command: the MonkeyConfig dialog opened on the Google redirect notice. Ticking \"Auto-Redirect to Social Media\" and Save stored `_MonkeyConfig_Configuration_cfg` with `redirectToSocial:true`, `ptcFaucet:false` and empty keys. `cfg.get` read it back after a reload.\n- No effect, same as the control: `www.google.com/url?q=` stays on \"Redirect Notice\", and `www.instagram.com/linkshim/` is now Instagram's 404.\n- No `GM_xmlhttpRequest` call, permission prompt or error in the run's log.\n- Not covered: any shortlink chain, captcha flows, PTC, or the betting and `yeumoney.com` flows. Of the shortlink sites tried, `hypershort.com` is parked (`ww19.hypershort.com`), `upfion.com` has no DNS, `lksfy.com` now redirects to `linkshortify.com`, and `aylink.co` gave 403 to curl. The others weren't tried, since those flows need a captcha or a real link.\n- Script, from reading only: \"Site-Specific Delays\" can't work (`location.host in sites` tests an array's indexes), and line 462 calls a `goTo` that isn't defined."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "2025-09-14",
+          "text": "Changed from `pass` to `inconclusive`: some of it works, but its main feature wasn't proven. The YouTube and Facebook \"leaving\" page skips and the settings dialog work. No shortlink chain was tested, as the note above describes."
         }
       ]
     },
@@ -106355,16 +106409,20 @@
         "version": "1.3.2"
       },
       "test": {
-        "status": "n/a",
-        "reason": "unsafe",
-        "date": "2026-10-10",
-        "version": "1.3.1"
+        "status": "pass",
+        "date": "2026-11-05",
+        "version": "1.3.2"
       },
       "notes": [
         {
           "date": "2026-10-10",
           "version": "1.3.1",
           "text": "Not run. A Microsoft Rewards farmer: on bing.com it runs the daily Rewards searches automatically (\"simulating human operation\" to avoid detection), earning points on the signed-in account. That drives an account, which the corpus rules don't allow."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.3.2",
+          "text": "Re-tested under the current safety rule (earlier `n/a unsafe`): temp headless browser, no accounts. The search count was set to 3, so the full run and points weren't checked; points need a signed-in account.\n\n- On https://www.bing.com/search?q=weather, the panel appeared and opened the Rewards flyout. Signed out, it found no points and showed its count mode, `0/20`.\n- Setting 保底次数 (fallback count) to 3 changed the panel to `0/3` and saved it in localStorage.\n- The start button ran 3 searches with terms from the flyout: football games today, russell brand, lear jet crash in florida. State carried across the page loads, progress reached `3/3`, and it scrolled and waited 10s between searches. Then it logged 搜索任务已完成 (search task finished), showed 搜索已停止 (search stopped) and cleared its saved state.\n- Bing answered the third search with its \"Verify you are human\" challenge, which wasn't solved. The script doesn't notice and counts that search anyway.\n- Signed out, the daily-tasks line shows all ticks, since the script treats a missing task list as all done."
         }
       ]
     },
@@ -108150,9 +108208,8 @@
         "version": "35 (1)"
       },
       "test": {
-        "status": "n/a",
-        "reason": "unsafe",
-        "date": "2026-10-11",
+        "status": "inconclusive",
+        "date": "2026-11-05",
         "version": "35 (1)"
       },
       "notes": [
@@ -108160,6 +108217,16 @@
           "date": "2026-10-11",
           "version": "35 (1)",
           "text": "Not run. Despite the name, this is a copy of the \"Bypass All Shortlinks\" script (`scriptId = '431691-bypass-all-shortlinks'`), matching about 700 shortlink, download and faucet sites.\n- Script: it drives a crypto faucet account (`autofaucet.dutchycorp.space`: auto coin rolls and PTC ad-view walls, line 2045 on), which is account automation.\n- Script: it sends the current page URL to a third-party bypass service (`https://adbypass.org/bypass?bypass=` + URL, line 2264) and clicks through forms once captchas report solved.\n- Bypassing ad shorteners is its whole purpose, so there is no safe check that proves it."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "35 (1)",
+          "text": "Re-tested under the current safety rule (earlier `n/a unsafe`): safety read `questionable` (faucet code on sight, misleading name), so run in a headless temp browser with no accounts, staying off faucet, PTC and betting sites. Each redirect below was compared with a `--noscript` tab.\n\n- `maloma3arbi.blogspot.com/?link=https://example.com/`: went to `example.com`; the control stayed on the blog.\n- `multiup.io/download/abc`: went to `/en/mirror/abc`. A made-up ID, so both tabs end at \"File Not Found\"; only the URL rewrite was seen.\n- `drive.google.com/file/d/<made-up ID>/view`: went to `drive.usercontent.google.com/download?id=...&export=download` (404, nothing downloaded); the control stayed on Drive. This runs with Auto-Download off.\n- `adbypass.org`: this does happen. `work.ink/abc` (a made-up path) went to `adbypass.org/bypass?bypass=https://work.ink/abc` with the path in the URL, from `work.ink`'s Cloudflare challenge page; the control stayed on \"Just a moment...\". `adbypass.org` then showed its own Cloudflare captcha, which was left alone, so no bypass result was seen.\n- Settings: \"Script Settings\" opened its dialog on `greasyfork.org`. Ticking \"Allow Context Menu\" and \"Disable Prompts & Notifications\" and Save stored `Cmenu` and `Prompt` as true, still set after a reload.\n- Script bug: those saved options do nothing. `runIfHost('.*', ...)` escapes the pattern to the regex `^\\.\\*`, which matches no host, so the all-sites handlers never run. After the reload, `window.alert` was still native, and `tm_logs` had no \"Prompt handling\" or \"RightFCL\" line. \"Disable Adblock Detections\" and \"BlockFC\" use the same call, though they weren't saved on in this test. So the promised popup and adblock-check handling is off whatever the settings say. This is the script's own logic, so no other manager was compared.\n- No effect from the script: `youtube.com/redirect` redirects to `www.youtube.com`, which `@match` doesn't cover, so the leave-YouTube page stays. `vk.com/away.php` reached `example.com` in both tabs, by a server redirect, with no handler logged.\n- \"Script Metrics\" showed an alert of stats for 431691, the original script, not this copy. \"Bug Report\" fired `GM_openInTab` on 431691's feedback page; that tab wasn't inspected.\n- No thrown errors from the script in the run's log.\n- Not covered: AdLinkFly-style shortlink chains and other captcha-gated flows, auto-downloads, Flickr, and all faucet steps.\n- Not tagged `sends-browsing-data`: the one URL it sends is the `work.ink` link being bypassed, which is the feature, and it goes to a bypass service rather than the author's server."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "35 (1)",
+          "text": "Changed from `pass` to `inconclusive`: some of it works, but its main feature wasn't proven. The blog link redirect and the settings dialog work, and the `multiup.io` and Google Drive URL rewrites happen. Shortlink chains weren't tested, since they need captchas, and its promised popup and adblock-check handling never runs, as the note above describes."
         }
       ]
     },
@@ -123198,9 +123265,8 @@
         "version": "1.1.1"
       },
       "test": {
-        "status": "n/a",
-        "reason": "unsafe",
-        "date": "2026-10-31",
+        "status": "inconclusive",
+        "date": "2026-11-05",
         "version": "1.1.1"
       },
       "notes": [
@@ -123208,6 +123274,11 @@
           "date": "2026-10-31",
           "version": "1.1.1",
           "text": "Not run. The body is obfuscated (mangled names, URLs hidden in `atob` strings), runs on all sites with `@connect *`, and loads remote JSON config (`_z00.min.json` from jsDelivr, refreshed hourly) plus a monetization host (`monetiza.ohas.net`, a premium checkout link). Downloads also need a companion desktop program on `127.0.0.1:15432`, which we wouldn't install."
+        },
+        {
+          "date": "2026-11-05",
+          "version": "1.1.1",
+          "text": "Re-tested under the current safety rule (earlier `n/a unsafe`): UI only. Downloads are untested, since they need the companion Windows program, which wasn't installed, so there is no verdict on the main promise.\n- Script: on a YouTube watch page, hovering the playing video shows a download button on it. Clicking it opens a dialog with the right title and thumbnail (\"Big Buck Bunny 60fps 4K ...\"), Video/Audio, MP4 and 1080p choices. It finds no video to act on over an ended video's end screen.\n- Script: clicking Download with no program paired opens Settings at Connection (port 15432, pairing key, Download Program). No request to 127.0.0.1 was made, so nothing was sent.\n- Script: example.com gets a floating download button at the bottom right. Settings tabs and the empty My Playlists dialog open; I didn't create a playlist. The Account tab's license and purchase buttons weren't clicked.\n- Script: a \"Getting Started\" notice pops up from a gist on the first page.\n- Requests seen on each of 4 page loads: `_z00.min.json`, `guide.json` and the gist, with only a `?t=` cache-buster, so no page URL. `monetiza.ohas.net` and the ad page were never contacted, so the ad gate wasn't reached.\n- `_z00.min.json` holds two SHA-256 values, matching the local script and library; a mismatch or failed fetch makes the script shut itself down."
         }
       ]
     },
