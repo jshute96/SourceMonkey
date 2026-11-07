@@ -20,8 +20,10 @@ import {
 import { applyLang, langLaunchArgs } from './browser-lang.js';
 import { watchDownloads, type DownloadWatch } from './download-watch.js';
 import { managerState, managersIn, otherManagersWarning, stateLabel, type ManagerState } from './browser-extensions.js';
-import { DROP_BROWSER_MODE } from './extension-backend.js';
+import { managerUnusable, useTempBrowser } from './manager-advice.js';
 import { ExtensionHost } from './extension-host.js';
+import type { BrowserType } from './browser-launch.js';
+import { launchTempChrome } from './chrome-launch.js';
 import { launchExtensionBrowser } from './extension-launch.js';
 import { fetchManager, fetchedVersion } from './manager-fetch.js';
 import { DEFAULT_MANAGER, MANAGERS, managerFlag, type ManagerName } from './managers.js';
@@ -149,6 +151,8 @@ export interface ConnectOptions {
    * package's own build of SourceMonkey (or `manager`) loaded.
    */
   tempBrowser?: boolean;
+  /** `--browser-type`, with `tempBrowser`: `chrome` launches Google Chrome rather than Chromium. */
+  browserType?: BrowserType;
   headed?: boolean;
   /** With `tempBrowser`: whether it has sound (false), or is muted (the default). */
   muted?: boolean;
@@ -201,15 +205,6 @@ function cdpSetting(opts: ConnectOptions): string {
   return browserSetting(opts.cdp);
 }
 
-/**
- * ` --existing-browser`, with the address (`addressArg`), for advice to
- * run a command against the browser at `endpoint`. Empty for a launched
- * one (`launched`), which closes with the run, so the advice goes to
- * the run.
- */
-export function browserArg(endpoint: string, launched = false): string {
-  return launched ? '' : ` --existing-browser${addressArg(endpoint)}`;
-}
 
 /** ` --browser <address>`, unless `endpoint` is the default browser. */
 export function addressArg(endpoint: string): string {
@@ -322,14 +317,18 @@ async function openBrowser(
       if (manager !== 'sourcemonkey' && fetchedVersion(manager) === null) await fetchManager(manager, out);
       // Only a port given outright: $SM_DEV_BROWSER names a lasting browser.
       const port = opts.cdp === undefined ? undefined : Number(new URL(cdpEndpoint(opts.cdp)).port);
-      launched = await launchExtensionBrowser({ port, headed: opts.headed === true, muted: opts.muted, args: langLaunchArgs(opts.lang), connectedElsewhere: true, downloadsDir, manager });
+      const launch = { port, headed: opts.headed === true, muted: opts.muted, args: langLaunchArgs(opts.lang), downloadsDir, manager };
+      launched = opts.browserType === 'chrome' ? await launchTempChrome(launch) : await launchExtensionBrowser({ ...launch, connectedElsewhere: true });
     } catch (err) {
       out(S.asError(`Could not launch a browser with ${label}: ${(err as Error).message}`));
       return null;
     }
     closeLaunched = launched.close;
     try {
-      browser = await chromium.connectOverCDP(launched.endpoint);
+      // `noDefaults` for Google Chrome, as for an `--open-browser` one:
+      // it's there to behave as a browser a person runs, for sites that
+      // stop Chromium, so without Playwright's overrides.
+      browser = await chromium.connectOverCDP(launched.endpoint, opts.browserType === 'chrome' ? { noDefaults: true } : {});
     } catch (err) {
       await launched.close();
       out(S.asError(`Could not connect to the browser launched with ${label}: ${(err as Error).message}`));
@@ -359,7 +358,7 @@ async function openBrowser(
       }
       const from = browserSettingName(opts.cdp) === '$SM_DEV_BROWSER' ? ' (from $SM_DEV_BROWSER)' : '';
       out(S.asError(`Could not connect to a browser at ${endpoint}${from}: ${message}`));
-      out(S.err(`Use \`--open-browser\` to start one there, or ${DROP_BROWSER_MODE}`));
+      out(S.err(`Start one there with ${quoted('--open-browser')}, or ${useTempBrowser('launches one')}`));
       return null;
     }
   }
@@ -628,7 +627,7 @@ export async function run(opts: RunOptions): Promise<number> {
   const state = managers ? managerState(managers, manager) : null;
   const extension = state ? stateLabel(state, manager) : '';
   opts.out(`[sm-dev] ${capitalized(browserSentence(browserIs, session.launched ? 'launched' : 'connected to'))} (Chrome ${session.browser.version()}${extension ? `, ${extension}` : ''})`);
-  for (const line of otherManagersWarning(managers ?? [], manager, browserArg(session.endpoint, session.launched))) opts.out(`[sm-dev] ${line}`);
+  for (const line of otherManagersWarning(managers ?? [], manager)) opts.out(`[sm-dev] ${line}`);
   session.notes.forEach(opts.out);
   opts.onConnected?.();
   // Only a run that waits for commands can be sent any.
@@ -938,23 +937,24 @@ async function runInBrowser(
   const manager = opts.manager ?? DEFAULT_MANAGER;
   const { label } = MANAGERS[manager];
   if (manager === 'sourcemonkey' && managerNow === 'disabled') {
-    opts.out(`[sm-dev] SourceMonkey is turned off in this browser. Turn it on with ${quoted(`sm-dev${browserArg(session.endpoint, session.launched)} manager enable`)}, or ${DROP_BROWSER_MODE}, which loads it.`);
+    opts.out('[sm-dev] ' + S.err(managerUnusable('sourcemonkey', 'disabled')));
     return 1;
   }
   // Under another manager, the manager runs every script it has, and
   // the run's tabs are plain browser tabs. The run's scripts go into
   // it too (external-manager.ts).
   if (manager !== 'sourcemonkey' && managerNow !== 'installed' && managerNow !== null) {
-    const fix = managerNow === 'disabled' ? 'manager enable' : 'manager install';
-    opts.out(`[sm-dev] ${label} is ${managerNow === 'disabled' ? 'turned off' : 'not installed'} in this browser. Use ${quoted(`sm-dev${browserArg(session.endpoint, session.launched)} ${managerFlag(manager)} ${fix}`)}.`);
+    // An error when it stops the run, which has scripts to load into it.
+    const why = managerUnusable(manager, managerNow);
+    opts.out(opts.files.length > 0 ? '[sm-dev] ' + S.err(why) : `[sm-dev] ${S.WARNING_PREFIX}${why}`);
     if (opts.files.length > 0) return 1;
   }
   if (manager !== 'sourcemonkey' && (managerNow === 'installed' || managerNow === null)) {
     let opened: ExternalManager;
     try {
-      opened = await openExternalManager(manager, session.endpoint, browserArg(session.endpoint, session.launched));
+      opened = await openExternalManager(manager, session.endpoint);
     } catch (err) {
-      opts.out(`[sm-dev] ${(err as Error).message}`);
+      opts.out('[sm-dev] ' + S.err((err as Error).message));
       return 1;
     }
     const scripts = new ExternalRunScripts(opened, { id: remote.id ?? 'unnamed', started: new Date(remote.startedAt).toISOString() });
@@ -975,7 +975,7 @@ async function runInBrowser(
     link = manager === 'sourcemonkey' ? await ExtensionLink.open(session.context, linkRunId(remote.id))
       : ExtensionLink.without(session.context, linkRunId(remote.id), runUses(manager));
   } catch (err) {
-    opts.out(`[sm-dev] ${(err as Error).message}`);
+    opts.out('[sm-dev] ' + S.err((err as Error).message));
     return 1;
   }
   held.extension = link;
@@ -1068,7 +1068,7 @@ async function runInBrowser(
       const fetchedText = remoteTexts.get(script.script.fileUrl);
       const text = fetchedText ?? await readFile(file, 'utf8');
       if (manager !== 'sourcemonkey' && !external) {
-        opts.out(`[sm-dev] ${label} was not on in this browser when the run started, so the run can't load scripts into it. Start a new run once it's on.`);
+        opts.out('[sm-dev] ' + S.err(`${label} was not enabled in this browser when the run started, so the run can't load scripts into it. Start a new run once it's enabled.`));
         return false;
       }
       if (external) {
@@ -1259,7 +1259,6 @@ async function runInBrowser(
         browserInfo: { address: session.endpoint.replace(/^https?:\/\//, ''), owned: session.launched === true, headless: session.headless === true },
         testCollection: () => (pushedAny && !external ? link.runId : undefined),
         managerName: manager,
-        browserArg: browserArg(session.endpoint, session.launched),
         managers: () => managersIn(session.endpoint),
         // The first push makes the test collection.
         backend: () => (external ? `${label} ${external.manager.version}, with the run's scripts installed in it until the run ends`

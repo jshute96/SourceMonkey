@@ -201,16 +201,20 @@ export function ui(strings: TemplateStringsArray, ...values: unknown[]): string 
   return MARKUP + out;
 }
 
+// A URL in a message we wrote, without the punctuation after it.
+const MESSAGE_URL = /((?:https?|chrome|file):\/\/[^\s`]*[^\s`.,;:!?)'"])/;
+
 /**
  * A message we wrote, as markup: each `backticked` span is a command
  * (`Use `tabs` to list them`), shown in color, or with its backticks
- * where they help it read (see keepsBackticks). Text that is markup
- * already stays as it is.
+ * where they help it read (see keepsBackticks), and each URL outside
+ * them is shown as one. Text that is markup already stays as it is.
  */
 export function message(text: string): string {
   const at = text.indexOf(MARKUP);
   const plain = at < 0 ? text : text.slice(0, at);
-  const marked = plain.split(QUOTED_SPAN).map((part, i) => (i % 2 === 1 ? `<cmd>${escapeMarkup(unquoted(part))}</cmd>` : escapeMarkup(part))).join('');
+  const urls = (part: string): string => part.split(MESSAGE_URL).map((piece, i) => (i % 2 === 1 ? `<url>${escapeMarkup(piece)}</url>` : escapeMarkup(piece))).join('');
+  const marked = plain.split(QUOTED_SPAN).map((part, i) => (i % 2 === 1 ? `<cmd>${escapeMarkup(unquoted(part))}</cmd>` : urls(part))).join('');
   return MARKUP + marked + (at < 0 ? '' : text.slice(at + MARKUP.length).replaceAll(MARKUP, ''));
 }
 
@@ -243,6 +247,16 @@ function markupLine(line: string): string | null {
   if (!kind) return null;
   const text = message(line).slice(MARKUP.length);
   return kind[1] ? `<${kind[1]}>${text}</${kind[1]}>` : text;
+}
+
+/**
+ * A line as markup, when it is markup or one of sm-dev's messages, for
+ * output read back from somewhere plain (a detached run's log), where a
+ * message's backticks may be gone. Null for other plain text.
+ */
+export function lineMarkup(line: string): string | null {
+  const markup = markupLine(line);
+  return markup === null ? null : MARKUP + markup;
 }
 
 // An ANSI escape sequence: a CSI one, as for a color (`ESC[31m`,

@@ -382,18 +382,26 @@ sm-dev --open-browser --browser 9300            # another one, on port 9300
   running).
 - Google Chrome when it's installed (it handles Google sign-in), else
   Playwright's Chromium. `SM_DEV_BROWSER_BINARY` names another binary.
+  - `--browser-type chrome` or `chromium` picks one, and fails if it isn't
+    installed. It overrides `SM_DEV_BROWSER_BINARY`.
 - Google Chrome ignores the flag that would load SourceMonkey, so load
   it there once with `sm-dev --existing-browser manager install` (see
   [Setting it up](#setting-it-up)).
 - Its profile is kept, so sign-ins and extensions carry over:
-  `~/.config/sm-dev/browser-profile-<port>`, or `--profile DIR`.
-  - One per port, since only one browser at a time can use a profile.
-    One already in use is refused, naming the port its browser is on.
+  `~/.config/sm-dev/browser-profile-{chrome,chromium}-<port>`, or
+  `--profile DIR`.
+  - A `browser-profile-<port>` from before those names is renamed the first
+    time it's needed, for the browser that was the default: Chrome if
+    installed, else Chromium.
+  - One for each browser and port, since only one browser at a time can use
+    a profile. One already in use is refused, naming the port its browser
+    is on.
 - A browser already answering on the port is used as it is, so
   `--open-browser` can go on any command line.
   - With `--profile`, that browser must be the one using that profile.
     Another is refused, naming the port of the browser that has the
     profile, if any.
+  - With `--browser-type`, that browser must be that type.
 - It only starts one on this machine: `--browser` has to be a port alone
   (`9300`), or one on `127.0.0.1` or `localhost`.
 - A browser that can't start, or whose port doesn't open within 10
@@ -426,6 +434,16 @@ sm-dev --open-browser --browser 9300            # another one, on port 9300
   so hover styles and tooltips show as in a windowed browser.
 - Given outright, `--temp-browser` needs a `start` on the line (or
   `--interactive` or `--stdin`, where one can come).
+- `--browser-type chrome` uses Google Chrome instead of Playwright's
+  build (Chrome for Testing, which `chromium` names), which gets past some
+  bot checks that stop Chromium, most reliably with `--headed`.
+  - It works the same way: a new empty profile, the manager installed, and the
+    browser closed and the profile deleted when the run ends.
+  - A run killed outright (SIGKILL) can't clean up. Its Chrome keeps running,
+    on a profile named `sm-dev-chrome-*` in the temp directory, which is how
+    to find it (`pgrep -af sm-dev-chrome-`). Other runs' Chromes have
+    profiles with that prefix too, so end only that one, then delete its
+    profile.
 
 ### Your own browser: `--existing-browser`
 
@@ -2331,10 +2349,11 @@ that, since the answer is a function.
 
 ## Troubleshooting
 
-- **"SourceMonkey is not installed in this browser"**, **"is turned
-  off"**, or a message that "Allow User Scripts" is off: load it, or
-  turn it on, as in [Setting it up](#setting-it-up), or drop
-  `--existing-browser` or `--open-browser` to use a temp browser.
+- **The manager isn't installed or enabled in the browser**: use `manager
+  install` (or `manager enable`), set it up yourself as in
+  [Setting it up](#setting-it-up), or use `--temp-browser`.
+- **Its "Allow User Scripts" is off**: turn it on in its extension
+  settings, or use `--temp-browser`.
 - **No `started` line for a script on a page**: its header may not
   cover the page, so it would not run there outside sm-dev either.
   `sm-dev match <script> <url>` names the rule; broaden the pattern or

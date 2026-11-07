@@ -686,7 +686,7 @@ sm-dev --browser 9301 --existing-browser --manager tm start my-script.user.js
   browser if `start` launched it.
 - A browser started with `--open-browser` stays open after `sm-dev`
   ends. Its profile is
-  `~/.config/sm-dev/browser-profile-<port>` unless `--profile` selects
+  `~/.config/sm-dev/browser-profile-{chrome,chromium}-<port>` unless `--profile` selects
   a profile dir explicitly.
 - `sm-dev` alone opens an interactive prompt to type commands at.
 - Use `sm-dev help`, and see

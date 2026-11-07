@@ -32,6 +32,7 @@ import {
 import { parseLang } from './browser-lang.js';
 import { helpRequest, parseCommandArgs, splitWords } from './command-args.js';
 import { DEFAULT_MANAGER, MANAGERS, managerMistake, managerNamed, type ManagerName } from './managers.js';
+import type { BrowserType } from './browser-launch.js';
 import type { ManagerVerb } from './manager-actions.js';
 import type { ManagerControl } from './manager-commands.js';
 import { COMMAND_NAMES, MAX_TIMER_SECONDS, OWN_COMMANDS, RUN_COMMAND_NAMES, SHARED_COMMANDS, TIMEOUT_FLAG, TIMEOUT_NEEDS_SECONDS, GLOBAL_FLAGS, VALUE_GLOBALS, commandHelp, commandNamed, commandSuggestion, commandSyntax, globalFlagMistake, helpTarget, helpText, timeoutSecondsMs, unsupportedCommand } from './command-list.js';
@@ -500,9 +501,10 @@ async function runHere(
     };
     // SIGTERM too, so a plain kill (or sm-dev stop, for a run it
     // can't reach) still ends the run cleanly. Set once the run has
-    // connected: before that there is nothing to clean up, and a
-    // signal ends it at once, as it would any command (a wait for a
-    // stuck tab, say).
+    // connected: before that, a signal ends it at once, as it would any
+    // command (a wait for a stuck tab, say). A temp Google Chrome,
+    // which wouldn't end with it, has handlers of its own for that
+    // (chrome-launch.ts).
     onSigint = () => stop();
     onOutputClosed = stop;
     if (opts.seconds !== undefined) timer = setTimeout(resolve, opts.seconds * 1000).unref();
@@ -540,6 +542,7 @@ async function runHere(
       cdp: opts.cdp ?? lineCdp,
       manager: lineManager,
       tempBrowser: tempBrowserLine(),
+      browserType: lineBrowserType,
       headed: launchHeaded(),
       muted: lineMuted,
       lang: opts.lang,
@@ -728,10 +731,12 @@ function print(line: string): void {
 
 // A run's line. In a background run, the file it goes to is plain, so
 // while the client that started it is passing the file on, a line with
-// markup also goes to that client (see `detachRun`). Sent first, so it's
-// there by the time the client reads the file.
+// markup also goes to that client (see `detachRun`), as does one of
+// sm-dev's messages, whose backticks the plain file can drop. Sent first,
+// so it's there by the time the client reads the file.
 function writeRunLine(line: string): void {
-  if (detachedLog && process.connected && line.includes(S.MARKUP)) process.send?.({ marked: line }, () => undefined);
+  const marked = detachedLog && process.connected ? S.lineMarkup(line) : null;
+  if (marked) process.send?.({ marked }, () => undefined);
   writeOutputLine(line);
 }
 
@@ -1051,7 +1056,7 @@ async function statusWithoutRun(words: string[], source: CommandSource): Promise
  * managers, for `status` with no run. Printed too unless `json`.
  */
 async function browserStatus(json: boolean): Promise<BrowserStatus> {
-  const { addressArg, browserArg, browserSetting } = await import('./run.js');
+  const { addressArg, browserSetting } = await import('./run.js');
   const { browserVersion, managersIn, managersText, otherManagersWarning } = await import('./browser-extensions.js');
   const endpoint = browserSetting(lineCdp);
   const address = endpoint.replace(/^https?:\/\//, '');
@@ -1063,7 +1068,7 @@ async function browserStatus(json: boolean): Promise<BrowserStatus> {
       : S.ui`${S.heading('Browser')}: ${S.message(`None answering at ${address}. Start one with ${quoted(`sm-dev --open-browser${addressArg(endpoint)}`)}.`)}`);
     if (managers) {
       print(S.ui`${S.heading('Managers')}: ${managersText(managers, chosen, 'chosen')}`);
-      for (const line of otherManagersWarning(managers, chosen, browserArg(endpoint))) print(line);
+      for (const line of otherManagersWarning(managers, chosen)) print(line);
     }
   }
   return {
@@ -1501,7 +1506,7 @@ async function managerVerbHere(words: string[], client: Client): Promise<number>
       : 'The `manager` command needs a verb: `fetch`, `install`, `enable` or `disable`');
   }
   const { liveRuns } = await import('./runs.js');
-  const { browserArg, browserSetting, sameBrowser } = await import('./run.js');
+  const { browserSetting, sameBrowser } = await import('./run.js');
   // The run picked, if any.
   const picked = client.runId ?? globalRun;
   const run = picked ? await targetRun(picked) : null;
@@ -1517,7 +1522,7 @@ async function managerVerbHere(words: string[], client: Client): Promise<number>
     : [];
   const { ManagerUsageError, managerAction } = await import('./manager-actions.js');
   try {
-    const done = await managerAction({ verb, manager, endpoint, browserArg: browserArg(endpoint), runsUsing, out: print, note: writeErr });
+    const done = await managerAction({ verb, manager, endpoint, runsUsing, out: print, note: writeErr });
     return done ? 0 : 1;
   } catch (err) {
     if (err instanceof ManagerUsageError) throw new UsageError(err.message);
@@ -1561,12 +1566,11 @@ async function managerHere(words: string[]): Promise<number> {
   let closeManager: (() => Promise<void>) | undefined;
   try {
     const { managersIn, otherManagersWarning } = await import('./browser-extensions.js');
-    const { browserArg } = await import('./run.js');
-    for (const line of otherManagersWarning(await managersIn(session.endpoint) ?? [], chosen, browserArg(session.endpoint))) writeErr(line);
+    for (const line of otherManagersWarning(await managersIn(session.endpoint) ?? [], chosen)) writeErr(line);
     let manager: ManagerControl;
     if (chosen !== 'sourcemonkey') {
       const { externalControl, openExternalManager } = await import('./external-manager.js');
-      const external = await openExternalManager(chosen, session.endpoint, browserArg(session.endpoint));
+      const external = await openExternalManager(chosen, session.endpoint);
       closeManager = () => external.close();
       manager = externalControl(external);
     } else {
@@ -1827,6 +1831,8 @@ let lineJson = false;
 // `--manager`: the userscript manager the line works with. Unset is
 // SourceMonkey, or a run's own when sending to one.
 let lineManager: ManagerName | undefined;
+// `--browser-type`: the browser to launch. Unset is the mode's default.
+let lineBrowserType: BrowserType | undefined;
 
 
 interface GlobalFlags {
@@ -1842,9 +1848,9 @@ interface GlobalFlags {
  * Takes the global options off the front of the line: `--run ID`,
  * `--root DIR`, `--local DIR` (repeatable), `--stdin`, `--interactive`
  * and the browser's: `--temp-browser`, `--open-browser`,
- * `--existing-browser`, `--browser`, `--manager`, `--profile`, `--headed`,
- * `--headless`, `--mute`, `--nomute`. One later on the line, among a
- * command's words, is said to go first.
+ * `--existing-browser`, `--browser`, `--browser-type`, `--manager`,
+ * `--profile`, `--headed`, `--headless`, `--mute`, `--nomute`. One later
+ * on the line, among a command's words, is said to go first.
  */
 function takeGlobalFlags(argv: string[]): GlobalFlags {
   let collectionRoot = process.cwd();
@@ -1884,6 +1890,10 @@ function takeGlobalFlags(argv: string[]): GlobalFlags {
       }
       if (word === '--run') globalRun = checkedRunId(value);
       else if (word === '--browser') lineCdp = value;
+      else if (word === '--browser-type') {
+        if (value !== 'chrome' && value !== 'chromium') throw new UsageError(`The ${quoted('--browser-type')} flag takes ${quoted('chrome')} or ${quoted('chromium')}, not ${quoted(value)}`);
+        lineBrowserType = value;
+      }
       else if (word === '--manager') {
         const named = managerNamed(value);
         if (!named) throw new UsageError(managerMistake(value));
@@ -1902,7 +1912,7 @@ function takeGlobalFlags(argv: string[]): GlobalFlags {
   const given = modes.filter(([on]) => on).map(([, name]) => name);
   if (given.length > 1) throw new UsageError(`The ${quoted(given[0])} flag can't be used with ${given.slice(1).map((f) => quoted(f)).join(' or ')}`);
   if (lineExistingBrowser) {
-    const launching = [[lineHeaded !== undefined, lineHeaded ? '--headed' : '--headless'], [lineMuted !== undefined, lineMuted ? '--mute' : '--nomute']] as const;
+    const launching = [[lineHeaded !== undefined, lineHeaded ? '--headed' : '--headless'], [lineMuted !== undefined, lineMuted ? '--mute' : '--nomute'], [lineBrowserType !== undefined, '--browser-type']] as const;
     for (const [on, name] of launching) {
       if (on) throw new UsageError(`The ${quoted(name)} flag only applies when sm-dev launches the browser, so not with ${quoted('--existing-browser')}`);
     }
@@ -1944,6 +1954,7 @@ function globalWords(runId: string | undefined): string[] {
     // A detached run has no prompt, so the prompt's headed default goes
     // as the flag.
     ...(tempBrowserLine() && launchHeaded() ? ['--headed'] : []),
+    ...(tempBrowserLine() && lineBrowserType !== undefined ? ['--browser-type', lineBrowserType] : []),
     ...(tempBrowserLine() && lineMuted !== undefined ? [lineMuted ? '--mute' : '--nomute'] : []),
   ];
 }
@@ -1953,6 +1964,7 @@ function globalWords(runId: string | undefined): string[] {
 function shapingFlag(): string | null {
   return lineTempBrowser ? '--temp-browser'
     : lineOpenBrowser ? null
+    : lineBrowserType !== undefined ? '--browser-type'
     : lineHeaded !== undefined ? (lineHeaded ? '--headed' : '--headless')
     : lineMuted !== undefined ? (lineMuted ? '--mute' : '--nomute')
     : null;
@@ -2228,9 +2240,9 @@ async function main(): Promise<void> {
   }
   // Decided by now: a temp browser opened from a prompt is headed.
   linePrompt = flags.interactive;
-  // --temp-browser, --headed, --headless, --mute and --nomute shape the
-  // runs this line starts (or --open-browser's browser); with no start
-  // to use them, they'd be silently ignored.
+  // --temp-browser, --browser-type, --headed, --headless, --mute and
+  // --nomute shape the runs this line starts (or --open-browser's
+  // browser); with no start to use them, they'd be silently ignored.
   const starts = commands.some((words) => parseCommand(words).kind === 'cli' && parseArgs(words).command === 'start');
   const shaping = shapingFlag();
   if (shaping && !starts && !stdin && !flags.interactive) {
@@ -2245,7 +2257,7 @@ async function main(): Promise<void> {
       const endpoint = browserSetting(lineCdp);
       const mistake = launchEndpointMistake(endpoint, browserSettingName(lineCdp));
       if (mistake) throw new UsageError(mistake);
-      await launchBrowser(endpoint, lineProfile, print, lineMuted === true, !launchHeaded());
+      await launchBrowser(endpoint, lineProfile, print, lineMuted === true, !launchHeaded(), lineBrowserType);
     } catch (err) {
       process.exitCode = printMistake(err);
       return;

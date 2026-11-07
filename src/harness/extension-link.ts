@@ -29,8 +29,9 @@ import {
 import type { StackLayout } from '../composed-source.js';
 import type { PushedFile } from '../external-files.js';
 import {
-  DROP_BROWSER_MODE, findExtensionWorker, isSourceMonkeyWorker, sourceMonkeyExtensionId, sourceMonkeyOrigin, type LogEntry, type PushResult,
+  findExtensionWorker, isSourceMonkeyWorker, sourceMonkeyExtensionId, sourceMonkeyOrigin, type LogEntry, type PushResult,
 } from './extension-backend.js';
+import { useTempBrowser } from './manager-advice.js';
 import type { ManagerControl } from './manager-commands.js';
 import { rebuildAdvice } from './rebuild-advice.js';
 import type { ExtensionFrame } from './frames.js';
@@ -72,8 +73,8 @@ async function markBrowser(context: BrowserContext): Promise<void> {
 }
 
 // How to bring each side up to date, for the messages below.
-const UPDATE_EXTENSION = `Update it: rebuild it and reload it in chrome://extensions, or ${DROP_BROWSER_MODE}, which loads this sm-dev's copy.`;
-const updateSmDev = (): string => `Update sm-dev: ${rebuildAdvice()} Or ${DROP_BROWSER_MODE}, which loads this sm-dev's copy of SourceMonkey.`;
+const UPDATE_EXTENSION = `Update it: rebuild it and reload it in chrome://extensions, or ${useTempBrowser('loads this sm-dev\'s copy')}.`;
+const updateSmDev = (): string => `Update sm-dev: ${rebuildAdvice()} Or ${useTempBrowser('loads this sm-dev\'s copy of SourceMonkey')}.`;
 
 /** Said when the extension in the browser has an older protocol major, or none. */
 const EXTENSION_TOO_OLD = `SourceMonkey in this browser is older than this sm-dev, so the two can't work together. ${UPDATE_EXTENSION}`;
@@ -127,7 +128,7 @@ function requireMinorOf(extension: ProtocolVersion | undefined, minor: number, f
 /** Said when Chrome won't let the extension register user scripts. */
 function userScriptsOff(extensionId: string): string {
   return 'SourceMonkey in this browser does not have "Allow User Scripts" on, so it can\'t run sm-dev\'s scripts. '
-    + `Turn it on in SourceMonkey's details page, chrome://extensions/?id=${extensionId}, or ${DROP_BROWSER_MODE}, which has it on.`;
+    + `Turn it on in its extension settings (chrome://extensions/?id=${extensionId}), or ${useTempBrowser('turns it on')}.`;
 }
 
 /** An event from the extension, as sm-dev-link.ts and background.ts send them. */

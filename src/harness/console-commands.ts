@@ -199,8 +199,6 @@ export interface ConsoleContext {
   backend?: () => string;
   /** The userscript manager the run works with (`--manager`); SourceMonkey when unset. */
   managerName?: ManagerName;
-  /** ` --existing-browser [--browser <address>]` for advice to run sm-dev against the run's browser (see `browserArg`). */
-  browserArg?: string;
   /** The managers in the browser now, for `status`; null when unknown. */
   managers?: () => Promise<InstalledManager[] | null>;
   /** The run's log lines, for `logs` and `wait log` (see run-logs.ts). */
@@ -734,7 +732,7 @@ export async function runConsoleCommand(
         ctx.out(ui`${S.heading('Run')}: ${S.id(ctx.runId)} (pid ${process.pid})${ctx.browser ? `, ${ctx.browser}${extension ? ` (${extension})` : ''}` : ''}`);
         if (managers) {
           ctx.out(ui`${S.heading('Managers')}: ${managersText(managers, chosen)}`);
-          for (const line of otherManagersWarning(managers, chosen, ctx.browserArg)) ctx.out(line);
+          for (const line of otherManagersWarning(managers, chosen)) ctx.out(line);
         }
       }
       if (ctx.backend) ctx.out(ui`${S.heading('Backend')}: ${ctx.backend()}`);

@@ -297,7 +297,8 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/page-commands.ts` | The run commands that drive and read a tab's page, from `click` and `eval` to `snapshot` and raw `cdp` calls |
 | `src/harness/snapshot.ts` | `snapshot`'s element refs, the parts it shows (on screen, a selector's matches, `--find`), and `probe --css`'s suggested CSS selectors |
 | `src/harness/browser-lang.ts` | `sm-dev start --lang`: checks the tags and sets them on tabs; builds GM requests' `Accept-Language` |
-| `src/harness/browser-launch.ts` | `sm-dev --open-browser`: starts a browser that stays open, on a kept profile per port, unless one is up |
+| `src/harness/browser-launch.ts` | `sm-dev --open-browser`: starts a browser that stays open, on a kept profile for each browser and port, unless one is up |
+| `src/harness/chrome-launch.ts` | `--temp-browser --browser-type chrome`: a throwaway Google Chrome with the manager loaded over CDP |
 | `src/harness/rebuild-advice.ts` | Gives the steps to rebuild or update sm-dev, by whether it's a local build or a published copy |
 | `src/harness/update-check.ts` | Notices a newer published sm-dev: the cache, its detached refresh, and the message |
 | `src/harness/project-copy.ts` | Finds the copies of sourcemonkey around a directory, and the update command when it can tell how this one was installed |
@@ -316,6 +317,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/browser-extensions.ts` | The managers in a browser, over CDP and a hidden `chrome://extensions`: list, enable, load unpacked, Allow User Scripts; hidden pages kept open |
 | `src/harness/manager-fetch.ts` | `manager fetch`: downloads TM or VM from the Chrome Web Store and unpacks its CRX into sm-dev's cache |
 | `src/harness/manager-actions.ts` | The `manager` verbs: fetch, install, enable and disable a manager, with their messages |
+| `src/harness/manager-advice.ts` | Shared advice for a manager that can't be used: the `manager` command to fix it, or a temp browser |
 | `src/harness/extension-host.ts` | Fills a run's or fixture test's host (reports, values, menus) from the extension's events, and answers its commands |
 | `src/harness/frames.ts` | A run's iframe ids (`F3`), a tab's frame tree, and matching the extension's frames to Playwright's |
 | `src/harness/frame-sessions.ts` | A tab's CDP sessions per process, reaching cross-origin iframes, and finding a frame in them |
@@ -665,7 +667,7 @@ built extension loaded; fixtures in `tests/fixtures/harness.ts`.
 | `tests/harness/stack-lines.spec.ts` | sm-dev's `threw` reports and console lines name the `@require` or script line a stack frame came from |
 | `tests/harness/update-note.spec.ts` | `start` announcing a newer sm-dev: first, on stderr, and not in the run's log |
 | `tests/harness/wait.spec.ts` | `wait` in its forms, the actions settling on their own, `--nowait`, and what a busy page reports |
-| `tests/harness/browser-launch.spec.ts` | `sm-dev --open-browser`: a browser that outlives sm-dev, started once, and its profile's lock |
+| `tests/harness/browser-launch.spec.ts` | `sm-dev --open-browser` and `--browser-type`: a lasting browser, its profile's lock, and a throwaway Chrome |
 | `tests/harness/manager-commands.spec.ts` | The `collection` and `script` verbs from the command line, with no run and in a run, text and `--json` |
 | `tests/harness/run-remote.spec.ts` | `sm-dev start` driven from other shells: `--detach`, `--run`, `--` lines, sent commands, logs, stuck tabs, `--json` |
 | `tests/harness/temp-extension.spec.ts` | Temp browser runs: the launched extension, `--values` and local files, run commands, managed scripts (E1) kept out |

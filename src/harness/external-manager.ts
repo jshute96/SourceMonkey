@@ -101,9 +101,9 @@ export interface ExternalManager {
 }
 
 /** Connects to `name` in the browser at `endpoint` (see `Violentmonkey.open`). */
-export async function openExternalManager(name: 'violentmonkey' | 'tampermonkey', endpoint: string, browserArg = ''): Promise<ExternalManager> {
-  if (name === 'tampermonkey') return (await import('./tampermonkey.js')).Tampermonkey.open(endpoint, browserArg);
-  return (await import('./violentmonkey.js')).Violentmonkey.open(endpoint, browserArg);
+export async function openExternalManager(name: 'violentmonkey' | 'tampermonkey', endpoint: string): Promise<ExternalManager> {
+  if (name === 'tampermonkey') return (await import('./tampermonkey.js')).Tampermonkey.open(endpoint);
+  return (await import('./violentmonkey.js')).Violentmonkey.open(endpoint);
 }
 
 /** The internal id of `C0`, the collection standing for all the manager's scripts. */

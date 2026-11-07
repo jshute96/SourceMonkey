@@ -95,11 +95,7 @@ export interface LaunchedExtensionBrowser {
  */
 export async function launchExtensionBrowser(options: ExtensionLaunchOptions = {}): Promise<LaunchedExtensionBrowser> {
   const manager = options.manager ?? 'sourcemonkey';
-  const dir = manager === 'sourcemonkey' ? EXTENSION_DIR : fetchedDir(manager);
-  if (!existsSync(path.join(dir, 'manifest.json'))) {
-    throw new Error(manager === 'sourcemonkey' ? `The built extension is missing from ${EXTENSION_DIR}. ${rebuildAdvice()}`
-      : `${MANAGERS[manager].label} isn't fetched. Fetch it with ${quoted(`sm-dev ${managerFlag(manager)} manager fetch`)}`);
-  }
+  const dir = managerDir(manager);
   const headed = options.headed === true;
   const profile = mkdtempSync(path.join(os.tmpdir(), 'sm-dev-extension-'));
   let context: BrowserContext | undefined;
@@ -115,7 +111,7 @@ export async function launchExtensionBrowser(options: ExtensionLaunchOptions = {
     // run would connect to whatever took it. A port given is checked
     // first, since Chrome starts without its port when it's taken.
     if (options.port !== undefined && !await portFree(options.port)) {
-      throw new Error(`Port ${options.port} is already in use. Use ${quoted('--existing-browser')} to connect to a browser there, or pick another port.`);
+      throw new Error(portInUse(options.port));
     }
     context = await launch(profile, headed, [`--remote-debugging-port=${options.port ?? 0}`, ...(options.muted === false ? [] : ['--mute-audio']), ...(options.args ?? [])], dir, options.backForwardCache === true);
     // Chrome writes the port it picked; one given, it doesn't.
@@ -133,13 +129,33 @@ export async function launchExtensionBrowser(options: ExtensionLaunchOptions = {
     return { endpoint: `http://127.0.0.1:${port}`, context, profile, close };
   } catch (err) {
     await close();
-    if (err instanceof ExtensionMissingError) throw new Error(`Chromium did not load the extension from ${EXTENSION_DIR}`);
+    if (err instanceof ExtensionMissingError) throw new Error(extensionNotLoaded('Chromium', EXTENSION_DIR));
     throw err;
   }
 }
 
-// Whether nothing listens on `port` on this machine.
-function portFree(port: number): Promise<boolean> {
+/** The folder a temp browser loads the manager from. Throws when it isn't there. */
+export function managerDir(manager: ManagerName): string {
+  const dir = manager === 'sourcemonkey' ? EXTENSION_DIR : fetchedDir(manager);
+  if (!existsSync(path.join(dir, 'manifest.json'))) {
+    throw new Error(manager === 'sourcemonkey' ? `The built extension is missing from ${EXTENSION_DIR}. ${rebuildAdvice()}`
+      : `${MANAGERS[manager].label} isn't fetched. Fetch it with ${quoted(`sm-dev ${managerFlag(manager)} manager fetch`)}`);
+  }
+  return dir;
+}
+
+/** Why a temp browser can't be launched on `port`: something listens there. */
+export function portInUse(port: number): string {
+  return `Port ${port} is already in use. Use ${quoted('--existing-browser')} to connect to a browser there, or pick another port.`;
+}
+
+/** Why a temp browser's run can't go on: the manager's worker never showed up. */
+export function extensionNotLoaded(browser: string, dir: string): string {
+  return `${browser} did not load the extension from ${dir}`;
+}
+
+/** Whether nothing listens on `port` on this machine. */
+export function portFree(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const server = net.createServer();
     server.once('error', () => resolve(false));
@@ -154,7 +170,7 @@ function portFree(port: number): Promise<boolean> {
 // string changes: the client hints (`Sec-CH-UA`,
 // `navigator.userAgentData`) still name HeadlessChrome. Null when the
 // version can't be read; the browser's own is kept then.
-async function windowedUserAgent(executable: string): Promise<string | null> {
+export async function windowedUserAgent(executable: string): Promise<string | null> {
   const version = process.platform === 'win32'
     // There `chrome.exe --version` opens a window instead of printing;
     // the version is the name of a folder beside it.
@@ -176,7 +192,7 @@ async function windowedUserAgent(executable: string): Promise<string | null> {
  * `--load-extension` (Chrome installs it anew each time): its
  * `notification_showUpdate` setting, set before it gets that far.
  */
-async function quietTampermonkey(context: BrowserContext, id: string): Promise<void> {
+export async function quietTampermonkey(context: BrowserContext, id: string): Promise<void> {
   const ours = (w: { url(): string }): boolean => w.url().startsWith(`chrome-extension://${id}/`);
   const worker = context.serviceWorkers().find(ours) ?? await context.waitForEvent('serviceworker', { predicate: ours, timeout: 10_000 });
   await worker.evaluate(async () => {
@@ -199,7 +215,7 @@ export function fetchedId(dir: string, manager: ManagerName): string {
 // `(pointer: none)`, so a page hides what it shows on hover (GitHub's
 // tooltips) as on a phone. The values are Blink's bit flags: hover 2,
 // fine pointer 4.
-const MOUSE_SETTINGS = '--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4';
+export const MOUSE_SETTINGS = '--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4';
 
 async function launch(
   profile: string, headed: boolean, args: string[] = [], dir = EXTENSION_DIR, backForwardCache = false,
@@ -292,7 +308,7 @@ export function extensionArgs(dir = EXTENSION_DIR): string[] {
 // download location is changed in its settings: `directory_upgrade`
 // marks it user-chosen, so Chrome doesn't fall back to its platform
 // default.
-function writePreferences(
+export function writePreferences(
   profile: string, extensionId: string, downloadsDir?: string,
   grants: { fileAccess?: boolean; permissions?: string[] } = {},
 ): void {
@@ -342,13 +358,18 @@ async function chromeDownloads(context: BrowserContext): Promise<void> {
 async function primeFirstRun(profile: string): Promise<void> {
   const context = await launch(profile, false);
   try {
-    const worker = await findExtensionWorker(context);
-    // Key mirrors FIRST_RUN_DONE_KEY in src/extension/script-store.ts.
-    // Suggestions off too, so the collections page shows the run's
-    // own scripts without a box of suggestions above them.
-    await worker.evaluate((key) => chrome.storage.local.set({ firstRunComplete: true, [key]: false }), SHOW_SUGGESTIONS_KEY);
+    await markFirstRunDone(context);
   } finally {
     // A clean close is what writes the storage to disk.
     await context.close();
   }
+}
+
+/** Records SourceMonkey's first run as done, and turns off "Show suggested scripts". */
+export async function markFirstRunDone(context: BrowserContext): Promise<void> {
+  const worker = await findExtensionWorker(context);
+  // Key mirrors FIRST_RUN_DONE_KEY in src/extension/script-store.ts.
+  // Suggestions off too, so the collections page shows the run's
+  // own scripts without a box of suggestions above them.
+  await worker.evaluate((key) => chrome.storage.local.set({ firstRunComplete: true, [key]: false }), SHOW_SUGGESTIONS_KEY);
 }

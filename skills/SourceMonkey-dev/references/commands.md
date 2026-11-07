@@ -14,8 +14,8 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 
 - Global options go first: `--run ID`,
   `--open-browser`, `--existing-browser`, `--browser URL|PORT`,
-  `--manager sm|tm|vm`, `--headed`, `--headless`, `--mute`, `--nomute`,
-  `--stdin`, `--interactive`,
+  `--browser-type chrome|chromium`, `--manager sm|tm|vm`, `--headed`,
+  `--headless`, `--mute`, `--nomute`, `--stdin`, `--interactive`,
   `--root DIR`, `--local DIR`, `--json`, `--version`.
 - `sm-dev --version` prints the version and the package directory,
   which holds `skills/`.
@@ -87,6 +87,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | `sm-dev --open-browser` | Start a lasting, visible browser on port 9233 (kept profile, so logins persist). A no-op if one is up |
 | `sm-dev --existing-browser ...` | Connect to the browser already on port 9233 |
 | `--browser 9300` | With `--open-browser` or `--existing-browser`: the browser on another port. With a temp browser: the port to launch it on |
+| `--browser-type chrome` | With a temp browser: a throwaway Google Chrome instead of Chromium, for sites whose bot checks stop Chromium. With `--open-browser`: which browser to start, and a browser already on the port must be that type |
 | `--headed`, `--headless`, `--nomute` | When sm-dev launches the browser: show or hide its window; sound on (a temp browser is muted otherwise) |
 
 - A run pushes its scripts into SourceMonkey in that browser. With

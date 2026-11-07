@@ -964,7 +964,7 @@ export const HELP_SECTIONS: HelpSection[] = [
                 term: '--open-browser',
                 about: [
                   'Use the browser at `--browser`, starting it first if none is running there.',
-                  'It stays open after sm-dev ends. Uses Google Chrome if installed, else Chromium.',
+                  'It stays open after sm-dev ends. Uses Chrome if installed, else Chromium.',
                   'Used alone (`sm-dev --open-browser`), just start the browser.',
                 ],
               },
@@ -984,7 +984,17 @@ export const HELP_SECTIONS: HelpSection[] = [
                 ],
                 commands: ['start'],
               },
-              { term: '--profile DIR', about: ['With `--open-browser`: the browser profile, kept between launches. When given, a browser already on the port must be using it.', '(Default: `~/.config/sm-dev/browser-profile-<port>`)'] },
+              {
+                term: '--browser-type TYPE',
+                about: [
+                  'The browser to launch: `chrome`, or `chromium` (Chrome for Testing, installed through Playwright). Fails if that one isn\'t installed.',
+                  'A temp browser with `chrome` gets a new empty profile with the selected `--manager` installed. The run closes the browser and deletes the profile when it ends.',
+                  'With `--open-browser`, a browser already on the port must be that type.',
+                  '(Default: `chromium` for a temp browser. For `--open-browser`, Chrome if installed, else Chromium)',
+                ],
+                commands: ['start'],
+              },
+              { term: '--profile DIR', about: ['With `--open-browser`: the browser profile, kept between launches. When given, a browser already on the port must be using it.', '(Default: `browser-profile-{chrome,chromium}-<port>` in `~/.config/sm-dev`)'] },
               {
                 term: '--manager NAME',
                 about: [
@@ -1648,10 +1658,10 @@ export function commandSyntax(name: string): CommandSyntax {
 }
 
 // The flags for the whole line, which go before any command.
-export const GLOBAL_FLAGS = ['--run', '--root', '--local', '--stdin', '--interactive', '--temp-browser', '--open-browser', '--existing-browser', '--browser', '--manager', '--profile', '--headed', '--headless', '--mute', '--nomute', '--json', '--version'];
+export const GLOBAL_FLAGS = ['--run', '--root', '--local', '--stdin', '--interactive', '--temp-browser', '--open-browser', '--existing-browser', '--browser', '--browser-type', '--manager', '--profile', '--headed', '--headless', '--mute', '--nomute', '--json', '--version'];
 
 // Those of them that take a value.
-export const VALUE_GLOBALS = new Set(['--run', '--root', '--local', '--browser', '--manager', '--profile']);
+export const VALUE_GLOBALS = new Set(['--run', '--root', '--local', '--browser', '--browser-type', '--manager', '--profile']);
 
 // A global flag given where a command's own go.
 export function globalFlagMistake(flag: string): string {

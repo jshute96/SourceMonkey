@@ -7,6 +7,7 @@
 
 import { installedManagers, openHiddenPage, type HiddenPage } from './browser-extensions.js';
 import { installUrlOf, type ExternalManager, type ExternalScript, type InstallOptions } from './external-manager.js';
+import { managerUnusable } from './manager-advice.js';
 import { MANAGERS } from './managers.js';
 import { withoutMark } from './script-mark.js';
 import { TmIds } from './tm-ids.js';
@@ -68,15 +69,14 @@ export class Tampermonkey implements ExternalManager {
 
   /**
    * Connects to TM in the browser at `endpoint`. Throws saying why when
-   * it isn't installed and enabled there. `browserArg`: the flags
-   * that name the browser in the advice (see `browserArg` in run.ts).
+   * it isn't installed and enabled there.
    */
-  static async open(endpoint: string, browserArg = ''): Promise<Tampermonkey> {
+  static async open(endpoint: string): Promise<Tampermonkey> {
     const label = MANAGERS.tampermonkey.label;
     const copies = (await installedManagers(endpoint)).filter((m) => m.manager === 'tampermonkey');
     const copy = copies.find((m) => m.enabled);
     if (!copy) {
-      throw new Error(`${label} is ${copies.length > 0 ? 'turned off' : 'not installed'} in this browser. Use ${quoted(`sm-dev${browserArg} --manager tm manager ${copies.length > 0 ? 'enable' : 'install'}`)}.`);
+      throw new Error(managerUnusable('tampermonkey', copies.length > 0 ? 'disabled' : 'absent', false));
     }
     let page: HiddenPage;
     try {

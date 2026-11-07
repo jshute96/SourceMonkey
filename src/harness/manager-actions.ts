@@ -11,6 +11,7 @@ import {
 } from './browser-extensions.js';
 import { withTilde } from './browser-launch.js';
 import { EXTENSION_DIR } from './extension-launch.js';
+import { managerFixCommand, managerUnusable } from './manager-advice.js';
 import { fetchManager, fetchedDir, fetchedVersion } from './manager-fetch.js';
 import { MANAGERS, managerFlag, type ManagerName } from './managers.js';
 import { cmd, id as idRole, message, quoted, SM_DEV_PREFIX, ui, url } from './output-style.js';
@@ -26,8 +27,6 @@ export interface ManagerActionOptions {
   manager: ManagerName;
   /** The browser's CDP endpoint; not needed for `fetch`. */
   endpoint?: string;
-  /** ` --existing-browser [--browser <address>]` for advice (see `browserArg`). */
-  browserArg?: string;
   /** The runs using SourceMonkey in that browser, which `disable` can't turn it off under. */
   runsUsing?: string[];
   /** Results, for stdout. */
@@ -60,7 +59,7 @@ export async function managerAction(o: ManagerActionOptions): Promise<boolean> {
     if (!await install(o, managers, copies)) return false;
   } else {
     if (copies.length === 0) {
-      o.note(message(`${label} is not installed in this browser. Install it with ${quoted(`sm-dev${o.browserArg ?? ''} ${managerFlag(o.manager)} manager install`)}`));
+      o.note(message(managerUnusable(o.manager, 'absent', false)));
       return false;
     }
     const enable = o.verb === 'enable';
@@ -79,12 +78,11 @@ export async function managerAction(o: ManagerActionOptions): Promise<boolean> {
       copy.enabled = enable;
       o.out(`${enable ? 'Enabled' : 'Disabled'} ${copy.name} ${copy.version}`);
     }
-    if (enable && copies.some((c) => !c.userScripts)) {
-      o.note(message(`Its Allow User Scripts is off, so it can't run scripts. ${quoted(`sm-dev${o.browserArg ?? ''} ${managerFlag(o.manager)} manager install`)} turns it on.`));
-    }
+    const off = enable ? copies.find((c) => !c.userScripts) : undefined;
+    if (off) o.note(message(`Its Allow User Scripts is off, so it can't run scripts. Turn it on in its extension settings (chrome://extensions/?id=${off.id}).`));
   }
   // Not after turning it off, when it's no longer in use either.
-  if (o.verb !== 'disable') for (const line of otherManagersWarning(managers, o.manager, o.browserArg)) o.note(line);
+  if (o.verb !== 'disable') for (const line of otherManagersWarning(managers, o.manager)) o.note(line);
   return true;
 }
 
@@ -119,7 +117,7 @@ async function install(o: ManagerActionOptions, managers: InstalledManager[], co
     } else {
       // Where Chrome says it came from, when it says.
       const from = copy.path ? ui`, from ${url(withTilde(copy.path))}` : copy.fromStore ? ', from the Chrome Web Store' : '';
-      o.out(ui`${copy.name} ${copy.version} is already installed${from}${copy.enabled ? '' : ui`, but disabled. Turn it on with ${cmd(`sm-dev${o.browserArg ?? ''} ${managerFlag(o.manager)} manager enable`)}.`}`);
+      o.out(ui`${copy.name} ${copy.version} is already installed${from}${copy.enabled ? '' : ui`, but disabled. Turn it on with ${cmd(managerFixCommand(o.manager, 'enable'))}.`}`);
     }
     if (!copy.userScripts) {
       await allowUserScripts(endpoint, copy.id);

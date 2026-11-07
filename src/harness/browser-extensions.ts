@@ -13,7 +13,8 @@
 //   which works over a debugging port in Chrome and Chromium alike.
 
 import { quoted, WARNING_PREFIX } from './output-style.js';
-import { MANAGERS, MANAGER_NAMES, managerFlag, type ManagerName } from './managers.js';
+import { managerFixCommand } from './manager-advice.js';
+import { MANAGERS, MANAGER_NAMES, type ManagerName } from './managers.js';
 import { sourceMonkeyExtensionId } from './extension-backend.js';
 
 /** One manager extension in the browser. */
@@ -158,6 +159,17 @@ async function withExtensionsPage<T>(endpoint: string, timeoutMs: number, fn: (e
   });
 }
 
+/**
+ * Whether the browser at `endpoint` is Google Chrome or a plain Chromium,
+ * by the brands it reports: CDP's own version calls report `Chrome` for
+ * both. Those brands need a secure page, which `chrome://extensions` is.
+ * Other builds of Chromium count as Chromium.
+ */
+export async function runningBrowserType(endpoint: string): Promise<'chrome' | 'chromium'> {
+  const brands = await withExtensionsPage(endpoint, 10_000, (evaluate) => evaluate<string[]>('navigator.userAgentData.brands.map((b) => b.brand)'));
+  return brands.includes('Google Chrome') ? 'chrome' : 'chromium';
+}
+
 /** A hidden page kept open over its own connection, until `close`. */
 export interface HiddenPage {
   /** Fails when the page doesn't answer within `timeoutMs`. */
@@ -283,14 +295,13 @@ export async function loadUnpacked(endpoint: string, dir: string): Promise<strin
 /**
  * Warns of each manager enabled beside `chosen`, whose scripts run in
  * the run's tabs too, with how to turn it off. For a run's first lines,
- * `status`, and the commands that connect without a run. `browserArg`:
- * the flags that name the browser in the advice (see `browserArg` in
- * run.ts).
+ * `status`, and the commands that connect without a run. The command
+ * names the manager, which isn't the one in use.
  */
-export function otherManagersWarning(managers: InstalledManager[], chosen: ManagerName, browserArg = ''): string[] {
+export function otherManagersWarning(managers: InstalledManager[], chosen: ManagerName): string[] {
   const others = [...new Set(managers.filter((m) => m.enabled && m.manager !== chosen).map((m) => m.manager))];
   return others.map((manager) =>
-    `${WARNING_PREFIX}${MANAGERS[manager].label} is also enabled in this browser, so its scripts run too. To turn it off, use ${quoted(`sm-dev${browserArg} ${managerFlag(manager)} manager disable`)}.`);
+    `${WARNING_PREFIX}${MANAGERS[manager].label} is also enabled in this browser, so its scripts run too. To turn it off, use ${quoted(managerFixCommand(manager, 'disable', true))}.`);
 }
 
 /**

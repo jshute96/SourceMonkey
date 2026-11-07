@@ -162,21 +162,14 @@ What happens next:
   live chat and captions.
   - Use `--headed` for those (it goes before the command: `--headed start`,
     not `start --headed`), a visible browser of your own (muted too).
-- If a bot check stops that too, try a visible Google Chrome, which gets past
-  some checks the temp browser's Chromium doesn't (Google's `/sorry`, say). Give
-  each script a new, empty profile and a free port of its own, so nothing carries
-  over between scripts, and never sign in to it:
+- If a bot check stops that too, try Google Chrome, which gets past some checks
+  the temp browser's Chromium doesn't (Google's `/sorry`, say). Each run gets a
+  new, empty profile and a free port, and `stop` closes the browser and deletes
+  the profile:
 
   ```sh
-  PROFILE=$(mktemp -d)
-  PORT=9300  # any free port
-  sm-dev --open-browser --browser $PORT --profile $PROFILE
-  sm-dev --existing-browser --browser $PORT manager install
-  sm-dev --run Dname --open-browser --browser $PORT --profile $PROFILE start <file> <url> --detach
+  sm-dev --run Dname --headed --browser-type chrome start <file> <url> --detach
   ```
-
-  - `stop` leaves this browser open. Finish with `sm-dev --run Dname cdp
-    Browser.close`, which closes it and ends the run, then delete `$PROFILE`.
 - A bot check that stops Chrome too (a captcha, a Cloudflare checkbox, a
   firewall's "Access Blocked") makes the script `n/a`, reason `bot-blocked`,
   unless it can still be judged elsewhere. Don't solve captchas.

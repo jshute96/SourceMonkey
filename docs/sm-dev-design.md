@@ -60,7 +60,8 @@ flowchart LR
 | `wait.ts` | `wait`, and when a tab has settled |
 | `tab-refs.ts` | Naming and picking tabs (`T2`, target ids), the current tab, the dialog message |
 | `save-html.ts`, `saved-pages.ts` | Saving a page, and serving it back at its URL |
-| `browser-launch.ts` | `--open-browser` |
+| `browser-launch.ts` | `--open-browser`, and starting a browser on its own |
+| `chrome-launch.ts` | `--temp-browser --browser-type chrome` |
 | `browser-lang.ts` | `start --lang`: the languages the run's tabs prefer |
 | `stuck-tabs.ts` | Waiting out unresponsive tabs before connecting |
 | `page-output.ts` | Which page console lines and errors the run streams |
@@ -348,6 +349,8 @@ Command marks:
     - Text a script or page wrote (console lines, a thrown error, a
       dialog's text) goes in as markup instead (`asError`, `ui`), so its
       own backticks stay as they are.
+  - A URL outside those spans (`https://`, `chrome://`, `file://`) is
+    shown as one, without the punctuation after it.
   - So a run from an older build, sending plain text, still shows
     colored errors.
 - Who gets markup:
@@ -361,8 +364,10 @@ Command marks:
     line.
   - The run's process never colors (it is started with
     `FORCE_COLOR=0`), so the log file stays plain.
-  - `start` relays a new run's first lines from that log, so they are
-    colored by their prefix alone, without IDs or URLs marked.
+  - `start` relays a new run's first lines from that log. The run also
+    sends the client each line as markup (`writeRunLine`), when it has
+    markup or is one of sm-dev's messages, whose backticks the plain log
+    can drop. The client paints those lines from that.
   - The client paints each line in `writeOutputLine`, and stderr lines
     in `writeErr`.
 - The prompt (`prompt-editor.ts`) paints the `> ` and `... ` prompts and
@@ -917,7 +922,8 @@ for commands without a run, the browser they act on.
     So `sm-dev start x.user.js url` at a terminal opens a window.
   - A detached run is passed `--headed` by the client that started it,
     since it has no prompt of its own.
-  - Both, and `--mute`, are refused with `--existing-browser`.
+  - `--headed`, `--headless`, `--mute`, `--nomute` and `--browser-type`
+    are refused with `--existing-browser`.
 - Commands that act on a browser outside a run (`status`'s browser
   part, `manager install`/`enable`/`disable`, `collection` and
   `script` commands) need `--existing-browser` or `--open-browser`: a
@@ -925,11 +931,11 @@ for commands without a run, the browser they act on.
   - `--browser` alone is refused there too, rather than taken as the
     browser to connect to: in the default mode it's a temp browser's
     port.
-  - Advice naming such a command includes `--existing-browser`
-    (`browserArg` in `run.ts`).
-  - Advice to use a temp browser says to drop the mode flag
-    (`DROP_BROWSER_MODE`), since adding `--temp-browser` beside it is
-    refused.
+  - Advice naming such a command gives only the command and its
+    `--manager` (`manager install`, `--manager tm manager enable`), not
+    the browser flags (`manager-advice.ts`).
+  - Advice for a run that can't use the browser's manager offers
+    `--temp-browser` as the way out (`useTempBrowser`).
 
 ### `--temp-browser` (`extension-launch.ts`)
 
@@ -1041,15 +1047,69 @@ A browser that outlives sm-dev, started before the line's commands.
   - Not checked on Windows, which locks a profile another way, nor for
     another machine's lock. A lock whose process has ended holds
     nothing.
-- A profile per port, since Chrome locks a profile.
+- A profile for each browser and port, since Chrome locks a profile.
   - The lock is `SingletonLock`, a link to `host-pid`. A second browser
     on the same profile hands its window to the first and drops its
     own debugging port.
   - A lock whose process is alive is refused, naming that browser's
     port (from its command line, via `ps`).
 - Google Chrome's usual install paths first, then Playwright's
-  Chromium. `SM_DEV_BROWSER_BINARY` and `SM_DEV_BROWSER_ARGS`
-  override, which the tests use for a headless Chromium.
+  Chromium. `SM_DEV_BROWSER_BINARY` names another binary, and
+  `SM_DEV_BROWSER_ARGS` adds arguments. The tests use them for a headless
+  Chromium.
+- `--browser-type` picks one with no fallback, and beats
+  `SM_DEV_BROWSER_BINARY`.
+  - A browser already on the port must be that type. CDP's version calls
+    report `Chrome` for both, so the check reads `navigator.userAgentData`'s
+    brands on a hidden `chrome://extensions` page: only Google Chrome lists
+    `Google Chrome`. If that can't be read, the browser is used as it is.
+- The default profile is named for the browser
+  (`browser-profile-{chrome,chromium}-<port>`), so neither opens a profile
+  the other wrote.
+  - An old `browser-profile-<port>` is renamed when first needed, so its
+    sign-ins carry over, for the browser that was the default then. Its
+    disk cache under `~/.cache` moves with it.
+  - A browser named by `SM_DEV_BROWSER_BINARY` has no type, and keeps the
+    plain name.
+
+### `--temp-browser --browser-type chrome` (`chrome-launch.ts`)
+
+A throwaway Google Chrome, for sites whose bot checks stop Playwright's
+Chromium. It behaves like a temp browser, but is built like an
+`--open-browser` one, since passing those checks depends on it:
+
+- **Spawned on its own**, not with Playwright's `launch`. Google Chrome ignores
+  `--load-extension`, so the manager is loaded over CDP
+  (`Extensions.loadUnpacked`).
+- **A port picked by sm-dev**, never `--remote-debugging-port=0`. Chrome
+  treats port 0 as automation and reports `navigator.webdriver`, and Google
+  then shows `/sorry`.
+- **Connected with `noDefaults`**, like any browser a person runs.
+- **Readied for the run** in a Playwright connection of its own: first run
+  marked done, the warm-up, and one new blank tab.
+- **A window size when hidden**, since hidden Chrome's default gives a 780x493
+  page, narrow enough for some sites' phone layouts.
+- **Closed by the run**, with SIGTERM, then SIGKILL after 5 seconds.
+  - Its main process exits while helpers still write to the profile, which
+    makes deleting it fail with `ENOTEMPTY`. So the process group is killed
+    first.
+  - Node's `exit` event covers a run that exits without closing it.
+- **Ended on a signal** the run doesn't handle yet: during the launch, before
+  the run sets its own SIGINT and SIGTERM handlers, and after it drops them to
+  tear down. Chrome is detached, so it wouldn't end with the run.
+  - `launchTempChrome` holds SIGINT, SIGTERM and SIGHUP handlers until
+    `close`. Each kills Chrome, deletes the profile and raises the signal
+    again.
+  - It stands aside while the run's own handler is there, which closes
+    Chrome as a `stop` does.
+- **Chrome's temp files in the profile**: `TMPDIR` is a `tmp` folder there.
+  Chrome leaves its `com.google.Chrome.*` folders (with its singleton socket)
+  in the temp directory otherwise.
+  - Not when that path is too long for the socket (104 bytes on macOS), as
+    macOS's long temp directory makes it. Chrome won't start then.
+- **SIGKILL can't be covered**: Chrome keeps running, and its profile stays.
+  Profiles have the `sm-dev-chrome-` prefix, which Chrome's command line
+  shows, to find both.
 
 ### Tabs stuck at connect (`stuck-tabs.ts`)
 
