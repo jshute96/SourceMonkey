@@ -350,7 +350,8 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `userscripts/greasyfork/show-test-results.spec.ts` | Spec on the harness fixture: panels on saved script and listing pages, the source menu and the cached copy |
 | `userscripts/greasyfork/prefill-forms-from-hash.user.js` | Userscript that fills Greasy Fork's new script, new version and import forms from URL hash parameters; `publish-on-GreasyFork` builds those URLs |
 | `userscripts/greasyfork/prefill-forms-from-hash.md` | Its doc: the hash parameters, form selectors and how fields are filled |
-| `userscripts/greasyfork/prefill-forms-from-hash.spec.ts` | Spec on the harness fixture: fills saved copies of the real forms from hashes, including one `greasyfork-url.py` builds |
+| `userscripts/greasyfork/open-prefilled-form.html` | Status page `greasyfork-url.py` opens first; the userscript fills it in and redirects to the form |
+| `userscripts/greasyfork/prefill-forms-from-hash.spec.ts` | Spec on the harness fixture: fills saved copies of the real forms from hashes, including `greasyfork-url.py`'s, and tests the opener page |
 | `userscripts/greasyfork/test-pages/` | Greasy Fork's new script, new version and import forms saved signed in, and trimmed saved script and listing pages |
 | `userscripts/greasyfork/screenshots/` | Screenshots shown in the Greasy Fork scripts' docs |
 
@@ -728,6 +729,7 @@ For userscript repos to install, so their coding agents know how to write script
 | `skills/userscript-collections/scripts/update_site_icons.py` | Saves each script's icons into `site-icons/` with an `sm-dev` run, and lists them in the manifest |
 | `skills/publish-on-GreasyFork/SKILL.md` | Publishing and updating scripts and libraries on Greasy Fork through prefilled forms, optionally recording their IDs in the manifest |
 | `skills/publish-on-GreasyFork/scripts/greasyfork-url.py` | Builds and opens a prefilled Greasy Fork form URL (`new`, `update`, `import`) |
+| `skills/publish-on-GreasyFork/scripts/serve-files.py` | Short-lived localhost server that `greasyfork-url.py` starts to give local files to the prefill userscript |
 | `skills/publish-on-GreasyFork/scripts/greasyfork-scripts.py` | Lists a user's published scripts, matches them to local files, records IDs in the manifest, prints GitHub raw URLs |
 | `skills/publish-on-GreasyFork/scripts/extract-description.py` | Pulls the publishable description and screenshot list out of a script's doc |
 | `skills/SourceMonkey-friction/SKILL.md` | When and how to log friction with the SourceMonkey tools in the shared `../SourceMonkey-friction.md` log, and how to compact it |

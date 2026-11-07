@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Show SourceMonkey test status on Greasy Fork
+// @name         Greasy Fork: Show SourceMonkey's userscript test results
 // @namespace    https://github.com/jshute96/SourceMonkey
-// @version      0.8.3
+// @version      0.8.4
 // @description  On Greasy Fork script pages, for scripts that have been tested with SourceMonkey, show the test results
 // @match        https://greasyfork.org/*
 // @grant        GM_xmlhttpRequest

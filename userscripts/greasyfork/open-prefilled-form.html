@@ -1,44 +1,89 @@
 <!doctype html>
 <!--
   The page greasyfork-url.py opens first. With prefill-forms-from-hash.user.js
-  running, the script redirects from here to the Greasy Fork form before this
-  page matters. Without it, these instructions are what the person sees, in
-  place of a blank form. See prefill-forms-from-hash.md.
+  running, the script fills in the status below, checks the Greasy Fork
+  sign-in, and redirects to the form when nothing needs fixing. Without it,
+  the defaults below are what the person sees, in place of a blank form. See
+  prefill-forms-from-hash.md.
 -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Open a Greasy Fork form</title>
+<title>Greasy Fork form-filler userscript</title>
+<link rel="icon" href="../../src/icons/icon-48.png">
 <style>
-:root { color-scheme: light dark; --text: #1f2328; --muted: #59636e; --bg: #fff; --accent: #0969da; --note: #f6f8fa; --border: #d1d9e0; }
+:root { color-scheme: light dark; --text: #1f2328; --muted: #59636e; --bg: #fff; --accent: #0969da; --note: #f6f8fa; --border: #d1d9e0; --ok: #1a7f37; --bad: #cf222e; }
 @media (prefers-color-scheme: dark) {
-  :root { --text: #e6edf3; --muted: #9198a1; --bg: #0d1117; --accent: #4493f8; --note: #161b22; --border: #3d444d; }
+  :root { --text: #e6edf3; --muted: #9198a1; --bg: #0d1117; --accent: #4493f8; --note: #161b22; --border: #3d444d; --ok: #3fb950; --bad: #f85149; }
 }
 body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, sans-serif; }
-main { max-width: 38rem; margin: 0 auto; padding: 2.5rem 1rem; }
+main { max-width: 40rem; margin: 0 auto; padding: 2.5rem 1rem; }
 h1 { margin: 0 0 1rem; font-size: 1.5rem; line-height: 1.25; }
+h2 { margin: 0 0 0.75rem; font-size: 1.15rem; }
 a { color: var(--accent); }
-li { margin-bottom: 0.5rem; }
+hr { border: 0; border-top: 1px solid var(--border); margin: 1.5rem 0; }
 button { padding: 0.45rem 1rem; border: 1px solid var(--border); border-radius: 6px; background: var(--note); color: inherit; font: inherit; cursor: pointer; }
-#status { padding: 0.75rem 1rem; border: 1px solid var(--border); border-radius: 6px; background: var(--note); }
-.muted { color: var(--muted); font-size: 0.9rem; }
+.status { list-style: none; margin: 0; padding: 0; }
+.status > li { position: relative; padding-left: 1.75rem; margin-bottom: 0.75rem; }
+.status > li::before { position: absolute; left: 0; width: 1.25rem; text-align: center; font-weight: bold; }
+.status > li[data-state="ok"]::before { content: "\2713"; color: var(--ok); }
+.status > li[data-state="bad"]::before { content: "\2717"; color: var(--bad); }
+.status > li[data-state="checking"]::before { content: "\2026"; color: var(--muted); }
+.status > li[data-state="unknown"]::before { content: "?"; color: var(--muted); }
+.status .fix { margin-top: 0.25rem; }
 </style>
 </head>
 <body>
 <main>
-  <h1>Open a Greasy Fork form</h1>
-  <p id="status" hidden></p>
-  <div id="install">
-    <p>This page opens a prefilled Greasy Fork form, which needs the prefill userscript. The script isn't running in this browser.</p>
-    <ol>
-      <li>Install a userscript manager, such as <a href="https://github.com/jshute96/SourceMonkey">SourceMonkey</a> or <a href="https://www.tampermonkey.net/">Tampermonkey</a>, if this browser doesn't have one.</li>
-      <li>Install or update <a href="prefill-forms-from-hash.user.js">the prefill userscript</a>. If it's already installed, check that it's enabled.</li>
-      <li>Reload this page to continue to the form.</li>
-    </ol>
+  <h1>Greasy Fork form-filler userscript</h1>
+  <p>The <a href="https://github.com/jshute96/SourceMonkey">SourceMonkey</a> userscript manager includes tools for agentic userscript development, including a tool for publishing scripts to <a href="https://greasyfork.org">Greasy Fork</a>. That uses <a href="https://github.com/jshute96/SourceMonkey/blob/main/userscripts/greasyfork/prefill-forms-from-hash.md">a userscript</a> that fills in the forms on Greasy Fork's script upload pages, so they can be opened from command-line tools.</p>
+
+  <hr>
+
+  <h2>Status</h2>
+  <ul class="status" id="status">
+    <li id="manager-row" data-state="unknown">
+      <b>Userscript manager:</b> <span id="manager">unable to detect</span>
+      <div class="fix" id="manager-fix">If needed, install a userscript manager, such as <a href="https://chromewebstore.google.com/detail/sourcemonkey/cgeoigcimmclmhiamjicgccmojfdgkkd">SourceMonkey</a> or <a href="https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo">Tampermonkey</a>.</div>
+    </li>
+    <li id="script-row" data-state="bad">
+      <b>Form-filler userscript:</b> <span id="script">not installed, or not enabled</span>
+      <div class="fix" id="script-fix"><a href="prefill-forms-from-hash.user.js">Install the userscript</a>.</div>
+    </li>
+    <li id="link-row" data-state="bad" hidden>
+      <b>Link:</b> This link does not name a Greasy Fork posting form
+    </li>
+    <li id="sign-in-row" data-state="checking" hidden>
+      <b>Greasy Fork sign-in:</b> <span id="sign-in">checking</span>
+      <div class="fix" id="sign-in-fix" hidden><a href="https://greasyfork.org/users/sign_in?return_to=/" target="_blank" rel="noopener">Sign in to Greasy Fork</a> in a new tab.</div>
+    </li>
+    <li id="files-row" data-state="checking" hidden>
+      <b>Local files for the form:</b> <span id="files">checking</span>
+      <div class="fix" id="files-fix" hidden>Rerun the greasyfork-url.py command.</div>
+    </li>
+  </ul>
+
+  <div id="continue" hidden>
+    <hr>
+    <p>Fix the issues above, then click Reload to try again.</p>
     <p><button type="button" onclick="location.reload()">Reload</button></p>
-    <p class="muted">Reloading keeps the form's values, which are stored in this page's URL.</p>
   </div>
+
+  <div id="usage" hidden>
+    <hr>
+    <p>Use the <a href="https://github.com/jshute96/SourceMonkey/blob/main/skills/publish-on-GreasyFork/SKILL.md">publish-on-GreasyFork</a> skill or the <a href="https://github.com/jshute96/SourceMonkey/blob/main/skills/publish-on-GreasyFork/scripts/greasyfork-url.py">greasyfork-url.py</a> script to open prefilled Greasy Fork script upload forms through this page.</p>
+    <p>They're installed as part of <a href="https://github.com/jshute96/SourceMonkey#userscript-development-tools">SourceMonkey's development tools</a>.</p>
+  </div>
+
+  <p>The userscript never clicks Submit on Greasy Fork. It opens tabs with the forms filled in, for you to review and submit.</p>
 </main>
+<script>
+// Without the userscript, this page can still tell whether the link names a
+// form to go to. The userscript switches to the usage note if the form named
+// isn't one it fills.
+var hasTarget = new URLSearchParams(location.search).has('to') && location.hash.length > 1;
+document.getElementById(hasTarget ? 'continue' : 'usage').hidden = false;
+</script>
 </body>
 </html>

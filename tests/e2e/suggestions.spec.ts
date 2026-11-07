@@ -44,7 +44,7 @@ test.describe('suggestion box', () => {
     scriptsDir.write({
       relativePath: 'status.user.js',
       meta: {
-        name: 'Show SourceMonkey test status on Greasy Fork',
+        name: "Greasy Fork: Show SourceMonkey's userscript test results",
         match: ['https://greasyfork.org/*'],
         extra: ['// @namespace   https://github.com/jshute96/SourceMonkey'],
       },

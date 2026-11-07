@@ -53,16 +53,16 @@ export const SUGGESTIONS: readonly Suggestion[] = [
   },
   {
     id: 'greasyfork-test-status',
-    title: 'Show SourceMonkey test status on Greasy Fork',
+    title: "Greasy Fork: Show SourceMonkey's userscript test results",
     description: 'On Greasy Fork script pages, for scripts that have been tested with SourceMonkey, show the test results.',
     kind: 'script',
     // No page of its own yet: the corpus folder, whose README describes it.
     infoUrl: `${REPO}/greasyfork-testing`,
     location: `${PAGES}/userscripts/greasyfork/show-test-results.user.js`,
-    // Its @name before 0.8.1 too, for copies installed then.
+    // Its earlier @names too, for copies installed then.
     scriptIdentity: {
       namespace: 'https://github.com/jshute96/SourceMonkey',
-      names: ['Show SourceMonkey test status on Greasy Fork', 'SourceMonkey test status on Greasy Fork'],
+      names: ["Greasy Fork: Show SourceMonkey's userscript test results", 'Show SourceMonkey test status on Greasy Fork', 'SourceMonkey test status on Greasy Fork'],
     },
   },
 ];

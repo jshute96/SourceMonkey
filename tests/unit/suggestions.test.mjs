@@ -27,8 +27,8 @@ test('pendingSuggestions: a collection counts as installed by any of its paths',
 });
 
 test('pendingSuggestions: a script counts as installed by @namespace and @name', () => {
-  const name = 'Show SourceMonkey test status on Greasy Fork';
-  for (const n of [name, 'SourceMonkey test status on Greasy Fork']) {
+  const name = "Greasy Fork: Show SourceMonkey's userscript test results";
+  for (const n of [name, 'Show SourceMonkey test status on Greasy Fork', 'SourceMonkey test status on Greasy Fork']) {
     const installed = pendingSuggestions([], [null, header(n, 'https://github.com/jshute96/SourceMonkey')]);
     assert.deepEqual(ids(installed), ['sourcemonkey-examples'], n);
   }

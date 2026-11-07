@@ -8,15 +8,16 @@
 //   - An inline script in each stands in for Greasy Fork's Write/Preview
 //     tabs, whose own script isn't served.
 //
-// The URLs the script fetches (code_url, image_files, ...) are made up and
+// Most URLs the script fetches (code_url, image_files, ...) are made up and
 // answered with `gm.interceptRequests`, since it fetches through
-// GM_xmlhttpRequest.
+// GM_xmlhttpRequest. They use the file server's URL form, which needs no
+// connection prompt. One test runs the real server.
 
-import { execFileSync } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import type { Page } from '@playwright/test';
 import { test, expect } from '../../lib/harness/index.js';
@@ -26,11 +27,15 @@ const SCRIPT = path.join(here, 'prefill-forms-from-hash.user.js');
 const NEW_SCRIPT_FORM = path.join(here, 'test-pages/new-script.html');
 const NEW_VERSION_FORM = path.join(here, 'test-pages/new-version.html');
 const IMPORT_FORM = path.join(here, 'test-pages/import.html');
+const OPENER_PAGE = path.join(here, 'open-prefilled-form.html');
 const URL_TOOL = path.join(here, '../../skills/publish-on-GreasyFork/scripts/greasyfork-url.py');
 
 const NEW_SCRIPT = 'https://greasyfork.org/en/script_versions/new';
 const NEW_VERSION = 'https://greasyfork.org/en/scripts/591403/versions/new';
 const IMPORT = 'https://greasyfork.org/en/import';
+const SERVED = 'http://localhost:1/gf-prefill-0123456789abcdef';
+const SERVER_TOOL = path.join(here, '../../skills/publish-on-GreasyFork/scripts/serve-files.py');
+const OPENER = 'https://jshute96.github.io/SourceMonkey/userscripts/greasyfork/open-prefilled-form.html';
 
 // Builds a hash the way the doc says: `key=value` pairs, each value
 // encodeURIComponent-encoded. `true` gives a bare key.
@@ -49,7 +54,9 @@ async function openFilled(page: Page, url: string): Promise<string[]> {
   const done = page.waitForEvent('console', {
     predicate: (msg) => msg.text().startsWith('[gf-prefill] done'),
   });
-  await page.goto(url);
+  // Only to the commit: on the opener page, the script's redirect can
+  // interrupt the wait for a full load.
+  await page.goto(url, { waitUntil: 'commit' });
   await done;
   return lines;
 }
@@ -131,17 +138,17 @@ test.describe('prefill-forms-from-hash', () => {
 
   test('new script: code, info and images loaded from URLs, images in order', async ({ page, gm }) => {
     await gm.interceptRequests(serveBodies({
-      'https://files.test/my.user.js': '// fetched code\n',
-      'https://files.test/my.md': 'Fetched *info*',
-      'https://files.test/shots/b-second.png': 'PNG-B',
-      'https://files.test/shots/a-first.jpg': 'JPG-A',
-      'https://files.test/shots/c-third.png': 'PNG-C',
+      [`${SERVED}/files/my.user.js`]: '// fetched code\n',
+      [`${SERVED}/files/my.md`]: 'Fetched *info*',
+      [`${SERVED}/files/shots/b-second.png`]: 'PNG-B',
+      [`${SERVED}/files/shots/a-first.jpg`]: 'JPG-A',
+      [`${SERVED}/files/shots/c-third.png`]: 'PNG-C',
     }));
     await openFilled(page, NEW_SCRIPT + hash({
-      code_url: 'https://files.test/my.user.js',
-      additional_info_markdown_url: 'https://files.test/my.md',
+      code_url: `${SERVED}/files/my.user.js`,
+      additional_info_markdown_url: `${SERVED}/files/my.md`,
       // Not alphabetical, so the order is the one given.
-      image_files: 'https://files.test/shots/b-second.png,https://files.test/shots/a-first.jpg, https://files.test/shots/c-third.png',
+      image_files: `${SERVED}/files/shots/b-second.png,${SERVED}/files/shots/a-first.jpg, ${SERVED}/files/shots/c-third.png`,
     }));
 
     await expect(page.locator('#script_version_code')).toHaveValue('// fetched code\n');
@@ -155,13 +162,37 @@ test.describe('prefill-forms-from-hash', () => {
   });
 
   test('new script: code_upload attaches the file', async ({ page, gm }) => {
-    await gm.interceptRequests(serveBodies({ 'https://files.test/up.user.js': '// uploaded\n' }));
-    await openFilled(page, NEW_SCRIPT + hash({ code_upload: 'https://files.test/up.user.js' }));
+    await gm.interceptRequests(serveBodies({ [`${SERVED}/files/up.user.js`]: '// uploaded\n' }));
+    await openFilled(page, NEW_SCRIPT + hash({ code_upload: `${SERVED}/files/up.user.js` }));
     expect(await filesOf(page, '#code-upload')).toEqual([
       { name: 'up.user.js', type: 'text/javascript', text: '// uploaded\n' },
     ]);
     await expect(page.locator('#script_version_code')).toHaveValue('');
   });
+
+  test('another site needs the person to allow the connection', async ({ page, gm }) => {
+    await gm.interceptRequests(serveBodies({ 'https://files.test/my.user.js': '// fetched\n' }));
+    const filled = openFilled(page, NEW_SCRIPT + hash({ code_url: 'https://files.test/my.user.js' }));
+    await expect.poll(() => gm.connectPrompts().length).toBe(1);
+    expect(gm.connectPrompts()[0].host).toBe('files.test');
+    await gm.answerConnectPrompt(gm.connectPrompts()[0].promptId, 'once');
+    await filled;
+    await expect(page.locator('#script_version_code')).toHaveValue('// fetched\n');
+  });
+
+  // A link anyone wrote can name these, so nothing is requested for them.
+  for (const source of ['file:///etc/hostname', '/etc/hostname', 'data:text/plain,x', 'http://localhost:8080/admin', 'http://127.0.0.1/gf-prefill-short/x', 'http://[::1]/x']) {
+    test(`refuses to load ${source}`, async ({ page, gm }) => {
+      const stopped = page.waitForEvent('console', {
+        predicate: (msg) => msg.text().startsWith('[gf-prefill] stopped'),
+      });
+      await page.goto(NEW_SCRIPT + hash({ code_url: source }));
+      await stopped;
+      await expect(page.locator('#script_version_code')).toHaveValue('');
+      expect(gm.requests()).toEqual([]);
+      expect(gm.connectPrompts()).toEqual([]);
+    });
+  }
 
   test('new script: changelog only applies on the new-version page', async ({ page }) => {
     const lines = await openFilled(page, NEW_SCRIPT + hash({ changelog_html: 'Nope', bogus: '1' }));
@@ -230,6 +261,25 @@ test.describe('prefill-forms-from-hash', () => {
     expect(page.url()).toBe(NEW_VERSION);
   });
 
+  test("the form is filled after the page's own DOMContentLoaded listeners", async ({ page, serveHtml }) => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'gf-prefill-'));
+    try {
+      const html = (await readFile(IMPORT_FORM, 'utf8')).replace('<head>', `<head><script>
+        document.addEventListener('DOMContentLoaded', () => {
+          window.urlsAtPageReady = document.querySelector('#sync-urls').value;
+        });
+      </script>`);
+      const form = path.join(dir, 'import.html');
+      await writeFile(form, html);
+      await serveHtml(form, IMPORT);
+      await openFilled(page, IMPORT + hash({ urls: 'https://example.test/a.user.js' }));
+      await expect(page.locator('#sync-urls')).toHaveValue('https://example.test/a.user.js');
+      expect(await page.evaluate(() => (window as any).urlsAtPageReady)).toBe('');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test('a URL from greasyfork-url.py --print fills the form', async ({ page }) => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'gf-prefill-'));
     try {
@@ -248,5 +298,316 @@ test.describe('prefill-forms-from-hash', () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+test.describe('prefill-forms-from-hash: opener page', () => {
+  const openerFor = (to: string) => `${OPENER}?to=${encodeURIComponent(to)}`;
+
+  // Answers the script's sign-in check, and leaves other requests alone.
+  function greasyForkAnswers(signedIn: boolean) {
+    return (request: { url: string }) => {
+      if (!request.url.startsWith('https://greasyfork.org/')) return null;
+      const finalUrl = signedIn ? request.url : 'https://greasyfork.org/en/users/sign_in';
+      return {
+        kind: 'load' as const,
+        response: {
+          status: 200, statusText: 'OK', responseURL: finalUrl, responseText: 'x', response: 'x',
+          responseHeaders: 'content-type: text/html', responseMimeType: 'text/html', finalUrl,
+        },
+      };
+    };
+  }
+
+  test.beforeEach(async ({ serveHtml, gm }) => {
+    await serveHtml(NEW_SCRIPT_FORM, NEW_SCRIPT, { block: true });
+    await serveHtml(NEW_VERSION_FORM, NEW_VERSION);
+    await serveHtml(IMPORT_FORM, IMPORT);
+    await gm.interceptRequests(greasyForkAnswers(true));
+  });
+
+  // Runs greasyfork-url.py with a fake browser, and gives the URL the tool
+  // opened in it. The launcher page for a long URL goes in `dir` too.
+  async function urlOpenedByTool(dir: string, args: string[]): Promise<string> {
+    const opened = path.join(dir, 'opened-url');
+    const browser = path.join(dir, 'browser.sh');
+    await writeFile(browser, `#!/bin/sh\nprintf %s "$1" > '${opened}'\n`, { mode: 0o755 });
+    execFileSync('python3', [URL_TOOL, '--browser', browser, ...args], {
+      env: { ...process.env, TMPDIR: dir }, stdio: 'pipe',
+    });
+    await expect.poll(() => readFile(opened, 'utf8').catch(() => '')).not.toBe('');
+    return readFile(opened, 'utf8');
+  }
+
+  test('redirects to the form with the hash intact, and stays out of history', async ({ page, loadUserscript, serveHtml }) => {
+    await loadUserscript(SCRIPT);
+    await serveHtml(OPENER_PAGE, openerFor('/en/import'));
+    await page.goto('about:blank');
+    await openFilled(page, openerFor('/en/import') + hash({ urls: 'https://example.test/a+b.user.js' }));
+    await expect(page.locator('#sync-urls')).toHaveValue('https://example.test/a+b.user.js');
+    expect(page.url()).toBe(IMPORT);
+    await page.goBack();
+    expect(page.url()).toBe('about:blank');
+  });
+
+  test('without the script it shows instructions, and a reload after installing continues', async ({ page, loadUserscript, serveHtml }) => {
+    const url = openerFor('/en/import');
+    await serveHtml(OPENER_PAGE, url);
+    await page.goto(url + hash({ urls: 'https://example.test/a.user.js' }));
+    await expect(page.locator('#manager-row')).toHaveAttribute('data-state', 'unknown');
+    await expect(page.locator('#manager-fix')).toBeVisible();
+    await expect(page.locator('#script-row')).toHaveAttribute('data-state', 'bad');
+    await expect(page.locator('#script-fix a[href="prefill-forms-from-hash.user.js"]')).toBeVisible();
+    await expect(page.locator('#sign-in-row')).toBeHidden();
+    await expect(page.locator('#continue')).toBeVisible();
+    await expect(page.locator('#usage')).toBeHidden();
+
+    await loadUserscript(SCRIPT);
+    const done = page.waitForEvent('console', {
+      predicate: (msg) => msg.text().startsWith('[gf-prefill] done'),
+    });
+    await page.getByRole('button', { name: 'Reload' }).click();
+    await done;
+    await expect(page.locator('#sync-urls')).toHaveValue('https://example.test/a.user.js');
+    expect(page.url()).toBe(IMPORT);
+  });
+
+  for (const to of ['/en/users/1', '//evil.test/import', 'https://evil.test/import', '/en/scripts/1?x/versions/new', '/en/scripts/../versions/new']) {
+    test(`stays on the page for the target ${to}`, async ({ page, loadUserscript, serveHtml }) => {
+      await loadUserscript(SCRIPT);
+      const url = openerFor(to);
+      await serveHtml(OPENER_PAGE, url);
+      await page.goto(url + hash({ urls: 'https://example.test/a.user.js' }));
+      await expect(page.locator('#link-row')).toBeVisible();
+      await expect(page.locator('#continue')).toBeHidden();
+      await expect(page.locator('#usage')).toBeVisible();
+      await expect(page.locator('#sign-in-row')).toBeHidden();
+      expect(new URL(page.url()).origin).toBe(new URL(OPENER).origin);
+    });
+  }
+
+  for (const [name, url] of [['no target', OPENER], ['no form values', openerFor('/en/import')]]) {
+    test(`stays on the page and reports the manager and script with ${name}`, async ({ page, loadUserscript, serveHtml }) => {
+      await loadUserscript(SCRIPT);
+      await serveHtml(OPENER_PAGE, url);
+      await page.goto(url);
+      await expect(page.locator('#manager-row')).toHaveAttribute('data-state', 'ok');
+      await expect(page.locator('#manager')).toHaveText(/^SourceMonkey \d/);
+      await expect(page.locator('#manager-fix')).toBeHidden();
+      await expect(page.locator('#script-row')).toHaveAttribute('data-state', 'ok');
+      await expect(page.locator('#script')).toHaveText(/^installed, version \d/);
+      await expect(page.locator('#script-fix')).toBeHidden();
+      await expect(page.locator('#continue')).toBeHidden();
+      await expect(page.locator('#usage')).toBeVisible();
+      await expect(page.locator('#link-row')).toBeHidden();
+      await expect(page.locator('#sign-in-row')).toBeHidden();
+      await expect(page.locator('#files-row')).toBeHidden();
+      expect(page.url()).toBe(url);
+    });
+  }
+
+  test('signed out, it says to sign in, and a reload continues to the form', async ({ page, gm, loadUserscript, serveHtml }) => {
+    await loadUserscript(SCRIPT);
+    await gm.interceptRequests(greasyForkAnswers(false));
+    const url = openerFor('/en/import');
+    await serveHtml(OPENER_PAGE, url);
+    await page.goto(url + hash({ urls: 'https://example.test/a.user.js' }));
+    await expect(page.locator('#sign-in-row')).toHaveAttribute('data-state', 'bad');
+    await expect(page.locator('#sign-in')).toHaveText('not signed in');
+    await expect(page.locator('#sign-in-fix a')).toHaveAttribute('href', 'https://greasyfork.org/users/sign_in?return_to=/');
+    await expect(page.locator('#sign-in-fix a')).toHaveAttribute('target', '_blank');
+    await expect(page.locator('#script-row')).toHaveAttribute('data-state', 'ok');
+    // The form's values name no local files.
+    await expect(page.locator('#files-row')).toBeHidden();
+    await expect(page.locator('#continue')).toBeVisible();
+    expect(new URL(page.url()).origin).toBe(new URL(OPENER).origin);
+
+    await gm.interceptRequests(greasyForkAnswers(true));
+    const done = page.waitForEvent('console', {
+      predicate: (msg) => msg.text().startsWith('[gf-prefill] done'),
+    });
+    await page.locator('#continue button').click();
+    await done;
+    await expect(page.locator('#sync-urls')).toHaveValue('https://example.test/a.user.js');
+  });
+
+  test('a failed sign-in check still goes to the form', async ({ page, gm, loadUserscript, serveHtml }) => {
+    await loadUserscript(SCRIPT);
+    await gm.failHosts('greasyfork.org');
+    const url = openerFor('/en/import');
+    await serveHtml(OPENER_PAGE, url);
+    await openFilled(page, url + hash({ urls: 'https://example.test/a.user.js' }));
+    await expect(page.locator('#sync-urls')).toHaveValue('https://example.test/a.user.js');
+  });
+
+  test('a stopped file server stays on the page and says to run the command again', async ({ page, loadUserscript, serveHtml }) => {
+    await loadUserscript(SCRIPT);
+    const url = openerFor('/en/script_versions/new');
+    await serveHtml(OPENER_PAGE, url);
+    // Nothing listens on port 1.
+    await page.goto(url + hash({ image_files: `${SERVED}/files/shot.png` }));
+    await expect(page.locator('#files-row')).toHaveAttribute('data-state', 'bad');
+    await expect(page.locator('#files')).toHaveText('no longer available');
+    await expect(page.locator('#files-fix')).toHaveText('Rerun the greasyfork-url.py command.');
+    // Reload can't bring the files back.
+    await expect(page.locator('#continue')).toBeHidden();
+    expect(new URL(page.url()).origin).toBe(new URL(OPENER).origin);
+  });
+
+  test('signed out with the file server running, it shows the files available, and a reload fills the form', async ({ page, gm, loadUserscript, serveHtml }) => {
+    await loadUserscript(SCRIPT);
+    await gm.interceptRequests(greasyForkAnswers(false));
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'gf-prefill-'));
+    try {
+      await writeFile(path.join(dir, 'shot.png'), 'PNG');
+      const url = await urlOpenedByTool(dir, ['update', '591403', '--image-files', path.join(dir, 'shot.png')]);
+      await serveHtml(OPENER_PAGE, url.split('#')[0]);
+      await page.goto(url);
+      await expect(page.locator('#sign-in-row')).toHaveAttribute('data-state', 'bad');
+      await expect(page.locator('#files-row')).toHaveAttribute('data-state', 'ok');
+      await expect(page.locator('#files')).toHaveText('available');
+      await expect(page.locator('#files-fix')).toBeHidden();
+      await expect(page.locator('#continue')).toBeVisible();
+      expect(new URL(page.url()).origin).toBe(new URL(OPENER).origin);
+
+      await gm.interceptRequests(greasyForkAnswers(true));
+      const done = page.waitForEvent('console', {
+        predicate: (msg) => msg.text().startsWith('[gf-prefill] done'),
+      });
+      await page.locator('#continue button').click();
+      await done;
+      expect(await filesOf(page, 'input[type=file]#script_version_attachments')).toEqual([
+        { name: 'shot.png', type: 'image/png', text: 'PNG' },
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('images on disk reach the form through the real file server', async ({ page, loadUserscript, serveHtml }) => {
+    await loadUserscript(SCRIPT);
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'gf-prefill-'));
+    try {
+      // Two files with the same name, in different folders.
+      await mkdir(path.join(dir, 'new'));
+      await writeFile(path.join(dir, 'new', 'b shot.png'), 'PNG-NEW');
+      await mkdir(path.join(dir, 'old'));
+      await writeFile(path.join(dir, 'old', 'b shot.png'), 'PNG-OLD');
+      const url = await urlOpenedByTool(dir, ['update', '591403',
+        '--image-files', `${path.join(dir, 'new', 'b shot.png')},${path.join(dir, 'old', 'b shot.png')}`]);
+      expect(decodeURIComponent(url)).toMatch(/\/gf-prefill-[\w-]+\/files\/new\/b%20shot\.png,/);
+      await serveHtml(OPENER_PAGE, url.split('#')[0]);
+      await openFilled(page, url);
+      // This page also has a hidden input with that id, for its existing image.
+      expect(await filesOf(page, 'input[type=file]#script_version_attachments')).toEqual([
+        { name: 'b shot.png', type: 'image/png', text: 'PNG-NEW' },
+        { name: 'b shot.png', type: 'image/png', text: 'PNG-OLD' },
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('greasyfork-url.py opens the opener page, which reaches the form', async ({ page, loadUserscript, serveHtml }) => {
+    await loadUserscript(SCRIPT);
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'gf-prefill-'));
+    try {
+      const url = await urlOpenedByTool(dir, ['update', '591403', '--changelog-text', 'Fixed & done']);
+      expect(url.split('#')[0]).toBe(openerFor('/en/scripts/591403/versions/new').replaceAll('%2F', '/'));
+      await serveHtml(OPENER_PAGE, url.split('#')[0]);
+      await openFilled(page, url);
+      await expect(page.locator('#script_version_changelog')).toHaveValue('Fixed & done');
+      expect(page.url()).toBe(NEW_VERSION);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a long URL reaches the form through the launcher and the opener page', async ({ page, loadUserscript, serveHtml }) => {
+    await loadUserscript(SCRIPT);
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'gf-prefill-'));
+    try {
+      const code = `// ==UserScript==\n// ==/UserScript==\n// ${'x + y & z '.repeat(1500)}\n`;
+      await writeFile(path.join(dir, 'long.user.js'), code);
+      const launcher = await urlOpenedByTool(dir, ['new', '--code-file', path.join(dir, 'long.user.js')]);
+      expect(launcher).toMatch(/^file:/);
+      await serveHtml(OPENER_PAGE, openerFor('/en/script_versions/new').replaceAll('%2F', '/'));
+      // At an https URL, since the routes above abort a file:// load. Its
+      // redirect runs the same.
+      const launcherAt = 'https://launcher.test/';
+      await serveHtml(fileURLToPath(launcher), launcherAt);
+      await openFilled(page, launcherAt);
+      await expect(page.locator('#script_version_code')).toHaveValue(code);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('greasyfork-url.py --direct and a custom --base skip the opener page', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'gf-prefill-'));
+    try {
+      expect((await urlOpenedByTool(dir, ['--direct', 'import', 'https://example.test/a.user.js'])).split('#')[0]).toBe(IMPORT);
+      await rm(path.join(dir, 'opened-url'));
+      expect((await urlOpenedByTool(dir, ['--base', 'http://localhost:1234', 'import', 'https://example.test/a.user.js'])).split('#')[0])
+        .toBe('http://localhost:1234/en/import');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('greasyfork-url.py update refuses a file path in place of the script id', () => {
+    const run = spawnSync('python3', [URL_TOOL, '--print', 'update', 'my.user.js', '--changelog-text', 'x'], { encoding: 'utf8' });
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain('my.user.js is not a Greasy Fork script id');
+  });
+
+  test('greasyfork-url.py --print gives the form, and with --no-direct the opener page or --opener-page', () => {
+    const printed = (...args: string[]) =>
+      execFileSync('python3', [URL_TOOL, '--print', ...args, 'import', 'https://example.test/a.user.js'], { encoding: 'utf8' }).trim().split('#')[0];
+    expect(printed()).toBe(IMPORT);
+    expect(printed('--no-direct')).toBe(openerFor('/en/import').replaceAll('%2F', '/'));
+    expect(printed('--no-direct', '--opener-page', 'file:///x/open-prefilled-form.html'))
+      .toBe('file:///x/open-prefilled-form.html?to=/en/import');
+    expect(printed('--no-direct', '--opener-page', OPENER_PAGE)).toBe(`${pathToFileURL(OPENER_PAGE)}?to=/en/import`);
+  });
+});
+
+test.describe('serve-files.py', () => {
+  // Starts the server on `paths` under `root`, and gives its base URL and a promise for its exit.
+  async function startServer(root: string, paths: string[], ...args: string[]) {
+    const server = spawn('python3', [SERVER_TOOL, ...args, '--', root, ...paths], { stdio: ['ignore', 'pipe', 'inherit'] });
+    const exited = new Promise((resolve) => server.on('exit', resolve));
+    const line = await new Promise<string>((resolve) => server.stdout.once('data', (data) => resolve(String(data))));
+    return { base: JSON.parse(line).base as string, exited, server };
+  }
+
+  test('serves only the files it was given, and exits once idle', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'gf-prefill-'));
+    try {
+      await mkdir(path.join(dir, 'img'));
+      await writeFile(path.join(dir, 'img', 'shot one.png'), 'PNG');
+      await writeFile(path.join(dir, 'other.txt'), 'private');
+      const { base, exited } = await startServer(dir, ['img/shot one.png'], '--idle-seconds', '2');
+      expect(base).toMatch(/^http:\/\/localhost:\d+\/gf-prefill-[\w-]{16,}$/);
+
+      const shot = await fetch(`${base}/files/img/shot%20one.png`);
+      expect(await shot.text()).toBe('PNG');
+      expect(shot.headers.get('content-type')).toBe('image/png');
+      expect((await fetch(`${base}/alive`)).status).toBe(200);
+
+      expect((await fetch(`${base}/files/other.txt`)).status).toBe(404);
+      expect((await fetch(`${base}/files/img/../other.txt`)).status).toBe(404);
+      expect((await fetch(`${base}/img/shot%20one.png`)).status).toBe(404);
+      expect((await fetch(`${new URL(base).origin}/files/img/shot%20one.png`)).status).toBe(404);
+
+      expect(await exited).toBe(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('exits if nothing ever contacts it', async () => {
+    const { exited } = await startServer(os.tmpdir(), [], '--first-contact-seconds', '1');
+    expect(await exited).toBe(0);
   });
 });

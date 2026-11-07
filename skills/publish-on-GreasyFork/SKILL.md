@@ -39,6 +39,7 @@ here. Some repos also keep symlinks to them (for example in their own
 | `greasyfork-scripts.py` | Look up what's published; match it to local files; record IDs in the manifest; print the GitHub raw URL a local script file lands at. Read-only against Greasy Fork (a JSON API, no login). |
 | `greasyfork-url.py` | Build and open a prefilled Greasy Fork form URL (`new`, `update`, `import`). |
 | `extract-description.py` | Pull the publishable description and the screenshot list out of a script's `.md` doc. |
+| `serve-files.py` | Serves local files (images, `--code-upload`) to the userscript for a short time. `greasyfork-url.py` starts it; don't run it yourself. |
 
 They work on the repo holding the working directory (its git root), so
 run them from inside the repo whose scripts you're publishing. Script
@@ -58,6 +59,21 @@ enabled** in the browser the URL opens in. Install it from
 (open it in the userscript manager's browser), or from a SourceMonkey
 checkout's `userscripts/greasyfork/`. Its doc has the full parameter
 table and the form selectors, if a field stops filling.
+
+`greasyfork-url.py` opens a page on GitHub Pages, which the userscript
+redirects to the form. That page may stop with a status list showing
+the person what to fix, in place of a blank form:
+
+* **The userscript isn't running:** it marks the userscript missing,
+  with install links for it and for a manager.
+* **They're signed out of Greasy Fork:** it links to the sign-in page.
+  Greasy Fork's sign-in redirect would lose the form's values.
+* **The command's images are no longer being served:** it says to run
+  the command again. Do that if they report that status.
+
+In the first two, reloading that tab continues to the form, so there's
+no need to run the command again. The form's URL is available without
+that page: `--print` prints it, and `--direct` opens it.
 
 ### The Greasy Fork user
 
@@ -416,23 +432,10 @@ one.
 ## Images
 
 Image uploads can't be inlined into the URL; the browser has to fetch
-the file. By default `greasyfork-url.py` passes a `file://` URL, and
-that works under SourceMonkey. So just run the plain command and it
-handles images.
-
-### If images don't attach
-
-A `file://` fetch may fail in userscript managers that run the request
-from a service worker. If (and only if) the images come out missing,
-serve the repo over HTTP and point at that instead:
-
-```bash
-python3 -m http.server 8765 --directory .      # from the repo root; leave running
-"${CLAUDE_SKILL_DIR}/scripts/greasyfork-url.py" update 590960 --http-base http://localhost:8765 …
-```
-
-Local paths under the repo root (or `--http-root`) are then rewritten
-to `http://localhost:8765/…`.
+the file. `greasyfork-url.py` handles it: it starts a short-lived server
+on `localhost` for the images, so just run the plain command. Run it when
+the person is ready to look at the form, since the server stops after a
+few minutes unused.
 
 ## After publishing
 

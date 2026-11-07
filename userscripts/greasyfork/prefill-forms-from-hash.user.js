@@ -1,20 +1,24 @@
 // ==UserScript==
 // @name         Greasy Fork: Fill post/update/import forms from URL parameters
 // @namespace    https://github.com/jshute96/SourceMonkey
-// @version      0.1.2
+// @version      0.2.11
 // @description  Fills Greasy Fork's new script, new version, and import script forms from URL parameters, so they can be opened pre-filled.
 // @author       Jeff Shute <jshute@gmail.com>
 // @license      MIT
+// @icon         https://jshute96.github.io/SourceMonkey/userscripts/site-icons/greasyfork.org.png
+// @match        https://jshute96.github.io/SourceMonkey/userscripts/greasyfork/open-prefilled-form.html*
 // @match        https://greasyfork.org/script_versions/new*
 // @match        https://greasyfork.org/*/script_versions/new*
 // @match        https://greasyfork.org/scripts/*/versions/new*
 // @match        https://greasyfork.org/*/scripts/*/versions/new*
 // @match        https://greasyfork.org/import*
 // @match        https://greasyfork.org/*/import*
+// @match        file:///*/userscripts/greasyfork/open-prefilled-form.html*
 // @grant        GM_xmlhttpRequest
-// @connect      *
+// @connect      greasyfork.org
+// @connect      localhost
 // @noframes
-// @run-at       document-idle
+// @run-at       document-start
 // ==/UserScript==
 
 (function () {
@@ -25,14 +29,14 @@
   // Greasy Fork prefixes most paths with a locale ("/en/scripts/..."), but the
   // locale is optional. Everything below matches with or without it.
   //
-  // The @match patterns already narrow us to these three pages, but they
-  // can't express "one optional locale segment" — their wildcards span
-  // slashes — so these are the precise version, and they also tell us
-  // *which* page we're on.
+  // The @match patterns already narrow us to these three pages (and the
+  // opener page, handled apart from them), but they can't express "one
+  // optional locale segment" (their wildcards span slashes), so these are the
+  // precise version, and they also tell us *which* page we're on.
   const LOCALE = '(?:/[a-z]{2}(?:-[A-Za-z]{2,4})?)?';
   const PAGE_PATTERNS = [
     { page: 'new-script', re: new RegExp(`^${LOCALE}/script_versions/new/?$`) },
-    { page: 'new-version', re: new RegExp(`^${LOCALE}/scripts/[^/]+/versions/new/?$`) },
+    { page: 'new-version', re: new RegExp(`^${LOCALE}/scripts/\\d+[^/?#]*/versions/new/?$`) },
     { page: 'import', re: new RegExp(`^${LOCALE}/import/?$`) },
   ];
 
@@ -49,11 +53,28 @@
     css: 'text/css',
   };
 
-  function detectPage() {
+  function detectPage(pathname) {
     for (const { page, re } of PAGE_PATTERNS) {
-      if (re.test(location.pathname)) return page;
+      if (re.test(pathname)) return page;
     }
     return null;
+  }
+
+  // Resolves when the form is parsed and the page's own setup has run, which
+  // is about when a document-idle script would start.
+  //
+  // A DOMContentLoaded listener added at document-start is registered ahead of
+  // the page's, so it runs first. The timeout lets the page's listeners go
+  // before we touch the form. A manager can also start us after the event has
+  // fired, so don't wait for it then.
+  function whenDomReady() {
+    return new Promise((resolve) => {
+      if (document.readyState !== 'loading') {
+        resolve();
+        return;
+      }
+      document.addEventListener('DOMContentLoaded', () => setTimeout(resolve, 0), { once: true });
+    });
   }
 
   // Every parameter we understand, per page. Used to warn about typos and
@@ -146,22 +167,35 @@
 
   // ---------- Loading remote / local content ----------
 
-  // A path like "/home/me/x.png" is accepted as shorthand for a file:// URL.
-  function toUrl(pathOrUrl) {
-    if (/^[a-z][a-z0-9+.-]*:/i.test(pathOrUrl)) return pathOrUrl;
-    if (pathOrUrl.startsWith('/')) return `file://${pathOrUrl}`;
-    return pathOrUrl;
+  // The URLs serve-files.py serves. The match is the part that names one
+  // running server, without the "/" after it.
+  const FILE_SERVER_URL = /^http:\/\/[^/]+\/gf-prefill-[A-Za-z0-9_-]{16,}(?=\/)/;
+  const LOOPBACK_HOST = /^(?:localhost|.*\.localhost|127(?:\.\d+){3}|\[::1\]|0\.0\.0\.0)$/i;
+
+  // These URLs come from a link anyone could have written, and what they load
+  // lands in a form the person may post. So there are no local paths or file://
+  // reads, and on this machine only the file server's own URLs: other local
+  // services are off limits. This has to be enforced here, since @connect only
+  // covers hosts, and not every manager enforces it.
+  function assertLoadable(url) {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch {
+      throw new Error(`Cannot load "${url}": It is not a full http or https URL`);
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new Error(`Cannot load "${url}": Only http and https URLs can be loaded`);
+    }
+    if (LOOPBACK_HOST.test(parsed.hostname) && !FILE_SERVER_URL.test(parsed.href)) {
+      throw new Error(`Cannot load "${url}": Only the file server from greasyfork-url.py can be used on this machine`);
+    }
   }
 
   // GM_xmlhttpRequest bypasses CORS, which plain fetch() can't do for most
   // hosts. We fall back to fetch() if the grant isn't available.
-  //
-  // file:// support depends on the userscript manager. Managers that run the
-  // request from a background service worker get an opaque, unreadable
-  // response for file:// URLs and will fail here — see the doc file. Serving
-  // the files over http://localhost is the portable alternative.
-  function loadUrl(url, responseType) {
-    const target = toUrl(url);
+  async function loadUrl(target, responseType) {
+    assertLoadable(target);
     if (typeof GM_xmlhttpRequest === 'function') {
       return new Promise((resolve, reject) => {
         GM_xmlhttpRequest({
@@ -170,12 +204,10 @@
           responseType: responseType === 'blob' ? 'blob' : 'text',
           onload: (res) => {
             const body = responseType === 'blob' ? res.response : res.responseText;
-            // A successful file:// read reports status 0, so only treat
-            // explicit HTTP error codes as failures.
             if (res.status >= 400) {
               reject(new Error(`HTTP ${res.status} for ${target}`));
             } else if (body == null || (responseType === 'blob' && body.size === 0)) {
-              reject(new Error(`empty response for ${target} (file:// reads may not be supported by this userscript manager)`));
+              reject(new Error(`empty response for ${target}`));
             } else {
               resolve(body);
             }
@@ -186,14 +218,14 @@
       });
     }
     return fetch(target).then((res) => {
-      if (!res.ok && res.status !== 0) throw new Error(`HTTP ${res.status} for ${target}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status} for ${target}`);
       return responseType === 'blob' ? res.blob() : res.text();
     });
   }
 
   async function loadFile(pathOrUrl) {
     const blob = await loadUrl(pathOrUrl, 'blob');
-    const name = decodeURIComponent(toUrl(pathOrUrl).split(/[?#]/)[0].split('/').pop() || 'upload');
+    const name = decodeURIComponent(pathOrUrl.split(/[?#]/)[0].split('/').pop() || 'upload');
     const extension = name.split('.').pop().toLowerCase();
     const type = blob.type && blob.type !== 'application/octet-stream'
       ? blob.type
@@ -315,8 +347,7 @@
 
   // "additional_info_html" / "additional_info_markdown" (and the changelog
   // equivalents) pick the markup radio and fill the text in one parameter.
-  // Each also accepts an "_url" variant that loads the text from a URL or a
-  // local path.
+  // Each also accepts an "_url" variant that loads the text from a URL.
   async function applyMarkupField(params, spec) {
     for (const markup of ['html', 'markdown']) {
       const inlineKey = `${spec.prefix}_${markup}`;
@@ -521,13 +552,133 @@
   //   button.click();
   // }
 
+  // ---------- The opener page ----------
+  //
+  // greasyfork-url.py opens open-prefilled-form.html rather than the form, so
+  // that a browser without this script gets a status page with install links
+  // rather than a blank form. This script fills in that page's status rows,
+  // and its redirect is what takes everyone else on to the form.
+  //
+  // First it checks the two things that would otherwise lose the form's values
+  // or files with nothing to show for it: Greasy Fork's sign-in redirect drops
+  // the hash, and the file server only stays up for a short time.
+  //
+  // "to" comes from the URL, so a link anyone wrote can set it. The origin is
+  // fixed and PAGE_PATTERNS limits the path to the forms, so the page can't be
+  // used to redirect elsewhere. The redirect gives a link no more than linking
+  // to the form directly does, and the person still has to submit the form.
+  //
+  // replace() keeps this page out of history, so Back doesn't bounce forward
+  // again. The hash goes through untouched: it's only decoded on the form.
+
+  const FORM_ORIGIN = 'https://greasyfork.org';
+
+  const SIGN_IN_PATH = /^(?:\/[^/]+)?\/users\/sign_in\/?$/;
+  const CHECK_TIMEOUT_MS = 10000;
+  const SERVER_PING_MS = 20000;
+
+  // Resolves with the response, or null if the request failed.
+  function requestForCheck(url) {
+    return new Promise((resolve) => {
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url,
+        timeout: CHECK_TIMEOUT_MS,
+        onload: resolve,
+        onerror: () => resolve(null),
+        ontimeout: () => resolve(null),
+      });
+    });
+  }
+
+  // True unless Greasy Fork answers with its sign-in page. A failed check counts
+  // as signed in, since going to the form is the most this could have stopped.
+  async function isSignedIn(target) {
+    const response = await requestForCheck(FORM_ORIGIN + target);
+    if (!response || !response.finalUrl) return true;
+    return !SIGN_IN_PATH.test(new URL(response.finalUrl).pathname);
+  }
+
+  // The file servers named by the form's values.
+  function fileServersIn(params) {
+    const sources = [params.get('code_upload'), ...(params.get('image_files') || '').split(',')];
+    const servers = new Set();
+    for (const source of sources) {
+      const match = source && source.trim().match(FILE_SERVER_URL);
+      if (match) servers.add(match[0]);
+    }
+    return [...servers];
+  }
+
+  // Each request also counts as activity, which keeps the server up.
+  async function isServerUp(server) {
+    const response = await requestForCheck(`${server}/alive`);
+    return Boolean(response) && response.status === 200;
+  }
+
+  // Sets a status row on the opener page: its mark ("ok", "bad" or
+  // "checking"), its text if given, and whether its fix shows.
+  function setRow(name, state, text) {
+    const row = document.getElementById(`${name}-row`);
+    row.hidden = false;
+    row.dataset.state = state;
+    const value = document.getElementById(name);
+    if (text && value) value.textContent = text;
+    const fix = document.getElementById(`${name}-fix`);
+    if (fix) fix.hidden = state !== 'bad';
+  }
+
+  async function runOpenerPage() {
+    // The page's defaults are for a browser without this script. Hide them
+    // until they're filled in, so they don't flash up. The DOM may not exist
+    // yet this early, so this is a stylesheet.
+    const style = document.createElement('style');
+    style.textContent = '#status { visibility: hidden; }';
+    (document.head || document.documentElement).append(style);
+    await whenDomReady();
+    setRow('manager', 'ok', `${GM_info.scriptHandler} ${GM_info.version}`);
+    setRow('script', 'ok', `installed, version ${GM_info.script.version}`);
+    style.remove();
+
+    const target = new URLSearchParams(location.search).get('to');
+    const known = target !== null && detectPage(target) !== null;
+    if (!known || !location.hash) {
+      document.getElementById('continue').hidden = true;
+      document.getElementById('usage').hidden = false;
+      if (target !== null && !known) setRow('link', 'bad');
+      return;
+    }
+
+    const servers = fileServersIn(parseHash());
+    setRow('sign-in', 'checking');
+    if (servers.length) setRow('files', 'checking');
+    const [serversUp, signedIn] = await Promise.all([
+      Promise.all(servers.map(isServerUp)),
+      isSignedIn(target),
+    ]);
+    const filesOk = serversUp.every(Boolean);
+
+    setRow('sign-in', signedIn ? 'ok' : 'bad', signedIn ? 'signed in' : 'not signed in');
+    if (servers.length) setRow('files', filesOk ? 'ok' : 'bad', filesOk ? 'available' : 'no longer available');
+    if (signedIn && filesOk) {
+      location.replace(FORM_ORIGIN + target + location.hash);
+      return;
+    }
+    // Reload can't bring the files back; the files row says to rerun the command.
+    if (!filesOk) document.getElementById('continue').hidden = true;
+    // Signing in can take longer than the file server would otherwise wait.
+    if (filesOk && servers.length) setInterval(() => servers.forEach(isServerUp), SERVER_PING_MS);
+  }
+
   // ---------- Entry point ----------
 
   async function main() {
-    const page = detectPage();
+    const page = detectPage(location.pathname);
     if (!page) return;
     const params = parseHash();
     if (params.size === 0) return;
+
+    await whenDomReady();
 
     console.log(`${TAG} init on ${page} with ${params.size} parameter(s): ${[...params.keys()].join(', ')}`);
     warnAboutUnknownParams(params, page);
@@ -556,5 +707,8 @@
     console.log(`${TAG} done: form filled, ready for you to review and submit`);
   }
 
-  main();
+  // Anywhere else @match allows is a copy of the opener page: the one on
+  // github.io, or a local file: copy given to greasyfork-url.py --opener-page.
+  if (location.origin === FORM_ORIGIN) main();
+  else runOpenerPage();
 })();

@@ -32,7 +32,7 @@ Userscripts for Greasy Fork pages.
 | Site | Script | Doc | Description |
 | :---: | --- | --- | --- |
 | <img src="site-icons/greasyfork.org_script_versions_new.png" width="16" height="16" alt=""> | [Greasy Fork: Fill post/update/import forms from URL parameters](greasyfork/prefill-forms-from-hash.user.js) | [doc](greasyfork/prefill-forms-from-hash.md) | Fills Greasy Fork's new script, new version, and import script forms from URL parameters, so they can be opened pre-filled. |
-| <img src="site-icons/greasyfork.org.png" width="16" height="16" alt=""> | [Show SourceMonkey test status on Greasy Fork](greasyfork/show-test-results.user.js) | [doc](greasyfork/show-test-results.md) | On Greasy Fork script pages, for scripts that have been tested with SourceMonkey, show the test results |
+| <img src="site-icons/greasyfork.org.png" width="16" height="16" alt=""> | [Greasy Fork: Show SourceMonkey's userscript test results](greasyfork/show-test-results.user.js) | [doc](greasyfork/show-test-results.md) | On Greasy Fork script pages, for scripts that have been tested with SourceMonkey, show the test results |
 
 ## `debugging/`
 

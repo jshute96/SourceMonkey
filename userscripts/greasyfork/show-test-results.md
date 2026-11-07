@@ -1,9 +1,12 @@
-# <img src="../site-icons/greasyfork.org.png" width="24" height="24" alt=""> Show SourceMonkey test status on Greasy Fork
+# <img src="../site-icons/greasyfork.org.png" width="24" height="24" alt=""> Greasy Fork: Show SourceMonkey's userscript test results
 
 ## Summary
 
-SourceMonkey includes tools that can test userscripts automatically, using
-the SourceMonkey extension and coding agents.
+The [SourceMonkey](https://github.com/jshute96/SourceMonkey) userscript
+manager includes tools for agentic userscript development, including
+tools that test userscripts automatically, using the SourceMonkey
+extension and coding agents.
+
 We've tested Greasy Fork's 2000 most-installed scripts, and some
 popular scripts in other categories, and stored the results.
 

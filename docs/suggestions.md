@@ -12,7 +12,7 @@ links to more about it (`infoUrl`):
   suggestion, with no dialog.
   - Not the GitHub folder: listing one goes through GitHub's API, which
     rate-limits unauthenticated use.
-- **Show SourceMonkey test status on Greasy Fork**: the corpus status
+- **Greasy Fork: Show SourceMonkey's userscript test results**: the corpus status
   script on GitHub Pages. Install opens its install page in a new tab.
 
 ## What shows

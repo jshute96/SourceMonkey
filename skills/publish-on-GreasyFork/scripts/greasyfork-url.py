@@ -7,6 +7,13 @@ the hash and fills the form; it has to be installed in the browser the URL
 opens in. The publish-on-GreasyFork skill says where to get it, and its
 .md has the full parameter list.
 
+The browser first opens the status page at
+https://jshute96.github.io/SourceMonkey/userscripts/greasyfork/open-prefilled-form.html
+With the userscript running, that page redirects straight to the form;
+otherwise it shows what to fix, such as installing the userscript, since
+nothing here can see that the form came up blank. --direct uses the form's own
+URL, as --print does unless --no-direct is given.
+
 Relative paths for import are read against the repo root: the git checkout
 holding the working directory.
 
@@ -57,17 +64,11 @@ Greasy Fork's own button.
   command. (A file the import names by URL isn't fetched, so isn't checked.)
 
 Local files:
-  --code-file and --info-file are read here and inlined into the URL, so
-  they always work. --image-files and --code-upload can only be passed as a
-  location for the browser to fetch, and file:// reads fail in userscript
-  managers that run the request from a service worker. If that bites, serve
-  the repo over HTTP and pass --http-base:
-
-    python3 -m http.server 8765 --directory .
-    greasyfork-url.py update 590960 --http-base http://localhost:8765 ...
-
-  Local paths under --http-root (default: the repo root) are then rewritten
-  to URLs under --http-base.
+  --code-file and --info-file are read here and inlined into the URL.
+  --image-files and --code-upload have to reach the browser as files, so
+  serve-files.py serves them from localhost in the background. It stops 90
+  seconds after the last request (5 minutes if nothing ever asks), so a URL
+  from --print with local files only works for that long.
 """
 import argparse
 import importlib.util
@@ -79,7 +80,6 @@ import subprocess
 import sys
 import tempfile
 import textwrap
-import time
 from pathlib import Path
 from urllib.parse import quote
 
@@ -89,6 +89,14 @@ sys.dont_write_bytecode = True
 
 DEFAULT_BASE = "https://greasyfork.org"
 DEFAULT_LOCALE = "en"
+
+# The parameters that name files for the browser to load, comma-separated.
+FILE_PARAMS = ("code_upload", "image_files")
+
+# What the browser opens by default (see --opener-page): the userscript
+# redirects from here to the form named by "to", carrying the hash along. The
+# hash isn't sent to GitHub.
+OPENER_URL = "https://jshute96.github.io/SourceMonkey/userscripts/greasyfork/open-prefilled-form.html"
 
 # Extension -> format, so passing a .md doc selects the Markdown radio
 # without having to say so twice.
@@ -222,21 +230,48 @@ def format_for(path_str: str, override: str | None) -> str:
   return FORMAT_BY_SUFFIX[suffix]
 
 
-def as_location(path_str: str, args) -> str:
-  """Turn a local path into something the *browser* can fetch."""
+def checked_source(path_str: str) -> str:
+  """A URL as it is, or a local path made absolute, once it's known to exist."""
   if "://" in path_str:
     return path_str
   path = Path(path_str).resolve()
   if not path.is_file():
     raise SystemExit(f"error: no such file: {path}")
-  if args.http_base:
-    root = Path(args.http_root).resolve()
-    try:
-      relative = path.relative_to(root)
-    except ValueError:
-      raise SystemExit(f"error: {path} is not under --http-root {root}, so it can't be served")
-    return f"{args.http_base.rstrip('/')}/{quote(str(relative))}"
-  return f"file://{path}"
+  return str(path)
+
+
+def serve_local_files(params: list[tuple[str, str]]) -> list[tuple[str, str]]:
+  """Start a file server for any local paths in `params`, and use its URLs.
+
+  This comes last, once nothing else can fail, so that a mistake in the
+  command doesn't leave a server waiting for a request that never comes.
+  """
+  sources = [source for key, value in params if key in FILE_PARAMS for source in value.split(",")]
+  local = [source for source in sources if "://" not in source]
+  if not local:
+    return params
+  # Each file is served at its path from the folder all of them share, so two
+  # files with the same name stay apart. The userscript names an upload after
+  # the last part of its URL.
+  root = Path(os.path.commonpath([Path(path).parent for path in local]))
+  served = {path: Path(path).relative_to(root).as_posix() for path in local}
+  server = subprocess.Popen(
+    [sys.executable, str(Path(__file__).resolve().parent / "serve-files.py"), "--", str(root), *served.values()],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL,
+    text=True,
+    # So that it outlives this command, which exits as soon as the browser opens.
+    start_new_session=True,
+  )
+  line = server.stdout.readline()
+  if not line:
+    raise SystemExit("error: could not start the server for local files")
+  base = json.loads(line)["base"]
+  urls = {path: f"{base}/files/{quote(served[path], safe='/')}" for path in local}
+  return [
+    (key, ",".join(urls.get(source, source) for source in value.split(",")) if key in FILE_PARAMS else value)
+    for key, value in params
+  ]
 
 
 def build_hash(params: list[tuple[str, str]]) -> str:
@@ -299,7 +334,7 @@ def script_params(args) -> list[tuple[str, str]]:
     params.append(("code_url", args.code_url))
   elif args.code_upload:
     check_requires_of(args.code_upload, args.code_upload)
-    params.append(("code_upload", as_location(args.code_upload, args)))
+    params.append(("code_upload", checked_source(args.code_upload)))
 
   doc_images: list[str] = []
   if args.extract_from_doc:
@@ -331,7 +366,7 @@ def script_params(args) -> list[tuple[str, str]]:
   paths = [path for group in (args.image_files or []) for path in group.split(",") if path.strip()]
   paths = paths or doc_images
   if paths:
-    params.append(("image_files", ",".join(as_location(p.strip(), args) for p in paths)))
+    params.append(("image_files", ",".join(checked_source(p.strip()) for p in paths)))
 
   if args.script_type:
     params.append(("script_type", args.script_type))
@@ -384,6 +419,10 @@ def update_params(args) -> list[tuple[str, str]]:
 def script_id_of(value: str) -> str:
   """Accept a bare id, a slug, or any URL containing /scripts/<id>."""
   if "://" not in value:
+    # An id or "<id>-<name>" slug. Anything else, such as a script's path
+    # given in its place, would make a form URL that doesn't exist.
+    if not re.fullmatch(r"\d+(?:-[^/]*)?", value):
+      raise SystemExit(f"error: {value} is not a Greasy Fork script id, slug or URL; pass the script's file with --code-file")
     return value
   # Take the segment after "scripts", not the first digit-leading one: a
   # host like "127.0.0.1:8765" would otherwise be read as the script id.
@@ -466,18 +505,18 @@ def main() -> int:
     sub.add_argument("--locale", default=argparse.SUPPRESS, help=visible(f"URL locale segment (default {DEFAULT_LOCALE})"))
     sub.add_argument("--keep-hash", action="store_true", default=argparse.SUPPRESS, help=visible("leave the parameters in the address bar"))
     sub.add_argument("--print", dest="print_only", action="store_true", default=argparse.SUPPRESS, help=visible("print the URL, don't launch a browser"))
+    sub.add_argument("--direct", action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS, help=visible("open the form itself, skipping the status page that shows what to fix first (default: on with --print)"))
+    sub.add_argument("--opener-page", metavar="URL", default=argparse.SUPPRESS, help=visible("the page to open first, as a URL or a local file, such as a changed copy to test (default: the one on GitHub Pages)"))
     sub.add_argument("--browser", default=argparse.SUPPRESS, help=visible("browser command (default google-chrome)"))
-    sub.add_argument("--http-base", default=argparse.SUPPRESS, help=visible("serve local files from this URL prefix instead of file://"))
-    sub.add_argument("--http-root", default=argparse.SUPPRESS, help=visible("directory --http-base serves (default: repo root)"))
 
   COMMON_DEFAULTS = {
     "base": DEFAULT_BASE,
     "locale": DEFAULT_LOCALE,
     "keep_hash": False,
     "print_only": False,
+    "direct": None,
+    "opener_page": OPENER_URL,
     "browser": "google-chrome",
-    "http_base": None,
-    "http_root": None,
   }
 
   add_common_options(parser)
@@ -553,9 +592,8 @@ def main() -> int:
   for key, value in COMMON_DEFAULTS.items():
     if not hasattr(args, key):
       setattr(args, key, value)
-  if args.http_root is None:
-    args.http_root = str(load_sibling("greasyfork-scripts.py").REPO_ROOT)
-  prefix = f"{args.base.rstrip('/')}/{args.locale}" if args.locale else args.base.rstrip("/")
+  base = args.base.rstrip("/")
+  prefix = f"/{args.locale}" if args.locale else ""
 
   if args.command == "new":
     path = f"{prefix}/script_versions/new"
@@ -582,12 +620,23 @@ def main() -> int:
   if not params:
     raise SystemExit("error: nothing to prefill")
 
-  url = f"{path}#{build_hash(params)}"
+  # The userscript only redirects to the real site, so another --base has to
+  # be opened directly. The opener page is checked before the file server
+  # starts, so a wrong path doesn't leave the server waiting.
+  direct = base != DEFAULT_BASE or (args.print_only if args.direct is None else args.direct)
+  if not direct:
+    opener = args.opener_page if "://" in args.opener_page else Path(checked_source(args.opener_page)).as_uri()
 
+  url_hash = build_hash(serve_local_files(params))
+  form_url = f"{base}{path}#{url_hash}"
+  url = form_url if direct else f"{opener}?to={quote(path, safe='/')}#{url_hash}"
   if args.print_only:
     print(url)
     return 0
-  print(url, file=sys.stderr)
+  # The hash can hold a whole script, so name its fields rather than print it.
+  # --print gives the full URL.
+  fields = ", ".join(dict.fromkeys(key for key, _ in params))
+  print(f"Opening {url.split('#')[0]}, filling {fields}", file=sys.stderr)
   open_in_browser(url, args.browser)
   return 0
 
@@ -599,10 +648,10 @@ def main() -> int:
 # 1-2k. Measured empirically; keep well under where it starts failing.
 BROWSER_URL_ARG_LIMIT = 8000
 
-# How long a launcher page is left on disk before a later run may clear it
-# out. Only has to outlast the browser's read of it, which is immediate;
-# the margin is for a browser that has to start up first.
-LAUNCHER_KEEP_SECONDS = 600
+# How long a launcher page is left on disk before it's deleted. Only has to
+# outlast the browser's read of it, which is immediate; the margin is for a
+# browser that has to start up first.
+LAUNCHER_KEEP_SECONDS = 30
 
 
 def open_in_browser(url, browser):
@@ -614,11 +663,6 @@ def open_in_browser(url, browser):
   target = url
   if len(url) > BROWSER_URL_ARG_LIMIT:
     target = write_launcher(url)
-    print(
-      f"note: URL is {len(url)} chars, too long to pass to {browser} directly; "
-      f"opening via {target}",
-      file=sys.stderr,
-    )
   try:
     subprocess.Popen(
       [browser, target],
@@ -634,20 +678,9 @@ def write_launcher(url):
   """Write a self-redirecting page for `url` and return a file:// URL for it.
 
   Each of these holds a whole inlined script, so they are not small. The
-  browser reads the file asynchronously, so this one can't be deleted on the
-  way out — instead every run clears out the ones left by earlier runs, but
-  only those old enough that no browser can still be opening them. Deleting
-  every launcher outright breaks the case this is most used for: multiple
-  forms opened back to back, where the next run would pull the file out from
-  under the tab the last one just launched.
+  browser reads the file after this command exits, so a detached process
+  deletes it a little later.
   """
-  stale_before = time.time() - LAUNCHER_KEEP_SECONDS
-  for old_file in Path(tempfile.gettempdir()).glob("greasyfork-launch-*.html"):
-    try:
-      if old_file.stat().st_mtime < stale_before:
-        old_file.unlink()
-    except OSError:
-      pass
   html = (
     "<!doctype html><meta charset=utf-8><title>Opening Greasy Fork\u2026</title>\n"
     "<body style=\"font:15px system-ui;padding:2rem\">\n"
@@ -659,6 +692,14 @@ def write_launcher(url):
   handle, path = tempfile.mkstemp(prefix="greasyfork-launch-", suffix=".html")
   with os.fdopen(handle, "w", encoding="utf-8") as f:
     f.write(html)
+  subprocess.Popen(
+    [sys.executable, "-c", "import os, sys, time; time.sleep(float(sys.argv[1])); os.remove(sys.argv[2])",
+     str(LAUNCHER_KEEP_SECONDS), path],
+    stdin=subprocess.DEVNULL,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+    start_new_session=True,
+  )
   # as_uri() rather than "file://" + path: a temp dir with a space or a
   # non-ASCII character in it otherwise yields a malformed argument, which
   # the browser drops as silently as the over-long URL this is working around.

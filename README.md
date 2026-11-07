@@ -725,7 +725,7 @@ Results:
   status, with notes.
 - [Analysis](https://jshute96.github.io/SourceMonkey/greasyfork-testing/analysis.html):
   statistics on which headers and `GM_*` APIs the scripts use most.
-- [Show SourceMonkey test status on Greasy Fork](https://jshute96.github.io/SourceMonkey/userscripts/greasyfork/show-test-results.user.js):
+- [Greasy Fork: Show SourceMonkey's userscript test results](https://jshute96.github.io/SourceMonkey/userscripts/greasyfork/show-test-results.user.js):
   a userscript that shows test results inline on Greasy Fork, next to the
   stats on script pages and search pages. Open the link with a userscript
   manager to install it.
