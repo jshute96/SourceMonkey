@@ -1,0 +1,44 @@
+<!doctype html>
+<!--
+  The page greasyfork-url.py opens first. With prefill-forms-from-hash.user.js
+  running, the script redirects from here to the Greasy Fork form before this
+  page matters. Without it, these instructions are what the person sees, in
+  place of a blank form. See prefill-forms-from-hash.md.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Open a Greasy Fork form</title>
+<style>
+:root { color-scheme: light dark; --text: #1f2328; --muted: #59636e; --bg: #fff; --accent: #0969da; --note: #f6f8fa; --border: #d1d9e0; }
+@media (prefers-color-scheme: dark) {
+  :root { --text: #e6edf3; --muted: #9198a1; --bg: #0d1117; --accent: #4493f8; --note: #161b22; --border: #3d444d; }
+}
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, sans-serif; }
+main { max-width: 38rem; margin: 0 auto; padding: 2.5rem 1rem; }
+h1 { margin: 0 0 1rem; font-size: 1.5rem; line-height: 1.25; }
+a { color: var(--accent); }
+li { margin-bottom: 0.5rem; }
+button { padding: 0.45rem 1rem; border: 1px solid var(--border); border-radius: 6px; background: var(--note); color: inherit; font: inherit; cursor: pointer; }
+#status { padding: 0.75rem 1rem; border: 1px solid var(--border); border-radius: 6px; background: var(--note); }
+.muted { color: var(--muted); font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Open a Greasy Fork form</h1>
+  <p id="status" hidden></p>
+  <div id="install">
+    <p>This page opens a prefilled Greasy Fork form, which needs the prefill userscript. The script isn't running in this browser.</p>
+    <ol>
+      <li>Install a userscript manager, such as <a href="https://github.com/jshute96/SourceMonkey">SourceMonkey</a> or <a href="https://www.tampermonkey.net/">Tampermonkey</a>, if this browser doesn't have one.</li>
+      <li>Install or update <a href="prefill-forms-from-hash.user.js">the prefill userscript</a>. If it's already installed, check that it's enabled.</li>
+      <li>Reload this page to continue to the form.</li>
+    </ol>
+    <p><button type="button" onclick="location.reload()">Reload</button></p>
+    <p class="muted">Reloading keeps the form's values, which are stored in this page's URL.</p>
+  </div>
+</main>
+</body>
+</html>
