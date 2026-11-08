@@ -14,7 +14,7 @@ import type { Browser, BrowserContext, ConsoleMessage, Frame, Page } from '@play
 
 import { shellWord } from './command-lines.js';
 import {
-  commandOutput, commandRunner, DialogTracker, dismissSettingUpDialogs, gotoInTab, hasUntrackedDialog, leaveDialogsOpen, trackSettingUp, onlyInspects, reloadTab, reloadable, serveSavedPage, setCommandsListening, skippedScriptLine, targetIdSuffix, withoutQuery,
+  commandOutput, commandRunner, DialogTracker, dismissSettingUpDialogs, gotoInTab, hasUntrackedDialog, leaveDialogsOpen, trackSettingUp, onlyInspects, reloadTab, reloadable, serveSavedPage, setCommandsListening, shortValue, skippedScriptLine, targetIdSuffix, withoutQuery,
   type CommandRunner, type ConsoleContext, type ControlledTab,
 } from './console-commands.js';
 import { applyLang, langLaunchArgs } from './browser-lang.js';
@@ -1924,18 +1924,6 @@ function wireHostOutput(host: ExtensionHost, emit: (fields: LogFields) => void, 
         : `GM_setValue ${w.key} = ${shortValue(w.value)}`);
     }
   });
-}
-
-// Longer stored values are cut in `GM_setValue` lines, so a cache a
-// script stores doesn't bury the rest of the output. `values` and
-// `get` show them whole.
-const VALUE_SHOWN_CHARS = 100;
-
-function shortValue(value: unknown): string {
-  const json = JSON.stringify(value) ?? String(value);
-  if (json.length <= VALUE_SHOWN_CHARS) return json;
-  // By code point, so an emoji isn't cut in half.
-  return `${Array.from(json).slice(0, VALUE_SHOWN_CHARS).join('')}... (${json.length} chars; get shows it all)`;
 }
 
 // A page whose CSP sandboxes it without allow-scripts gets no MAIN-world

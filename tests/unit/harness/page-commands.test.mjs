@@ -110,7 +110,7 @@ test('click says what is wrong with its flags', () => {
   assert.equal(typed('e4 --button back'), '`back` is not a mouse button. Use `left`, `right` or `middle`.');
   assert.equal(typed('e4 --modifiers Shift+Q'), '`Q` is not a modifier key. Use `Alt`, `Control`, `ControlOrMeta`, `Meta`, `Shift`, joined by `+`.');
   assert.equal(typed('e4 --count 0'), 'The `--count` flag takes a number of clicks from 1 to 10, not `0`');
-  assert.equal(typed('e4 --at 5'), 'The `--at` flag takes x,y in pixels from the element\'s top left corner, e.g. `--at 10,5`, not `5`');
+  assert.equal(typed('e4 --at 5'), 'The `--at` flag takes x,y in pixels from the top left corner of the element (or of the window, with no selector), e.g. `--at 10,5`, not `5`');
 });
 
 test('click and hover take --at, and hover --modifiers but no click-only flags', () => {

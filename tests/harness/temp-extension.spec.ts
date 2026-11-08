@@ -2,7 +2,8 @@
 // the built extension (dist/), and the script runs in it, in the tab
 // the run opened before pushing it (see warmUp in extension-launch.ts).
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 
 import { chromium, type BrowserContext } from '@playwright/test';
 
@@ -189,11 +190,14 @@ test('SourceMonkey-managed scripts on the tab are E1, ..., kept out, and their v
       meta: { name: 'Mine', match: ['*://*/target.html'] },
       body: `console.log('[mine] title ' + document.title);`,
     });
+    const saved = path.join(scriptsDir.path, 'other-values.json');
     const { lines, left } = await driveCli(['--existing-browser', '--browser', launched.endpoint, 'start', file, `${fixtureServer.baseUrl}/target.html`], [
       ['Mine started on', 'scripts'],
       ['E1: Other', 'values E1'],
       ['seen = 1', 'scripts E1'],
-      ['Selected E1: Other', 'scripts'],
+      // The selected one's values, to a file.
+      ['Selected E1: Other', `values --out ${saved}`],
+      ['Wrote 1 value (E1: Other) to', 'scripts'],
       ['* E1: Other', 'set seen --force 2'],
       ['Set seen', 'get seen'],
       // Not a throwaway browser, so without --force it refuses (which
@@ -203,6 +207,7 @@ test('SourceMonkey-managed scripts on the tab are E1, ..., kept out, and their v
     const text = lines.join('\n');
     expect(left, text).toEqual([]);
     expect(text).toContain('so this would change its real stored data. Use --force to continue.');
+    expect(JSON.parse(readFileSync(saved, 'utf8'))).toEqual({ seen: 1 });
     // The picked one is marked, and the run's own script isn't.
     expect(text).toMatch(/\* E1: Other \(Scripts from web\)/);
     // Kept out of the run's tab: only the run's own script ran there.

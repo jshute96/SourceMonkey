@@ -4,7 +4,7 @@
 // dialog a command opens waits for a typed answer, and with several
 // tabs the commands name them as T1, T2 and act on the one picked.
 
-import { writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { test, expect } from '../fixtures/harness.js';
@@ -54,6 +54,16 @@ test.describe('sm-dev typed commands', () => {
       'Stored values:', `  1: First (${scriptsDir.path}/first.user.js)`, '    who = "one"', `* 2: Second (${scriptsDir.path}/second.user.js)`, '    who = "changed"',
     ]);
     expect(await run('values 1')).toEqual(['Stored values:', `  1: First (${scriptsDir.path}/first.user.js)`, '    who = "one"']);
+    // Written whole, for --values-file and set --file to read back.
+    expect(await run('values --out vals.json')).toEqual(['[sm-dev] Wrote 1 value (Second) to vals.json']);
+    expect(JSON.parse(readFileSync(path.join(scriptsDir.path, 'vals.json'), 'utf8'))).toEqual({ who: 'changed' });
+    expect(await run('values 1 --out one.json')).toEqual(['[sm-dev] Wrote 1 value (First) to one.json']);
+    expect(JSON.parse(readFileSync(path.join(scriptsDir.path, 'one.json'), 'utf8'))).toEqual({ who: 'one' });
+    expect(await run('values all --out all.json')).toEqual(['[sm-dev] ERROR: The --out flag writes one script\'s values. Name one script, or select one with `script`.']);
+    expect(await run('get who --out who.json')).toEqual(['[sm-dev] Wrote `who` (Second) to who.json']);
+    expect(JSON.parse(readFileSync(path.join(scriptsDir.path, 'who.json'), 'utf8'))).toBe('changed');
+    expect(await run('get nobody --out nobody.json')).toEqual(['[sm-dev] ERROR: Nothing is stored under `nobody` (Second), so nothing was written']);
+    expect(existsSync(path.join(scriptsDir.path, 'nobody.json'))).toBe(false);
     expect(await run('values now')).toEqual(['[sm-dev] No loaded script matches `now`. Use `scripts` to list them.']);
     expect(await run('status now')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The `status` command takes no arguments\.\n {2}Usage: /)]);
     expect(await run('reload now')).toEqual(['[sm-dev] ERROR: `now` is not a tab. Tabs are named T1, T2 and so on; use `tabs` to list them.']);
@@ -121,6 +131,32 @@ test.describe('sm-dev typed commands', () => {
     ctx.interactive = true;
     expect(await run('menu Late --timeout-seconds 5')).toEqual(['[sm-dev] Fired "Late"']);
     await expect.poll(() => host.getValue(script.id!, 'said')).toBe(3);
+  });
+
+  test('menu matches a label without its case and the emoji or symbols around it, when only one does', async ({ page, fixtureServer, host, attachment, loadScript }) => {
+    const script = await loadScript({
+      relativePath: 'menus.user.js',
+      meta: { name: 'Menus', match: ['*://*/target.html'], grant: ['GM_registerMenuCommand', 'GM_setValue'] },
+      body: `GM_registerMenuCommand('⚙️ Script Settings', () => GM_setValue('said', 'settings'));
+        GM_registerMenuCommand('★ Star', () => GM_setValue('said', 'star'));
+        GM_registerMenuCommand('Star!', () => GM_setValue('said', 'star!'));`,
+    });
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect.poll(() => host.reports.menuCommands.length).toBe(3);
+    const lines: string[] = [];
+    const tabs = [{ n: 1, page, link: attachment }];
+    const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(plainLine(l)), stop: () => undefined, interactive: true };
+    const run = async (line: string) => {
+      lines.length = 0;
+      await runConsoleCommand(line, ctx);
+      return [...lines];
+    };
+    expect(await run('menu script settings')).toEqual(['[sm-dev] Fired "⚙️ Script Settings"']);
+    await expect.poll(() => host.getValue(script.id!, 'said')).toBe('settings');
+    // Two labels match that way, so neither fires; the exact one still does.
+    expect(await run('menu star')).toEqual(['[sm-dev] Multiple menu commands match `star`: "★ Star", "Star!". Give the whole label, or its M number.']);
+    expect(await run('menu Star!')).toEqual(['[sm-dev] Fired "Star!"']);
+    await expect.poll(() => host.getValue(script.id!, 'said')).toBe('star!');
   });
 
   test('menu lists a repeated caption once, firing all its registrations, as the popup does', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {

@@ -589,6 +589,13 @@ one rule, so a guess is usually right:
   row: `screenshot --selector`, `snapshot --selector`, `logs
   --script`. A lone optional argument with a shape of its own stays
   positional (`open [page]`).
+- A flag whose value is optional (`eval --script[=<script>]`) takes one
+  after `=`. A bare `--script` takes the next word only when it is a
+  script ID and code comes right after it (`eval --script 1 'code'`),
+  since agents guess that form.
+  - `eval --script 1` alone, or before a flag (`--out f`), evaluates `1`.
+  - `eval --script 1 + 1` evaluates `+ 1` in script 1. That reading is
+    rare enough to accept.
 - A tab is `--tab T2` on every command that takes one. `tab` in the
   syntax says what else it takes:
   - `flag`: only `--tab`, for commands where the tab says where they
@@ -1350,6 +1357,14 @@ response, so it says so directly.
   tab when its last report there is a start rather than a skip.
 - Menu commands fire by record (`fireMenuEntry`), not by id, since two
   tabs can register the same custom id.
+- `menu <label>` tries the exact label first. Failing that, it matches
+  ignoring case and the emoji or symbols around a label
+  (`looseMenuMatch`), since agents give `⚙️ Settings` as `Settings`.
+  - Only when one distinct label matches that way. Two different labels
+    that both match fire neither.
+- A script word is a path ending in `.user.js`, or a URL whose path
+  does (`isScriptWord` in checks.ts). A page URL whose query or fragment
+  ends that way (`form.html#url=x.user.js`) stays a page.
 - A manual script (`@run-at context-menu`) that can run on a tab's
   document lists `Run this script` first among its commands, run or
   not ([manual-scripts.md](manual-scripts.md#sm-dev)).

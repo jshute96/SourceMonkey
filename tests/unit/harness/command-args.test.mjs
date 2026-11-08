@@ -75,6 +75,15 @@ test('a flag with an optional value takes it only after =', () => {
   assert.deepEqual(typed('eval', '--script=a --script'), { error: 'The --script flag can be given once', flag: '--script' });
   // Sent as words, as `sm-dev eval --script=2 x` does.
   assert.deepEqual(sent('eval', '--script=2', 'x').flags, { '--script': '2' });
+  // A script ID after a bare --script, with code after it, is its value.
+  assert.deepEqual(typed('eval', `--script 1 'document.title'`), { flags: { '--script': '1' }, words: [], text: 'document.title' });
+  assert.deepEqual(typed('eval', '--script T2.3 x'), { flags: { '--script': 'T2.3' }, words: [], text: 'x' });
+  assert.deepEqual(sent('eval', '--script', 'E4', '1+1'), { flags: { '--script': 'E4' }, words: [], text: '1+1' });
+  // Alone after it, the ID is the code; quoted, it is code too.
+  assert.deepEqual(typed('eval', '--script 1'), { flags: { '--script': true }, words: [], text: '1' });
+  assert.deepEqual(typed('eval', `--script '1' x`), { flags: { '--script': true }, words: [], text: `'1' x` });
+  // Before a flag, the ID is the code too.
+  assert.deepEqual(typed('eval', '--script 2 --out f'), { flags: { '--script': true, '--out': 'f' }, words: [], text: '2' });
 });
 
 test('arguments a command doesn\'t take are refused, with its usage', () => {
@@ -85,6 +94,10 @@ test('arguments a command doesn\'t take are refused, with its usage', () => {
   assert.equal(first(typed('focus', 'T1 T2 T3')), 'The `focus` command takes at most one argument besides a tab.');
   assert.deepEqual(typed('attach', 'D1 D2'), { error: ['The `attach` command takes at most one argument.', '  Usage: `attach [ID]`', '  Flags: `--log-source SOURCE`', '  See `help attach`.'].join('\n') });
   assert.equal(first(typed('logs', 'all')), 'The `logs` command takes no arguments.');
+  // A word after a flag's value may be the rest of it, unquoted.
+  assert.equal(first(typed('logs', '--find /a|b c/')), 'The `logs` command takes no arguments. If `c/` is part of the `--find` value, quote the whole value.');
+  // Only after a text value: a number's is whole.
+  assert.equal(first(typed('logs', '--tail 20 all')), 'The `logs` command takes no arguments.');
   assert.equal(typed('logs', '--tab all').tab, 'all');
   // An extra argument in screenshot's shows where the element goes.
   assert.match(typed('screenshot', '.btn out.png').error, /^ {2}Flags: `--selector <css>`/m);

@@ -30,6 +30,20 @@ export interface ScriptRoots {
 // (after expandPathArg: a directory there stands for its scripts).
 export const SCRIPT_ARG = /\.user\.js$/i;
 
+/**
+ * Whether a command's word names a script rather than a page: a path
+ * ending in `.user.js`, or a URL whose path does. A page URL whose query
+ * or fragment ends that way (`page.html#url=x.user.js`) is a page.
+ */
+export function isScriptWord(word: string): boolean {
+  if (!HAS_SCHEME.test(word)) return SCRIPT_ARG.test(word);
+  try {
+    return SCRIPT_ARG.test(new URL(word).pathname);
+  } catch {
+    return SCRIPT_ARG.test(word);
+  }
+}
+
 // A script named by a web address rather than a path: `validate` and
 // `match` fetch it.
 export const REMOTE_SCRIPT = /^https?:\/\//i;

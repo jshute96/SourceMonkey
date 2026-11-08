@@ -354,8 +354,9 @@ $R screenshot btn.png --selector '.save'   # just one element
   pixels over `cdp`, which skips those checks.
 - `--at x,y` clicks or hovers at a point in the element (pixels from
   its top left corner), for a spot other than its center, e.g. a row's
-  empty space rather than the link in its middle. `hover` takes
-  `--modifiers` too.
+  empty space rather than the link in its middle. With no selector,
+  `--at` is a point in the window, for UI no selector reaches (a
+  closed shadow root). `hover` takes `--modifiers` too.
   - `--at` is in CSS pixels. A `--headed` screenshot can be in device
     pixels (1740 px wide for a 1280 px page), so divide a point read
     off it by `eval --page devicePixelRatio` first.
@@ -488,6 +489,8 @@ $R menu                 # the tab's commands: M1, M2 ...
 $R menu 'Toggle dark'   # fire by label (or: menu M1)
 $R menu 'Run this script'  # run a @run-at context-menu script (again)
 $R values               # what the scripts stored
+$R values --out v.json  # one script's, whole, for --values-file
+$R get lastItem --out item.json   # one value, whole, for set --file
 $R get lastItem
 $R set units '"metric"' # JSON; running scripts' change listeners fire
 $R set prefs --file prefs.json                 # long JSON, from a file
@@ -503,6 +506,10 @@ $R start ... --values-file values.json         # seed from a JSON file
 - Stored values belong to the script and survive `update` and reloads.
   They live in the extension; `--values` seeds them as the script is
   pushed.
+- A temp-browser run starts with nothing stored, so a script that caches
+  an API lookup in GM storage repeats it on each run, which can use up
+  a rate limit. Save the cached values once with `values --out
+  values.json`, and seed later runs with `--values-file values.json`.
 
 ### `@run-at context-menu` scripts
 

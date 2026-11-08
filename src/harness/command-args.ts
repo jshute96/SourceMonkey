@@ -175,6 +175,8 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
   let mistake: { error: string } | undefined;
   // The tab came leading, not as `--tab`.
   let ledTab = false;
+  // Each word right after a flag's separate value, with that flag.
+  const afterValue = new Map<Word, string>();
   for (let i = 0; i < list.length; i++) {
     const word = list[i];
     // In a command that takes text, only a flag-shaped word (the text's
@@ -187,6 +189,9 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
       }
       const taken = takeFlag(command, syntax, parsed, list, i);
       if (typeof taken === 'object') return taken;
+      // A text value taken from the next word: a word after that may be
+      // the rest of it, unquoted (`--find /a b/`).
+      if (taken > i && list[taken + 1] && /text/i.test(syntax.values[word.text] ?? '')) afterValue.set(list[taken + 1], word.text);
       i = taken;
       continue;
     }
@@ -267,7 +272,11 @@ export function parseCommandArgs(command: string, input: { line: string } | { wo
   }
   switch (shape.args) {
     case 'none':
-      if (own.length > 0) mistake ??= { error: withUsage(`The ${quoted(usageName)} command takes no arguments`, usageName) };
+      if (own.length > 0) {
+        const flag = afterValue.get(own[0]);
+        const hint = flag ? `. If ${quoted(own[0].text)} is part of the ${quoted(flag)} value, quote the whole value` : '';
+        mistake ??= { error: withUsage(`The ${quoted(usageName)} command takes no arguments${hint}`, usageName) };
+      }
       break;
     case 'words':
       if (shape.max !== undefined && own.length > shape.max) {
@@ -368,6 +377,10 @@ export function helpRequest(command: string, input: { line: string } | { words: 
   return { command, ...(subcommand !== undefined ? { subcommand } : {}) };
 }
 
+// A script ID as `--script` can take one without `=`: its number, one on
+// a tab (`T2.3`), or an installed script's (`E1`).
+const SCRIPT_ID_WORD = /^(?:\d+|T\d+\.\d+|E\d+)$/;
+
 // The flag at `list[i]`, recorded in `parsed`: the index of its last
 // word, or what's wrong.
 function takeFlag(command: string, syntax: CommandSyntax, parsed: ParsedArgs, list: Word[], i: number): number | { error: string; flag: string } {
@@ -389,6 +402,16 @@ function takeFlag(command: string, syntax: CommandSyntax, parsed: ParsedArgs, li
     return { error: noSuchFlag(scope.name, name, scope.flags), flag: name };
   }
   if (Object.hasOwn(parsed.flags, name)) return { error: `The ${name} flag can be given once`, flag: name };
+  // A bare `--script` before code takes a script ID as its value too
+  // (`eval --script 1 'code'`), when code follows the ID: an ID alone
+  // after it, or before a flag, is the code (`eval --script 1` gives 1).
+  const next = list[i + 1];
+  const after = list[i + 2];
+  if (kind === 'optional' && eq < 0 && syntax.values[name] === '<script>' && next && !next.quoted
+    && SCRIPT_ID_WORD.test(next.text) && after && (after.quoted || !/^--./.test(after.text))) {
+    parsed.flags[name] = next.text;
+    return i + 1;
+  }
   if (kind === 'bool' || (kind === 'optional' && eq < 0)) {
     if (eq > 0) return { error: `The ${name} flag takes no value`, flag: name };
     parsed.flags[name] = true;

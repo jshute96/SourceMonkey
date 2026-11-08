@@ -151,6 +151,8 @@ test('frames: ids, the scripts in each frame, menus and match', async ({ page, f
   expect(await run('eval --frame T1 location.pathname')).toEqual(['"/frames/frames.html"']);
   const before = Number(host.getValue(every.id!, 'count') ?? 0);
   expect((await run(`click --frame ${b} '#buttons button'`)).at(-1)).toBe(`[sm-dev] Clicked #buttons button in ${b}`);
+  // A point in the window has no frame to be in.
+  expect(await run(`click --frame ${b} --at 5,5`)).toEqual(['[sm-dev] ERROR: With no selector, --at is a point in the window, so --frame doesn\'t apply. Give a selector to click in a frame.']);
   await expect.poll(() => host.getValue(every.id!, 'count')).toBe(before + 1);
   expect(await run(`probe --frame ${nested} --css '#log li'`)).toEqual(['found    #log li  (1)', `    selector (in ${nested}): li`]);
   expect(await run(`wait selector --frame ${nested} '#log li'`)).toEqual([`[sm-dev] Wait done: The selector #log li matches on T1.${nested}`]);

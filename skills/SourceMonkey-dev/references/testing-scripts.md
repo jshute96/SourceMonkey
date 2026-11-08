@@ -185,7 +185,7 @@ While a run is live:
 
 - A `newtab --noscript` tab on the same page is the control to compare with.
 - UI in a closed shadow root is out of reach of selectors and `snapshot`. Find it
-  in a `screenshot`, and use `click html --at x,y`.
+  in a `screenshot`, and use `click --at x,y` (a point in the window).
 - `@run-at document-start` code may run after the page's first inline scripts,
   where SourceMonkey alone would run it first. A script that hooks `fetch` or
   `XMLHttpRequest` early may miss page code for that reason; say so in the note.

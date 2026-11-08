@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { globFiles } from '../../../lib/harness/path-args.js';
-import { UsageError, expandPathArg, expandPathArgs } from '../../../lib/harness/checks.js';
+import { UsageError, expandPathArg, expandPathArgs, isScriptWord } from '../../../lib/harness/checks.js';
 
 const root = mkdtempSync(path.join(os.tmpdir(), 'sm-path-args-'));
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -80,4 +80,13 @@ test('a word with a * and no scheme is a glob, even one that looks like a host',
 
 test('an empty word is left as it is, not the current directory', () => {
   assert.deepEqual(expandPathArg('', root, { scripts: true }), ['']);
+});
+
+test('a URL is a script by its path, not its query or fragment', () => {
+  assert.equal(isScriptWord('sites/x.user.js'), true);
+  assert.equal(isScriptWord('https://x.test/a/b.user.js'), true);
+  assert.equal(isScriptWord('https://x.test/a/b.user.js?v=2'), true);
+  assert.equal(isScriptWord('file:///p/form.html?to=/a#urls=https://x.test/b.user.js'), false);
+  assert.equal(isScriptWord('https://x.test/page?u=b.user.js'), false);
+  assert.equal(isScriptWord('example.com'), false);
 });

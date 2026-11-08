@@ -95,6 +95,11 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('eval --tab [targetId=ABCDEF0123456789] document.title')).toEqual(['"target"']);
   expect(await run('hover button')).toEqual(['[sm-dev] Hovered over button']);
   expect(await run('hover button --modifiers Shift --at 2,2')).toEqual(['[sm-dev] Hovered over button with Shift held, the mouse at 2,2 in it']);
+  // With no selector, `--at` is a point in the window.
+  await page.evaluate(() => document.addEventListener('click', (e) => { (window as any).clickedAt = [e.clientX, e.clientY, e.shiftKey]; }, { once: true }));
+  expect(await run('click --at 5,7 --modifiers Shift')).toEqual(['[sm-dev] Clicked the point 5,7 in the window with Shift held']);
+  expect(await page.evaluate(() => (window as any).clickedAt)).toEqual([5, 7, true]);
+  expect(await run('hover --at 5,7')).toEqual(['[sm-dev] Hovered over the point 5,7 in the window']);
   // A command that failed is false, so a line of several stops there.
   expect(await runConsoleCommand('click \'#nothing\'', ctx)).toBe(false);
   expect(await runConsoleCommand('eval nothing.here', ctx)).toBe(false);

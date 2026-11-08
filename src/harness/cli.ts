@@ -49,7 +49,7 @@ import { parseLogSources, type LogSource } from './run-logs.js';
 import { preparedScriptName, shownPath, withDefaultScheme } from './prepare.js';
 import { pagesToOpen, type PageWord, type SavedPageStart } from './saved-pages.js';
 import {
-  REMOTE_SCRIPT, SCRIPT_ARG, UsageError, expandPathArg, isManifestArg, manifestScripts, matchJson, matchLines, prepareSource, scriptFile, scriptSources, validateAll, validateSources,
+  REMOTE_SCRIPT, UsageError, expandPathArg, isScriptWord, isManifestArg, manifestScripts, matchJson, matchLines, prepareSource, scriptFile, scriptSources, validateAll, validateSources,
   type ScriptRoots,
 } from './checks.js';
 
@@ -296,7 +296,7 @@ function scriptsAndUrls(words: string[]): { scripts: string[]; urls: string[]; p
   }))];
   // Each once, so a repeat is neither checked nor opened twice.
   const pages = new Map<string, PageWord>();
-  for (const word of args.filter((a) => !SCRIPT_ARG.test(a))) {
+  for (const word of args.filter((a) => !isScriptWord(a))) {
     // A script misnamed would otherwise be opened as a page, leaving
     // the run with no scripts.
     if (/\.js$/i.test(word) && !/^[a-z][a-z0-9+.-]*:/i.test(word)) throw new UsageError(`${quoted(word)} is not a userscript: Its name doesn't end in .user.js`);
@@ -307,7 +307,7 @@ function scriptsAndUrls(words: string[]): { scripts: string[]; urls: string[]; p
   // one script (the extension keeps a run's scripts by the path typed).
   // The first spelling is kept.
   const scripts = new Map<string, string>();
-  for (const word of args.filter((a) => SCRIPT_ARG.test(a))) {
+  for (const word of args.filter((a) => isScriptWord(a))) {
     const file = scriptKey(word);
     if (!scripts.has(file)) scripts.set(file, word);
   }
@@ -956,9 +956,10 @@ async function targetRun(wanted: string | undefined): Promise<RunRecord> {
 function checkedRunId(typed: string, flag = '--run '): string {
   const id = runIdOf(typed);
   if (id) return id;
-  throw new UsageError(/^\d+$/.test(typed)
-    ? `Runs are named D1, D2 and so on. Did you mean ${flag}D${typed}?`
-    : `The run ID ${typed} is not valid. Run IDs are D and then letters, digits, _ or -.`);
+  if (/^\d+$/.test(typed)) throw new UsageError(`Runs are named D1, D2 and so on. Did you mean ${quoted(`${flag}D${typed}`)}?`);
+  // A name of one's own that only lacks the leading D.
+  const withD = runIdOf(`D${typed}`) ? ` Did you mean ${quoted(`${flag}D${typed}`)}?` : '';
+  throw new UsageError(`The run ID ${typed} is not valid. Run IDs are D and then letters, digits, _ or -.${withD}`);
 }
 
 function isTypedCommand(name: string): boolean {
@@ -2140,6 +2141,21 @@ function atTerminal(): boolean {
 
 const START_ALONE = 'The start command with nothing after it would stop the run as soon as it started. Add --interactive for a prompt, --detach to leave it running, --stop-after-seconds N to watch it for a while, or commands after --.';
 
+/**
+ * When `start`'s arguments include a run command (`start x.user.js
+ * example.com eval 1`), the likely slip: the commands were meant to run
+ * after it, which takes `--`. `words`: the command as given, flags
+ * included, for the fixed version. Null when there is none.
+ */
+function commandsInStart(words: string[], args: string[]): string | null {
+  const command = args.find(isTypedCommand);
+  if (command === undefined) return null;
+  // After `start` itself, which could be a word a later one repeats.
+  const at = words.indexOf(command, 1);
+  const fixed = [...words.slice(0, at), '--', ...words.slice(at)].map(shellWord).join(' ');
+  return `${quoted(command)} is a command, not a script or page for ${quoted('start')}. To run commands after ${quoted('start')}, put ${quoted('--')} before them: ${quoted(fixed)}`;
+}
+
 async function main(): Promise<void> {
   // Output piped into something that stops reading early (`| head`)
   // ends the command quietly, as other command-line tools do, rather
@@ -2224,6 +2240,16 @@ async function main(): Promise<void> {
     if (commands.length > 1) writeErr(NONE_RUN);
     process.exitCode = failed;
     return;
+  }
+  // A `start` whose arguments include a run command, which would
+  // otherwise be opened as a page.
+  for (const words of commands) {
+    const opts = parseCommand(words).kind === 'cli' ? parseArgs(words) : null;
+    const slip = opts?.command === 'start' ? commandsInStart(words, opts.args) : null;
+    if (slip) {
+      process.exitCode = printMistake(new UsageError(slip));
+      return;
+    }
   }
   // A `start` with nothing after it to keep it going: it would start the
   // run and stop it again straight away. Its flags can come first. At a

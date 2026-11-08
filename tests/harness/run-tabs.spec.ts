@@ -1034,3 +1034,33 @@ test('--browser gives a temp browser its port, which must be free', async () => 
     blocker.close();
   }
 });
+
+test('values --out writes what --values-file seeds a later run with', async ({ fixtureServer, scriptsDir }) => {
+  // Stores its values only when it has none, as a cache would.
+  const file = scriptsDir.write({
+    relativePath: 'cache.user.js',
+    meta: { name: 'Cache', match: ['*://*/target.html*'], grant: ['GM_getValue', 'GM_setValue'] },
+    body: `
+      if (GM_getValue('lookup') === undefined) {
+        GM_setValue('lookup', { id: 7, text: 'x'.repeat(2000) });
+        GM_setValue('when', 'first run');
+      }
+      console.log('[cache] ' + GM_getValue('when'));
+    `,
+  });
+  const saved = path.join(scriptsDir.path, 'values.json');
+  const cli = (...args: string[]): Promise<string> => new Promise((resolve) => {
+    execFile(process.execPath, [CLI, '--root', scriptsDir.path, ...args], (_err, stdout, stderr) => resolve(stdout + stderr));
+  });
+  const url = `${fixtureServer.baseUrl}/target.html`;
+  const first = await cli('start', file, url, '--', 'wait', 'log', '[cache]', '--', 'values', '--out', saved);
+  expect(first).toContain('Wrote 2 values to');
+  // Whole, not cut as `values` prints a long one.
+  expect(JSON.parse(readFileSync(saved, 'utf8'))).toEqual({ lookup: { id: 7, text: 'x'.repeat(2000) }, when: 'first run' });
+
+  // A later run seeded from the file finds them, and doesn't store again.
+  writeFileSync(saved, JSON.stringify({ ...JSON.parse(readFileSync(saved, 'utf8')), when: 'seeded' }));
+  const second = await cli('start', '--values-file', saved, file, url, '--', 'wait', 'log', '[cache]', '--', 'get', 'lookup');
+  expect(second).toContain('[cache] seeded');
+  expect(second).toContain(`lookup = {"id":7,"text":"${'x'.repeat(2000)}"}`);
+});

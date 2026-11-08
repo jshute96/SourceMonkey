@@ -245,8 +245,31 @@ export async function runPageCommand(
           return;
         }
         const { selector } = options;
+        // No element: `--at` is a point in the window, for what no
+        // selector reaches (a closed shadow root) or a page whose
+        // `<html>` has no size.
+        if (!selector && options.click.position) {
+          if (input.flags['--frame'] !== undefined) {
+            sayMistake(`With no selector, ${quoted('--at')} is a point in the window, so ${quoted('--frame')} doesn't apply. Give a selector to click in a frame.`);
+            return;
+          }
+          const { x, y } = options.click.position;
+          const modifiers = options.click.modifiers ?? [];
+          const pointer = async (): Promise<void> => {
+            for (const key of modifiers) await page.keyboard.down(key);
+            try {
+              if (command === 'click') await page.mouse.click(x, y, { button: options.click.button, clickCount: options.click.clickCount });
+              else await page.mouse.move(x, y);
+            } finally {
+              for (const key of [...modifiers].reverse()) await page.keyboard.up(key);
+            }
+          };
+          const how = options.how.filter((h) => !h.startsWith('the mouse at '));
+          await act(pointer(), `${command === 'click' ? 'Clicked' : 'Hovered over'} the point ${x},${y} in the window${how.length > 0 ? ` with ${how.join(', ')}` : ''}`);
+          return;
+        }
         if (!selector) {
-          sayMistake(`The ${quoted(command)} command needs a selector, e.g. ${quoted(`${command} '#submit'`)}`);
+          sayMistake(`The ${quoted(command)} command needs a selector, e.g. ${quoted(`${command} '#submit'`)}, or ${quoted('--at x,y')} for a point in the window`);
           return;
         }
         const count = await matches(page, selector, say, frame, tab.link.host.frameIds);
@@ -262,7 +285,15 @@ export async function runPageCommand(
             const why = plain(err);
             // The call log's own reasons (hidden, disabled, moving) stand.
             if (why !== notReadyGeneral(actionMs / 1000) && !why.startsWith(COVERED)) throw err;
-            throw new Error(await placeProblem(page, target, options.click.position) ?? err.message);
+            const place = await placeProblem(page, target, options.click.position);
+            if (place) throw new Error(place);
+            // A headed browser's background tab can stall, which reads as
+            // an element that never got ready.
+            if (why === notReadyGeneral(actionMs / 1000) && await inBackground(page)) {
+              // One sentence: plain() drops a final period.
+              throw new Error(`${why}, and the tab is in the background, where the browser may pause it; use ${quoted('focus')} to bring it to the front, then try again`);
+            }
+            throw new Error(err.message);
           });
         const how = options.how.length > 0 ? ` with ${options.how.join(', ')}` : '';
         await act(action, ui`${command === 'click' ? 'Clicked' : 'Hovered over'} ${namedMarked(page, selector)}${inFrame}${which && ` (${which})`}${how}`);
@@ -1055,7 +1086,7 @@ export function clickOptions(given: Record<string, string | true>, selector: str
   }
   if (flags['--at'] !== undefined) {
     const at = /^(\d+(?:\.\d+)?),(\d+(?:\.\d+)?)$/.exec(flags['--at'].replace(/\s/g, ''));
-    if (!at) return `The ${quoted('--at')} flag takes x,y in pixels from the element's top left corner, e.g. ${quoted('--at 10,5')}, not ${quoted(flags['--at'])}`;
+    if (!at) return `The ${quoted('--at')} flag takes x,y in pixels from the top left corner of the element (or of the window, with no selector), e.g. ${quoted('--at 10,5')}, not ${quoted(flags['--at'])}`;
     click.position = { x: Number(at[1]), y: Number(at[2]) };
     how.push(`the mouse at ${at[1]},${at[2]} in it`);
   }
@@ -1098,6 +1129,11 @@ function notReady(message: string, seconds: number): string {
     if (line === 'element is outside of the viewport') return `The element stayed outside the viewport ${within}, where it can't be scrolled to`;
   }
   return notReadyGeneral(seconds);
+}
+
+/** Whether the page's tab is hidden behind another one. False when that can't be told. */
+async function inBackground(page: Page): Promise<boolean> {
+  return await withTimeout(page.evaluate(() => document.visibilityState === 'hidden'), 1000).catch(() => false);
 }
 
 // How `notReady` starts when the element was covered.

@@ -1247,9 +1247,11 @@ The shapes of every command's result, with examples:
 | `script list [collection]` | Lists every installed script (`E1`, ...) under its collection, or one collection's (`C3`, a name, or `id=<id>`). Runs' test collections' scripts too: this run's as `1`, `2`, another run's by name. The selected script is marked `*`. `scripts list` does the same. Works with no run too |
 | `status` | The run and its log file, the tab list, and each script's state on the current tab |
 | `menu` | Lists the registered menu commands, numbered `M1`, `M2`, under the script that registered each |
-| `menu <M-number or label>` | Fires one, as picking it from the toolbar would |
-| `values [what]` | Prints what all scripts have stored (`all` too), one script's, or those of the scripts running on a tab (`T2`) |
+| `menu <M-number or label>` | Fires one, as picking it from the toolbar would. A label matches ignoring case and any emoji or symbols before or after it (`menu 'settings'` fires `⚙️ Settings`), when only one command's label matches that way |
+| `values [what]` | Prints what all scripts have stored (`all` too), one script's, or those of the scripts running on a tab (`T2`). A value longer than 1,000 characters is cut; `get` prints it whole |
+| `values --out FILE` | Writes one script's values, whole, to a JSON file (that `start --values-file` can read) |
 | `get <key>` | Prints one stored value |
+| `get <key> --out FILE` | Writes the value, whole, to a JSON file (that `set <key> --file` can read) |
 | `set <key> <json>` | Stores a value, as another tab's write would: a running script sees it and its change listeners fire |
 | `set <key> --file <path>` | Stores a value read from a JSON file; a running script sees it and its change listeners fire |
 
@@ -1625,6 +1627,7 @@ acts on the current tab, or the one `--tab` names (`--tab T2`,
 | `click <selector>`, `hover <selector>` | A real mouse click or hover, scrolled into view. With multiple matches, the first visible match (or the first, with none showing); `type` and `screenshot --selector` pick the same way |
 | `click <selector> --button right --modifiers Shift --count 2` | A right or middle click, with keys held, or a double (`--count 2`) or triple click |
 | `click <selector> --at 300,12`, `hover <selector> --modifiers Alt --at 4,4` | At a point in the element, in pixels from its top left corner, rather than its center. `hover` takes `--modifiers` too |
+| `click --at 640,80`, `hover --at 640,80` | With no selector, at a point in the window, in pixels from its top left corner: for UI no selector reaches, such as a closed shadow root |
 | `type <selector> <text>` | Types into an element, key by key |
 | `type <selector> --file <path>` | Types a file's text into an element, a last line break included |
 | `type <selector> --clear [text]` | Empties the element first, then types the text if given |

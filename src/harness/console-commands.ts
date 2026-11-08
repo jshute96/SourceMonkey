@@ -13,6 +13,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { existsSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -56,7 +57,7 @@ import {
   type PageToOpen, type PageWord, type SavedPageFile, type SavedPageStart,
 } from './saved-pages.js';
 import {
-  SCRIPT_ARG, UsageError, expandPathArg, expandPathArgs, matchJson, matchLines, prepareSource, scriptSources, validateAll, validateSources,
+  UsageError, expandPathArg, expandPathArgs, isScriptWord, matchJson, matchLines, prepareSource, scriptSources, validateAll, validateSources,
   type MatchTarget, type ScriptRoots, type ScriptSource, type ValidateSource,
 } from './checks.js';
 
@@ -749,9 +750,11 @@ export async function runConsoleCommand(
       return;
     }
     case 'values': {
+      const outFile = typeof flags['--out'] === 'string' ? flags['--out'] : undefined;
       if (OTHER_LABEL.test(text)) {
         const found = await pickOther(ctx, text, picked);
         if (!found) return false;
+        if (outFile !== undefined) return writeValuesFile(ctx, cwd, outFile, await found.values(), ` (${found.label}: ${found.name})`);
         if (ctx.json) {
           ctx.out(jsonResult('values', { scripts: [{ script: found.label, name: found.name, values: await found.values() }] } satisfies J.ValuesData));
           return;
@@ -761,7 +764,14 @@ export async function runConsoleCommand(
         for (const l of valueEntries(await found.values())) ctx.out(l);
         return;
       }
+      // `--out` writes the selected script's values: one of another
+      // manager's, as `get` and `set` take it, when that is selected.
+      if (outFile !== undefined && !text && other) return writeValuesFile(ctx, cwd, outFile, await other.values(), whose);
       if (ctx.scripts.length === 0) {
+        if (outFile !== undefined) {
+          ctx.out(`[sm-dev] ${NO_SCRIPTS}`);
+          return false;
+        }
         if (ctx.json) ctx.out(jsonResult('values', { scripts: [] } satisfies J.ValuesData));
         else ctx.out(`[sm-dev] ${NO_SCRIPTS}`);
         return;
@@ -775,6 +785,14 @@ export async function runConsoleCommand(
         const found = pickScript(ctx, ref.rest);
         if (!found) return false;
         scripts = [found];
+      } else if (outFile !== undefined) {
+        // One script's values, as --values-file takes them: the one
+        // named, or the selected one.
+        if (text) {
+          ctx.out(`${MISTAKE_PREFIX}The ${quoted('--out')} flag writes one script's values. Name one script, or select one with ${quoted('script')}.`);
+          return false;
+        }
+        scripts = [current];
       } else if (ref.named) {
         scripts = runningOn(ctx, ref.tab);
         if (scripts.length === 0 && !ctx.json) {
@@ -783,6 +801,11 @@ export async function runConsoleCommand(
         }
       }
       await settleWrites();
+      if (outFile !== undefined) {
+        const [script] = scripts;
+        const named = ctx.scripts.length > 1 ? ` (${preparedScriptName(script)})` : '';
+        return writeValuesFile(ctx, cwd, outFile, script.id ? await ctx.host.valuesOf(script.id) : {}, named);
+      }
       if (ctx.json) {
         const entries = [];
         for (const script of scripts) {
@@ -808,6 +831,15 @@ export async function runConsoleCommand(
       }
       await settleWrites();
       const values = other ? await other.values() : await ctx.host.valuesOf(scriptId!);
+      // The value alone, whole, as `set <key> --file` reads it back.
+      const getOut = flags['--out'];
+      if (typeof getOut === 'string') {
+        if (!Object.hasOwn(values, text)) {
+          ctx.out(`${MISTAKE_PREFIX}Nothing is stored under ${quoted(text)}${whose}, so nothing was written`);
+          return false;
+        }
+        return writeJsonFile(ctx, cwd, getOut, values[text], `Wrote ${quoted(text)}${whose}`);
+      }
       if (ctx.json) {
         const found = Object.hasOwn(values, text);
         ctx.out(jsonResult('get', {
@@ -1359,7 +1391,7 @@ async function matchCommand(ctx: ConsoleContext, words: string[], cwd: string, w
     } else {
       // A glob expanded, a directory taken for its scripts.
       for (const found of expandPathArg(word, cwd, { scripts: true })) {
-        if (SCRIPT_ARG.test(found)) files.push(found);
+        if (isScriptWord(found)) files.push(found);
         else pages.push({ url: withDefaultScheme(found, cwd) });
       }
     }
@@ -2602,6 +2634,32 @@ function noMenusMessage(ctx: ConsoleContext, tab: ControlledTab): string {
 // given waits that long for it in any case.
 const MENU_WAIT_MS = 5000;
 
+// A label without its leading and trailing emoji, symbols and spaces,
+// in lower case: `⚙️ Script Settings` is `script settings`.
+function looseLabel(label: string): string {
+  return label.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '').toLowerCase();
+}
+
+/** Whether a menu label matches `argument` but for case and the emoji or symbols around it. */
+function looselyNamed(label: string, argument: string): boolean {
+  const key = looseLabel(argument);
+  return key !== '' && looseLabel(label) === key;
+}
+
+/**
+ * The menu command whose label matches `argument` but for case and the
+ * emoji or symbols around it, as a label like `⚙️ Settings` is given
+ * without them, when only one label does. `labels`: each distinct one
+ * that matched.
+ */
+function looseMenuMatch(commands: MenuEntry[], argument: string): { entry?: MenuEntry; labels: string[] } {
+  const found = commands.filter((c) => looselyNamed(c.name, argument));
+  // One label can be listed more than once (from multiple frames); as
+  // for an exact match, the last one listed.
+  const labels = [...new Set(found.map((c) => c.name))];
+  return labels.length === 1 ? { entry: found.at(-1), labels } : { labels };
+}
+
 // False when nothing was fired.
 async function fireMenu(ctx: ConsoleContext, tab: ControlledTab, argument: string, timeoutMs?: number): Promise<boolean> {
   const all = (): MenuEntry[] => menuGroups(ctx, tab).flatMap((group) => group.commands);
@@ -2610,7 +2668,7 @@ async function fireMenu(ctx: ConsoleContext, tab: ControlledTab, argument: strin
   for (;;) {
     const commands = all();
     // A label wins over a number, for a command whose label is one.
-    const byName = [...commands].reverse().find((c) => c.name === argument);
+    const byName = [...commands].reverse().find((c) => c.name === argument) ?? looseMenuMatch(commands, argument).entry;
     const byNumber = numbered ? commands[Number(numbered[1]) - 1] : undefined;
     const entry = byName ?? byNumber;
     if (entry && 'run' in entry) {
@@ -2646,6 +2704,10 @@ async function fireMenu(ctx: ConsoleContext, tab: ControlledTab, argument: strin
       + `Use ${quoted(`menu ${tabName(elsewhere[0])}.${argument}`)} to fire it ${elsewhere.length === 1 ? 'there' : 'on one of them'}.`);
   }
   else if (all().length === 0) ctx.out(noMenusMessage(ctx, tab));
+  else if (looseMenuMatch(all(), argument).labels.length > 1) {
+    const labels = looseMenuMatch(all(), argument).labels;
+    ctx.out(`[sm-dev] Multiple menu commands match ${quoted(argument)}: ${labels.map((l) => `"${l}"`).join(', ')}. Give the whole label, or its M number.`);
+  }
   else if (numbered) ctx.out(`[sm-dev] There is no menu command M${numbered[1]}${onTab(ctx, tab)}. Use ${quoted('menu')} to list them.`);
   else ctx.out(`[sm-dev] No menu command named "${argument}" is registered${onTab(ctx, tab)}. Use ${quoted('menu')} to list them.`);
   return false;
@@ -2671,7 +2733,8 @@ async function runManual(ctx: ConsoleContext, tab: ControlledTab, scriptId: stri
 
 // The other tabs with a menu command of that label.
 function elsewhereFor(ctx: ConsoleContext, tab: ControlledTab, label: string): ControlledTab[] {
-  return ctx.tabs().filter((t) => t !== tab && fromTab(ctx, t, ctx.host.reports.menuCommands).some((c) => c.name === label));
+  // Loosely too, as `menu` matches on the tab itself.
+  return ctx.tabs().filter((t) => t !== tab && fromTab(ctx, t, ctx.host.reports.menuCommands).some((c) => c.name === label || looselyNamed(c.name, label)));
 }
 
 // Counts as done once a dialog the command opens is up, so `accept`
@@ -2789,7 +2852,41 @@ async function valueLines(ctx: ConsoleContext, scripts: PreparedScript[]): Promi
 function valueEntries(values: Record<string, unknown>): string[] {
   const keys = Object.keys(values);
   if (keys.length === 0) return ['    Nothing stored'];
-  return keys.map((key) => ui`    ${S.code(key)} = ${S.code(String(JSON.stringify(values[key])))}`);
+  return keys.map((key) => ui`    ${S.code(key)} = ${S.code(shortValue(values[key], VALUES_SHOWN_CHARS))}`);
+}
+
+/**
+ * `values --out`: a script's values, whole, as the JSON object
+ * `--values-file` and `start --values-file` read back.
+ */
+async function writeValuesFile(ctx: ConsoleContext, cwd: string, given: string, values: Record<string, unknown>, whose = ''): Promise<boolean | void> {
+  const count = Object.keys(values).length;
+  return writeJsonFile(ctx, cwd, given, values, `Wrote ${count} value${count === 1 ? '' : 's'}${whose}`);
+}
+
+/** JSON to a file, for `values --out` and `get --out`, then `<done> to <file>`. */
+async function writeJsonFile(ctx: ConsoleContext, cwd: string, given: string, value: unknown, done: string): Promise<boolean | void> {
+  const file = path.resolve(cwd, given);
+  try {
+    await writeFile(file, JSON.stringify(value, null, 2) + '\n');
+  } catch (err) {
+    ctx.out(`${MISTAKE_PREFIX}Could not write ${quoted(given)}: ${writeProblem(err) ?? errorSentence(err)}`);
+    return false;
+  }
+  ctx.out(`[sm-dev] ${done} to ${ui`${S.url(shownPath(file, cwd))}`}`);
+}
+
+// Longer stored values are cut, so a cache a script stores doesn't bury
+// the rest of the output: in `GM_setValue` event lines, and less tightly
+// in `values`. `get`, `values --out` and JSON output show them whole.
+const EVENT_VALUE_SHOWN_CHARS = 100;
+const VALUES_SHOWN_CHARS = 1000;
+
+export function shortValue(value: unknown, max = EVENT_VALUE_SHOWN_CHARS): string {
+  const json = JSON.stringify(value) ?? String(value);
+  if (json.length <= max) return json;
+  // By code point, so an emoji isn't cut in half.
+  return `${Array.from(json).slice(0, max).join('')}... (${json.length} chars; get shows it all)`;
 }
 
 // `E1`: a SourceMonkey-managed script (see `OtherScript`).

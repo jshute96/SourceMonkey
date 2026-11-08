@@ -572,7 +572,7 @@ export const HELP_SECTIONS: HelpSection[] = [
           { term: '--button <name>', about: '`left` (the default), `right` or `middle`.' },
           { term: '--modifiers <keys>', about: 'Keys held during the click, e.g. `Shift` or `Control+Alt`.' },
           { term: '--count <n>', about: 'Clicks in a row: `2` double-clicks, `3` triple-clicks.' },
-          { term: '--at <x,y>', about: 'Where in the element, in pixels from its top left corner (default: its center).' },
+          { term: '--at <x,y>', about: ['Where in the element, in pixels from its top left corner (default: its center).', 'With no selector, a point in the window, in pixels from its top left corner.'] },
         ],
       },
       {
@@ -581,7 +581,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         about: ['Move the mouse over an element.', 'With multiple matches, the first visible match.'],
         options: [
           { term: '--modifiers <keys>', about: 'Keys held, e.g. `Alt`.' },
-          { term: '--at <x,y>', about: 'Where in the element, in pixels from its top left corner (default: its center).' },
+          { term: '--at <x,y>', about: ['Where in the element, in pixels from its top left corner (default: its center).', 'With no selector, a point in the window, in pixels from its top left corner.'] },
         ],
         gap: true,
       },
@@ -710,8 +710,18 @@ export const HELP_SECTIONS: HelpSection[] = [
               { term: 'all', about: 'All scripts. (Default)' },
               { term: 'T2', about: 'Scripts running on a tab.' },
             ],
+            options: [
+              { term: '--out FILE', about: 'Write one script\'s values to a JSON file (that `start --values-file` can read).' },
+            ],
           },
-          { managers: SM, usage: 'get <key>', syntax: TEXT, about: 'Print one value for the selected script.', gap: true },
+          {
+            managers: SM,
+            usage: 'get <key>',
+            syntax: TEXT,
+            about: 'Print one value for the selected script.',
+            options: [{ term: '--out FILE', about: 'Write the value to a JSON file (that `set <key> --file` can read).' }],
+            gap: true,
+          },
           {
             managers: SM,
             usage: 'set <key> <json>',
@@ -1578,8 +1588,9 @@ export function commandFlags(name: string): string[] {
 
 /**
  * How a flag takes a value: `--out FILE` takes one, `--visible` none,
- * and `--script[=<script>]` one only when joined by `=`, so a bare
- * `--script` never takes the next word.
+ * and `--script[=<script>]` one when joined by `=`. A bare `--script`
+ * takes the next word only when it is a script ID with more words
+ * after it (see `takeFlag` in command-args.ts).
  */
 export type FlagKind = 'bool' | 'value' | 'optional';
 

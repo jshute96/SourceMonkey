@@ -236,6 +236,7 @@ asked to.
 | `click <sel>`, `hover <sel>` | Real mouse input, scrolled into view. A failure names the check that failed (hidden, disabled, moving, covered by what) |
 | `click <sel> --button right --modifiers Shift --count 2` | Right or middle button, keys held (`Control+Alt`), double or triple click |
 | `click <sel> --at 300,12`, `hover <sel> --at 4,4` | At that point in the element (pixels from its top left), not its center |
+| `click --at 640,80`, `hover --at 640,80` | With no selector, at that point in the window |
 | `hover <sel> --modifiers Alt` | Keys held during the hover |
 | `type <sel> <text>` | Type key by key |
 | `type <sel> {{` | Type several lines exactly (line breaks are Enter; the final one before `}}` isn't typed) |
@@ -276,6 +277,8 @@ old) or DOM changes for 200ms. Timers aren't waited for.
 | `values [script\|T2\|E1]` | Stored values (`E1`: a SourceMonkey-managed script) |
 | `get <key>`, `set <key> <json>` | One value; `set` fires change listeners |
 | `set <key> --file <path>` | The value from a JSON file (or a `{{` block, as `eval` takes) |
+| `values --out <file>` | Write one script's values, whole, to a JSON file (that `start --values-file` can read) |
+| `get <key> --out <file>` | Write one value, whole, to a JSON file (that `set <key> --file` can read) |
 
 ## eval
 

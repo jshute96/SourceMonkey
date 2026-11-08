@@ -209,6 +209,12 @@ export const OFFLINE_NEEDS_SAVED = 'The --offline flag goes with --from-saved';
 /** `--url` without `--from-saved` and exactly one saved page. */
 export const URL_NEEDS_ONE_SAVED = 'The --url flag gives the URL for one saved page, so it goes with --from-saved and a single .html file';
 
+/**
+ * `--url` with no `--from-saved` at all: most likely meant as the page
+ * to open, which is a plain argument.
+ */
+export const URL_WITHOUT_SAVED = 'The --url flag gives the URL for a saved page, so it goes with --from-saved. To open a page, give its URL as an argument, without --url.';
+
 /** `--from-saved` with no page to open from a file. */
 export const NO_SAVED_FILE = 'The --from-saved flag opens .html files, and none was given';
 
@@ -254,7 +260,7 @@ export async function pagesToOpen(
   words: PageWord[], opts: { fromSaved: boolean; url?: string; offline: boolean }, cwd = process.cwd(),
 ): Promise<PageToOpen[]> {
   if (!opts.fromSaved) {
-    if (opts.url !== undefined) throw new UsageError(URL_NEEDS_ONE_SAVED);
+    if (opts.url !== undefined) throw new UsageError(URL_WITHOUT_SAVED);
     if (opts.offline) throw new UsageError(OFFLINE_NEEDS_SAVED);
     return words.map(({ url }) => ({ url }));
   }
