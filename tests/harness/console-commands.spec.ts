@@ -42,7 +42,7 @@ test.describe('sm-dev typed commands', () => {
     ]);
     expect(await run('script 2')).toEqual([`[sm-dev] Selected Second (${scriptsDir.path}/second.user.js)`]);
     expect(await run('get who')).toEqual(['  who = "two"']);
-    expect(await run('set who "changed"')).toEqual(['[sm-dev] Set who (Second)']);
+    expect(await run('set who "changed"')).toEqual(['[sm-dev] Set `who` (Second)']);
     expect(host.getValue(second.id!, 'who')).toBe('changed');
     expect(host.getValue(first.id!, 'who')).toBe('one');
     // By exact file name, or by a piece of a name that only one has.
@@ -71,24 +71,24 @@ test.describe('sm-dev typed commands', () => {
     expect(await run('reload now')).toEqual(['[sm-dev] ERROR: `now` is not a tab. Tabs are named T1, T2 and so on; use `tabs` to list them.']);
     // Several lines of JSON, as a {{ block gives them, or from a file,
     // the flag before the key or after it.
-    expect(await run('set prefs\n{\n  "units": "metric"\n}')).toEqual(['[sm-dev] Set prefs (Second)']);
+    expect(await run('set prefs\n{\n  "units": "metric"\n}')).toEqual(['[sm-dev] Set `prefs` (Second)']);
     expect(host.getValue(second.id!, 'prefs')).toEqual({ units: 'metric' });
     writeFileSync(path.join(scriptsDir.path, 'prefs.json'), '{ "units": "imperial" }\n');
-    expect(await run('set prefs --file prefs.json')).toEqual(['[sm-dev] Set prefs (Second)']);
+    expect(await run('set prefs --file prefs.json')).toEqual(['[sm-dev] Set `prefs` (Second)']);
     expect(host.getValue(second.id!, 'prefs')).toEqual({ units: 'imperial' });
-    expect(await run('set --file prefs.json other')).toEqual(['[sm-dev] Set other (Second)']);
+    expect(await run('set --file prefs.json other')).toEqual(['[sm-dev] Set `other` (Second)']);
     writeFileSync(path.join(scriptsDir.path, 'bad.json'), '{ units: 1 }');
     expect(await run('set prefs --file bad.json')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The file bad\.json is not JSON: \S/)]);
     expect(await run('set prefs --file nope.json')).toEqual(['[sm-dev] ERROR: Couldn\'t read nope.json: The file does not exist']);
     // A quoted path, with a space in it.
     writeFileSync(path.join(scriptsDir.path, 'my prefs.json'), '{ "units": "si" }');
-    expect(await run('set spaced --file "my prefs.json"')).toEqual(['[sm-dev] Set spaced (Second)']);
+    expect(await run('set spaced --file "my prefs.json"')).toEqual(['[sm-dev] Set `spaced` (Second)']);
     expect(host.getValue(second.id!, 'spaced')).toEqual({ units: 'si' });
     // The key is on the command's line, not the block's first.
     expect(await run('set\nfoo 1')).toEqual(['[sm-dev] ERROR: The `set` command needs a key and a JSON value, e.g. `set units "metric"`']);
     expect(await run('set prefs\n{ "a": 1,\n}')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The value of `prefs` is not JSON: \S/)]);
     // Single quotes around the JSON, as a shell would take them.
-    expect(await run('set quoted \'["a"]\'')).toEqual(['[sm-dev] Set quoted (Second)']);
+    expect(await run('set quoted \'["a"]\'')).toEqual(['[sm-dev] Set `quoted` (Second)']);
     expect(host.getValue(second.id!, 'quoted')).toEqual(['a']);
     expect(await run('set prefs --flie x.json')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The `set` command has no --flie flag\.\n {2}Usage: /)]);
     expect(await run('set prefs --file')).toEqual(['[sm-dev] ERROR: The --file flag needs a value: `--file <path>`']);
@@ -709,7 +709,7 @@ test.describe('sm-dev typed commands', () => {
       ]);
       // Answered from T1, naming the tab.
       expect(await run('accept --tab T2')).toEqual(['[sm-dev] Accepted the dialog']);
-      expect(await run('set k 1')).toEqual(['[sm-dev] Set k']);
+      expect(await run('set k 1')).toEqual(['[sm-dev] Set `k`']);
     } finally {
       await attachment2.dispose();
       await page2.close();

@@ -134,6 +134,26 @@ a tab after T1. `logs` adds the time and tab in front instead:
     go on.
   - Each reader counts its own, since each may show different sources.
   - `logs` folds the same lines as `(N times)`, and `wait log` sees each.
+- The stream shows a script's first start in a frame of a tab, and
+  counts the rest (`RepeatFolder.frameStart`). A script without
+  `@noframes` on an ad-heavy page starts in 100 frames or more.
+  - `[sm-dev] <name> also started in N more frames on T1` follows once
+    they stop coming for a second, when an sm-dev line comes, or when a
+    command ends (a detached `start` included, before it reports ready).
+    It names the `logs --tab T1 --script 1 --find ...` command that
+    lists them.
+  - A later burst (a reload) shows its first again.
+  - The log file is the run's own stream, so it folds them too; `logs`
+    and `wait log` see each start.
+- An event or Log line about one script records the name its text
+  holds (`subject`), and output shows that name in the `name` style
+  (italics), as other sm-dev lines do. The text stays plain, for
+  `--find` and JSON.
+  - sm-dev's own error lines (`ERROR: ...`) keep names plain: their
+    color and command highlighting come from plain text.
+- `scripts`, `status` and `tabs` name at most five places a script
+  runs (`T1, F1, ...`), then how many more frames (`placesList`).
+  `frames`, `tabs --frames` and JSON output list them all.
 - ANSI color codes a script or page logs show as color at a terminal.
   Plain output (a pipe, the log file) leaves them out.
 - sm-dev's own notices (`[sm-dev] ...`) aren't log lines: the stream

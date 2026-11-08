@@ -6,7 +6,7 @@
 // Light, importing only output-style.ts (which imports nothing):
 // runs.ts, which the sm-dev client loads, takes the sources from here.
 
-import { asError, asWarning, dim, stripAnsi, ui } from './output-style.js';
+import { asError, asWarning, dim, name, stripAnsi, ui } from './output-style.js';
 
 /**
  * Where a line came from, from narrowest to broadest:
@@ -60,6 +60,8 @@ export interface LogFields {
   scriptId?: string;
   /** The line after its prefix. Can run over several lines (a stack). */
   text: string;
+  /** The script name `text` holds, whose first place output shows as a name (in italics). */
+  subject?: string;
   /** False for a line only `logs` and `wait log` see: a page load, which the stream says its own way. */
   streamed?: boolean;
   /** Streamed whatever sources were asked for: a dialog box, which holds up the page until answered. */
@@ -281,7 +283,10 @@ function streamBody(record: LogFields, whole = false): string {
 // is. Taken as it is, since a script or page wrote it.
 function leveledText(record: LogFields, text: string): string {
   const level = record.source === 'event' ? (record.kind === 'threw' ? 'error' : '') : record.kind;
-  return level === 'error' ? asError(text) : level === 'warning' || level === 'warn' ? asWarning(text) : text;
+  const { subject } = record;
+  const at = subject ? text.indexOf(subject) : -1;
+  const marked = at >= 0 ? ui`${text.slice(0, at)}${name(subject!)}${text.slice(at + subject!.length)}` : text;
+  return level === 'error' ? asError(marked) : level === 'warning' || level === 'warn' ? asWarning(marked) : marked;
 }
 
 /** `streamText`'s line as the stream shows it: its prefix dimmed, an error or warning in color. */
@@ -293,6 +298,9 @@ export function streamLine(record: LogFields): string {
 // How long repeats of a streamed line go unreported while they keep coming.
 export const REPEATS_REPORT_MS = 5000;
 
+// How long after the last frame start held back its count is reported.
+export const FRAME_STARTS_REPORT_MS = 1000;
+
 /**
  * The stream's lines for one reader, a line identical to the one just
  * shown held back: a script throwing every 100ms would bury everything
@@ -303,8 +311,47 @@ export class RepeatFolder {
   private last: string | undefined;
   private count = 0;
   private timer: NodeJS.Timeout | undefined;
+  // Frame starts held back, by what started where: its count, and the
+  // line that reports it.
+  private readonly frameStarts = new Map<string, { count: number; report: (n: number) => string }>();
+  private frameTimer: NodeJS.Timeout | undefined;
+  // Reports the count while starts go on without a pause, as repeats are.
+  private frameMaxTimer: NodeJS.Timeout | undefined;
 
-  constructor(private readonly write: (line: string) => void, private readonly reportMs = REPEATS_REPORT_MS) {}
+  constructor(private readonly write: (line: string) => void, private readonly reportMs = REPEATS_REPORT_MS, private readonly frameReportMs = FRAME_STARTS_REPORT_MS) {}
+
+  /**
+   * A script's start in a frame: the first for `key` (a script on a
+   * tab) shown, the rest counted until they stop coming for a moment
+   * (or every `reportMs` while they don't stop),
+   * one of sm-dev's own lines comes (`interrupt`), or a command ends
+   * (`flushAll`). The page's lines between them don't end the count. A
+   * whole-site script on an ad-heavy page starts in 100 frames or
+   * more. `report` gives the count line.
+   */
+  frameStart(key: string, line: string, report: (n: number) => string): void {
+    const held = this.frameStarts.get(key);
+    if (held) {
+      held.count++;
+    } else {
+      this.frameStarts.set(key, { count: 0, report });
+      this.line(line);
+    }
+    clearTimeout(this.frameTimer);
+    this.frameTimer = setTimeout(() => this.flushFrames(), this.frameReportMs).unref();
+    this.frameMaxTimer ??= setTimeout(() => this.flushFrames(), this.reportMs).unref();
+  }
+
+  /** Reports the frame starts held back, and shows the next one for each key again. */
+  flushFrames(): void {
+    clearTimeout(this.frameTimer);
+    clearTimeout(this.frameMaxTimer);
+    this.frameTimer = undefined;
+    this.frameMaxTimer = undefined;
+    const held = [...this.frameStarts.values()];
+    this.frameStarts.clear();
+    for (const { count, report } of held) if (count > 0) this.line(report(count));
+  }
 
   /** A stream line: shown, or counted if it's the last one again. */
   line(line: string): void {
@@ -327,9 +374,15 @@ export class RepeatFolder {
     this.count = 0;
   }
 
+  /** Reports all that was held back, at a command's end. */
+  flushAll(): void {
+    this.flushFrames();
+    this.flush();
+  }
+
   /** Reports the repeats, and takes the next line as new: another line was shown in between. */
   interrupt(): void {
-    this.flush();
+    this.flushAll();
     this.last = undefined;
   }
 }

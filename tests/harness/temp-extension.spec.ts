@@ -147,7 +147,7 @@ test('an extension run takes the run commands: status, values, set, menu, eval, 
     ['1 stored value', 'menu Mark'],
     ['Fired "Mark"', 'eval document.title'],
     ['"marked"', 'set count 10'],
-    ['Set count', 'reload'],
+    ['Set `count`', 'reload'],
     ['[cmds] count 10', 'get count'],
     // The extension's own world, where `chrome.runtime` is there.
     ['count = 11', 'eval --script typeof chrome.runtime.sendMessage'],
@@ -201,7 +201,7 @@ test('SourceMonkey-managed scripts on the tab are E1, ..., kept out, and their v
       ['Selected E1: Other', `values --out ${saved}`],
       ['Wrote 1 value (E1: Other) to', 'scripts'],
       ['* E1: Other', 'set seen --force 2'],
-      ['Set seen', 'get seen'],
+      ['Set `seen`', 'get seen'],
       // Not a throwaway browser, so without --force it refuses (which
       // ends a --stdin run).
       ['seen = 2', 'set seen 3'],

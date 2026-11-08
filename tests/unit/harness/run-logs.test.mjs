@@ -6,9 +6,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  DEFAULT_LOG_SOURCES, inSources, RepeatFolder, logsLines, parseLogSources, parsePosition, parseTail, RunLog, shortConsoleText, streamText, textMatcher, timeOfDay,
+  DEFAULT_LOG_SOURCES, inSources, RepeatFolder, logsLines, parseLogSources, parsePosition, parseTail, RunLog, shortConsoleText, streamLine, streamText, textMatcher, timeOfDay,
 } from '../../../lib/harness/run-logs.js';
-import { plainLine } from '../../../lib/harness/output-style.js';
+import { paintOutput, plainLine } from '../../../lib/harness/output-style.js';
 
 test('--log-source takes a comma list, or all', () => {
   assert.deepEqual([...parseLogSources('sm,page')], ['sm', 'page']);
@@ -92,7 +92,7 @@ test('lines read with their source, and their tab after T1', () => {
   assert.equal(streamText({ source: 'page', kind: 'warning', tab: 2, text: 'x' }), '[T2] [page warning] x');
   assert.equal(streamText({ source: 'event', kind: 'started', tab: 1, text: 'A started on u' }), '[event] A started on u');
   // An iframe's line names its frame, on T1 too.
-  assert.equal(streamText({ source: 'event', kind: 'started', tab: 1, frame: 3, text: 'A started in an iframe on u' }), '[T1.F3] [event] A started in an iframe on u');
+  assert.equal(streamText({ source: 'event', kind: 'started', tab: 1, frame: 3, text: 'A started in a frame on u' }), '[T1.F3] [event] A started in a frame on u');
   assert.equal(streamText({ source: 'sm', kind: 'error', text: 'A: no' }), '[sm error] A: no');
   // Long console lines are cut in the stream, but not when whole.
   const long = { source: 'script', kind: 'log', tab: 1, text: 'x'.repeat(1500) };
@@ -158,8 +158,70 @@ test('the stream shows a repeated line once, then how many more times it came', 
   assert.deepEqual(shown, ['b']);
 });
 
+test('the stream shows a script\'s first iframe start, then how many more came', async () => {
+  const shown = [];
+  const folder = new RepeatFolder((l) => shown.push(l), 20, 20);
+  const report = (who) => (n) => `${who} +${n}`;
+  for (let i = 1; i <= 4; i++) folder.frameStart('T1 a', `a in F${i}`, report('a'));
+  folder.frameStart('T1 b', 'b in F1', report('b'));
+  // Other lines don't end the count; it comes once the starts stop.
+  folder.line('page line');
+  folder.frameStart('T1 a', 'a in F5', report('a'));
+  assert.deepEqual(shown, ['a in F1', 'b in F1', 'page line']);
+  await new Promise((r) => setTimeout(r, 40));
+  assert.deepEqual(shown, ['a in F1', 'b in F1', 'page line', 'a +4']);
+  // The next burst shows its first again, and a command's own output
+  // (interrupt) reports the count before it.
+  shown.length = 0;
+  folder.frameStart('T1 a', 'a in F6', report('a'));
+  folder.frameStart('T1 a', 'a in F7', report('a'));
+  folder.interrupt();
+  assert.deepEqual(shown, ['a in F6', 'a +1']);
+});
+
 test('--find and wait log match a line as plain output shows it, without ANSI colors', () => {
   const line = '[page log] \x1b[31mred\x1b[0m done';
   assert.equal(textMatcher('red done').matches(line), true);
   assert.equal(textMatcher('/^\\[page log\\] red/').matches(line), true);
+});
+
+test('an event line shows the script name it starts with in italics, and reads the same plain', () => {
+  const record = { source: 'event', kind: 'started', tab: 1, text: 'Ad Remover started on https://x.test/', subject: 'Ad Remover' };
+  assert.match(paintOutput(streamLine(record), true), /\x1b\[3mAd Remover\x1b\[0m started on/);
+  assert.equal(paintOutput(streamLine(record), false), '[event] Ad Remover started on https://x.test/');
+  // An error keeps its color around the name.
+  const threw = { ...record, kind: 'threw', text: 'Ad Remover threw: Error: x' };
+  assert.match(paintOutput(streamLine(threw), true), /\x1b\[31m\x1b\[3mAd Remover\x1b\[0m\x1b\[1m\x1b\[31m threw: Error: x/);
+});
+
+test('an iframe start folds by script and tab, and its count line says how to list them', async () => {
+  const { frameStartFold } = await import('../../../lib/harness/run.js');
+  const start = { source: 'event', kind: 'started', tab: 2, scriptId: 's1', subject: 'Ad Remover', text: 'Ad Remover started in a frame on https://ads.test/' };
+  const fold = frameStartFold(start, (id) => (id === 's1' ? 1 : undefined));
+  assert.equal(fold.key, 'T2 s1');
+  assert.equal(plainLine(fold.report(29)), "[sm-dev] Ad Remover also started in 29 more frames on T2. Use `logs --tab T2 --script 1 --find 'started in a frame'` to list them.");
+  assert.equal(plainLine(fold.report(1)), "[sm-dev] Ad Remover also started in 1 more frame on T2. Use `logs --tab T2 --script 1 --find 'started in a frame'` to list them.");
+  // The top frame's start, and other events, aren't folded.
+  assert.equal(frameStartFold({ ...start, text: 'Ad Remover started on https://x.test/' }), null);
+  assert.equal(frameStartFold({ ...start, kind: 'skipped', text: 'Ad Remover skipped in a frame on u: x' }), null);
+});
+
+test('scripts and tabs list a few places a script runs, then how many more', async () => {
+  const { placesList } = await import('../../../lib/harness/console-commands.js');
+  const places = (n) => ['T1', ...Array.from({ length: n - 1 }, (_, i) => `F${i + 1}`)];
+  assert.equal(plainLine(placesList(places(6))), 'T1, F1, F2, F3, F4, F5');
+  assert.equal(plainLine(placesList(places(30))), 'T1, F1, F2, F3, F4 and 25 more frames');
+});
+
+test('starts in frames that never pause are still counted every so often', async () => {
+  const shown = [];
+  // Reported after 60ms however close together they come.
+  const folder = new RepeatFolder((l) => shown.push(l), 60, 40);
+  for (let i = 1; i <= 6; i++) {
+    folder.frameStart('T1 a', `a in F${i}`, (n) => `a +${n}`);
+    await new Promise((r) => setTimeout(r, 15));
+  }
+  // A count came while they went on, before anything ended the burst.
+  assert.ok(shown.some((l) => l.startsWith('a +')), shown.join(' | '));
+  folder.flushAll();
 });

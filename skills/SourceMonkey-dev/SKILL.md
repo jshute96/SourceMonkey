@@ -599,9 +599,9 @@ of the script; they share stored values, and can talk to each other with
 `postMessage`.
 
 ```sh
-$R frames                     # List the tab's iframes as a tree, with the scripts running in each
-$R match --frames             # Check which iframes the script's rules match
-$R snapshot --find Save       # Find elements in all frames; refs in iframes look like f2e4
+$R frames                     # List the tab's frames as a tree, with the scripts running in each
+$R match --frames             # Check which frames the script's rules match
+$R snapshot --find Save       # Find elements in all frames; refs in frames look like f2e4
 $R click f2e4                 # Use a ref from any frame directly, with no --frame
 $R probe --css f2e4           # Get a CSS selector for the element, and which frame it's in
 $R eval --frame F2 'state'    # Run code in the script instance in F2 (--page: in F2's page)
@@ -632,7 +632,7 @@ $R wait selector --frame F2 '.ready'   # Wait for an element inside F2
   in the top frame: the selected script's scope, `--script=<script>`,
   or `--page`.
 - Lines from a frame are prefixed with it: `[T1.F2] [event] ...
-  started in an iframe on <frame URL>`, `[T1.F2] [script log] ...`.
+  started in a frame on <frame URL>`, `[T1.F2] [script log] ...`.
 - `menu` shows the script's one menu for the tab, as SourceMonkey's
   popup does, with every frame's commands in it. sm-dev labels a
   command an iframe registered with its frame: `M3: Toggle (F2)`.

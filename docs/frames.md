@@ -171,7 +171,7 @@ Status stays per tab, kept on the top document's state
 
 ## sm-dev
 
-- A run reports a script in a frame as `started in an iframe on <frame
+- A run reports a script in a frame as `started in a frame on <frame
   URL>` (`frame` on the report).
 - A menu command records its document, and fires there.
 - Frame ids, the frames each script runs in, `--frame` on `eval` and

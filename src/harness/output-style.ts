@@ -28,7 +28,7 @@ export const MARKUP = '\u0002\ue000';
 
 /** What a piece of output is. Each has one style, in STYLES. */
 export type Role =
-  | 'prompt' | 'typed' | 'cmd' | 'code' | 'err' | 'warn'
+  | 'prompt' | 'typed' | 'cmd' | 'code' | 'given' | 'err' | 'warn'
   | 'h' | 'sel' | 'id' | 'dim' | 'url' | 'name' | 'ok';
 
 type Look = 'bold' | 'dim' | 'italic' | 'underline' | 'red' | 'green' | 'magenta' | 'cyan';
@@ -40,6 +40,9 @@ const STYLES: Record<Role, Look[]> = {
   typed: ['cyan'],
   cmd: ['cyan'],
   code: ['cyan'],
+  // Input of the person's own (a key they named), shown as code. Plain,
+  // it keeps backticks, which mark where it starts and ends.
+  given: ['cyan'],
   err: ['bold', 'red'],
   warn: ['bold', 'magenta'],
   h: ['bold'],
@@ -175,6 +178,8 @@ export const name = (text: string): string => role('name', text);
 export const url = (text: string): string => role('url', text);
 export const cmd = (text: string): string => role('cmd', text);
 export const code = (text: string): string => role('code', text);
+/** The person's own input in a line that isn't an error: code style, or backticks in plain output. */
+export const given = (text: string): string => role('given', text);
 export const heading = (text: string): string => role('h', text);
 export const selected = (text: string): string => role('sel', text);
 export const dim = (text: string): string => role('dim', text);
@@ -286,11 +291,13 @@ function paintMarkup(markup: string, color: boolean): string {
   const roles: Role[] = [];
   const on = (rs: Role[]): string => rs.flatMap((r) => STYLES[r]).map((look) => `\x1b[${SGR[look][0]}m`).join('');
   let out = '';
-  // Plain, a command keeps its backticks where they help it read.
-  let cmdText = '';
+  // Plain, a command keeps its backticks where they help it read, and
+  // the person's own input always does.
+  let spanText = '';
+  const quotes = (r: Role): boolean => r === 'cmd' || r === 'given';
   for (const piece of pieces(markup)) {
     if ('text' in piece) {
-      if (!color && roles.includes('cmd')) cmdText += piece.text;
+      if (!color && roles.some(quotes)) spanText += piece.text;
       else out += piece.text;
     } else if ('open' in piece) {
       roles.push(piece.open);
@@ -299,13 +306,13 @@ function paintMarkup(markup: string, color: boolean): string {
       const i = roles.lastIndexOf(piece.close);
       if (i >= 0) roles.splice(i, 1);
       if (color) out += `\x1b[0m${on(roles)}`;
-      else if (piece.close === 'cmd' && !roles.includes('cmd')) {
-        out += keepsBackticks(cmdText) ? quoted(cmdText) : cmdText;
-        cmdText = '';
+      else if (quotes(piece.close) && !roles.some(quotes)) {
+        out += piece.close === 'given' || keepsBackticks(spanText) ? quoted(spanText) : spanText;
+        spanText = '';
       }
     }
   }
-  return out + cmdText + (color && roles.length > 0 ? '\x1b[0m' : '');
+  return out + spanText + (color && roles.length > 0 ? '\x1b[0m' : '');
 }
 
 /**

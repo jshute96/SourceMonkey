@@ -722,6 +722,8 @@ class Remote {
   private readonly folders = new Map<(line: string) => void, RepeatFolder>();
   /** The run's log lines, for `logs` and `wait log`. */
   readonly logs = new RunLog();
+  /** A loaded script's number (`scripts` lists it as `1:`), by its id. */
+  scriptNumberOf: (id: string) => number | undefined = () => undefined;
   /** When the run started, in epoch ms, as its record says. */
   readonly startedAt = Date.now();
 
@@ -777,8 +779,13 @@ class Remote {
     if (record.streamed === false) return;
     const line = streamLine(record);
     const shows = (sources: ReadonlySet<LogSource>): boolean => record.always === true || inSources(record, sources);
-    if (shows(this.sources)) this.folded(this.print).line(line);
-    for (const [listener, sources] of this.listeners) if (shows(sources ?? this.sources)) this.folded(listener).line(line);
+    const frameStart = frameStartFold(record, this.scriptNumberOf);
+    const send = (folder: RepeatFolder): void => {
+      if (frameStart) folder.frameStart(frameStart.key, line, frameStart.report);
+      else folder.line(line);
+    };
+    if (shows(this.sources)) send(this.folded(this.print));
+    for (const [listener, sources] of this.listeners) if (shows(sources ?? this.sources)) send(this.folded(listener));
   };
 
   /** The run's id, once other shells can reach it. */
@@ -830,8 +837,13 @@ class Remote {
     void this.control?.update({ tabs });
   }
 
+  /** Reports what each reader's stream held back, as a command ends. */
+  flushHeld(): void {
+    for (const folder of this.folders.values()) folder.flushAll();
+  }
+
   async close(): Promise<void> {
-    for (const folder of this.folders.values()) folder.flush();
+    this.flushHeld();
     await this.control?.close();
   }
 
@@ -904,7 +916,7 @@ class Remote {
     // command's end, not after its next command's echo. It prints that
     // echo itself, so the first line after it shows as new.
     const fresh = (): void => this.folders.get(reply)?.interrupt();
-    const flushed = (): void => this.folders.get(reply)?.flush();
+    const flushed = (): void => this.folders.get(reply)?.flushAll();
     return this.runner(line, inspects ? { ...hooks, answer: reply, start: fresh, end: flushed }
       : sent.follows ? { ...hooks, start: fresh, end: flushed }
         : { ...hooks, start: () => this.listeners.set(reply, undefined), end: () => this.unlisten(reply) });
@@ -913,7 +925,7 @@ class Remote {
   // Stops streaming to `reader`, first reporting the repeats it was
   // shown only once.
   private unlisten(reader: (line: string) => void): void {
-    this.folders.get(reader)?.flush();
+    this.folders.get(reader)?.flushAll();
     this.folders.delete(reader);
     this.listeners.delete(reader);
   }
@@ -982,7 +994,7 @@ async function runInBrowser(
   if (link.versionNote) opts.out(`[sm-dev] ${link.versionNote}`);
   // `tabs` is set before any entry can come in: nothing awaits between.
   const host = new ExtensionHost(link, ({ scriptId, name, level, message, page }) => opts.emit!({
-    source: 'sm', kind: level, scriptId, tab: page && tabs.numberOf(page), text: `${name}: ${message}`,
+    source: 'sm', kind: level, scriptId, tab: page && tabs.numberOf(page), text: `${name}: ${message}`, subject: name,
   }));
   if (external) {
     host.external = {
@@ -1041,6 +1053,11 @@ async function runInBrowser(
   const stamps = new Map<PreparedScript, string>();
   for (const script of prepared) stamps.set(script, await filesStamp(script));
   let commands: ConsoleContext | null = null;
+  // For the stream's lines that name a script by its number.
+  remote.scriptNumberOf = (id) => {
+    const i = (commands?.scripts ?? scripts).findIndex((s) => s.id === id);
+    return i < 0 ? undefined : i + 1;
+  };
   let watcher: FileWatcher | null = null;
   // Set once the run is ending, so work still queued changes nothing.
   let stopping = false;
@@ -1288,6 +1305,9 @@ async function runInBrowser(
       const runner = commandRunner(ctx);
       if (commandsComing) setCommandsListening(ctx.tabs(), true);
       remote.arm(runner);
+      // The start's own output ends with what it held back, such as how
+      // many frames a script also started in.
+      remote.flushHeld();
       opts.onReady?.(remote.id);
       await opts.until;
     } else {
@@ -1886,28 +1906,57 @@ async function prepareAll(opts: RunOptions, files = opts.files): Promise<Prepare
   return out;
 }
 
+/**
+ * For a script's start in a frame, how the stream folds it: by the
+ * script and tab, with the line that counts the ones held back, which
+ * says how to list them. Null for any other line. The log keeps each
+ * one. `numberOf`: the script's number, for the `logs` command.
+ */
+export function frameStartFold(record: LogFields, numberOf: (id: string) => number | undefined = () => undefined): { key: string; report: (n: number) => string } | null {
+  const { subject: name } = record;
+  if (record.source !== 'event' || record.kind !== 'started' || !name || !record.text.startsWith(name + FRAME_START)) return null;
+  const tab = record.tab === undefined ? undefined : `T${record.tab}`;
+  const number = record.scriptId === undefined ? undefined : numberOf(record.scriptId);
+  // `logs` shows the current tab's lines unless told which, and every
+  // script's unless told which.
+  const list = [
+    'logs', ...(tab ? ['--tab', tab] : []), ...(number !== undefined ? ['--script', String(number)] : []), '--find', FRAME_START.trim(),
+  ].map(shellWord).join(' ');
+  return {
+    key: `${tab ?? ''} ${record.scriptId ?? name}`,
+    report: (n) => `[sm-dev] ${S.ui`${S.name(name)} also started in ${n} more frame${n === 1 ? '' : 's'}${tab ? S.ui` on ${S.id(tab)}` : ''}. Use ${S.cmd(list)} to list them.`}`,
+  };
+}
+
+// How a start report from a frame (not a tab's top frame) reads, after
+// the script's name.
+const IN_A_FRAME = 'in a frame ';
+const FRAME_START = ` started ${IN_A_FRAME}`;
+
 // `prefix` tags each report with the tab it came from.
 function wireHostOutput(host: ExtensionHost, emit: (fields: LogFields) => void, tabOf: (record: object) => number | undefined): void {
   // A report or menu command from an iframe names it (`T1.F3`).
-  const event = (record: { scriptId?: string; frameNumber?: number }, kind: string, text: string, also?: LogSource[]): void => emit({
-    source: 'event', kind, tab: tabOf(record), ...(record.frameNumber !== undefined ? { frame: record.frameNumber } : {}), scriptId: record.scriptId, text, ...(also ? { also } : {}),
+  // A line about one script starts with its name (`subject`).
+  const event = (record: { scriptId?: string; frameNumber?: number }, kind: string, text: string, also?: LogSource[], subject?: string): void => emit({
+    source: 'event', kind, tab: tabOf(record), ...(record.frameNumber !== undefined ? { frame: record.frameNumber } : {}), scriptId: record.scriptId, text,
+    ...(also ? { also } : {}), ...(subject ? { subject } : {}),
   });
   // SourceMonkey's Log has an entry for each of these, logged as the
   // report rather than twice. A throw is the script's own error too, and
   // the page's console shows it.
   // A report from an iframe says so: its URL is the frame's, not the page's.
-  const on = (r: { url: string; frame?: true }): string => `${r.frame ? 'in an iframe ' : ''}on ${r.url}`;
-  host.on('start', (r: StartReport) => event(r, 'started', `${r.name} started ${on(r)}`, ['sm']));
+  const on = (r: { url: string; frame?: true }): string => `${r.frame ? IN_A_FRAME : ''}on ${r.url}`;
+  host.on('start', (r: StartReport) => event(r, 'started', `${r.name} started ${on(r)}`, ['sm'], r.name));
   // Not a script whose rules miss the page: otherwise each page load
   // would print a line for every run script that doesn't match it.
   // `match` shows why one doesn't run.
   host.on('skip', (r: SkipReport) => {
-    if (!r.ruleMiss) event(r, 'skipped', `${r.name} skipped ${on(r)}: ${r.reason}`, ['sm']);
+    if (!r.ruleMiss) event(r, 'skipped', `${r.name} skipped ${on(r)}: ${r.reason}`, ['sm'], r.name);
   });
-  host.on('manual', (r: ManualReport) => event(r, 'manual', `${r.name} is waiting to be run on ${r.url}, since it has @run-at context-menu. Use menu to run it.`));
+  host.on('manual', (r: ManualReport) => event(r, 'manual', `${r.name} is waiting to be run on ${r.url}, since it has @run-at context-menu. Use menu to run it.`, undefined, r.name));
   host.on('script-error', (r: ErrorReport) => {
     const frames = r.stack ? r.stack.split('\n').slice(1, 4).map((line) => `\n    ${decodeOwnRefs(line.trim())}`).join('') : '';
-    event(r, 'threw', `${r.name} threw: ${decodeOwnRefs(r.message)}${frames}`, ['sm', 'script', 'page']);
+    event(r, 'threw', `${r.name} threw: ${decodeOwnRefs(r.message)}${frames}`, ['sm', 'script', 'page'], r.name);
   });
   host.on('request', (r) => event(r, 'request', `GM_xmlhttpRequest ${r.method} ${r.url}: ${r.outcome}${r.status ? ' ' + r.status : ''}${r.error ? ' ' + r.error : ''}`));
   host.on('tab', (r) => event(r, 'open-tab', `GM_openInTab ${r.url}`));
@@ -1919,7 +1968,7 @@ function wireHostOutput(host: ExtensionHost, emit: (fields: LogFields) => void, 
   host.on('connect-prompt', (r) => {
     if (r.answer) return;
     emit({
-      source: 'event', kind: 'permission-prompt', tab: tabOf(r), scriptId: r.scriptId, always: true,
+      source: 'event', kind: 'permission-prompt', tab: tabOf(r), scriptId: r.scriptId, always: true, subject: r.name,
       text: `*PERMISSION PROMPT*: ${r.name} requests permission to connect to ${r.host} (${r.method} ${withoutQuery(r.url)}). Answer using connect once|cancel|allow|deny|allow-all.`,
     });
   });

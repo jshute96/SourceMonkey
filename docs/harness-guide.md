@@ -1546,7 +1546,7 @@ A script runs in each iframe whose URL it matches (see
   does, with each command an iframe registered labeled with its frame:
   `M3: Toggle (F2)`. Firing it runs it in that frame.
 - A line from a frame is prefixed with it: `[T1.F2] [event] ... started
-  in an iframe on ...`, `[T1.F2] [script log] ...`. Its loads show in
+  in a frame on ...`, `[T1.F2] [script log] ...`. Its loads show in
   `logs` as `T1.F2 [event] Loaded <URL>`.
 - `eval --frame F2` runs in that frame, in the script's scope there (or
   `--script=<script>`, or `--page` for the frame's own page world).

@@ -1101,7 +1101,7 @@ function statusHeading(how: RunConnection, detached: boolean): (line: string) =>
   };
 }
 
-const MATCH_FRAMES_NEEDS_RUN = 'The `--frames` flag checks the iframes of a run\'s tab, so `match` needs a run for it. Name a frame\'s URL to check it.';
+const MATCH_FRAMES_NEEDS_RUN = 'The `--frames` flag checks the frames of a run\'s tab, so `match` needs a run for it. Name a frame\'s URL to check it.';
 const MATCH_NEEDS = 'The `match` command needs a script (a .user.js file) and at least one URL, or a run to take them from';
 const VALIDATE_NEEDS = 'The `validate` command needs at least one path, or a run to take the script from';
 const NEEDS_A_RUN: Record<string, string> = {

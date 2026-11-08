@@ -167,7 +167,7 @@ const IN_FRAME = ['eval', 'click', 'hover', 'type', 'snapshot', 'screenshot', 'p
 // `logs` lists its own, which takes `all`.
 const ON_TAB = ['open', 'snapshot', 'screenshot', 'savehtml', 'probe', 'click', 'hover', 'type', 'key', 'eval', 'cdp', 'accept', 'dismiss', 'wait selector', 'wait selector-gone'];
 // `status` and `tabs` print each tab's frame tree with this.
-const FRAMES_OPTION: HelpItem = { term: '--frames', about: 'Show each tab\'s iframes as a tree, with the scripts running in each (see `help frames`).' };
+const FRAMES_OPTION: HelpItem = { term: '--frames', about: 'Show each tab\'s frames as a tree, with the scripts running in each (see `help frames`).' };
 // The commands that work through SourceMonkey, which a run under
 // another manager doesn't have.
 const SM: ManagerName[] = ['sourcemonkey'];
@@ -350,7 +350,7 @@ export const HELP_SECTIONS: HelpSection[] = [
               { term: 'all-tabs', about: 'In a run: all tabs.' },
               { term: 'all', about: 'In a run: all scripts on all tabs.' },
             ],
-            options: [{ term: '--frames', about: 'In a run: for a tab, also check each of its iframes, by the frame\'s URL. `@noframes` keeps a script out of them.' }],
+            options: [{ term: '--frames', about: 'In a run: for a tab, also check each of its frames, by the frame\'s URL. `@noframes` keeps a script out of them.' }],
           },
           {
             usage: 'validate [script]...',
@@ -435,9 +435,9 @@ export const HELP_SECTIONS: HelpSection[] = [
   {
     title: 'Frames',
     name: 'frames',
-    summary: 'Work with iframes',
+    summary: 'Work with frames',
     text: [
-      'A script runs in each iframe whose own URL it matches, unless it has `@noframes`. Each iframe gets an ID, `F1`, `F2` and so on across the run, which it keeps when it reloads. The top frame goes by its tab\'s ID (`T1`).',
+      'A script runs in each frame (an `<iframe>` in the page) whose own URL it matches, unless it has `@noframes`. Each frame gets an ID, `F1`, `F2` and so on across the run, which it keeps when it reloads. The top frame goes by its tab\'s ID (`T1`).',
       '',
       'Working in a frame:',
       '- `frames`: Show the frames tree, and the scripts running in each.',
@@ -456,12 +456,12 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         usage: 'frames [tab|frame|all]',
         syntax: { args: 'words', max: 1, tab: 'word', tabAll: true },
-        about: 'List the current tab\'s iframes, as a tree, with the scripts running in each.',
+        about: 'List the current tab\'s frames, as a tree, with the scripts running in each.',
         args: [
-          { term: 'T2', about: 'That tab\'s iframes.' },
+          { term: 'T2', about: 'That tab\'s frames.' },
           { term: 'F3, T2.F3', about: 'That frame and the frames in it.' },
           { term: 'frameId=<id>', about: 'A frame by its CDP frame id, as the `frames` tree shows it, or the start of one.' },
-          { term: 'all', about: 'Every tab\'s iframes.' },
+          { term: 'all', about: 'Every tab\'s frames.' },
         ],
       },
     ],
@@ -1091,7 +1091,7 @@ export const HELP_SECTIONS: HelpSection[] = [
           },
           {
             term: '--frame <frame>',
-            about: 'Act in an iframe (`F2`) of the tab. See `help frames`.',
+            about: 'Act in a frame (`F2`) of the tab. See `help frames`.',
             commands: IN_FRAME,
           },
           {
@@ -1154,7 +1154,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         title: 'Frames',
         items: [
-          { term: 'F2', about: 'Iframe ID in the `frames` list. The top frame is its tab\'s ID (`T2`).' },
+          { term: 'F2', about: 'Frame ID in the `frames` list. The top frame is its tab\'s ID (`T2`).' },
           { term: 'T2.F2', about: 'Frame `F2`, on tab `T2`.' },
           { term: 'frameId=<id>', about: ['Its CDP frame id, as the `frames` tree shows it, or its first 6 or more characters.', 'Frames with their own process get their own `targetId`, which is the same as their `frameId`.'] },
         ],

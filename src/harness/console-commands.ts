@@ -282,8 +282,8 @@ export function waitingReminders(ctx: ConsoleContext, before: WaitingState, said
   for (const prompt of waitingPrompts(ctx)) {
     if (!before.prompts.has(prompt.promptId)) continue;
     const script = ctx.scripts.find((s) => s.id === prompt.scriptId);
-    const select = script && script !== selected && ctx.scripts.length > 1 ? ` (select it first with ${quoted(`script ${ctx.scripts.indexOf(script) + 1}`)})` : '';
-    lines.push(`[sm-dev] *PERMISSION PROMPT* still waiting: ${prompt.name} requests permission to connect to ${prompt.host}. Answer using ${quoted('connect once|cancel|allow|deny|allow-all')}${select}.`);
+    const select = script && script !== selected && ctx.scripts.length > 1 ? ui` (select it first with ${S.cmd(`script ${ctx.scripts.indexOf(script) + 1}`)})` : '';
+    lines.push(`[sm-dev] ${ui`*PERMISSION PROMPT* still waiting: ${S.name(prompt.name)} requests permission to connect to ${prompt.host}. Answer using ${S.cmd('connect once|cancel|allow|deny|allow-all')}${select}.`}`);
   }
   const current = currentTab(ctx);
   for (const tab of ctx.tabs()) {
@@ -326,12 +326,12 @@ async function answerConnectCommand(ctx: ConsoleContext, args: string[]): Promis
   const prompt = waiting.find((r) => r.scriptId === script?.id);
   if (!prompt) {
     const forHost = host === undefined ? '' : ` for ${host}`;
-    const name = script ? preparedScriptName(script) : 'the selected script';
+    const name = script ? S.name(preparedScriptName(script)) : 'the selected script';
     const other = waiting.find((r) => r.scriptId !== script?.id);
     const otherScript = other && ctx.scripts.find((s) => s.id === other.scriptId);
-    ctx.out(otherScript
-      ? `[sm-dev] No permission prompt${forHost} is waiting for ${name}. ${preparedScriptName(otherScript)} has one: select it with ${quoted(`script ${ctx.scripts.indexOf(otherScript) + 1}`)}, then use ${quoted('connect')} again.`
-      : `[sm-dev] No permission prompt${forHost} is waiting for ${name}`);
+    ctx.out(`[sm-dev] ${otherScript
+      ? ui`No permission prompt${forHost} is waiting for ${name}. ${S.name(preparedScriptName(otherScript))} has one: select it with ${S.cmd(`script ${ctx.scripts.indexOf(otherScript) + 1}`)}, then use ${S.cmd('connect')} again.`
+      : ui`No permission prompt${forHost} is waiting for ${name}`}`);
     return;
   }
   let answered: boolean;
@@ -348,7 +348,7 @@ async function answerConnectCommand(ctx: ConsoleContext, args: string[]): Promis
   const said = choice === 'allow' ? `Allowed ${prompt.host}` : choice === 'allow-all' ? 'Allowed all sites'
     : choice === 'deny' ? `Denied ${prompt.host}` : choice === 'once' ? `Allowed ${prompt.host} once`
       : `Cancelled the permission prompt about ${prompt.host}`;
-  ctx.out(`[sm-dev] ${said} for ${prompt.name}`);
+  ctx.out(`[sm-dev] ${ui`${said} for ${S.name(prompt.name)}`}`);
 }
 
 /**
@@ -577,8 +577,10 @@ export async function runConsoleCommand(
   const scriptId = current?.id;
   const other = ctx.currentOther;
   // Named in the output only when there is a choice to be clear about.
-  const whose = other ? ` (${other.label}: ${other.name})`
-    : ctx.scripts.length > 1 && current ? ` (${preparedScriptName(current)})` : '';
+  // As markup, the name in its style, and plain, for error lines.
+  const whoseUi = other ? ui` (${S.id(other.label)}: ${S.name(other.name)})`
+    : ctx.scripts.length > 1 && current ? ui` (${S.name(preparedScriptName(current))})` : '';
+  const whose = whoseUi && S.plainLine(whoseUi);
   const picked = currentTab(ctx);
   // Every controlled tab can be closed, T1 included.
   if (!picked && NEEDS_A_TAB.has(command)) {
@@ -770,7 +772,7 @@ export async function runConsoleCommand(
       if (OTHER_LABEL.test(text)) {
         const found = await pickOther(ctx, text, picked);
         if (!found) return false;
-        if (outFile !== undefined) return writeValuesFile(ctx, cwd, outFile, await found.values(), ` (${found.label}: ${found.name})`);
+        if (outFile !== undefined) return writeValuesFile(ctx, cwd, outFile, await found.values(), ui` (${S.id(found.label)}: ${S.name(found.name)})`);
         if (ctx.json) {
           ctx.out(jsonResult('values', { scripts: [{ script: found.label, name: found.name, values: await found.values() }] } satisfies J.ValuesData));
           return;
@@ -782,7 +784,7 @@ export async function runConsoleCommand(
       }
       // `--out` writes the selected script's values: one of another
       // manager's, as `get` and `set` take it, when that is selected.
-      if (outFile !== undefined && !text && other) return writeValuesFile(ctx, cwd, outFile, await other.values(), whose);
+      if (outFile !== undefined && !text && other) return writeValuesFile(ctx, cwd, outFile, await other.values(), whoseUi);
       if (ctx.scripts.length === 0) {
         if (outFile !== undefined) {
           ctx.out(`[sm-dev] ${NO_SCRIPTS}`);
@@ -819,7 +821,7 @@ export async function runConsoleCommand(
       await settleWrites();
       if (outFile !== undefined) {
         const [script] = scripts;
-        const named = ctx.scripts.length > 1 ? ` (${preparedScriptName(script)})` : '';
+        const named = ctx.scripts.length > 1 ? ui` (${S.name(preparedScriptName(script))})` : '';
         return writeValuesFile(ctx, cwd, outFile, script.id ? await ctx.host.valuesOf(script.id) : {}, named);
       }
       if (ctx.json) {
@@ -854,7 +856,7 @@ export async function runConsoleCommand(
           ctx.out(`${MISTAKE_PREFIX}Nothing is stored under ${quoted(text)}${whose}, so nothing was written`);
           return false;
         }
-        return writeJsonFile(ctx, cwd, getOut, values[text], `Wrote ${quoted(text)}${whose}`);
+        return writeJsonFile(ctx, cwd, getOut, values[text], ui`Wrote ${S.given(text)}${whoseUi}`);
       }
       if (ctx.json) {
         const found = Object.hasOwn(values, text);
@@ -925,7 +927,7 @@ export async function runConsoleCommand(
       } else {
         await ctx.host.setValues(scriptId!, { [key]: value });
       }
-      ctx.out(`[sm-dev] Set ${key}${whose}`);
+      ctx.out(`[sm-dev] ${ui`Set ${S.given(key)}${whoseUi}`}`);
       return;
     }
     case 'reload': {
@@ -1734,11 +1736,25 @@ function framesWhere(ctx: ConsoleContext, tab: ControlledTab, scriptId: string |
   return [...(activeOn(ctx, tab, scriptId) ? [tabName(tab)] : []), ...frames.map((n) => `F${n}`)];
 }
 
-// `framesWhere` after a tab's name or a script's: ` (T1, F1, F3)`.
+// `framesWhere` after a tab's name or a script's: ` (T1, F1, F3)`. A
+// script without @noframes on an ad-heavy page runs in 100 frames or
+// more, so a long list is cut, with the count of the rest.
 function framesSuffix(ctx: ConsoleContext, tab: ControlledTab, scriptId: string | undefined): string {
   const where = framesWhere(ctx, tab, scriptId);
-  return where ? ui` (${idList(where)})` : '';
+  return where ? ui` (${placesList(where)})` : '';
 }
+
+/**
+ * Places as `framesSuffix` lists them: all of them, or the first few and
+ * how many more. Never "and 1 more", which takes the room of the one.
+ */
+export function placesList(where: string[]): string {
+  if (where.length <= FRAMES_LISTED + 1) return idList(where);
+  return ui`${idList(where.slice(0, FRAMES_LISTED))} and ${where.length - FRAMES_LISTED} more frames`;
+}
+
+// How many places `framesSuffix` names before it counts the rest.
+const FRAMES_LISTED = 5;
 
 // IDs joined by commas, each marked up.
 function idList(ids: string[]): string {
@@ -1850,7 +1866,7 @@ function framesCommand(ctx: ConsoleContext, words: string[], current: Controlled
   }
   for (const { tab, from } of tabs) {
     for (const line of frameTreeLines(ctx, tab, '', from)) ctx.out(line);
-    if (from === undefined && (ctx.frames?.get(tab)?.length ?? 0) === 0) ctx.out('  No iframes');
+    if (from === undefined && (ctx.frames?.get(tab)?.length ?? 0) === 0) ctx.out('  No frames');
   }
 }
 
@@ -2012,7 +2028,7 @@ async function loadInTab(
     const waiting = host.unreported(tab.link, ids, since);
     const names = scripts.filter((s) => waiting.includes(s.id!)).map(preparedScriptName);
     if (names.length > 0) {
-      out(`[sm-dev] ${names.join(', ')} had not started on ${tabName(tab)} after ${SCRIPTS_REPORT_MAX_MS / 1000} seconds`);
+      out(`[sm-dev] ${ui`${names.map((n) => S.name(n)).join(', ')} had not started on ${S.id(tabName(tab))} after ${SCRIPTS_REPORT_MAX_MS / 1000} seconds`}`);
     }
     return result(false);
   } finally {
@@ -2054,7 +2070,7 @@ function printTabs(ctx: ConsoleContext, frames = false): void {
     for (const script of listed) {
       // Where, when not the top frame alone, then anything amiss.
       const where = framesWhere(ctx, tab, script.id);
-      const notes = [...(where ? [idList(where)] : []), tabNote(ctx, tab, script).join(', ')].filter((n) => n);
+      const notes = [...(where ? [placesList(where)] : []), tabNote(ctx, tab, script).join(', ')].filter((n) => n);
       const suffix = notes.length > 0 ? ui` (${notes.join('; ')})` : '';
       ctx.out(ui`   ${selectMark(script === selected)}${S.id(ctx.scripts.indexOf(script) + 1)}: ${S.name(preparedScriptName(script))}${suffix}`);
     }
@@ -2446,7 +2462,7 @@ async function installedPage(ctx: ConsoleContext, label: string): Promise<string
       return null;
     }
     const url = representativeMatch({ matches: details.match })?.linkUrl ?? null;
-    if (!url) ctx.out(`[sm-dev] ${label}: ${details.name}: ${NO_DEFAULT_PAGE}. Give a URL instead.`);
+    if (!url) ctx.out(`[sm-dev] ${ui`${S.id(label)}: ${S.name(details.name)}: ${NO_DEFAULT_PAGE}. Give a URL instead.`}`);
     return url;
   } catch (err) {
     ctx.out(`[sm-dev] ${label} could not be looked up: ${firstLine(err)}`);
@@ -2772,7 +2788,7 @@ async function runManual(ctx: ConsoleContext, tab: ControlledTab, scriptId: stri
     ctx.out(`${MISTAKE_PREFIX}${name} did not run: ${failed.message}`);
     return false;
   }
-  ctx.out(`[sm-dev] Ran ${name}`);
+  ctx.out(`[sm-dev] ${ui`Ran ${script ? S.name(name) : name}`}`);
   if (!tab.dialogs?.current) await fire(tab, tab.link.drain().then(() => true));
   return true;
 }
@@ -2998,10 +3014,10 @@ function valueEntries(values: Record<string, unknown>): string[] {
  */
 async function writeValuesFile(ctx: ConsoleContext, cwd: string, given: string, values: Record<string, unknown>, whose = ''): Promise<boolean | void> {
   const count = Object.keys(values).length;
-  return writeJsonFile(ctx, cwd, given, values, `Wrote ${count} value${count === 1 ? '' : 's'}${whose}`);
+  return writeJsonFile(ctx, cwd, given, values, ui`Wrote ${count} value${count === 1 ? '' : 's'}${whose}`);
 }
 
-/** JSON to a file, for `values --out` and `get --out`, then `<done> to <file>`. */
+/** JSON to a file, for `values --out` and `get --out`, then `<done> to <file>` (`done` as markup). */
 async function writeJsonFile(ctx: ConsoleContext, cwd: string, given: string, value: unknown, done: string): Promise<boolean | void> {
   const file = path.resolve(cwd, given);
   try {
@@ -3010,7 +3026,7 @@ async function writeJsonFile(ctx: ConsoleContext, cwd: string, given: string, va
     ctx.out(`${MISTAKE_PREFIX}Could not write ${quoted(given)}: ${writeProblem(err) ?? errorSentence(err)}`);
     return false;
   }
-  ctx.out(`[sm-dev] ${done} to ${ui`${S.url(shownPath(file, cwd))}`}`);
+  ctx.out(`[sm-dev] ${ui`${done} to ${S.url(shownPath(file, cwd))}`}`);
 }
 
 // Longer stored values are cut, so a cache a script stores doesn't bury

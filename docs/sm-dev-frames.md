@@ -90,6 +90,10 @@ Tabs:
 - The frame list is left out for a script in the top frame only. When
   the script runs in the top frame and in iframes, it includes the tab
   id.
+- A list of more than six places names the first five and how many
+  more (`T1, F1, F2, F3, F4 and 26 more frames`, `placesList`), since a
+  script without `@noframes` on an ad-heavy page runs in 100 frames or
+  more. `frames`, `--frames` and JSON list them all.
 
 In the status lines under each script in `status` and `scripts`
 ([What `tabs` and `status` show](harness-guide.md#what-tabs-and-status-show)),
@@ -206,6 +210,9 @@ T1: http://localhost:8765/frames/frames.html
   - a frame's load: Playwright's `framenavigated`.
 - A frame's load is a line like a page's: `T1.F3 [event] Loaded <URL>`,
   in `logs` only, not the stream (ad frames load often).
+- A script's start in a frame shows in the stream once per tab, then
+  one line counts the rest, which `logs` keeps
+  ([sm-dev-logs.md](sm-dev-logs.md)).
   - Load lines go through the same queue as console lines and errors,
     so what a page logged or threw comes before the next page's load.
   - A change of the frame URL's fragment alone isn't a load.

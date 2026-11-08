@@ -1081,6 +1081,12 @@ See [docs/harness-design.md](docs/harness-design.md).
 
 ## sm-dev runs: follow-ups
 
+- **Fold other per-frame lines in the stream, as starts are.** A
+  script's `skipped in a frame` and `threw` lines, and its own console
+  lines, print once per frame, so on an ad-heavy page they still bury
+  the rest. Starts fold by script and tab (`RepeatFolder.frameStart`,
+  `frameStartFold` in `src/harness/run.ts`); the repeat folder misses
+  these because each line's `[T1.Fn]` prefix differs.
 - **A page's stackless error is labeled `[script error]`.** A
   `SyntaxError` from the page's own `eval` has no stack frames, and
   `pageErrorSource` (`src/harness/page-output.ts`) gives a frameless

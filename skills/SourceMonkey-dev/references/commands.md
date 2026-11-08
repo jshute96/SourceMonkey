@@ -75,7 +75,7 @@ sm-dev [global options] <command> [args] [-- <command> ...]
 | Installed script | `E1` | SourceMonkey's own number, the same in every run |
 | Collection | `C1`, its name or a unique piece, `id=<id>` | A run's test collection: its run, `D1` |
 | Menu command | `M1`, `T2.M1`, or its label | |
-| Element | CSS or Playwright selector, or a ref (`e4`, `f2e6`) | Refs from the latest `snapshot`. A selector in an iframe: `--frame F2` |
+| Element | CSS or Playwright selector, or a ref (`e4`, `f2e6`) | Refs from the latest `snapshot`. A selector in a frame: `--frame F2` |
 | Frame | `F2`, `T1.F2`, `frameId=<id>`; the top frame is its tab, `T1` | From `frames`; kept across the frame's reloads |
 | Page | URL, file, glob, or script number (its default page) | Scheme optional for hosts |
 
@@ -147,7 +147,7 @@ test a script under VM or TM:
 | --- | --- |
 | `validate <path>...` | Header, `@require` and syntax checks, plus warnings, e.g. an `@icon` that can't be shown (files, dirs, globs) |
 | `match <script>... <url>...` | Would it run there; which rules matched or excluded it |
-| `match`, `match all` | In a run: the selected script on the current tab; all scripts on all tabs. `--frames`: each of the tab's iframes too |
+| `match`, `match all` | In a run: the selected script on the current tab; all scripts on all tabs. `--frames`: each of the tab's frames too |
 | `scripts`, `script <script>` | List; pick the one `get`/`set`/`match` use. It also lists SourceMonkey-managed scripts on the tab as E1, ...; `scripts E1` picks one for `get`/`set`, any installed script (`script list` lists them), on the tab or not (`set key --force <json>` outside a temp browser) |
 | `load <script>...` | Add scripts to the run |
 | `update [script]` | Re-read changed scripts and reload affected tabs |
@@ -195,8 +195,8 @@ asked to.
 
 | Command | Does |
 | --- | --- |
-| `tabs`, `tab T2` | List (with targetIds); pick the current tab. `--frames`: each tab's iframes too |
-| `frames [T2\|F3\|all]` | A tab's iframes (`F1`, ...) as a tree, with the scripts running in each, `(hidden)` ones marked, each one's CDP `frameId`, and the `targetId` of one from another site |
+| `tabs`, `tab T2` | List (with targetIds); pick the current tab. `--frames`: each tab's frames too |
+| `frames [T2\|F3\|all]` | A tab's frames (`F1`, ...) as a tree, with the scripts running in each, `(hidden)` ones marked, each one's CDP `frameId`, and the `targetId` of one from another site |
 | `newtab [page...]` | Open a controlled tab (becomes current) |
 | `newtab --noscript <url>` | A tab the scripts stay out of (sticky) |
 | `closetab [T2 T3...\|all]` | Close the current tab, the ones named, or all. Closing the last tab leaves a blank tab open. A page's "Leave site?" dialog waits for `accept`/`dismiss`; `--force` skips it |
@@ -217,7 +217,7 @@ asked to.
 | `eval <js>` | Evaluate inside the selected script, where its `GM_*` APIs, `@require` libraries, top-level declarations and IIFE locals are visible; prints JSON (promises awaited). In the page when no script is selected or it hasn't run there |
 | `eval --page <js>` | Evaluate in the page, where the page's own globals are |
 | `eval --script=<script> <js>` | Evaluate inside the named script |
-| `eval --frame F2 <js>` | Evaluate in an iframe: in the script instance there, or in its page with `--page`. Cross-origin frames too |
+| `eval --frame F2 <js>` | Evaluate in a frame: in the script instance there, or in its page with `--page`. Cross-origin frames too |
 | `eval --file <path>` | Evaluate a JavaScript file |
 | `eval --out FILE <js>` | Write the result to a file; printed results are cut past 10,000 characters |
 | `cdp <Method> [json]` | A raw CDP call on the tab; the result as JSON. A `{{` block or `--file` holds several, one per line (see [cdp.md](cdp.md)) |

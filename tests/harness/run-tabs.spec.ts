@@ -407,7 +407,7 @@ test('a script running only in an iframe: its lines name the frame, a frame\'s s
     body: `console.log('[in-frame] on ' + location.pathname);`,
   });
   const lines = await driveCli([file, `${fixtureServer.baseUrl}/frames/frames.html`], [
-    ['[event] In frame started in an iframe on', 'status'],
+    ['[event] In frame started in a frame on', 'status'],
     // A stackless error in a frame no script runs in is the page's.
     ['T1: Running (F', 'eval --frame F3 --page setTimeout(() => { Promise.reject(\'stackless\') }); \'rejected\''],
     ['"rejected"', 'wait log --log-source page stackless'],
@@ -418,7 +418,7 @@ test('a script running only in an iframe: its lines name the frame, a frame\'s s
   // Frame B is F2 (Frame A is F1, B's nested frame F3).
   expect(lines).toContain('[T1.F2] [script log] [in-frame] on /frames/frame-b.html');
   expect(lines.some((l) => / T1\.F3 \[page error\] stackless$/.test(l))).toBe(true);
-  expect(lines.some((l) => /^\[T1\.F\d+\] \[event\] In frame started in an iframe on http:\/\/\S+\/frames\/frame-b\.html$/.test(l))).toBe(true);
+  expect(lines.some((l) => /^\[T1\.F\d+\] \[event\] In frame started in a frame on http:\/\/\S+\/frames\/frame-b\.html$/.test(l))).toBe(true);
   expect(lines.some((l) => /^\* T1: \S+\/frames\/frames\.html \(\+3 frames\)/.test(l))).toBe(true);
   expect(lines.some((l) => /^ {5}T1: Running \(F\d+\)$/.test(l))).toBe(true);
 });
@@ -574,7 +574,7 @@ test('load, update and reload all reload just the tabs they affect', async ({ fi
     // B matches only T2's page.
     ['[T2] [script log] [B] on /other.html', 'scripts 2'],
     ['Selected B', 'set k 1'],
-    ['Set k', 'update 1'],
+    ['Set `k`', 'update 1'],
     // Untouched, so nothing to do; touched, only A's tab reloads.
     ["hasn't changed on disk", () => { touch(a); return 'update all'; }],
     ['[script log] [A] on /target.html', 'scripts'],

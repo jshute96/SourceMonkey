@@ -148,8 +148,8 @@ What happens next:
   observe to prove it works: a DOM state, a measured value, a stored value.
 - Pick a real page its `@match` covers, and confirm with `match`.
   - For a script that runs on all sites, pick a plain page. Without `@noframes`,
-    it also runs in each ad iframe, and an ad-heavy page can bury the top frame's
-    output under hundreds of them.
+    it also runs in each ad iframe, and on an ad-heavy page its log lines from
+    hundreds of them can bury the top frame's.
 
 ### 4. Run it on the live site
 
