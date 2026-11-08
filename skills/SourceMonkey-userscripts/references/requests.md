@@ -27,3 +27,19 @@ List each host the script requests from with `@connect`. A request to
 an unlisted host waits on the manager's permission prompt (see
 "Permission prompts" in `SourceMonkey-dev`), and a person may deny it.
 Handle the denial: log it, and say on the page what didn't load.
+
+## Scraping other pages
+
+A script that `fetch`es a page and parses it gets the HTML as served,
+before page scripts run. That can differ from the page in the browser,
+and from a saved page, which holds the DOM after scripts ran.
+
+- One site served order cards with their status text encrypted, and the
+  page's scripts decoded it. The script's parse found nothing and
+  reported "0 orders" with no error.
+- When a parse of fetched HTML finds less than the page shows, compare
+  the fetched HTML with the rendered DOM for the parts the script reads:
+  `sm-dev eval --page` with a `fetch(url).then(r => r.text())`, against
+  `probe` or `snapshot` on the live tab.
+- When the content needs page code to run, load the page in a hidden
+  same-origin iframe and read its DOM once the content appears.

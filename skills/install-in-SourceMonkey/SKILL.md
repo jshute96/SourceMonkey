@@ -67,8 +67,8 @@ refresh command applies.
 
 All three open a browser tab, so don't fire them speculatively: one
 refresh once the change is complete, not one per edit. **None is needed
-after editing an existing script's body**; only when *which* scripts run
-where has changed.
+after editing an existing script, header included, for a page it already
+runs on**; see [Picking up edits to a script](#picking-up-edits-to-a-script).
 
 ## Picking up edits to a script
 
@@ -76,8 +76,15 @@ SourceMonkey re-reads local script files on every page load, so for a
 page the script *already* targets, the person just reloads the page. No
 `refresh`, and nothing for us to do after an edit.
 
-A refresh is needed only when the set of scripts, or where they run,
-changes, and then `refresh-file` on the affected path is enough.
+That covers header changes too (`@grant`, `@run-at`, `@require`,
+`@match` and the rest): SourceMonkey re-reads a local script whenever
+its tab comes to the front or loads, so the next reload of a page the
+script already runs on uses the new header.
+
+A refresh is needed only when the set of scripts changes (a file added,
+removed or renamed), or when a script should start running on a page
+where it doesn't run now (such as a `@match` added for another site).
+Then `refresh-file` on the affected path is enough.
 
 That covers local `@require` files too, including a local file
 overriding a remote URL (see below): reloading the page re-reads them

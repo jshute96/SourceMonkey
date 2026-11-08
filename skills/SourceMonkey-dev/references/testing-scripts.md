@@ -170,6 +170,8 @@ What happens next:
   ```sh
   sm-dev --run Dname --headed --browser-type chrome start <file> <url> --detach
   ```
+- Reddit's "Prove your humanity" page shows up on most fresh browsers,
+  and one `reload` usually gets past it, with nothing to solve.
 - A bot check that stops Chrome too (a captcha, a Cloudflare checkbox, a
   firewall's "Access Blocked") makes the script `n/a`, reason `bot-blocked`,
   unless it can still be judged elsewhere. Don't solve captchas.

@@ -112,6 +112,8 @@ In each agent's prompt:
 
 - Give it its script IDs and a run name prefix of its own (`DhA`, `DhB`,
   ...; never `D1`/`D2`, which are the person's).
+- Tell it the scratchpad is shared with the other agents, so its file names
+  start with its prefix (`DhA-result-14178.json`).
 - Tell it to read
   [references/testing-a-script.md](references/testing-a-script.md) first.
 - Add site hints (which sites block headless, which to avoid).
@@ -153,13 +155,24 @@ When a SourceMonkey fix lands, re-test the scripts it should have fixed.
 
 Find them by tag or blame:
 
-```sh
-node $R list --tag setclipboard-callback           # a tag names the gap
-node $R list --test fail                           # all failures
-node greasyfork-testing/build-db.mjs        # or query by blame:
-sqlite3 greasyfork-testing/corpus.db \
-  "SELECT script_id, test_status, test_blame FROM ScriptResults WHERE test_blame = 'sourcemonkey'"
-```
+- With `record-results.mjs list`, which filters by tag and test status:
+
+  ```sh
+  node $R list --tag setclipboard-callback    # a tag names the gap
+  node $R list --test fail                    # all failures
+  ```
+
+- With SQL over `corpus.db`, for anything `list` can't filter on, such as
+  blame. `build-db.mjs --query` rebuilds the database from `corpus.json`
+  (about a second) and runs the query, so it sees results imported just now:
+
+  ```sh
+  node greasyfork-testing/build-db.mjs --query \
+    "SELECT script_id, test_status FROM ScriptResults WHERE test_blame = 'sourcemonkey'"
+  ```
+
+  - Add `--no-build` to query the database as it is.
+  - The tables and their columns are in `greasyfork-testing/schema.sql`.
 
 For each one:
 

@@ -27,6 +27,13 @@ test('adds the button', async ({ page, loadUserscript, gm, reports }) => {
   `values` / `get` / `set` → `gm.list()` / `gm.get()` / `gm.set()`,
   `--from-saved` → `serveHtml`, `match` →
   `loadUserscript(path, { url })` (throws on a miss).
+- Serve saved copies of the real pages, not pages built from the
+  script's selectors. A hand-made page encodes what you think the site
+  looks like, so it hides the differences a spec should catch (label
+  text, which element carries a state, default form values).
+  - For a page behind a login, ask the person to sign in, in an
+    `--open-browser` run, and save the page with `savehtml` (or
+    `saveHtml` in a spec run once against the live site).
 - Specs are ES modules (`.mjs`, or `"type": "module"`).
 - A `GM_xmlhttpRequest` really goes out unless the spec answers it:
   `await gm.interceptRequests(fn)`, or `await gm.failHosts('api.x.com')`

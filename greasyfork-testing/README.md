@@ -24,7 +24,8 @@ skill in [`.claude/skills/corpus-testing/`](../.claude/skills/corpus-testing/SKI
 | `corpus.json` | yes | One record per script (its GreasyFork `listing` stats, plus test findings), and the hand-added tag definitions | `add-scripts.mjs` and `download-scripts.mjs --update` (listings), `record-results.mjs` (findings, tag definitions) | every tool |
 | `files/` | no | Downloaded scripts and their `@require` / `@resource` files (~270 MB) | `download-scripts.mjs` | `build-db.mjs`, `record-results.mjs` |
 | `download-report.json` | no | Last download run's counts and failures, and what `--update` changed | `download-scripts.mjs` | you |
-| `corpus.db` | no | SQLite database of listings, parsed headers, dependencies and findings; rebuilt from scratch each run | `build-db.mjs` | `render-analysis.mjs`, ad hoc SQL |
+| `corpus.db` | no | SQLite database of listings, parsed headers, dependencies and findings; rebuilt from scratch each run | `build-db.mjs` | `render-analysis.mjs`, `build-db.mjs --query`, ad hoc SQL |
+| `schema.sql` | yes | The tables in `corpus.db`, with comments on their columns | you | `build-db.mjs` |
 | `analysis.sql` | yes | The queries behind `analysis.html` | you | `render-analysis.mjs` |
 | `analysis.html` | yes | Corpus statistics report | `render-analysis.mjs` | you |
 | `results.html` | yes | Static page that reads `corpus.json` and shows a sortable, filterable table of every script's validity, test status, tags and notes | you (hand-written) | you, in a browser |
@@ -40,7 +41,7 @@ from it.
 | `add-scripts.mjs` | GreasyFork, `corpus.json` | `corpus.json` listings | [Finds script IDs](#adding-scripts) from IDs, URLs or pages, and compares or adds them |
 | `download-scripts.mjs` | `corpus.json`, GreasyFork | `files/`, `download-report.json`, `corpus.json` listings (`--update`) | [Downloads](#downloading-the-scripts-themselves) each script, then its dependencies, or [updates](#updating-the-scripts) those that changed |
 | `record-results.mjs` | `corpus.json`, `files/` | `corpus.json` findings | **Records individual facts about one script at a time** (a test result, tag or note) as you learn them. [More](#test-results). Its `validate` subcommand is the one bulk step |
-| `build-db.mjs` | `corpus.json`, `files/` | `corpus.db` | [Loads everything into SQLite](#analysis-database) |
+| `build-db.mjs` | `corpus.json`, `files/`, `schema.sql` | `corpus.db`, stdout (`--query`) | [Loads everything into SQLite](#analysis-database), and [runs a query](#querying) on it |
 | `validate-corpus.mjs` | `files/` | stdout, `--json` file | [Validates](#validating-the-corpus) every downloaded script offline; `record-results.mjs validate` runs it |
 | `render-analysis.mjs` | `corpus.db`, `analysis.sql` | `analysis.html` | Renders the statistics report |
 | `serve-results.mjs` | `results.html`, `corpus.json`, `corpus-help.js` | | [Serves the results page](#viewing-results) on localhost |
@@ -331,11 +332,29 @@ node greasyfork-testing/render-analysis.mjs   # analysis.sql → analysis.html
 ```
 
 `build-db.mjs` rebuilds `corpus.db` from scratch each run — it is derived data,
-and both inputs are cheap to re-read. Header parsing reuses the extension's own
-`dist/userscript-header.js`, so the database sees metadata blocks exactly the
-way SourceMonkey does (`pnpm run build` first).
+and both inputs are cheap to re-read. A build takes about a second. Header
+parsing reuses the extension's own `dist/userscript-header.js`, so the database
+sees metadata blocks exactly the way SourceMonkey does (`pnpm run build`
+first).
+
+### Querying
+
+`--query` rebuilds the database, then runs one SQL statement and prints its
+rows as tab-separated lines. `--no-build` skips the rebuild.
+
+```sh
+node greasyfork-testing/build-db.mjs --query \
+  "SELECT script_id, test_status FROM ScriptResults WHERE test_blame = 'sourcemonkey'"
+node greasyfork-testing/build-db.mjs --no-build --query "SELECT COUNT(*) FROM Scripts"
+```
+
+The `sqlite3` tool works on `corpus.db` too, for exploring (`.tables`,
+`.schema`) and running SQL files, but it doesn't rebuild first.
 
 ### Tables
+
+The full schema, with comments on the columns, is
+[`schema.sql`](schema.sql), which `build-db.mjs` runs to create them.
 
 | Table | Contents |
 |-------|----------|
@@ -414,20 +433,23 @@ node $R import-results results.json    # results from the testing method's JSON 
 
 `validate` needs a build (`pnpm run build`), like the other tools.
 
-To try a script on its site, run it with `sm-dev`, pointing it at the
-downloaded `@require`s so a dead or flaky host doesn't stop the run.
-Give the run an ID of your own, since other agents may be testing too:
-
-```sh
-scripts/sm-dev --run D<yours> --local greasyfork-testing/files start "<file from show>" <url> --detach
-```
-
 - It records a verdict for every downloaded script, `tool error` included.
 - A verdict that matches the one recorded keeps its old `date`, so a rerun
   redates only the scripts whose result changed.
 - A listed script that isn't downloaded has its `valid`, `sites`,
   `version` and `file` cleared, so an old verdict can't pass for a current one.
 - Each command refuses options it doesn't take, so a misspelled one fails loudly.
+
+To try a script on its site, run it with `sm-dev`, pointing it at the
+downloaded `@require`s so a dead or flaky host doesn't stop the run.
+Give the run an ID of your own, since other agents may be testing too:
+
+```sh
+scripts/sm-dev --run D<yours> --root greasyfork-testing/files start "<file from show>" <url> --detach
+```
+
+Use `--root`, not `--local`: with the repo as the root, a repo file such as
+`LICENSE` can stand in for a dead dependency of the same name.
 
 ### Record format
 

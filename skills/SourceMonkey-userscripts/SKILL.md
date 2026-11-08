@@ -69,9 +69,12 @@ Links to `references/...` below are relative to this skill's directory
 ## Changing a script
 
 - The install skills describe how an edit reaches the person's browser
-  in each manager. In SourceMonkey, a reload is enough for a local
-  script's body. Header changes, especially `@match` / `@include` /
-  `@exclude`, may need a refresh or reinstall.
+  in each manager. In SourceMonkey, a reload is enough for any edit to a
+  local script, header included (`@grant`, `@require`, ...), on a page
+  the script already runs on. A refresh is needed for a new, removed or
+  renamed file, or a script that should now run on a page it doesn't
+  run on yet. See "Picking up edits to a script" in
+  `install-in-SourceMonkey`.
 - None of that applies while iterating with `sm-dev start`, which
   injects the file as it is on disk.
 - Bump `@version` (the last number) for a change people should get
@@ -117,6 +120,11 @@ itself.
 - **`@noframes`** by default. Sites embed hidden iframes, and without it
   the script runs in those too, with init logs from contexts you didn't
   expect. Drop it only when the script needs to run in frames.
+  - Some sites run their app in a hidden same-site iframe (LinkedIn's
+    feed loads its app in `/preload/`). Before keeping `@noframes` on a
+    script that patches page code, check `sm-dev frames` for such a
+    frame. If the script logs `init` but never finds what it patches,
+    look there.
 - **Leave `@grant` out unless the script uses `GM_*` APIs**, then list
   just those. Don't add `@grant none` by default; it changes which
   `window` the script sees. See
@@ -198,6 +206,18 @@ already done:
 - Injected styles check for their own `<style>`, found by a
   `data-<script-slug>` marker.
 
+### Inserting UI while the page loads
+
+On a large page that paints as it parses, `DOMContentLoaded` can come a
+second or more after the content is on screen, so UI added then appears
+late and moves what's around it.
+
+- To add UI as soon as its anchor exists, run at `document-start` and
+  watch with a `MutationObserver` on `document`, disconnecting once the
+  anchor is found and the UI is in.
+- Keep `DOMContentLoaded` (or `@run-at document-end`) as the default;
+  use this when the late insert is visible.
+
 ### Other rules
 
 - **No personal data** in scripts, specs or docs: no account ids, user
@@ -221,7 +241,7 @@ Load the one that matches what the site does:
 | [scrolling.md](references/scrolling.md) | The script scrolls the page or reads scroll position: inner scroll containers, pages that grow mid-scroll, sticky headers |
 | [css-overrides.md](references/css-overrides.md) | A CSS override doesn't take effect, or the element to restyle is hard to find |
 | [shared-code-and-collaboration.md](references/shared-code-and-collaboration.md) | Sharing helpers through `@require`, scripts that cooperate on one page, or two installed copies fighting |
-| [requests.md](references/requests.md) | The script fetches from another site, or a request works from the page but fails from the script |
+| [requests.md](references/requests.md) | The script fetches from another site or scrapes other pages of this one, or a request works from the page but fails from the script |
 | [image-viewer-pages.md](references/image-viewer-pages.md) | The script runs on direct image URLs (Chrome's standalone image viewer) |
 | [config-settings.md](references/config-settings.md) | Making a value user-configurable, stored in GM storage and edited from the script's menu |
 | [naming-and-describing.md](references/naming-and-describing.md) | Writing `@name` and `@description` |

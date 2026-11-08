@@ -2283,6 +2283,9 @@ test('adds the button to the toolbar', async ({ page, loadUserscript, gm, report
 - A `<name>_files` folder beside the file is served too.
 - Other requests fall through to the page's other routes and the
   network, unless `block` is set.
+  - `block` aborts `file:` loads too (`page.goto('file://...')` fails
+    with `net::ERR_FAILED`). To test a local page in the same spec,
+    serve its contents at a made-up URL (`https://launcher.test/`).
 - Pair it with Playwright's `routeFromHAR` for pages that fetch data.
 - `saveHtml` writes the same file the `savehtml` run command writes.
 

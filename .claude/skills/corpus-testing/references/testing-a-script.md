@@ -24,9 +24,14 @@ particular to the corpus.
 What the method's brief leaves open, for the corpus:
 
 - Test against the downloaded `@require` and `@resource` files, so a dead or
-  flaky host doesn't stop the run. Give `--local greasyfork-testing/files`
+  flaky host doesn't stop the run. Give `--root greasyfork-testing/files`
   before the `validate` and `start` commands. Later commands to the run don't
   take it.
+  - Use `--root`, not `--local`. `--local` adds the folder but keeps the
+    current directory (the repo) as the root that local copies are searched
+    in, so a repo file whose path ends the same way can stand in for a dead
+    dependency. Script 9630's dead `@resource LICENSE` was served the repo's
+    `LICENSE`, with no warning.
 - A script you ran that sends private data keeps its result. Add the
   `sends-browsing-data` tag.
 

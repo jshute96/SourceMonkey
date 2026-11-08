@@ -8,10 +8,24 @@
 //   node greasyfork-testing/build-db.mjs [options]
 //
 //   --corpus PATH  script list and findings (default greasyfork-testing/corpus.json)
-//   --root PATH  download root (default greasyfork-testing/files)
-//   --db PATH    database to write (default greasyfork-testing/corpus.db)
+//   --root PATH    download root (default greasyfork-testing/files)
+//   --db PATH      database to write (default greasyfork-testing/corpus.db)
+//   --query SQL    after building, run one SQL statement and print its rows as
+//                  tab-separated lines under a header line (NULL as empty).
+//                  Only the first statement runs; any after it are ignored.
+//   --no-build     with --query, query the database as it is instead of
+//                  rebuilding it first
 //
-// The database is rebuilt from scratch each run — it's derived data, and both
+// Examples:
+//   node greasyfork-testing/build-db.mjs
+//   node greasyfork-testing/build-db.mjs --query \
+//     "SELECT script_id, test_status FROM ScriptResults WHERE test_blame = 'sourcemonkey'"
+//
+// Building takes about a second, so --query rebuilds by default and sees
+// corpus.json as it is now. The `sqlite3` tool works on corpus.db too, for
+// `.tables`, `.schema` and SQL files.
+//
+// The database is rebuilt from scratch each build: it's derived data, and both
 // inputs (corpus.json and the file tree) are cheap to re-read.
 //
 // Requires a build (`pnpm run build`): the header parsing reuses the extension's
@@ -19,7 +33,7 @@
 // sees headers exactly the way SourceMonkey does.
 
 import { DatabaseSync } from 'node:sqlite';
-import { rm, stat } from 'node:fs/promises';
+import { readFile, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseHeader } from '../dist/userscript-header.js';
@@ -35,139 +49,61 @@ const DEFAULTS = {
   db: path.join(REPO_ROOT, 'greasyfork-testing/corpus.db'),
 };
 
+const PATH_OPTIONS = new Set(['corpus', 'root', 'db']);
+
 function parseArgs(argv) {
-  const opts = { ...DEFAULTS };
+  const opts = { ...DEFAULTS, query: null, build: true };
+  const seen = new Set();
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (!Object.hasOwn(DEFAULTS, arg.replace(/^--/, '')) || !arg.startsWith('--')) {
-      throw new Error(`Unknown argument: ${arg}`);
-    }
+    if (seen.has(arg)) throw new Error(`The ${arg} option is given more than once`);
+    seen.add(arg);
+    if (arg === '--no-build') { opts.build = false; continue; }
+    const name = arg.startsWith('--') ? arg.slice(2) : '';
+    if (!PATH_OPTIONS.has(name) && name !== 'query') throw new Error(`Unknown argument: ${arg}`);
     const value = argv[++i];
     if (value === undefined) throw new Error(`Missing value for ${arg}`);
-    opts[arg.slice(2)] = path.resolve(value);
+    opts[name] = name === 'query' ? value : path.resolve(value);
   }
+  if (!opts.build && opts.query === null) throw new Error('The --no-build option needs --query');
   return opts;
 }
 
-const SCHEMA = `
-CREATE TABLE Scripts (
-  id             INTEGER PRIMARY KEY,
-  name           TEXT NOT NULL,
-  info_page      TEXT NOT NULL,
-  script_url     TEXT NOT NULL,
-  total_installs INTEGER,
-  daily_installs INTEGER,
-  ratings_good   INTEGER,
-  ratings_ok     INTEGER,
-  ratings_bad    INTEGER,
-  created_date   TEXT,
-  updated_date   TEXT,
-  gone_as_of     TEXT,     -- when GreasyFork was found to no longer have it; NULL when it does
-  size           INTEGER,  -- bytes on disk; NULL when the body wasn't downloaded
-  local_filename TEXT      -- relative to the download root; NULL when absent
-);
+/** One cell of --query output: tabs and line breaks escaped so each row stays one line. */
+function cell(value) {
+  if (value === null || value === undefined) return '';
+  return String(value).replace(/\\/g, '\\\\').replace(/\t/g, '\\t').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+}
 
--- One row per distinct dependency URL. size/local_filename are NULL when the
--- file couldn't be fetched: a dead link, a blocked or unreachable host.
-CREATE TABLE RequiresFiles (
-  url            TEXT PRIMARY KEY,
-  size           INTEGER,
-  local_filename TEXT
-);
+async function runQuery(dbPath, sql) {
+  if (!await stat(dbPath).catch(() => null)) {
+    throw new Error(`The database ${path.relative(REPO_ROOT, dbPath)} does not exist. Run without --no-build to build it.`);
+  }
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    let statement;
+    try {
+      statement = db.prepare(sql);
+    } catch (err) {
+      const reason = String(err?.message ?? err);
+      throw new Error(`SQLite refused the query: ${reason[0].toUpperCase()}${reason.slice(1)}`);
+    }
+    const columns = statement.columns().map((c) => c.name);
+    if (columns.length === 0) throw new Error('The query returns no columns. Give a SELECT statement.');
+    // Rows as arrays: as objects, two columns with one name (`SELECT *` over
+    // a join) would both show the last one's value.
+    statement.setReturnArrays(true);
+    process.stdout.write(columns.map(cell).join('\t') + '\n');
+    for (const row of statement.iterate()) {
+      process.stdout.write(row.map(cell).join('\t') + '\n');
+    }
+  } finally {
+    db.close();
+  }
+}
 
-CREATE TABLE ResourceFiles (
-  url            TEXT PRIMARY KEY,
-  size           INTEGER,
-  local_filename TEXT
-);
-
--- Join tables: which script pulls in which dependency. A script listing the
--- same URL twice is recorded once, so counts here are "scripts referencing".
-CREATE TABLE ScriptRequiresFiles (
-  script_id INTEGER NOT NULL REFERENCES Scripts(id),
-  url       TEXT NOT NULL REFERENCES RequiresFiles(url),
-  PRIMARY KEY (script_id, url)
-);
-
-CREATE TABLE ScriptResourcesFiles (
-  script_id     INTEGER NOT NULL REFERENCES Scripts(id),
-  url           TEXT NOT NULL REFERENCES ResourceFiles(url),
-  resource_name TEXT NOT NULL,  -- the @resource name the script binds it to
-  PRIMARY KEY (script_id, url, resource_name)
-);
-
--- Every metadata-block line, in source order.
---   @description:ar → header_field 'description', suffix 'ar', full 'description:ar'
---   @grant          → header_field 'grant',       suffix '',   full 'grant'
-CREATE TABLE ScriptHeaders (
-  script_id           INTEGER NOT NULL REFERENCES Scripts(id),
-  header_field        TEXT NOT NULL,
-  header_field_full   TEXT NOT NULL,
-  header_field_suffix TEXT NOT NULL,
-  argument            TEXT NOT NULL
-);
-
--- One row per @match / @include line, decomposed so the URL-targeting questions
--- are plain SQL. See classifyPattern() for what each column means.
-CREATE TABLE ScriptMatches (
-  script_id    INTEGER NOT NULL REFERENCES Scripts(id),
-  header_field TEXT NOT NULL,     -- 'match' or 'include'
-  pattern      TEXT NOT NULL,     -- the line's argument, trimmed
-  shape        TEXT NOT NULL,     -- absolute | prefix-glob | inner-glob | regex | all-urls
-                                  -- judged on host+path only; a wildcard scheme
-                                  -- is tracked separately in scheme_glob
-  scheme       TEXT NOT NULL,     -- '' when the pattern names none
-  host_pattern TEXT NOT NULL,     -- host portion as written, e.g. '*.youtube.com'
-  site         TEXT,              -- resolved hostname, NULL when it isn't one site
-  scheme_glob  INTEGER NOT NULL,
-  host_glob    INTEGER NOT NULL,
-  path_glob    INTEGER NOT NULL
-);
-
--- The findings recorded in corpus.json (see record-results.mjs), flattened for SQL.
--- One row per script that has any finding.
-CREATE TABLE ScriptResults (
-  script_id     INTEGER PRIMARY KEY REFERENCES Scripts(id),
-  version       TEXT,  -- @version of the downloaded copy
-  valid_status  TEXT,  -- ok | invalid | tool error; NULL when never validated
-  valid_error   TEXT,
-  valid_date    TEXT,
-  test_status   TEXT,  -- pass | fail | inconclusive | n/a; NULL when never tried
-  test_reason   TEXT,  -- why a test was n/a
-  test_blame    TEXT,  -- what caused a failure
-  test_date     TEXT,
-  test_version  TEXT
-);
-
--- Tags from both sources: 'validation' (derived by import-validation, e.g.
--- unsupported-grant:GM_cookie) and 'manual' (added while testing).
-CREATE TABLE ScriptTags (
-  script_id INTEGER NOT NULL REFERENCES Scripts(id),
-  tag       TEXT NOT NULL,
-  source    TEXT NOT NULL
-);
-
--- Labels on corpus records, each with its rank under that label when it has one.
-CREATE TABLE ScriptLabels (
-  script_id INTEGER NOT NULL REFERENCES Scripts(id),
-  label     TEXT NOT NULL,
-  rank      INTEGER
-);
-
-CREATE TABLE ScriptNotes (
-  script_id INTEGER NOT NULL REFERENCES Scripts(id),
-  date      TEXT NOT NULL,
-  version   TEXT,
-  text      TEXT NOT NULL
-);
-
-CREATE INDEX idx_matches_script ON ScriptMatches(script_id);
-CREATE INDEX idx_matches_site ON ScriptMatches(site);
-CREATE INDEX idx_headers_script ON ScriptHeaders(script_id);
-CREATE INDEX idx_headers_field ON ScriptHeaders(header_field);
-CREATE INDEX idx_requires_url ON ScriptRequiresFiles(url);
-CREATE INDEX idx_resources_url ON ScriptResourcesFiles(url);
-`;
+// The tables, kept in their own file so they're easy to read.
+const SCHEMA_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'schema.sql');
 
 /** Size and root-relative name of a downloaded file, or nulls when it's absent. */
 async function fileFacts(root, url) {
@@ -180,14 +116,21 @@ async function fileFacts(root, url) {
 async function main() {
   if (printHelp(process.argv.slice(2), import.meta.url)) return;
   const opts = parseArgs(process.argv.slice(2));
+  if (opts.build) await build(opts, { quiet: opts.query !== null });
+  if (opts.query !== null) await runQuery(opts.db, opts.query);
+}
+
+async function build(opts, { quiet }) {
   await checkRoot(opts.root);
+  // Read before the old database is deleted, so a missing file leaves it alone.
+  const schema = await readFile(SCHEMA_FILE, 'utf8');
 
   // Drop the WAL sidecars too: SQLite would treat a stray -wal next to a
   // freshly created database as content to recover.
   for (const suffix of ['', '-wal', '-shm']) await rm(opts.db + suffix, { force: true });
   const db = new DatabaseSync(opts.db);
   db.exec('PRAGMA journal_mode = WAL');
-  db.exec(SCHEMA);
+  db.exec(schema);
 
   const insertScript = db.prepare(`
     INSERT INTO Scripts (id, name, info_page, script_url, total_installs, daily_installs,
@@ -288,6 +231,7 @@ async function main() {
   }
   db.exec('COMMIT');
 
+  if (quiet) { db.close(); return; }
   const count = (sql) => db.prepare(sql).get().n;
   console.info(`Scripts:              ${stats.scripts} (${stats.missingBodies} without a downloaded body)`);
   console.info(`ScriptHeaders:        ${stats.headers} lines (${stats.noHeaderBlock} scripts had no metadata block)`);
@@ -301,4 +245,7 @@ async function main() {
   console.info(`Wrote ${path.relative(REPO_ROOT, opts.db)}`);
 }
 
-await main();
+await main().catch((err) => {
+  process.stderr.write(`${err?.message ?? err}\n`);
+  process.exitCode = 1;
+});

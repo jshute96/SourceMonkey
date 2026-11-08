@@ -698,8 +698,9 @@ Standalone tooling, not a test suite — see `docs/testing.md`.
 | `greasyfork-testing/files/` | Downloaded userscripts, `@require` libraries, and `@resource` assets at `<host>/<url-path>`, plus `_location.json` (gitignored) |
 | `greasyfork-testing/download-report.json` | Last download run's counts, dead links, failed URLs, and what `--update` changed (gitignored) |
 | `greasyfork-testing/corpus.mjs` | Shared corpus helpers: locked atomic `corpus.json` updates, labels, listing blocks, mirror URLs, URL↔on-disk-path mapping, `@match` parsing |
-| `greasyfork-testing/build-db.mjs` | Loads `corpus.json` and downloaded files into `corpus.db` (scripts, headers, match patterns, deps, findings) |
+| `greasyfork-testing/build-db.mjs` | Loads `corpus.json` and downloaded files into `corpus.db` (scripts, headers, deps, findings); `--query` runs SQL on it |
 | `greasyfork-testing/corpus.db` | SQLite database built from the corpus by `build-db.mjs` (gitignored) |
+| `greasyfork-testing/schema.sql` | The tables `build-db.mjs` creates in `corpus.db`, with comments on their columns |
 | `greasyfork-testing/analysis.sql` | Annotated analysis queries over `corpus.db`, one `-- @report` block per table |
 | `greasyfork-testing/render-analysis.mjs` | Runs `analysis.sql` and renders the results as `analysis.html` |
 | `greasyfork-testing/analysis.html` | Generated HTML report of corpus statistics, rendered from `analysis.sql` |

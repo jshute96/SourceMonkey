@@ -356,6 +356,9 @@ $R screenshot btn.png --selector '.save'   # just one element
   its top left corner), for a spot other than its center, e.g. a row's
   empty space rather than the link in its middle. `hover` takes
   `--modifiers` too.
+  - `--at` is in CSS pixels. A `--headed` screenshot can be in device
+    pixels (1740 px wide for a 1280 px page), so divide a point read
+    off it by `eval --page devicePixelRatio` first.
 - A scroll from `eval` (`scrollIntoView`, `scrollBy`) fires no
   `wheel` event, so a script that watches for the user scrolling won't
   see it. Send a real wheel event over `cdp` (see
@@ -794,6 +797,9 @@ and whatever the script does with its response wait.
   script, so later requests to that site don't ask again in the run.
 - `connect` answers the selected script's prompt; with several scripts
   loaded, `script N` first.
+- Answer right after the command that set off the request. The prompt
+  goes away when the script's own request times out (some time out in
+  a few seconds), and a later `connect` then finds no prompt waiting.
 - When testing a script's real behavior, note which sites it asked
   about: its `@connect` lines may be missing some.
 
