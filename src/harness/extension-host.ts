@@ -133,24 +133,51 @@ export class ExtensionHost extends HarnessHost {
       const entries = await this.link.scriptLog(extensionId).catch(() => []);
       const live = this.liveFrom.get(extensionId) ?? Infinity;
       this.liveFrom.delete(extensionId);
-      for (const entry of entries) if (entry.timestamp > seen && entry.timestamp < live) this.logEntry(extensionId, runId, entry);
+      for (const entry of entries) if (entry.timestamp > seen && entry.timestamp < live) this.logEntry(extensionId, runId, entry, true);
     }
   }
 
   // A Log entry of one of the run's scripts: logged when it was made in
   // one of the run's tabs, or outside any (a `@require` that failed to
-  // load).
-  private logEntry(extensionId: string, runId: string, entry: LogEntry): void {
+  // load). `replayed`: read back after a worker restart, so from a page
+  // the tab may have left since.
+  private logEntry(extensionId: string, runId: string, entry: LogEntry, replayed = false): void {
     this.logSeen.set(extensionId, Math.max(this.logSeen.get(extensionId) ?? 0, entry.timestamp));
     const tabId = entry.tabId;
     if (tabId !== undefined && !this.tabs.has(tabId) && !this.early.has(tabId)) return;
     const page = tabId === undefined ? undefined : this.tabs.get(tabId)?.page;
-    this.printLog({ scriptId: runId, name: this.nameOf(runId), level: entry.level, message: decodeOwnRefs(this.remapStack(entry.message)), page });
+    const message = decodeOwnRefs(this.remapStack(entry.message));
+    // A warning about what the script did in the page, as the popup
+    // counts one: not a load-state entry, nor the wrapper's own.
+    if (page && !replayed && entry.level === 'warning' && entry.state === undefined && entry.source !== 'script-wrapper') {
+      this.recordWarning(page, runId, message);
+    }
+    this.printLog({ scriptId: runId, name: this.nameOf(runId), level: entry.level, message, page });
   }
 
   /** The extension's id for the run's script `runId`, once pushed. */
   extensionIdOf(runId: string): string | undefined {
     return this.extensionIds.get(runId);
+  }
+
+  /**
+   * Reads which of the run's scripts SourceMonkey has off, their own
+   * switch or their collection's (`isOff`). A failed read keeps what
+   * was known before.
+   */
+  async refreshOff(): Promise<void> {
+    // Another manager's scripts aren't SourceMonkey's to read.
+    if (this.runIds.size === 0 || this.external) return;
+    try {
+      const [scripts, collections] = await Promise.all([this.link.manager.scripts(), this.link.manager.collections()]);
+      const offCollections = new Set(collections.filter((c) => !c.enabled).map((c) => c.id));
+      this.setOff(scripts.flatMap((s) => {
+        const runId = this.runIds.get(s.id);
+        return runId !== undefined && (!s.enabled || offCollections.has(s.collectionId)) ? [runId] : [];
+      }));
+    } catch {
+      // The waits and lists then go by what was read last.
+    }
   }
 
   /** How the extension's script `extensionId` maps back to its files, if known. */

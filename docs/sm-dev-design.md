@@ -212,6 +212,11 @@ instead wait out what they set off that has a known end:
   - Only reports stamped at or after the new document's start count, so
     late ones from the old document don't end it.
   - A hash-only change loads no document, and waits for nothing.
+  - A script the manager has turned off is never injected, so it isn't
+    waited on (the host's `isOff`). `ExtensionHost.refreshOff` reads
+    which ones are off from SourceMonkey before the commands that load
+    pages or show what runs, after `script` and `collection` commands,
+    and before a `--watch` save's reloads.
   - A 10-second backstop, counted from the load, covers a script that
     never reports. It is not how the end is found.
 - `drain` (in `page-watch.ts`) then makes a round trip through each CDP
@@ -1451,7 +1456,9 @@ User-facing behavior is in [harness-guide.md](harness-guide.md).
     `managed` (`src/extension/managed-changes.ts`) for the other
     `collection` and `script` verbs (see
     [sm-dev-managers.md](sm-dev-managers.md)). These also work with no
-    run, over a connection of their own (`openManagerLink`);
+    run, over a connection of their own (`openManagerLink`). A change
+    returns once Chrome's registrations match it, so a page loaded
+    right after gets the new set;
   - tabs: `tabDocument(tabId)`, which document a tab shows, to tell
     which page an opened tab is.
 - Scripts are named by the extension's script id, a UUID kept stable

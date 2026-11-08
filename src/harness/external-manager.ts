@@ -488,11 +488,12 @@ export function externalOthers(
 }
 
 /**
- * Which scripts the manager has off, all of them while its own switch
- * is (`ConsoleContext.predictedOff`), as of the last `refresh`. A
- * failed refresh keeps what was known before.
+ * Which of the run's scripts the manager has off, all of them while its
+ * own switch is (`ConsoleContext.scriptsOff`), as of the last
+ * `refresh`. `idOf` gives a script's id in the manager. A failed
+ * refresh keeps what was known before.
  */
-export function externalOff(manager: ExternalManager): NonNullable<ConsoleContext['predictedOff']> {
+export function externalOff(manager: ExternalManager, idOf: (script: PreparedScript) => string | undefined): NonNullable<ConsoleContext['scriptsOff']> {
   let off = new Set<string>();
   let applied = true;
   return {
@@ -505,7 +506,11 @@ export function externalOff(manager: ExternalManager): NonNullable<ConsoleContex
         // The lists then go by what was read last.
       }
     },
-    has: (id) => !applied || (id !== undefined && off.has(id)),
+    has: (script) => {
+      const id = idOf(script);
+      return !applied || (id !== undefined && off.has(id));
+    },
+    managerOff: () => !applied,
   };
 }
 

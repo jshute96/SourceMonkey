@@ -143,7 +143,8 @@ test('an extension run takes the run commands: status, values, set, menu, eval, 
   // Each command once the line before it shows up.
   const steps: [string, string][] = [
     ['GM_setValue count = 1', 'status'],
-    ['2 menu commands, 1 stored value', 'menu Mark'],
+    // Last of status's lines, after the tab's menu count.
+    ['1 stored value', 'menu Mark'],
     ['Fired "Mark"', 'eval document.title'],
     ['"marked"', 'set count 10'],
     ['Set count', 'reload'],
@@ -163,6 +164,7 @@ test('an extension run takes the run commands: status, values, set, menu, eval, 
   expect(left, text).toEqual([]);
   expect(text).toContain('/cmds.user.js');
   expect(text).toMatch(/\* 1: Cmds \(.*cmds\.user\.js\)/);
+  expect(text).toMatch(/ {5}T1: Running\n {7}2 menu commands\n {5}1 stored value/);
   // The run's own test collection, by its unique id.
   expect(text).toMatch(/Backend: SourceMonkey extension, test collection [\w.-]+-[0-9a-f]{4}\b/);
 });

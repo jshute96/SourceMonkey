@@ -166,6 +166,7 @@ interface Script {
   run?: string;          // a live run's script: the run ("D1")
   leftBy?: string;       // left by a run that ended ("D1")
   tabs?: TabActivity[];  // in scripts and status
+  values?: number;       // in scripts and status, a run's script under SourceMonkey: values stored
 }
 
 // What a script is doing on one tab.
@@ -175,6 +176,18 @@ interface TabActivity {
   // Where in the tab it runs, the tab's id for its top frame. Absent
   // when that's the top frame only.
   frames?: string[];     // ["T1", "F1", "F3"]
+  // The rest for the run's scripts only.
+  matches?: boolean;     // its rules match the tab's page (top frame)
+  expected?: boolean;    // matches and is on; absent for a manual script
+  notExpected?: "disabled" | "manager-off" | "noscript"; // why not, though it matches
+  skipped?: string;      // why SourceMonkey skipped it on this page
+  // Under SourceMonkey, on the tab's current page, in all its frames.
+  menuCommands?: number;
+  errors?: number;
+  warnings?: number;
+  lastError?: string;
+  lastErrorFrame?: string; // "F2", when the last error came from an iframe
+  lastWarning?: string;
 }
 
 type TabState =
@@ -253,9 +266,9 @@ interface BrowserStatus {
 
 // The counts are for the run's scripts; installed ones have none.
 interface StatusScript extends Script {
-  menuCommands?: number; // on the selected tab
-  values?: number;
-  errors?: number;       // on the selected tab, or every tab with none
+  // With no tab open: all its errors, from tabs since closed. With
+  // tabs, each tab's are in `tabs`.
+  errors?: number;
   lastError?: string;
   // Its permission prompts waiting for `connect`; the URL without its query.
   permissionPrompts?: { host: string; method: string; url: string }[];
@@ -275,12 +288,12 @@ Downloads: /tmp/sm-dev-logs-me/sm-dev-20261003-085822-497-downloads
 Tabs:
 * T1: file:///home/me/gm-menu/gm-menu.html [targetId=CB4200EEA6397DAC9E7BC5A3B995A3A5]
    * 1: Menu example
-Scripts (with status on active tab T1):
+Scripts:
 * 1: Menu example (scripts/gm-menu.user.js)
-     Active
-     1 menu command, 1 stored value
+     T1: Running
+       1 menu command
+     1 stored value
   2: Log example (scripts/gm-log.user.js)
-     Not active
 ```
 
 With no run picked, the browser the line names (with
@@ -545,11 +558,10 @@ interface ScriptsData {
 Text:
 
 ```text
-Loaded scripts (with status on active tab T1):
+Loaded scripts:
 * 1: Menu example (scripts/gm-menu.user.js)
-     Active
+     T1: Running
   2: Log example (scripts/gm-log.user.js)
-     Not active
 SourceMonkey-managed scripts on T1:
   E1: Dark mode (Scripts from web): SourceMonkey script not loaded in sm-dev tab
 ```

@@ -10,6 +10,8 @@ import path from 'node:path';
 import { test, expect } from '../fixtures/harness.js';
 import { DialogTracker, runConsoleCommand, type ConsoleContext } from '../../lib/harness/console-commands.js';
 import { plainLine } from '../../lib/harness/output-style.js';
+import { jsonResultData } from '../../lib/harness/json-output.js';
+import { prepareScript } from '../../lib/harness/prepare.js';
 
 test.describe('sm-dev typed commands', () => {
   test('scripts picks the script values, get and set act on', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {
@@ -34,9 +36,9 @@ test.describe('sm-dev typed commands', () => {
 
     expect(await run('get who')).toEqual(['  who = "one"']);
     expect(await run('scripts')).toEqual([
-      'Loaded scripts (with status on active tab T1):',
-      `* 1: First (${scriptsDir.path}/first.user.js)`, '     Active',
-      `  2: Second (${scriptsDir.path}/second.user.js)`, '     Active',
+      'Loaded scripts:',
+      `* 1: First (${scriptsDir.path}/first.user.js)`, '     T1: Running', '     1 stored value',
+      `  2: Second (${scriptsDir.path}/second.user.js)`, '     T1: Running', '     1 stored value',
     ]);
     expect(await run('script 2')).toEqual([`[sm-dev] Selected Second (${scriptsDir.path}/second.user.js)`]);
     expect(await run('get who')).toEqual(['  who = "two"']);
@@ -209,7 +211,7 @@ test.describe('sm-dev typed commands', () => {
     const row = `* 1: Manual (${scriptsDir.path}/manual.user.js)`;
 
     expect(await run('scripts')).toEqual([
-      'Loaded scripts (with status on active tab T1):', row, '     Waiting for menu to run it (@run-at context-menu)',
+      'Loaded scripts:', row, '     T1: Waiting for menu to run it (@run-at context-menu)',
     ]);
     expect(await run('menu')).toEqual(['Menu commands:', row, '    M1: Run this script']);
     expect(await run('menu M1')).toEqual(['[sm-dev] Ran Manual']);
@@ -264,6 +266,47 @@ test.describe('sm-dev typed commands', () => {
     await run('menu M1');
     expect(await run('accept')).toEqual(['[sm-dev] Accepted the dialog']);
     await expect.poll(() => host.getValue(script.id!, 'name')).toBe('Bob');
+  });
+
+  test('each tab says whether a script is expected and running there, in text and JSON', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {
+    const spec = (name: string) => ({ relativePath: `${name.toLowerCase()}.user.js`, meta: { name, match: ['*://*/target.html'] }, body: '' });
+    const a = await loadScript(spec('A'));
+    // B is never put in the page, so it is expected there and not running.
+    const b = await prepareScript({ file: scriptsDir.write(spec('B')), collectionRoot: scriptsDir.path });
+    await page.goto(`${fixtureServer.baseUrl}/target.html`);
+    await expect.poll(() => host.isRunning(attachment, a.id!)).toBe(true);
+    const lines: string[] = [];
+    const tabs = [{ n: 1, page, link: attachment }];
+    // Stands in for the manager's switches.
+    let disabled = false;
+    const ctx: ConsoleContext = {
+      host, tabs: () => tabs, scripts: [a, b], out: (l) => lines.push(plainLine(l)), stop: () => undefined,
+      json: false, scriptsOff: { refresh: async () => undefined, has: (s) => disabled && s === a },
+    };
+    const run = async (line: string) => {
+      lines.length = 0;
+      await runConsoleCommand(line, ctx);
+      return [...lines];
+    };
+    const rows = [`* 1: A (${scriptsDir.path}/a.user.js)`, `  2: B (${scriptsDir.path}/b.user.js)`];
+    const tabsJson = async () => {
+      const [line] = await run('scripts --json');
+      // The flag sets the context's JSON mode, as a run's sender keeps it.
+      ctx.json = false;
+      return (jsonResultData(line)!.data as { scripts: { tabs: object[] }[] }).scripts.map((s) => s.tabs[0]);
+    };
+    expect(await run('scripts')).toEqual(['Loaded scripts:', rows[0], '     T1: Running', rows[1], '     T1: Expected, Not running']);
+    expect((await run('tabs')).slice(2)).toEqual(['   * 1: A', '     2: B (expected but not running)']);
+    expect(await tabsJson()).toEqual([
+      { tab: 'T1', state: 'running', matches: true, expected: true, menuCommands: 0, errors: 0, warnings: 0 },
+      { tab: 'T1', state: 'not-running', matches: true, expected: true, menuCommands: 0, errors: 0, warnings: 0 },
+    ]);
+
+    // A turned off: still running on the page, which loaded before.
+    disabled = true;
+    expect((await run('scripts')).slice(0, 3)).toEqual(['Loaded scripts:', rows[0], '     T1: Not expected (matches page URL, but disabled), Running']);
+    expect((await run('tabs')).slice(2, 3)).toEqual(['   * 1: A (not expected: disabled)']);
+    expect((await tabsJson())[0]).toMatchObject({ state: 'running', expected: false, notExpected: 'disabled' });
   });
 
   test('with several tabs, commands act on the picked one, or on all', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir, watchPage }) => {
@@ -327,7 +370,7 @@ test.describe('sm-dev typed commands', () => {
       expect(await run('status')).toEqual([
         'Tabs:', `* T1: ${target} [targetId=AB12CD34EF56AB12CD34EF56AB12CD34]`, '   * 1: Menus',
         `  T2: ${other} (opened by T1) [targetId=AB12CD99EF56AB12CD34EF56AB12CD34]`, '     1: Menus',
-        'Scripts (with status on active tab T1):', row, '     Active on T1, T2', '     1 menu command',
+        'Scripts:', row, '     T1: Running', '       1 menu command', '     T2: Running', '       1 menu command',
       ]);
       expect(await run('status T2')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The `status` command takes no arguments\.\n {2}Usage: /)]);
       expect(await run('menu')).toEqual(['Menu commands on T1:', row, '    M1: Hit /target.html']);

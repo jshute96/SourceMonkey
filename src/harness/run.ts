@@ -1268,13 +1268,17 @@ async function runInBrowser(
             : `SourceMonkey extension, run ${link.runId}, with no test collection until a script is pushed`),
         // A throwaway browser's data is the run's own. Under another
         // manager, there's no SourceMonkey to list.
-        ...(manager === 'sourcemonkey' ? { others: host.otherScripts(!session.launched), manager: link.manager }
+        ...(manager === 'sourcemonkey' ? {
+          others: host.otherScripts(!session.launched),
+          manager: link.manager,
+          scriptsOff: { refresh: () => host.refreshOff(), has: (script) => script.id !== undefined && host.isOff(script.id) },
+        }
           : external ? {
             others: externalOthers(external.manager, () => new Set(scripts.flatMap((p) => (p.id ? [host.extensionIdOf(p.id)] : []))), !session.launched),
             manager: externalControl(external.manager),
             // Nothing reports what ran, so the run's scripts' rules say.
             predicted: true,
-            predictedOff: externalOff(external.manager),
+            scriptsOff: externalOff(external.manager, (script) => (script.id === undefined ? undefined : host.extensionIdOf(script.id))),
           } : {}),
         extensionIdOf: (script) => (script.id === undefined ? undefined : host.extensionIdOf(script.id)),
         logs: remote.logs,
@@ -1429,6 +1433,9 @@ class FollowedTabs {
    */
   async apply(next: PreparedScript[], changed: ScriptChange[], none: string, timeoutMs?: number): Promise<void> {
     this.scripts = next;
+    // Turned off in SourceMonkey since the last command: the reloads
+    // below don't wait on those.
+    await this.host.refreshOff();
     const open = this.open();
     // Running in the top frame or any iframe: a script for a page's
     // embedded player may not match the page itself.

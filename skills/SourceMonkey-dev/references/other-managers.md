@@ -44,9 +44,9 @@ $R stop                                    # removes the run's scripts from VM
 
 What differs from SourceMonkey:
 
-- **Nothing reports what ran.** `scripts` and `status` list the run's
-  scripts under `Expected on tab T1 using match rules:` and `Not
-  expected on tab T1:`, from their headers. Check the page itself
+- **Nothing reports what ran.** `scripts` and `status` show each of
+  the run's scripts as `T1: Expected` or `Not expected`, from their
+  headers and the manager's switches. Check the page itself
   (`snapshot`, `eval --page`) to see a script worked.
 - **Every script in the manager runs in every tab**, the person's own and other
   runs' too: nothing keeps them out of the run's tabs.

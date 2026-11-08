@@ -91,13 +91,14 @@ Tabs:
   the script runs in the top frame and in iframes, it includes the tab
   id.
 
-The activity line under each script in `status` and `scripts`:
+In the status lines under each script in `status` and `scripts`
+([What `tabs` and `status` show](harness-guide.md#what-tabs-and-status-show)),
+`Running` takes the same frame list:
 
-- `Active`: in the current tab's top frame only.
-- `Active on T1 (T1, F1, F3), T2, T3 (F7)`: running anywhere else too,
-  each tab with the same frame list.
-- `Not active on T1. Active on T2, T3 (F7).`: not in the current tab.
-- `Not active`: nowhere.
+- `T1: Running`: in the top frame only.
+- `T1: Running (T1, F1, F3)`: in the top frame and iframes.
+- `T3: Running (F7)`: only in an iframe, on a page the script doesn't
+  match.
 
 ### `--frames`
 

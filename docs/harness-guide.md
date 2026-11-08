@@ -579,8 +579,9 @@ sm-dev --existing-browser manager disable          # turn SourceMonkey off there
     (hello.user.js), E6 in Violentmonkey`.
   - Whether a script is on a tab is predicted from its match rules,
     since the manager doesn't say what ran. `scripts` and `status`
-    list them under `Expected on tab T1 using match rules:` and `Not
-    expected on tab T1:`.
+    show `T1: Expected`, or `Not expected` with why when the script
+    matches but is off. `Expected` goes by the top frame: a script that
+    matches only an iframe shows `Expected in frames (F2)`.
   - A script the manager already has by the same name and namespace
     is never replaced: `start` refuses, naming it.
   - The `collection` and `script` commands work on its scripts, in one
@@ -1473,15 +1474,50 @@ on files only, with no run or browser.
     in any of them is listed, with where it runs when that isn't the
     top frame alone: `(T1, F1, F3)` or `(F2)`. See
     [Frames](#frames).
-- `status` lists the tabs first, then the scripts on the current tab.
-- `status` and `scripts` give each script a line saying whether it runs
-  on the current tab, and on which others:
-  - The list's heading names the tab:
-    `Scripts (with status on active tab T1):`.
-  - Each script's line: `Active` (the current tab's top frame only),
-    `Active on T1 (T1, F2), T2`, `Not active on T1. Active on T2.`, or
-    `Not active`.
-  - With no tabs open, there is no heading note and no line.
+  - A script with something amiss on the tab's current page gets a
+    short note, as in `(2 errors, 1 warning)`:
+    - `not expected: disabled`: turned off since the page loaded.
+    - `not expected: doesn't match page URL`: still running after a
+      `pushState` moved the page off its URLs.
+    - `expected but not running`: listed though it isn't running.
+    - A frame list comes first, then `;`: `(T1, F2; 1 error)`.
+- `status` lists the tabs first, then the scripts.
+- `status` and `scripts` give each script a line per tab where its
+  status is worth showing:
+  - First, whether the script should run there: `Expected` when its
+    rules match the tab's URL and it is on.
+    - `Not expected (matches page URL, but disabled)`: the manager
+      has it or its collection off.
+    - `Not expected (matches page URL, but the tab has --noscript)`.
+  - Then whether it runs on the tab's current page load: `Running` or
+    `Not running`. Frames follow `Running` as in `tabs`.
+    - `Not running (skipped: <reason>)` when the manager reported
+      skipping it.
+  - A script running where it is expected shows just `Running`.
+  - Examples: `T1: Running`, `T1: Expected, Not running`,
+    `T2: Not expected (matches page URL, but disabled), Running` (turned
+    off since the page loaded), `T3: Running (F2)` (only in an iframe).
+  - `Not expected (doesn't match page URL), Running`: a `pushState`
+    moved the page off the script's URLs after it started.
+  - `Expected` goes by the top frame: a script that runs only in an
+    iframe of a page it should run on shows `Expected, Not running,
+    Running (F2)`.
+  - A tab where the script doesn't match and doesn't run gets no line.
+  - A manual script (`@run-at context-menu`) shows `Waiting for menu to
+    run it (@run-at context-menu)`, or `Running` once run.
+  - `script show` gives the same line for each tab, and `Doesn't match
+    page URL` for a tab the script doesn't match.
+  - `scripts` and `status` both end each script with its stored values
+    count, shared by all tabs.
+  - Under each tab's line go the script's menu command, error and
+    warning counts on the tab's current page, then its last error and
+    last warning, each on its own line.
+    - The counts cover the tab's top frame and its iframes.
+      `Last error (F2): ...` names the iframe an error came from.
+    - Warnings are the ones SourceMonkey's Log has from that page, the
+      same ones that mark the script Warning in its popup.
+- `reload` and the other loads don't wait on a script the manager has
+  off, since it never starts.
 - Per tab:
   - `menu T2` lists T2's commands, and `menu T2.M1` fires one there
     without switching tabs. `menu all` shows all tabs in turn, each

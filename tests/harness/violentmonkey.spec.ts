@@ -115,7 +115,7 @@ test('a run installs its scripts, traces their logs, and removes them when it en
   const id = /as (E\d+)/.exec(start.stdout)![1];
 
   const scripts = await cli('--run', 'DV1', 'scripts');
-  expect(scripts.stdout).toBe(`Loaded scripts:\n  Expected on tab T1 using match rules:\n  * 1: Hello (hello.user.js), ${id} in Violentmonkey\n`);
+  expect(scripts.stdout).toBe(`Loaded scripts:\n* 1: Hello (hello.user.js), ${id} in Violentmonkey\n     T1: Expected\n`);
   expect((await cli('--run', 'DV1', 'script', 'list')).stdout).toContain(`* ${id}: Hello 1.0 (run DV1's script 1)\n`);
 
   // Another run can't load it too, nor can it be installed over.
@@ -125,12 +125,15 @@ test('a run installs its scripts, traces their logs, and removes them when it en
   expect(over.stdout + over.stderr).toContain('is a script of run DV1, which only that run changes');
 
   // Turned off in Violentmonkey, one by one or all at once, it isn't expected.
-  const notExpected = `Loaded scripts:\n  Not expected on tab T1:\n  * 1: Hello (hello.user.js), ${id} in Violentmonkey\n`;
+  const notExpected = (why: string) => `Loaded scripts:\n* 1: Hello (hello.user.js), ${id} in Violentmonkey\n     T1: Not expected (matches page URL, but ${why})\n`;
   expect((await vm('script', id, 'disable')).code).toBe(0);
-  expect((await cli('--run', 'DV1', 'scripts')).stdout).toBe(notExpected);
+  expect((await cli('--run', 'DV1', 'scripts')).stdout).toBe(notExpected('disabled'));
+  const tabsJson = async () => (JSON.parse((await cli('--run', 'DV1', 'scripts', '--json=single')).stdout) as { scripts: { tabs: object[] }[] }).scripts[0].tabs;
+  expect(await tabsJson()).toEqual([{ tab: 'T1', state: 'not-expected', matches: true, expected: false, notExpected: 'disabled' }]);
   expect((await vm('script', id, 'enable')).code).toBe(0);
   expect((await vm('collection', 'C0', 'disable')).code).toBe(0);
-  expect((await cli('--run', 'DV1', 'scripts')).stdout).toBe(notExpected);
+  expect((await cli('--run', 'DV1', 'scripts')).stdout).toBe(notExpected('Violentmonkey is off'));
+  expect(await tabsJson()).toEqual([{ tab: 'T1', state: 'not-expected', matches: true, expected: false, notExpected: 'manager-off' }]);
   expect((await vm('collection', 'C0', 'enable')).code).toBe(0);
 
   // Another file of the run's own with the same name and namespace

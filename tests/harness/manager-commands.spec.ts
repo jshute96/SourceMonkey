@@ -349,7 +349,8 @@ test('in a run, its own scripts and its test collection', async ({ scriptsDir })
   // Re-read from disk, as update does; and on each tab, as scripts says.
   const more = await cli('start', '--notab', file, '--', 'script', '1', 'refresh', '--', 'newtab', '--', 'script', '1', 'show', '--', 'script', '1', 'refresh', '--json');
   expect(more.stdout + more.stderr).toContain('Script 1 hasn\'t changed on disk, so nothing was reloaded');
-  expect(more.stdout).toMatch(/^ {2}Tabs: +T1: Not running$/m);
+  // A blank tab, which the script doesn't match.
+  expect(more.stdout).toMatch(/^ {2}Tabs: +T1: Doesn't match page URL$/m);
   const refreshJson = JSON.parse(more.stdout.split('\n').find((l) => l.startsWith('{"command":"script refresh"'))!);
   expect(refreshJson).toMatchObject({ script: { id: '1', kind: 'run' }, updated: false });
   const uninstall = await cli('start', '--notab', file, '--', 'script', '1', 'uninstall');

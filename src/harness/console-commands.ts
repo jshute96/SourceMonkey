@@ -26,7 +26,7 @@ import type * as J from './json-output.js';
 import { managerState, managersText, otherManagersWarning, stateLabel, type InstalledManager } from './browser-extensions.js';
 import { DEFAULT_MANAGER, MANAGERS, type ManagerName } from './managers.js';
 import { firstLine } from './extension-link.js';
-import type { ConnectPromptRecord, HarnessHost, MenuCommandRecord } from './host.js';
+import type { ConnectPromptRecord, ErrorReport, HarnessHost, MenuCommandRecord, WarningRecord } from './host.js';
 import type { PageAttachment } from './page-watch.js';
 import {
   collectionList, count, managerVerb, noSuchScript, noSuchVerb, scriptList, type ManagerControl, type ManagerRun, type RunView,
@@ -40,7 +40,7 @@ import { appendHistory, HISTORY_SIZE, historyFile, loadHistory } from './prompt-
 import { frameNodes, parseFrameRef } from './frames.js';
 import { defaultPageUrl, explainMatch, NO_DEFAULT_PAGE, preparedNoframes, preparedScriptMatches, preparedScriptName, preparedScriptPath, shownPath, withDefaultScheme, type PreparedScript } from './prepare.js';
 import { representativeMatch } from '../match-targets.js';
-import { RUN_SCRIPT_LABEL } from '../userscript-header.js';
+import { RUN_SCRIPT_LABEL, isContextMenuRunAt } from '../userscript-header.js';
 import { currentTab, dialogKind, dialogWaitingMessage, NO_TABS, pickTab, tabName } from './tab-refs.js';
 import { runLogLabel } from './run-log.js';
 import {
@@ -148,11 +148,16 @@ export interface ConsoleContext {
    */
   predicted?: boolean;
   /**
-   * Under another manager: which of the run's scripts are off there, by
-   * the manager's id, all of them while its switch is off. Read again
-   * (`refresh`) before each command that shows what a tab runs.
+   * Which of the run's scripts the manager has off, all of them while
+   * its switch is off. Read again (`refresh`) before each command that
+   * shows what a tab runs or waits on its scripts.
    */
-  predictedOff?: { refresh(): Promise<void>; has(extensionId: string | undefined): boolean };
+  scriptsOff?: {
+    refresh(): Promise<void>;
+    has(script: PreparedScript): boolean;
+    /** The manager's own switch is off, so all of them are. */
+    managerOff?(): boolean;
+  };
   /**
    * Each tab's iframes and the scripts in each, read again
    * (`loadFrames`) before each command that shows them. Without it,
@@ -490,6 +495,9 @@ export const inCommand = new AsyncLocalStorage<{ inspects: boolean }>();
 // it does (`save` lists them in the saved page, `values T1` reads them).
 const SHOWS_ACTIVITY = new Set(['scripts', 'script', 'status', 'tabs', 'logs', 'save', 'values']);
 
+// The commands that load pages and wait on their scripts.
+const LOADS_PAGES = new Set(['reload', 'load', 'open', 'newtab', 'update', 'wait']);
+
 // The commands that show a tab's frames, or the scripts in them.
 const SHOWS_FRAMES = new Set(['scripts', 'script', 'status', 'tabs', 'frames', 'menu']);
 
@@ -524,8 +532,9 @@ export async function runConsoleCommand(
     return false;
   }
   // What the manager has turned off, for the commands that show what
-  // the tabs are expected to run.
-  if (ctx.predictedOff && SHOWS_ACTIVITY.has(command)) await ctx.predictedOff.refresh();
+  // the tabs are expected to run, and those that wait on a load's
+  // scripts (`HarnessHost.isOff`).
+  if (ctx.scriptsOff && (SHOWS_ACTIVITY.has(command) || LOADS_PAGES.has(command))) await ctx.scriptsOff.refresh();
   // The trees and JSON show each frame's details too, which cost a call
   // per frame.
   if (SHOWS_FRAMES.has(command)) {
@@ -591,8 +600,13 @@ export async function runConsoleCommand(
 
   switch (command) {
     case 'collection':
-    case 'script':
-      return managerCommand(ctx, command, parsed, cwd);
+    case 'script': {
+      const result = await managerCommand(ctx, command, parsed, cwd);
+      // What the command turned on or off, for the waits on the next
+      // load, however it comes (a `--watch` save's reload too).
+      await ctx.scriptsOff?.refresh();
+      return result;
+    }
     case 'match':
       return matchCommand(ctx, args, cwd, flags['--frames'] === true);
     case 'validate':
@@ -667,21 +681,23 @@ export async function runConsoleCommand(
         if (!others) return false;
         ctx.out(jsonResult('scripts', {
           ...(picked ? { tab: tabName(picked) } : {}),
-          scripts: [...ctx.scripts.map((script) => scriptJson(ctx, script)), ...others],
+          // Stored values as `status` gives them; another manager's aren't readable.
+          scripts: [...await Promise.all(ctx.scripts.map(async (script) => ({
+            ...scriptJson(ctx, script),
+            ...(ctx.predicted ? {} : { values: await valueCount(ctx, script.id) }),
+          }))), ...others],
         } satisfies J.ScriptsData));
         return;
       }
-      if (!text && ctx.predicted && picked && ctx.scripts.length > 0) {
-        for (const l of predictedLines(ctx, picked, 'Loaded scripts')) ctx.out(l);
-        for (const l of await otherLines(ctx, picked)) ctx.out(l);
-        return;
-      }
       if (!text) {
-        ctx.out(ui`${S.heading('Loaded scripts')}${activityHeading(picked)}:`);
+        ctx.out(ui`${S.heading('Loaded scripts')}:`);
         if (ctx.scripts.length === 0) ctx.out(`  ${NO_SCRIPTS}`);
         for (const script of ctx.scripts) {
           ctx.out(scriptRow(ctx, script));
-          if (picked) ctx.out(activityLine(ctx, picked, script.id));
+          for (const l of activityLines(ctx, script, (t) => pageDetails(ctx, t, script))) ctx.out(l);
+          // As `status` gives them.
+          const values = await valueCount(ctx, script.id);
+          if (values > 0) ctx.out(`${DETAIL}${count(values, 'stored value')}`);
         }
         for (const l of await otherLines(ctx, picked)) ctx.out(l);
         return;
@@ -742,8 +758,8 @@ export async function runConsoleCommand(
       // worth a line once there is one.
       if (ctx.downloadsDir && existsSync(ctx.downloadsDir)) ctx.out(ui`${S.heading('Downloads')}: ${S.url(ctx.downloadsDir)}`);
       // The tabs first, each with its URL, ids and any dialog; then
-      // the scripts on the current one, which is marked there. With no
-      // tab, still the scripts and what they have stored.
+      // the scripts, each with its status on each tab. With no tab,
+      // still the scripts and what they have stored.
       printTabs(ctx, flags['--frames'] === true);
       for (const l of await statusLines(ctx, tab)) ctx.out(l);
       for (const l of await otherLines(ctx, tab)) ctx.out(l);
@@ -1313,10 +1329,10 @@ function managerRun(ctx: ConsoleContext): ManagerRun {
       const out: Awaited<ReturnType<ManagerRun['tabsOf']>> = [];
       for (const tab of ctx.tabs()) {
         const name = tabName(tab);
+        // As `scripts` says it, and on every tab: one it doesn't match
+        // says so rather than being left out.
         if (script) {
-          const running = activeOn(ctx, tab, script.id);
-          const waiting = waitingOn(ctx, tab, script.id, running);
-          out.push({ activity: { tab: name, state: activityState(ctx, running, waiting) }, text: activityWord(ctx, running, waiting) });
+          out.push({ activity: tabActivityJson(ctx, tab, script), text: tabActivity(ctx, tab, script) ?? "Doesn't match page URL" });
           continue;
         }
         const other = label === undefined ? undefined : (await ctx.others?.onTab(tab).catch((): OtherScript[] => []))?.find((o) => o.label === label);
@@ -1658,7 +1674,7 @@ async function tabFrames(ctx: ConsoleContext, tab: ControlledTab, unknown: (why:
   if (tab.noScript) {
     // No scripts run in any of its frames.
   } else if (ctx.predicted) {
-    scriptsIn = (url) => ctx.scripts.filter((s) => !preparedNoframes(s) && !ctx.predictedOff?.has(ctx.extensionIdOf?.(s)) && explainMatch(s.matching, url).matches);
+    scriptsIn = (url) => ctx.scripts.filter((s) => !preparedNoframes(s) && !ctx.scriptsOff?.has(s) && explainMatch(s.matching, url).matches);
   } else {
     const documents = await ctx.host.liveFrameDocuments(tab.link).catch((err: Error) => {
       unknown(err.message);
@@ -1865,7 +1881,7 @@ function activeOn(ctx: ConsoleContext, tab: ControlledTab, scriptId: string | un
   if (tab.noScript) return false;
   if (ctx.predicted) {
     const script = ctx.scripts.find((s) => s.id === scriptId);
-    if (script === undefined || ctx.predictedOff?.has(ctx.extensionIdOf?.(script))) return false;
+    if (script === undefined || ctx.scriptsOff?.has(script)) return false;
     return explainMatch(script.matching, tab.page.url()).matches;
   }
   return scriptId !== undefined && ctx.host.isRunning(tab.link, scriptId);
@@ -1873,6 +1889,10 @@ function activeOn(ctx: ConsoleContext, tab: ControlledTab, scriptId: string | un
 
 // What a manual script that hasn't run on a tab is doing there.
 const WAITING_FOR_MENU = 'Waiting for menu to run it (@run-at context-menu)';
+
+// Under another manager, a manual script whose rules match: whether its
+// menu was used isn't known.
+const MANUAL = 'Runs from its menu (@run-at context-menu)';
 
 // Whether a manual script (`@run-at context-menu`) not running on a
 // tab could be run there.
@@ -1885,13 +1905,6 @@ function activityState(ctx: ConsoleContext, active: boolean, waiting = false): J
   if (ctx.predicted) return active ? 'expected' : 'not-expected';
   if (waiting) return 'manual';
   return active ? 'running' : 'not-running';
-}
-
-// `activeOn`'s answer, in words.
-function activityWord(ctx: ConsoleContext, active: boolean, waiting = false): string {
-  if (ctx.predicted) return active ? 'Expected using match rules' : 'Not expected using match rules';
-  if (waiting) return WAITING_FOR_MENU;
-  return active ? 'Running' : 'Not running';
 }
 
 /**
@@ -2032,14 +2045,18 @@ function printTabs(ctx: ConsoleContext, frames = false): void {
       for (const line of frameTreeLines(ctx, tab, '  ').slice(1)) ctx.out(line);
       continue;
     }
-    // In its top frame or any of its iframes, with where when not only
-    // the top frame.
-    const running = ctx.scripts.filter((script) => activeInTab(ctx, tab, script.id));
+    // Those in its top frame or any of its iframes, and those that
+    // should be and aren't.
+    const listed = ctx.scripts.filter((script) => activeInTab(ctx, tab, script.id) || tabNote(ctx, tab, script).length > 0);
     // By @name alone, the file being in `scripts`. The selected script is one
     // for the whole run, so its `*` goes only under the current tab.
     const selected = tab === current ? selectedScript(ctx) : undefined;
-    for (const script of running) {
-      ctx.out(ui`   ${selectMark(script === selected)}${S.id(ctx.scripts.indexOf(script) + 1)}: ${S.name(preparedScriptName(script))}${framesSuffix(ctx, tab, script.id)}`);
+    for (const script of listed) {
+      // Where, when not the top frame alone, then anything amiss.
+      const where = framesWhere(ctx, tab, script.id);
+      const notes = [...(where ? [idList(where)] : []), tabNote(ctx, tab, script).join(', ')].filter((n) => n);
+      const suffix = notes.length > 0 ? ui` (${notes.join('; ')})` : '';
+      ctx.out(ui`   ${selectMark(script === selected)}${S.id(ctx.scripts.indexOf(script) + 1)}: ${S.name(preparedScriptName(script))}${suffix}`);
     }
   }
 }
@@ -2079,11 +2096,40 @@ function scriptJson(ctx: ConsoleContext, script: PreparedScript): J.Script {
     status: script.status,
     ...(script.diagnostic ? { error: script.diagnostic } : {}),
     ...(script === selectedScript(ctx) ? { selected: true } : {}),
-    tabs: ctx.tabs().map((tab) => {
-      const running = activeInTab(ctx, tab, script.id);
-      const where = framesWhere(ctx, tab, script.id);
-      return { tab: tabName(tab), state: activityState(ctx, running, waitingOn(ctx, tab, script.id, running)), ...(where ? { frames: where } : {}) };
-    }),
+    tabs: ctx.tabs().map((tab) => tabActivityJson(ctx, tab, script)),
+  };
+}
+
+// A run's script on one tab, as JSON: what `tabActivity` and
+// `pageDetails` say in words.
+function tabActivityJson(ctx: ConsoleContext, tab: ControlledTab, script: PreparedScript): J.TabActivity {
+  const id = script.id;
+  const s = tabStanding(ctx, tab, script);
+  const where = framesWhere(ctx, tab, id);
+  const out: J.TabActivity = {
+    tab: tabName(tab),
+    state: activityState(ctx, s.anywhere, s.waiting),
+    ...(where ? { frames: where } : {}),
+    matches: explainMatch(script.matching, tab.page.url()).matches,
+    ...(s.manual ? {} : { expected: s.expected }),
+    ...(s.off ? { notExpected: s.off } : {}),
+  };
+  // Another manager says nothing of what ran.
+  if (ctx.predicted) return out;
+  const skipped = skipReason(ctx, tab, id);
+  const { errors, warnings } = pageReports(ctx, tab, script);
+  const lastError = errors.at(-1);
+  return {
+    ...out,
+    // As `Expected, Not running (skipped: ...)` says: one that doesn't
+    // match has its rule miss as a skip too.
+    ...(skipped && s.expected && !s.top ? { skipped } : {}),
+    menuCommands: tabMenuCommands(ctx, tab).filter((r) => r.scriptId === id).length,
+    errors: errors.length,
+    warnings: warnings.length,
+    ...(lastError ? { lastError: lastError.message } : {}),
+    ...(lastError?.frameNumber !== undefined ? { lastErrorFrame: `F${lastError.frameNumber}` } : {}),
+    ...(warnings.length > 0 ? { lastWarning: warnings.at(-1)!.message } : {}),
   };
 }
 
@@ -2135,13 +2181,13 @@ async function statusJson(ctx: ConsoleContext, tab: ControlledTab | undefined): 
   const scripts: J.StatusScript[] = [];
   for (const script of ctx.scripts) {
     const id = script.id;
-    const errors = (tab ? fromTab(ctx, tab, reports.errors) : reports.errors).filter((r) => r.scriptId === id);
+    // As the text gives them with no tab: each tab's are in `tabs`.
+    const errors = tab ? [] : reports.errors.filter((r) => r.scriptId === id);
     scripts.push({
       ...scriptJson(ctx, script),
-      ...(tab ? { menuCommands: tabMenuCommands(ctx, tab).filter((r) => r.scriptId === id).length } : {}),
       // Another manager's aren't readable.
       ...(ctx.predicted ? {} : { values: id ? Object.keys(await ctx.host.valuesOf(id)).length : 0 }),
-      errors: errors.length,
+      ...(tab ? {} : { errors: errors.length }),
       ...(errors.length > 0 ? { lastError: errors.at(-1)!.message } : {}),
     });
     const prompts = waitingPrompts(ctx).filter((r) => r.scriptId === id);
@@ -2745,18 +2791,17 @@ function fire(tab: ControlledTab, fired: Promise<boolean>): Promise<boolean> {
 
 // ---------- status and values ----------
 
-// Each script's state on a tab: an open dialog there, then per script
-// where it is active, its counts, and its last error. With no `tab`,
-// only what doesn't depend on one: stored values and errors.
+// Each script's state: any permission prompt it waits on, then its
+// status on each tab (`activityLines`), with what it did on that tab's
+// page under it, then its stored values. With no `tab`, only what
+// doesn't depend on one: stored values and all its errors. Only
+// whether `tab` is there counts: the lines cover every tab.
 // The lines under a script are indented to start under its name.
 async function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined): Promise<string[]> {
   const { scripts } = ctx;
   const { reports } = ctx.host;
-  // Another manager's say nothing per script, but whether each is
-  // expected on the tab.
-  if (ctx.predicted && tab && scripts.length > 0) return predictedLines(ctx, tab, 'Scripts');
   const lines: string[] = [];
-  lines.push(ui`${S.heading('Scripts')}${activityHeading(tab)}:`);
+  lines.push(ui`${S.heading('Scripts')}:`);
   if (scripts.length === 0) lines.push(`  ${NO_SCRIPTS}`);
   for (const script of scripts) {
     const id = script.id;
@@ -2776,19 +2821,39 @@ async function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined):
       if (last) lines.push(ui`${DETAIL}${S.heading('Last error')}: ${last.message}`);
       continue;
     }
-    lines.push(activityLine(ctx, tab, id));
-    const errors = fromTab(ctx, tab, reports.errors).filter((r) => r.scriptId === id);
-    const menus = tabMenuCommands(ctx, tab).filter((r) => r.scriptId === id).length;
+    lines.push(...activityLines(ctx, script, (t) => pageDetails(ctx, t, script)));
     // Stored values are the script's, shared by every tab.
     const values = await valueCount(ctx, id);
-    // Only the counts that aren't zero, and no line when none is.
-    const counts = [count(menus, 'menu command'), count(values, 'stored value'), count(errors.length, 'error')]
-      .filter((c) => !c.startsWith('0 '));
-    if (counts.length > 0) lines.push(`${DETAIL}${counts.join(', ')}`);
-    const last = errors.at(-1);
-    if (last) lines.push(ui`${DETAIL}${S.heading('Last error')}: ${last.message}`);
+    if (values > 0) lines.push(`${DETAIL}${count(values, 'stored value')}`);
   }
   return lines;
+}
+
+// A script's errors and warnings from a tab's current page.
+function pageReports(ctx: ConsoleContext, tab: ControlledTab, script: PreparedScript): { errors: ErrorReport[]; warnings: WarningRecord[] } {
+  const onPage = <T extends { scriptId: string; at: number }>(records: T[]): T[] =>
+    fromTab(ctx, tab, records).filter((r) => r.scriptId === script.id && r.at >= tab.link.documentFirstStart());
+  return { errors: onPage(ctx.host.reports.errors), warnings: onPage(ctx.host.reports.warnings) };
+}
+
+// What a script did on a tab's current page, for under the tab's line:
+// its menu command, error and warning counts, then its last error and
+// last warning. Only the counts that aren't zero, and no line when none
+// is.
+function pageDetails(ctx: ConsoleContext, tab: ControlledTab, script: PreparedScript): string[] {
+  const id = script.id;
+  const { errors, warnings } = pageReports(ctx, tab, script);
+  const menus = tabMenuCommands(ctx, tab).filter((r) => r.scriptId === id).length;
+  const counts = [count(menus, 'menu command'), count(errors.length, 'error'), count(warnings.length, 'warning')]
+    .filter((c) => !c.startsWith('0 '));
+  const lastError = errors.at(-1);
+  const lastWarning = warnings.at(-1);
+  return [
+    ...(counts.length > 0 ? [counts.join(', ')] : []),
+    // From an iframe, its id where known.
+    ...(lastError ? [ui`${S.heading('Last error')}${lastError.frameNumber !== undefined ? ui` (${S.id(`F${lastError.frameNumber}`)})` : ''}: ${lastError.message}`] : []),
+    ...(lastWarning ? [ui`${S.heading('Last warning')}: ${lastWarning.message}`] : []),
+  ];
 }
 
 // How many values a run's script has stored: none to count under
@@ -2797,45 +2862,117 @@ async function valueCount(ctx: ConsoleContext, id: string | undefined): Promise<
   return id && !ctx.predicted ? Object.keys(await ctx.host.valuesOf(id)).length : 0;
 }
 
-// Under another manager, the scripts as two lists: those whose match
-// rules cover `tab`'s page, and the rest. Each list only when it has
-// any.
-function predictedLines(ctx: ConsoleContext, tab: ControlledTab, heading: string): string[] {
-  // In its top frame or any of its iframes, with where when not only
-  // the top frame, as `tabs` shows.
-  const expected = ctx.scripts.filter((s) => activeInTab(ctx, tab, s.id));
-  const rest = ctx.scripts.filter((s) => !expected.includes(s));
-  return [
-    ui`${S.heading(heading)}:`,
-    ...(expected.length > 0 ? [ui`  Expected on tab ${S.id(tabName(tab))} using match rules:`, ...expected.map((s) => ui`  ${scriptRow(ctx, s)}${framesSuffix(ctx, tab, s.id)}`)] : []),
-    ...(rest.length > 0 ? [ui`  Not expected on tab ${S.id(tabName(tab))}:`, ...rest.map((s) => ui`  ${scriptRow(ctx, s)}`)] : []),
-  ];
-}
-
 // Under a `scriptRow`, lined up with the script's name (`* 1: `) when
 // its number is one digit.
 const DETAIL = '     ';
 
-// A script list's heading names the tab its `activityLine`s are about.
-// None with no tab.
-function activityHeading(tab: ControlledTab | undefined): string {
-  return tab ? ui` (with status on active tab ${S.id(tabName(tab))})` : '';
+// A script's status on each tab where it says something, a line each:
+// `T1: Running`, `T2: Not expected (matches page URL, but
+// disabled)`, `T3: Running (F7)`. `under` gives more lines about the
+// script on that tab, indented under its line.
+function activityLines(ctx: ConsoleContext, script: PreparedScript, under: (tab: ControlledTab) => string[] = () => []): string[] {
+  return ctx.tabs().flatMap((tab) => {
+    const text = tabActivity(ctx, tab, script);
+    return text ? [ui`${DETAIL}${S.id(tabName(tab))}: ${text}`, ...under(tab).map((l) => `${DETAIL}  ${l}`)] : [];
+  });
 }
 
-// Whether a script is active on the tab the heading names, and on
-// which others: `Not active (Active on T1,T2.)`.
+// An expected script not running on a tab's page, with why when the
+// manager said it skipped it there.
+function notRunning(ctx: ConsoleContext, tab: ControlledTab, id: string | undefined): string {
+  const skipped = skipReason(ctx, tab, id);
+  return skipped ? `Not running (skipped: ${skipped})` : 'Not running';
+}
+
+// Why the manager skipped a script on a tab's current page, if it did.
+function skipReason(ctx: ConsoleContext, tab: ControlledTab, id: string | undefined): string | undefined {
+  const { skipped } = id === undefined ? {} : ctx.host.lastStartAndSkip(tab.link, id);
+  return skipped && skipped.at >= tab.link.documentFirstStart() ? skipped.reason : undefined;
+}
+
+// Where a script stands on a tab, which `tabActivity` and `tabNote`
+// both put in words.
+interface TabStanding {
+  // `@run-at context-menu`: it has no expectation, and runs when its
+  // menu is used.
+  manual: boolean;
+  // Manual, and its menu item can run it there now.
+  waiting: boolean;
+  // Its rules match the tab's page (its top frame) and it is on.
+  expected: boolean;
+  // Why not, when its rules match.
+  off?: 'disabled' | 'manager-off' | 'noscript';
+  // Running in the top frame of the tab's current page, and in any of
+  // its frames.
+  top: boolean;
+  anywhere: boolean;
+}
+
+function tabStanding(ctx: ConsoleContext, tab: ControlledTab, script: PreparedScript): TabStanding {
+  const id = script.id;
+  const top = activeOn(ctx, tab, id);
+  const anywhere = activeInTab(ctx, tab, id);
+  const manual = isContextMenuRunAt(script.script.header);
+  const matches = explainMatch(script.matching, tab.page.url()).matches;
+  const off = !matches ? undefined
+    : ctx.scriptsOff?.has(script) ? (ctx.scriptsOff.managerOff?.() ? 'manager-off' : 'disabled')
+    : tab.noScript ? 'noscript' : undefined;
+  return { manual, waiting: waitingOn(ctx, tab, id, anywhere), expected: !manual && matches && !off, off, top, anywhere };
+}
+
+// Why a script whose rules match a tab's page isn't expected there.
+function offReason(ctx: ConsoleContext, off: NonNullable<TabStanding['off']>): string {
+  if (off === 'disabled') return 'matches page URL, but disabled';
+  if (off === 'noscript') return 'matches page URL, but the tab has --noscript';
+  return `matches page URL, but ${MANAGERS[ctx.managerName ?? DEFAULT_MANAGER].label} is off`;
+}
+
+// A script's status on one tab: whether it should be running there,
+// then whether it is, with where when not the top frame alone.
 //
-// Running anywhere but `tab`'s top frame alone, it names where:
-// `Active on T1 (T1, F1, F3), T2, T3 (F7)`, or, not on `tab`,
-// `Not active on T1. Active on T2.`.
-function activityLine(ctx: ConsoleContext, tab: ControlledTab, id: string | undefined): string {
-  const active = activeInTab(ctx, tab, id);
-  const tabs = ctx.tabs().filter((t) => activeInTab(ctx, t, id));
-  const places = ui`${tabs.map((t) => ui`${S.id(tabName(t))}${framesSuffix(ctx, t, id)}`).join(', ')}`;
-  if (active) return ui`${DETAIL}${tabs.length === 1 && framesWhere(ctx, tab, id) === undefined ? 'Active' : ui`Active on ${places}`}`;
-  const here = waitingOn(ctx, tab, id, active) ? WAITING_FOR_MENU : 'Not active';
-  if (tabs.length === 0) return `${DETAIL}${here}`;
-  return ui`${DETAIL}${here === 'Not active' ? ui`Not active on ${S.id(tabName(tab))}` : here}. Active on ${places}.`;
+// None for a script that doesn't match the page and doesn't run there:
+// the lists would be mostly those.
+function tabActivity(ctx: ConsoleContext, tab: ControlledTab, script: PreparedScript): string | undefined {
+  const id = script.id;
+  const s = tabStanding(ctx, tab, script);
+  // Another manager says nothing of what ran: only what its rules and
+  // switches say should.
+  if (ctx.predicted) {
+    if (s.off) return `Not expected (${offReason(ctx, s.off)})`;
+    if (s.manual) return s.anywhere ? MANUAL : undefined;
+    // `Expected` goes by the top frame, as `expected` in the JSON does.
+    if (s.top) return ui`Expected${framesSuffix(ctx, tab, id)}`;
+    return s.anywhere ? ui`Expected in frames${framesSuffix(ctx, tab, id)}` : undefined;
+  }
+  const running = s.anywhere ? ui`Running${framesSuffix(ctx, tab, id)}` : undefined;
+  // A manual script turned off says so, as one that runs on load does,
+  // ahead of the menu item its page registered before.
+  if (s.manual && s.off) return running ? `Not expected (${offReason(ctx, s.off)}), ${running}` : `Not expected (${offReason(ctx, s.off)})`;
+  if (s.waiting) return WAITING_FOR_MENU;
+  if (s.manual) return running;
+  // Running where expected says it all. Expected in the top frame: a
+  // run in an iframe alone doesn't make up for it.
+  if (s.expected) return s.top ? running : `Expected, ${notRunning(ctx, tab, id)}${running ? `, ${running}` : ''}`;
+  if (s.off) return running ? `Not expected (${offReason(ctx, s.off)}), ${running}` : `Not expected (${offReason(ctx, s.off)})`;
+  // Not matching, yet running in the top frame: a pushState moved it away.
+  if (s.top) return `Not expected (doesn't match page URL), ${running}`;
+  // Only in iframes, whose pages the script matches.
+  return running;
+}
+
+// A script's status on a tab, short, for `tabs`: only what's amiss.
+// `expected but not running`, `not expected: disabled`, `2 errors`.
+// Nothing under another manager, which says nothing of what ran.
+function tabNote(ctx: ConsoleContext, tab: ControlledTab, script: PreparedScript): string[] {
+  if (ctx.predicted) return [];
+  const s = tabStanding(ctx, tab, script);
+  const notes: string[] = [];
+  if (s.expected && !s.top) notes.push('expected but not running');
+  // Turned off since the page loaded. A --noscript tab runs none.
+  if (s.off === 'disabled' && s.anywhere) notes.push('not expected: disabled');
+  if (!s.expected && !s.off && !s.manual && s.top) notes.push("not expected: doesn't match page URL");
+  const { errors, warnings } = pageReports(ctx, tab, script);
+  return [...notes, ...[count(errors.length, 'error'), count(warnings.length, 'warning')].filter((c) => !c.startsWith('0 '))];
 }
 
 async function valueLines(ctx: ConsoleContext, scripts: PreparedScript[]): Promise<string[]> {

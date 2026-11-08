@@ -114,8 +114,8 @@ test a script under VM or TM:
 - A manager enabled beside the chosen one runs its scripts in the run's
   tabs too: the run's first lines and `status` warn of it.
 - Under VM or TM, `scripts` and `status` show which scripts each tab
-  is expected to run, by their match rules (`Expected on tab T1 using
-  match rules:`), not what ran. A run's script shows its E-id there
+  is expected to run, by their match rules (`T1: Expected`), not what
+  ran. A run's script shows its E-id there
   too: `1: Hello (hello.user.js), E6 in Violentmonkey`.
 - Under VM or TM, a run never replaces a script the manager already
   has by the same name and namespace: `start` refuses, naming it.

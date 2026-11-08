@@ -283,8 +283,9 @@ $R status
 
 - `match` names the rule that matched or excluded each URL. It is
   cheap: run it after any header edit.
-- `status` shows each script as `Active` or `Not active` on the current
-  tab, and the other tabs and frames it runs on.
+- `status` shows, for each tab, whether each script is running there
+  (`T1: Running`). `Expected, Not running` means it should have started
+  and didn't.
 - On a single-page app the URL can change without a load. `match` in a
   run (no arguments) checks the selected script against the current
   tab's URL now.

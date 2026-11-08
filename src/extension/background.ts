@@ -713,14 +713,35 @@ interface SourceMonkeyApi {
   resetCollectionRowReads: () => void;
 }
 
-// The `syncNow` of the test surface, shared by the sm-dev run
-// methods so they too settle only once the registration is in place.
-async function syncNowForTests(): Promise<{ registered: { id: string }[]; kind: 'full' | 'incremental' | null }> {
+// sm-dev's changes to scripts and collections, each done only once
+// Chrome's registrations match it. Otherwise a page loaded right after
+// (`script 1 disable`, then `reload`) could still get the old set.
+// Every call but the reads, so a change added later waits too.
+const MANAGED_READS = new Set(['scriptDetails', 'onDisk', 'scriptText', 'scriptFiles', 'scriptIcons']);
+
+function registeredAfter<T extends ReturnType<typeof managedChanges>>(managed: T): T {
+  const wrapped = { ...managed };
+  for (const name of Object.keys(managed).filter((n) => !MANAGED_READS.has(n))) {
+    const change = (managed as Record<string, unknown>)[name] as (...args: unknown[]) => Promise<unknown>;
+    (wrapped as Record<string, unknown>)[name] = async (...args: unknown[]) => {
+      const result = await change(...args);
+      await flushSync();
+      return result;
+    };
+  }
+  return wrapped;
+}
+
+// Runs the pending registration sync now and waits for it: the test
+// surface's `syncNow`, and what the sm-dev run methods and `managed`
+// changes (`registeredAfter`) wait on, so each settles only once the
+// registration is in place.
+async function flushSync(): Promise<{ registered: { id: string }[]; kind: 'full' | 'incremental' | null }> {
   // Cancel any pending debounced sync first — otherwise its work
   // would fire just after we return, and a test that does
   // addCollection → syncNow → page.goto could see the registration
-  // briefly disappear mid-navigation. Tests rely on syncNow being the
-  // LAST sync until the next mutation.
+  // briefly disappear mid-navigation. Tests and sm-dev rely on this
+  // being the LAST sync until the next mutation.
   if (syncTimer != null) {
     clearTimeout(syncTimer);
     syncTimer = null;
@@ -765,10 +786,10 @@ const api: SourceMonkeyApi = {
     }));
     return managedScripts(await getCollections(), scripts, numbers, sources);
   },
-  managed: managedChanges(async () => {
+  managed: registeredAfter(managedChanges(async () => {
     const numbers = await assignAllNumbers();
     return { scripts: numbers.scripts.byId, collections: numbers.collections.byId };
-  }),
+  })),
   addCollection,
   createCollection,
   installScript,
@@ -932,7 +953,7 @@ const api: SourceMonkeyApi = {
       pendingScriptIds.add(result.scriptId);
       pendingCollectionIds.add(result.collectionId);
     }
-    await syncNowForTests();
+    await flushSync();
     await startRunSweeps();
     return result;
   }),
@@ -942,12 +963,12 @@ const api: SourceMonkeyApi = {
   renewRun,
   releaseRun: (runId) => queueSmDevWork(async () => {
     await releaseRun(runId);
-    if (await dropSmDevCollection(runId)) await syncNowForTests();
+    if (await dropSmDevCollection(runId)) await flushSync();
   }),
   sweepRunCollections: async (now) => {
     realSweepsPaused = true;
     await sweepRunCollections(now);
-    await syncNowForTests();
+    await flushSync();
   },
   setTabScriptsOff,
   clickNotification: (notificationId) => deliverNotificationEvent(notificationId, 'clicked'),
@@ -985,7 +1006,7 @@ const api: SourceMonkeyApi = {
       return null;
     }
   },
-  syncNow: () => syncNowForTests(),
+  syncNow: () => flushSync(),
   replayScriptLogsAtBoot,
   clearUpdateRateLimit: () => { _resetUpdaterStateForTests(); },
   rerunStoreMigration: () => rerunStoreMigrationForTests(),

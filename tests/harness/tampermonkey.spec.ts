@@ -110,7 +110,7 @@ test('a run installs its scripts, traces their logs, and removes them when it en
   const id = /as (E\d+)/.exec(start.stdout)![1];
 
   const scripts = await cli('--run', 'DT1', 'scripts');
-  expect(scripts.stdout).toBe(`Loaded scripts:\n  Expected on tab T1 using match rules:\n  * 1: Hello (hello.user.js), ${id} in Tampermonkey\n`);
+  expect(scripts.stdout).toBe(`Loaded scripts:\n* 1: Hello (hello.user.js), ${id} in Tampermonkey\n     T1: Expected\n`);
   expect((await cli('--run', 'DT1', 'script', 'list')).stdout).toContain(`* ${id}: Hello 1.0 (run DT1's script 1)\n`);
 
   // Another run can't load it too, nor can it be installed over.
@@ -156,7 +156,7 @@ test('frames list the scripts each frame is expected to run, by its URL', async 
     ].join('\n'));
     const status = (await tm('--run', 'DT2', 'status')).stdout;
     expect(status).toMatch(/^\* T1: \S+ \(\+3 frames\)/m);
-    expect(status).toMatch(/^ {4}2: SourceMonkey example: frames: Frame B only \(.*\), E\d+ in Tampermonkey \(F2\)$/m);
+    expect(status).toMatch(/^ {2}2: SourceMonkey example: frames: Frame B only \(.*\), E\d+ in Tampermonkey\n {5}T1: Expected in frames \(F2\)$/m);
   } finally {
     await server.close();
   }
@@ -184,7 +184,7 @@ test('stack lines point at the files, other scripts come by Tampermonkey\'s matc
   expect(start.stdout).toMatch(new RegExp(`${url}:11:20\\)`));
   expect(start.stdout).toContain('[script error] Cannot read properties of null (reading \'x\')\n');
   const id = /as (E\d+)/.exec(start.stdout)![1];
-  expect((await cli('--run', 'DT1', 'scripts')).stdout).toBe(`Loaded scripts:\n  Expected on tab T1 using match rules:\n  * 1: Lines (lines.user.js), ${id} in Tampermonkey\nTampermonkey scripts expected on T1:\n  ${other}: Other: Expected using match rules\n`);
+  expect((await cli('--run', 'DT1', 'scripts')).stdout).toBe(`Loaded scripts:\n* 1: Lines (lines.user.js), ${id} in Tampermonkey\n     T1: Expected\nTampermonkey scripts expected on T1:\n  ${other}: Other: Expected using match rules\n`);
   // Turned off, it isn't expected, though Tampermonkey's own matching still gives it.
   expect((await tm('script', other, 'disable')).code).toBe(0);
   expect((await cli('--run', 'DT1', 'scripts')).stdout).not.toContain(other);

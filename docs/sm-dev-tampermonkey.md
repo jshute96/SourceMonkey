@@ -111,9 +111,8 @@ This doc covers only where TM differs.
 - The run's own scripts go by sm-dev's matching, as under VM. They're
   installed fresh, so no editor overrides apply to them, and the
   commands that list them don't wait on a call.
-- The headings and JSON stay as under VM (`Expected on tab T1 using
-  match rules`, `expected`): it's still a prediction of what runs, not
-  a report of what ran.
+- The lines and JSON are as under VM (`T1: Expected`, `expected`):
+  it's still a prediction of what runs, not a report of what ran.
 
 ## `file://` pages
 

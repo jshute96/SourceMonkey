@@ -695,7 +695,7 @@ test('--json prints each result as one line of JSON on stdout, and other log mes
     expect(picked).toMatchObject({
       run: { id: 'D1', browser: { owned: false }, sourceMonkey: 'installed', connection: 'selected', detached: true },
       tab: 'T1',
-      scripts: [{ id: '1', kind: 'run', name: 'Json', status: 'ok', values: 1, menuCommands: 1, errors: 0, tabs: [{ tab: 'T1', state: 'running' }] }],
+      scripts: [{ id: '1', kind: 'run', name: 'Json', status: 'ok', values: 1, tabs: [{ tab: 'T1', state: 'running', menuCommands: 1, errors: 0 }] }],
     });
     expect(tabs).toEqual({ command: 'tabs', tabs: [expect.objectContaining({ id: 'T1', url, selected: true, scripts: ['1'] })] });
     expect(scripts).toMatchObject({ tab: 'T1', scripts: [{ id: '1', selected: true }] });

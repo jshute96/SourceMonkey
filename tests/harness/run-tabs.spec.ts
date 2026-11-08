@@ -409,7 +409,7 @@ test('a script running only in an iframe: its lines name the frame, a frame\'s s
   const lines = await driveCli([file, `${fixtureServer.baseUrl}/frames/frames.html`], [
     ['[event] In frame started in an iframe on', 'status'],
     // A stackless error in a frame no script runs in is the page's.
-    ['Active on T1 (F', 'eval --frame F3 --page setTimeout(() => { Promise.reject(\'stackless\') }); \'rejected\''],
+    ['T1: Running (F', 'eval --frame F3 --page setTimeout(() => { Promise.reject(\'stackless\') }); \'rejected\''],
     ['"rejected"', 'wait log --log-source page stackless'],
     ['Wait matched', 'logs --log-source page --find stackless'],
     ['[page error] stackless', () => { touch(file); return 'update 1'; }],
@@ -420,7 +420,7 @@ test('a script running only in an iframe: its lines name the frame, a frame\'s s
   expect(lines.some((l) => / T1\.F3 \[page error\] stackless$/.test(l))).toBe(true);
   expect(lines.some((l) => /^\[T1\.F\d+\] \[event\] In frame started in an iframe on http:\/\/\S+\/frames\/frame-b\.html$/.test(l))).toBe(true);
   expect(lines.some((l) => /^\* T1: \S+\/frames\/frames\.html \(\+3 frames\)/.test(l))).toBe(true);
-  expect(lines.some((l) => /^ {5}Active on T1 \(F\d+\)$/.test(l))).toBe(true);
+  expect(lines.some((l) => /^ {5}T1: Running \(F\d+\)$/.test(l))).toBe(true);
 });
 
 test('a stackless error is the script\'s only where one could have thrown it', async ({ fixtureServer, scriptsDir }) => {
@@ -450,6 +450,115 @@ test('a stackless error is the script\'s only where one could have thrown it', a
   expect(lines.some((l) => l.endsWith('[script error] page-own'))).toBe(false);
 });
 
+test('a script turned off in the manager shows as not expected, and a reload waits on it no more', async ({ fixtureServer, scriptsDir }) => {
+  const base = fixtureServer.baseUrl;
+  const a = scriptsDir.write({
+    relativePath: 'a.user.js',
+    meta: { name: 'A', match: ['*://*/target.html'] },
+    body: `console.log('[A] on ' + location.pathname);`,
+  });
+  const lines = await driveCli([a, `${base}/target.html`], [
+    ['Started as run', 'scripts'],
+    ['T1: Running', 'tabs'],
+    ['Tabs:', 'script 1 disable'],
+    // Still running in the page loaded before.
+    ['Disabled 1: A', 'tabs'],
+    ['1: A (not expected: disabled)', 'scripts'],
+    // Nothing from the new page: not running, and nothing waited on.
+    ['T1: Not expected (matches page URL, but disabled), Running', 'reload\nscripts'],
+    ['Loaded scripts:', 'exit'],
+  ]);
+  const after = lines.slice(lines.lastIndexOf('Loaded scripts:'));
+  expect(after.slice(0, 3)).toEqual(['Loaded scripts:', expect.stringContaining('1: A'), '     T1: Not expected (matches page URL, but disabled)']);
+  // `tabs` notes only what's amiss.
+  expect(lines).toContain('   * 1: A');
+  expect(lines).toContain('   * 1: A (not expected: disabled)');
+  // The reload didn't wait on it.
+  expect(lines.some((l) => l.includes('had not started'))).toBe(false);
+});
+
+test('status and scripts put a script error or warning under the tab it came from, from its current page', async ({ fixtureServer, scriptsDir }) => {
+  const base = fixtureServer.baseUrl;
+  const a = scriptsDir.write({
+    relativePath: 'a.user.js',
+    meta: { name: 'A', match: ['*://*/target.html*'], grant: ['window.close'] },
+    body: `if (location.search === '?fail') throw new Error('Failure during init');
+if (location.search === '?warn') window.close();`,
+  });
+  const lines = await driveCli([a, `${base}/target.html?warn`], [
+    ['Started as run', `newtab ${base}/target.html?fail`],
+    ['The page commands now act on T2', 'status'],
+    ['Scripts:', 'scripts'],
+    ['Loaded scripts:', 'tabs'],
+    ['Tabs:', 'scripts --json=single'],
+    ['{"command":"scripts"', 'exit'],
+  ]);
+  const json = JSON.parse(lines.find((l) => l.startsWith('{"command":"scripts"'))!) as { scripts: { tabs: object[] }[] };
+  expect(json.scripts[0].tabs).toEqual([
+    {
+      tab: 'T1', state: 'running', matches: true, expected: true, menuCommands: 0, errors: 0, warnings: 1,
+      lastWarning: expect.stringMatching(/^window\.close: /),
+    },
+    { tab: 'T2', state: 'running', matches: true, expected: true, menuCommands: 0, errors: 1, warnings: 0, lastError: 'Failure during init' },
+  ]);
+  expect(lines).toContain('     1: A (1 warning)');
+  expect(lines).toContain('   * 1: A (1 error)');
+  const expected = [
+    '     T1: Running',
+    '       1 warning',
+    expect.stringMatching(/^ {7}Last warning: window\.close: /),
+    '     T2: Running',
+    '       1 error',
+    '       Last error: Failure during init',
+  ];
+  const status = lines.lastIndexOf('Scripts:');
+  expect(lines.slice(status + 2, status + 8)).toEqual(expected);
+  const scripts = lines.lastIndexOf('Loaded scripts:');
+  expect(lines.slice(scripts + 2, scripts + 8)).toEqual(expected);
+});
+
+test('status names the iframe a script error came from', async ({ fixtureServer, scriptsDir }) => {
+  const file = scriptsDir.write({
+    relativePath: 'frame-boom.user.js',
+    meta: { name: 'Frame boom', match: ['*://*/frames/frame-b.html'] },
+    body: `throw new Error('Failure in frame B');`,
+  });
+  const lines = await driveCli([file, `${fixtureServer.baseUrl}/frames/frames.html`], [
+    ['[event] Frame boom threw', 'status'],
+    ['Scripts:', 'scripts --json=single'],
+    ['{"command":"scripts"', 'exit'],
+  ]);
+  const json = JSON.parse(lines.find((l) => l.startsWith('{"command":"scripts"'))!) as { scripts: { tabs: object[] }[] };
+  expect(json.scripts[0].tabs).toEqual([expect.objectContaining({ errors: 1, lastError: 'Failure in frame B', lastErrorFrame: 'F2' })]);
+  const at = lines.lastIndexOf('Scripts:');
+  // Frame B is F2 (Frame A is F1).
+  expect(lines.slice(at + 2, at + 5)).toEqual(['     T1: Running (F2)', '       1 error', '       Last error (F2): Failure in frame B']);
+});
+
+// Turned off with `script disable`, which reads the manager's switches
+// again itself; the read before a `--watch` reload covers one turned
+// off in SourceMonkey's own pages, which this doesn't reach.
+test('a --watch save reloads without waiting on a script turned off', async ({ fixtureServer, scriptsDir }) => {
+  const write = (word: string) => scriptsDir.write({
+    relativePath: 'a.user.js',
+    meta: { name: 'A', match: ['*://*/target.html'] },
+    body: `console.log('[A] ${word}');`,
+  });
+  const a = write('before');
+  const lines = await driveCli([a, `${fixtureServer.baseUrl}/target.html`, '--watch'], [
+    ['Watching', 'script 1 disable'],
+    ['Disabled 1: A', () => { write('after'); return 'tabs'; }],
+    // The reload goes on after it says so; then the page settles.
+    ['[sm-dev] Reloading T1', 'wait 1s'],
+    ['stdin > wait 1s', 'wait T1'],
+    ['stdin > wait T1', 'scripts'],
+    ['Loaded scripts:', 'exit'],
+  ]);
+  const after = lines.slice(lines.lastIndexOf('Loaded scripts:'));
+  expect(after[2]).toBe('     T1: Not expected (matches page URL, but disabled)');
+  expect(lines.some((l) => l.includes('had not started') || l.includes('not started yet'))).toBe(false);
+});
+
 test('load, update and reload all reload just the tabs they affect', async ({ fixtureServer, scriptsDir }) => {
   const base = fixtureServer.baseUrl;
   const write = (name: string, page: string, body = `console.log('[${name}] on ' + location.pathname);`) => scriptsDir.write({
@@ -469,7 +578,7 @@ test('load, update and reload all reload just the tabs they affect', async ({ fi
     // Untouched, so nothing to do; touched, only A's tab reloads.
     ["hasn't changed on disk", () => { touch(a); return 'update all'; }],
     ['[script log] [A] on /target.html', 'scripts'],
-    ['Loaded scripts (', 'get k'],
+    ['Loaded scripts:', 'get k'],
     ['k = 1', `load ${b}`],
     // A directory: its scripts, both loaded already.
     ['is already loaded', `load ${scriptsDir.path}`],
@@ -731,7 +840,7 @@ test('--from-saved serves a saved page at its URL, and the scripts match it', as
     // The scripts match it by its URL, and run on the saved copy.
     ['[T3] [script log] [A] on /target.html titled as saved', 'tabs'],
     ['Tabs:', 'status'],
-    ['Scripts (with status on active tab T3)', () => {
+    ['Scripts:', () => {
       writeFileSync(plain, readFileSync(plain, 'utf8').replace('as saved', 'edited'));
       return 'reload';
     }],
@@ -871,7 +980,7 @@ test('newtab of several saved pages picks the first, serves their _files folders
     ['Started as run', `newtab '${scriptsDir.path}/x *.html' --from-saved --offline`],
     ['[T3] [script log] [A] on /other.html titled x two', 'status'],
     // The first new tab is the current one.
-    ['Scripts (with status on active tab T2)', 'eval --tab T2 getComputedStyle(document.body).color'],
+    ['Scripts:', 'eval --tab T2 getComputedStyle(document.body).color'],
     // Served from the folder beside the file, though offline.
     ['"rgb(1, 2, 3)"', 'exit'],
   ]);
@@ -1003,8 +1112,14 @@ test('a manual script waits to be run, again after going back, and not in a tab 
     ['M1: Run this script', `newtab --noscript ${base}/target.html`],
     ['The page commands now act on T2', 'eval new Promise((r) => setTimeout(r, 1000)).then(() => "sett" + "led")'],
     ['"settled"', 'menu T2'],
-    ['No menu commands', 'exit'],
+    ['No menu commands', 'tabs T1'],
+    ['now act on T1', 'scripts'],
+    ['T1: Waiting for menu to run it (@run-at context-menu)', 'script 1 disable'],
+    // Turned off, it says so, as a script that runs on load would.
+    ['Disabled 1: M', 'scripts'],
+    ['Loaded scripts:', 'exit'],
   ]);
+  expect(lines).toContain('     T1: Not expected (matches page URL, but disabled)');
   const at = (text: string) => lines.findIndex((l) => l.includes(text));
   // Waiting again once back on the page, with Run listed.
   expect(lines.slice(at('"going"')).some((l) => l.includes('M1: Run this script'))).toBe(true);

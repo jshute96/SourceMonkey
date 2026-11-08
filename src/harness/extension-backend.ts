@@ -26,6 +26,8 @@ export interface LogEntry {
   source: string;
   message: string;
   tabId?: number;
+  /** Set on an entry about the script's load state rather than what it did (see script-log.ts). */
+  state?: string;
 }
 
 // SourceMonkey's extension id. The manifest carries a fixed `key`, so

@@ -26,6 +26,12 @@ import { FrameIds } from './frames.js';
 export interface PageLink {
   /** The page's current top-level URL. */
   url(): string;
+  /**
+   * When the page's top frame first entered its current document, by
+   * the host's clock, as reports are stamped (see
+   * `PageAttachment.documentFirstStart`).
+   */
+  documentFirstStart(): number;
 }
 
 export interface TabRecord {
@@ -173,6 +179,15 @@ export interface HostReports {
   downloads: DownloadRecord[];
   /** Every connection prompt, with its answer once given. */
   connectPrompts: ConnectPromptRecord[];
+  /** Warnings a script logged in a page, as the manager's Log has them. */
+  warnings: WarningRecord[];
+}
+
+/** A warning a script logged in a page (`HostReports.warnings`). */
+export interface WarningRecord {
+  scriptId: string;
+  message: string;
+  at: number;
 }
 
 export interface WireWrite {
@@ -241,11 +256,13 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
   private readonly reportWaiters = new Set<() => void>();
   readonly reports: HostReports = {
     started: [], errors: [], skipped: [], manual: [], requests: [], tabs: [], menuCommands: [], notifications: [], downloads: [],
-    connectPrompts: [],
+    connectPrompts: [], warnings: [],
   };
   // The manual scripts that match each page's current document, which
   // can be run there.
   private readonly manualByPage = new Map<PageLink, Set<string>>();
+  // The run's scripts the manager has off (`isOff`).
+  private turnedOff = new Set<string>();
   // Each menu command's page; dropped when that page loads a new
   // document or goes away.
   private readonly menuOwners = new Map<MenuCommandRecord, PageLink>();
@@ -287,7 +304,23 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
    */
   isRunning(page: PageLink, scriptId: string): boolean {
     const { started, skipped } = this.lastStartAndSkip(page, scriptId);
-    return started !== undefined && (!skipped || started.at >= skipped.at);
+    // Only a start from this document: a script the manager doesn't
+    // inject (one turned off) says nothing on a load, so a start from
+    // the document before would still be its last word.
+    return started !== undefined && started.at >= page.documentFirstStart() && (!skipped || started.at >= skipped.at);
+  }
+
+  /**
+   * The run's scripts the manager has turned off, as of the caller's
+   * last `setOff`. The manager injects these nowhere and so says
+   * nothing of them, so nothing waits on them (`unreported`).
+   */
+  isOff(scriptId: string): boolean {
+    return this.turnedOff.has(scriptId);
+  }
+
+  setOff(scriptIds: Iterable<string>): void {
+    this.turnedOff = new Set(scriptIds);
   }
 
   /**
@@ -301,6 +334,7 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
   /**
    * Of `scriptIds`, the ones with no word from `page` since `since`:
    * not yet started, skipped or thrown there, nor waiting to be run.
+   * A script the manager has off (`isOff`) has nothing to say.
    */
   unreported(page: PageLink, scriptIds: readonly string[], since: number): string[] {
     // Nothing to wait for from a manager that never reports.
@@ -308,7 +342,7 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
     const { started, skipped, errors, manual } = this.reports;
     const reported = (id: string): boolean => [started, skipped, errors, manual]
       .some((records) => records.some((r) => r.scriptId === id && r.at >= since && this.recordPages.get(r) === page));
-    return scriptIds.filter((id) => !reported(id));
+    return scriptIds.filter((id) => !this.turnedOff.has(id) && !reported(id));
   }
 
   /**
@@ -571,6 +605,17 @@ export abstract class HarnessHost extends EventEmitter<HostEventMap> {
     const report: ManualReport = this.baseReport(from, fields);
     this.reports.manual.push(report);
     this.notify('manual', report);
+  }
+
+  /**
+   * A script logged a warning in `from`. Stamped on arrival, as reports
+   * are: one from the document before that comes in just after a load
+   * counts for the new one, as a late error would.
+   */
+  protected recordWarning(from: PageLink, scriptId: string, message: string): void {
+    const record: WarningRecord = { scriptId, message, at: Date.now() };
+    this.recordPages.set(record, from);
+    this.reports.warnings.push(record);
   }
 
   /** A script in `from` wrote values. */

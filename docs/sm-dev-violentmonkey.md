@@ -160,17 +160,24 @@ manager about as well as under SourceMonkey (SM).
 - `scripts`, `status` and `script show` list the scripts expected on
   each tab, by sm-dev's own matching (as `match` uses) on each enabled
   script's header.
-  - `scripts` and `status` list the run's scripts in two lists, under
-    `Expected on tab T1 using match rules:` and `Not expected on tab
-    T1:`. `script show` says the same for each tab.
+  - `scripts` and `status` give each of the run's scripts a line per
+    tab, as under SourceMonkey, with only the expectation:
+    `T1: Expected`, `T1: Expected in frames (F2)` (only an iframe's
+    URL matches), `T1: Not expected (matches page URL, but
+    disabled)` or `T1: Not expected (matches page URL, but
+    Violentmonkey is off)`. A tab the script doesn't match gets no
+    line. `script show` says the same for each tab, and `Doesn't match
+    page URL` for one it doesn't match.
+  - A manual script (`@run-at context-menu`) whose rules match shows
+    `Runs from its menu (@run-at context-menu)`: VM doesn't say whether
+    its menu was used.
   - VM's other scripts expected there are listed after them, under
     `Violentmonkey scripts expected on T1`.
   - The JSON says `expected` and `not-expected` for them, where SM's
     say `running` and `not-running`.
   - A script turned off in VM, or all of them while VM's switch is
     off, isn't expected. The run reads that from VM again before each
-    command that lists or acts on what a tab runs (`scripts`, `script`,
-    `status`, `tabs`, `logs`, `save`, `values`).
+    command that lists what a tab runs or loads pages.
   - It's a prediction: VM's own rules can differ in edge cases, and its
     blacklist and the per-script overrides set in VM's editor aren't
     applied.

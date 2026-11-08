@@ -91,9 +91,9 @@ test('frames: ids, the scripts in each frame, menus and match', async ({ page, f
     '     3: SourceMonkey example: frames: top frame only',
   ]);
   const status = await run('status');
-  expect(status).toContain(`     Active on T1 (T1, ${a}, ${b}, ${nested})`);
-  expect(status).toContain(`     Active on T1 (${b})`);
-  expect(status.filter((l) => l === '     Active')).toHaveLength(1);
+  expect(status).toContain(`     T1: Running (T1, ${a}, ${b}, ${nested})`);
+  expect(status).toContain(`     T1: Running (${b})`);
+  expect(status.filter((l) => l === '     T1: Running')).toHaveLength(1);
   expect(plain(await run('tabs --frames'))).toEqual([
     'Tabs:', `* T1: ${url} (+3 frames)`, '      Scripts: 1, 3',
     `    ${a}: ${frameA}`, '        Scripts: 1',
@@ -122,9 +122,10 @@ test('frames: ids, the scripts in each frame, menus and match', async ({ page, f
   ]);
   const scriptsJson = await json('scripts');
   expect(scriptsJson.scripts.map((s: { tabs: unknown[] }) => s.tabs)).toEqual([
-    [{ tab: 'T1', state: 'running', frames: ['T1', a, b, nested] }],
-    [{ tab: 'T1', state: 'running', frames: [b] }],
-    [{ tab: 'T1', state: 'running' }],
+    [expect.objectContaining({ tab: 'T1', state: 'running', frames: ['T1', a, b, nested], matches: true, expected: true })],
+    // Frame B's page matches it, the tab's doesn't.
+    [expect.objectContaining({ tab: 'T1', state: 'running', frames: [b], matches: false, expected: false })],
+    [expect.objectContaining({ tab: 'T1', state: 'running', matches: true, expected: true })],
   ]);
 
   // @noframes keeps top-only out of every frame its rules match.
@@ -227,15 +228,16 @@ test('frames: ids, the scripts in each frame, menus and match', async ({ page, f
   const frameList = async () => plain(await run('frames')).filter((l) => /^ +F\d+: /.test(l)).map((l) => l.trim().split(':')[0]);
   await expect.poll(frameList).toEqual([a, b, nested]);
 
-  // A second tab none of them match: each line names the tabs and frames.
+  // A second tab none of them match: no line for it, whichever tab is
+  // current, while T1's lines stay.
   const page2 = await page.context().newPage();
   const attachment2 = await watchPage(page2);
   for (const script of [every, bOnly, topOnly]) await attachment2.inject(script);
   await page2.goto(`${fixtureServer.baseUrl}/target.html`);
   tabs.push({ n: 2, page: page2, link: attachment2 });
-  expect(await run('status')).toContain(`     Active on T1 (${b})`);
   ctx.tab = tabs[1];
   const onT2 = await run('status');
-  expect(onT2).toContain(`     Not active on T2. Active on T1 (${b}).`);
-  expect(onT2).toContain('     Not active on T2. Active on T1.');
+  expect(onT2).toContain(`     T1: Running (${b})`);
+  expect(onT2).toContain('     T1: Running');
+  expect(onT2.filter((l) => l.startsWith('     T2:'))).toEqual([]);
 });

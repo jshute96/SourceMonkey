@@ -93,7 +93,9 @@ export const SKIP_REASON_SM_DEV = 'tab controlled by sm-dev';
 //   they can't run.
 // 3.1: a pushed file can carry a `failure` instead of a body, and
 //   `writeRunScript` runs a script with an over-limit `@resource` without it.
-export const SM_DEV_PROTOCOL = { major: 3, minor: 1 } as const;
+// 3.2: a `managed` change returns only once Chrome's registrations match
+//   it, so a page loaded right after gets the new set.
+export const SM_DEV_PROTOCOL = { major: 3, minor: 2 } as const;
 
 export interface ProtocolVersion {
   major: number;

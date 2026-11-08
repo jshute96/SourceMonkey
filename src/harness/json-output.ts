@@ -192,7 +192,32 @@ export interface TabActivity {
    * frame. Absent when that's the top frame only.
    */
   frames?: string[];
+  // The rest only for the run's scripts.
+  /** Its rules match the tab's page (its top frame). */
+  matches?: boolean;
+  /** It matches and is on, so it should run there. Absent for a manual script. */
+  expected?: boolean;
+  /** Why it isn't expected, though it matches. */
+  notExpected?: NotExpectedReason;
+  /** SourceMonkey skipped it on the tab's current page, for this reason. */
+  skipped?: string;
+  /**
+   * Under SourceMonkey, what it did on the tab's current page, in all
+   * its frames. The last error names its frame when from an iframe.
+   */
+  menuCommands?: number;
+  errors?: number;
+  warnings?: number;
+  lastError?: string;
+  lastErrorFrame?: string;
+  lastWarning?: string;
 }
+
+/** Why a script whose rules match a tab's page isn't expected there. */
+export type NotExpectedReason =
+  | 'disabled'           // turned off in the manager, or its collection is
+  | 'manager-off'        // the manager's own switch is off
+  | 'noscript';          // the tab was opened with --noscript
 
 /** A script: one the run loaded (`1`), or one installed in SourceMonkey (`E1`). */
 export interface Script {
@@ -232,14 +257,16 @@ export interface Script {
   leftBy?: string;
   /** In `scripts` and `status`: what it is doing on each tab. */
   tabs?: TabActivity[];
+  /** In `scripts` and `status`, a run's script under SourceMonkey: how many values it has stored. */
+  values?: number;
 }
 
 /** `status`'s extra per-script facts, for the run's scripts. */
 export interface StatusScript extends Script {
-  /** On the selected tab, where there is one. */
-  menuCommands?: number;
-  values?: number;
-  /** On the selected tab, or every tab when there is none. */
+  /**
+   * With no tab open, all its errors, from tabs since closed. With tabs,
+   * each tab's are in `tabs`.
+   */
   errors?: number;
   lastError?: string;
   /** Its permission prompts waiting for an answer (`connect`). */
