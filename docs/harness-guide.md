@@ -2065,6 +2065,10 @@ Limits of the heuristic:
 - Commands that only look answer the sender alone. Ones that change
   something (`reload`, `click`, `menu Bump`) also show in the run's
   log, and to other clients following it.
+- Commands from multiple shells run one after another, except `wait`
+  and the commands that read only sm-dev's own state (`status`, `logs`,
+  listing `tabs` and `scripts`). Those run right away, so one shell's
+  `wait 10s` doesn't hold up another shell's commands.
 
 When a command's reply is complete:
 

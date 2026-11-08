@@ -458,6 +458,24 @@ export function onlyInspects(line: string): boolean {
   return false;
 }
 
+// The commands that run beside the others rather than in turn, along
+// with listing `tabs` and `scripts`. Each one waits, or reads what
+// sm-dev already knows without reaching into a page, and changes
+// nothing. So one sender's `wait 10s` or `status` neither holds up
+// another's commands nor waits behind them. All other commands take
+// turns, including those that only look into a page (`snapshot`).
+// Each sender's own commands still run in order, since its client
+// sends the next only once one has ended.
+const RUNS_BESIDE = new Set(['wait', 'help', 'status', 'logs', 'match', 'validate']);
+
+/** Whether a command line runs beside the others (see RUNS_BESIDE). */
+export function runsBeside(line: string): boolean {
+  const typed = line.trim().split(/\s+/)[0];
+  const command = RUN_ALIASES[typed] ?? typed;
+  if (command === 'tabs' || command === 'scripts') return onlyInspects(line);
+  return RUNS_BESIDE.has(command);
+}
+
 /**
  * Whether a command line has a JSON form (`--json`): one of
  * `JSON_COMMANDS`, in a form that only looks (`tabs`, not `tabs T2`).
@@ -3460,33 +3478,57 @@ export function writeOutputLine(line: string): void {
 }
 
 /**
- * Runs command lines one at a time, from whichever source: typed ones
- * and ones sent from other shells take turns, so two never interleave.
- * `hooks` bracket the line's own turn, not its wait for one, so output
- * captured between them is that command's.
- */
-/**
- * Runs a command line, resolving to false when the command failed in
- * a way that should stop a line of several (a `wait` that timed out).
+ * Runs a command line, resolving to its exit code. `hooks.answer`:
+ * where the command's own output goes instead of `ctx.out` (see
+ * commandOutput).
  */
 export type CommandRunner = (
   line: string,
   hooks?: { start?: () => void; end?: () => void; cwd?: string; words?: string[]; answer?: (line: string) => void; interactive?: boolean; json?: boolean },
 ) => Promise<number>;
 
-// `answer`: where the command's own output goes instead of `ctx.out`
-// (see commandOutput). Resolves to the command's exit code.
 // Commands after which nothing is left to remind about.
 const ENDS_RUN = new Set(['exit', 'stop']);
 
-export function commandRunner(ctx: ConsoleContext): CommandRunner {
+// The fields each running command keeps for itself, so commands
+// running at once (see runsBeside) never see each other's.
+const OWN_FIELDS = new Set<PropertyKey>(['out', 'json', 'jsonLayout', 'interactive']);
+
+// A command's view of the run's context: its own `OWN_FIELDS`, and the
+// rest shared, so a change to the current tab or script still reaches
+// the commands after it.
+// `frames` is both: a command reads the frames it loaded itself, since
+// a listing running beside it may load them without the details it
+// needs, and its load also goes to the shared context for the commands
+// after it.
+function commandContext(shared: ConsoleContext): ConsoleContext {
+  const own: Record<PropertyKey, unknown> = { out: shared.out };
+  return new Proxy(shared, {
+    get: (target, key) => {
+      if (OWN_FIELDS.has(key)) return own[key];
+      if (key === 'frames') return own.frames ?? target.frames;
+      return Reflect.get(target, key);
+    },
+    set: (target, key, value) => {
+      if (OWN_FIELDS.has(key)) own[key] = value;
+      else {
+        if (key === 'frames') own.frames = value;
+        Reflect.set(target, key, value);
+      }
+      return true;
+    },
+  });
+}
+
+export function commandRunner(shared: ConsoleContext): CommandRunner {
+  // The commands that take turns, each after the one before.
   let queue: Promise<unknown> = Promise.resolve();
   return (line, hooks) => {
+    const ctx = commandContext(shared);
     // The exit code: 2 when it said it was invalid, wherever in it
     // that was said; else what the command returned (a number, or false
     // for 1); else 0. A throw is 2 for an invalid command (a file that
-    // isn't there), 1 otherwise. Commands run one at a time, so the
-    // mistake watch holds only for this one.
+    // isn't there), 1 otherwise.
     let code = 0;
     const run = async (): Promise<void> => {
       let mistaken = false;
@@ -3494,19 +3536,15 @@ export function commandRunner(ctx: ConsoleContext): CommandRunner {
       // In JSON mode, the command's other lines (a note beside its
       // result, or its failure in place of one) go to stderr as text.
       ctx.json = hasJsonForm(line) ? hooks?.json === true : undefined;
+      const said: string[] = [];
       ctx.out = (l) => {
+        said.push(l);
         if (l.startsWith(MISTAKE_PREFIX)) mistaken = true;
         if (!ctx.json) out(l);
         else if (isJsonLine(l)) out(ctx.jsonLayout ? withLayout(l, ctx.jsonLayout) : l);
         else out(STDERR_LINE + l);
       };
       const before = waitingState(ctx);
-      const said: string[] = [];
-      const shown = ctx.out;
-      ctx.out = (l) => {
-        said.push(l);
-        shown(l);
-      };
       try {
         // Typed at a person's prompt, `menu` needn't wait for a command
         // still to register: the person can see what there is.
@@ -3525,28 +3563,31 @@ export function commandRunner(ctx: ConsoleContext): CommandRunner {
         ctx.out(err instanceof UsageError ? `${MISTAKE_PREFIX}${(err as Error).message}` : `[sm-dev] ${errorLine((err as Error).message)}`);
         code = err instanceof UsageError ? 2 : 1;
       } finally {
+        // What the command started that prints after it ends goes out
+        // plainly, as the page's own lines do.
         ctx.json = undefined;
         ctx.jsonLayout = undefined;
         ctx.out = out;
       }
     };
-    const done = queue.then(async () => {
+    const beside = runsBeside(line);
+    const done = (beside ? Promise.resolve() : queue).then(async () => {
       hooks?.start?.();
-      const answer = hooks?.answer && { line: hooks.answer, live: true };
+      const output = hooks?.answer && { line: hooks.answer, live: true };
       // Where this command began, for the next `wait log`. Not for one
       // that only looks or waits, or an empty line (a message's turn):
       // what the command before it set off still counts.
-      const began = ctx.logs?.position();
+      const began = shared.logs?.position();
       const name = line.trim().split(/\s+/)[0];
       try {
-        await inCommand.run({ inspects: onlyInspects(line) }, () => (answer ? commandOutput.run(answer, run) : run()));
+        await inCommand.run({ inspects: onlyInspects(line) }, () => (output ? commandOutput.run(output, run) : run()));
       } finally {
-        if (answer) answer.live = false;
-        else if (name && name !== 'wait' && !onlyInspects(line)) ctx.previousStart = began;
+        if (output) output.live = false;
+        if (name && name !== 'wait' && !onlyInspects(line)) shared.previousStart = began;
         hooks?.end?.();
       }
     });
-    queue = done;
+    if (!beside) queue = done;
     return done.then(() => code);
   };
 }

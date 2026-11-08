@@ -303,6 +303,40 @@ test('a background run is listed, takes sent commands, and stops', async ({ fixt
   }
 });
 
+test('a wait or status from one client runs beside another client\'s commands', async ({ fixtureServer, scriptsDir }) => {
+  test.setTimeout(60_000);
+  const setup = await setUp();
+  try {
+    const file = scriptsDir.write({ relativePath: 'beside.user.js', meta: { name: 'Beside', match: ['*://*/target.html'] }, body: '' });
+    const run = setup.startRun([file, `${fixtureServer.baseUrl}/target.html`, '--root', scriptsDir.path]);
+    await run.waitFor(/^\[sm-dev\] Started as run D1\. /);
+    // Once the run takes commands.
+    await setup.cli('eval', '1');
+
+    // One client waits; another's commands, which change something and
+    // which only look, finish while it does.
+    let waited = false;
+    const waiting = setup.cli('wait', '8s').then((lines) => {
+      waited = true;
+      return lines;
+    });
+    await new Promise((r) => setTimeout(r, 500));
+    const started = Date.now();
+    expect(await setup.cli('eval', '1234 * 2')).toEqual(['2468']);
+    expect((await setup.cli('--run', 'D1', 'status'))[0]).toMatch(/^Selected run: D1 /);
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(waited).toBe(false);
+    // The waiting client follows the run, so it sees the other
+    // client's command, headed by its echo.
+    expect(await waiting).toEqual(["remote:arg > eval '1234 * 2'", '2468']);
+    // The run's own stream shows both.
+    await run.waitFor(/^remote:arg > wait 8s$/);
+    await run.waitFor(/^2468$/);
+  } finally {
+    await setup.cleanup();
+  }
+});
+
 test('a background run\'s startup output is colored as validate\'s is, and its log stays plain', async ({ fixtureServer, scriptsDir }) => {
   test.setTimeout(60_000);
   const setup = await setUp();

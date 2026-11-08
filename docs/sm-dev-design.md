@@ -195,8 +195,31 @@ Serves `sm-dev list`, `stop`, `attach` and the commands sent to a run.
 
 ### Running commands
 
-- `Remote` feeds sent commands through one `commandRunner` queue, so
-  they never interleave.
+- `Remote` feeds sent commands through one `commandRunner`.
+  - `wait`, and the commands that only read what sm-dev already knows
+    without reaching into a page (`status`, `logs`, listing `tabs` and
+    `scripts`, `help`, `match`, `validate`), run beside the queue
+    (`runsBeside`).
+  - All other commands take turns in one queue, so they never
+    interleave. That covers page actions (`click`, `eval`), commands
+    that change sm-dev's state, and commands that look into a page
+    (`snapshot`, `screenshot`, `values`). So one client's
+    `wait 10s` doesn't hold up another client's commands, and `status`
+    answers while a command is busy.
+  - Each client still runs its own commands in order: it sends the next
+    one only once the last has ended.
+  - A `wait` doesn't wait for another client's command to finish: it
+    can settle while another client's `reload` is still loading. Each
+    client waits on its own commands.
+  - A `wait`'s result can show in the run's log and stream among another
+    client's command output, after that command's echo.
+  - Each command gets its own view of the console context
+    (`commandContext`): its output function and JSON mode are its own,
+    and the current tab and script are shared.
+  - The frames a command loads are its own too, and also saved for the
+    commands after it: a `status` beside a `frames` command would
+    otherwise replace them with a load lacking the details `frames`
+    shows.
 - Lines arriving before the page has loaded wait for it.
 - Once the run starts tearing down, sent lines are refused.
 
