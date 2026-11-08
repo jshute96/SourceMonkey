@@ -1,31 +1,60 @@
 #!/usr/bin/env python3
 """Rewrite the script and library tables in README.md from script_manifest.json.
 
-Each table in README.md sits under a placeholder comment. Script tables
-name the category they hold:
+Each table in README.md sits under a placeholder comment. A script
+table's placeholder is:
 
-  <!-- update_readme.py category=default -->
+  <!-- update_readme.py [category=<name>,...] [manifest=<path or URL>] -->
+
+* `category=` names the manifest categories the table shows, merged and
+  sorted into one table. Without it, the table shows all the manifest's
+  scripts. A manifest entry's `category` field gives its category, and
+  entries with none are in `default`. Categories named must exist in
+  the manifest.
+* `manifest=` names the manifest to read: a file path, relative to the
+  --root directory (where README.md is), or a URL. Default: `script_manifest.json`
+  in the --root directory.
+
+A manifest can also list libraries: shared helper `.js` files that
+scripts `@require`, in its `libraries` list. A table of them has its
+own placeholder, with the same `manifest=` option:
+
+  <!-- update_readme.py libraries [manifest=<path or URL>] -->
+
+Everything from the line after a placeholder up to the next blank line
+is the generated table, and is replaced wholesale. A script table looks
+like this:
+
+  <!-- update_readme.py category=tools -->
   | Site | Script | Doc | GF | Description |
   | :---: | --- | --- | --- | --- |
-  | ... |
+  | <img src="site-icons/example.com.png" ...> | [Example: Fix the thing](sites/example.com/fix.user.js) | [doc](sites/example.com/fix.md) | [GF](https://greasyfork.org/scripts/...) | What it does. |
 
-and the one table of shared `@require` libraries is marked:
-
-  <!-- update_readme.py libraries -->
-
-Everything from the line after the placeholder up to the next blank line
-is the generated table, and is replaced wholesale. Rows come from
-`script_manifest.json`. Script rows are sorted by the name the table
-shows (`@name`: site, then title, ignoring case); library rows stay in manifest order.
+Script rows are sorted by the name the table shows (`@name`: site, then
+title, ignoring case); library rows stay in manifest order.
 
 For a script, the row's name and description are its `@name` and
 `@description` headers. A script with no `@name` shows its filename, and
 one with no `@description` a blank description. The Doc column links the
 sibling `.md`, when there is one; a table where no entry has one leaves
-the column out, and the same for the Site column (icons). A manifest
-entry's `category` field selects the table; entries with no `category` go in `default`. The set of categories
-used in the manifest must match the set of placeholders in README.md
-exactly.
+the column out, and the same for the Site column (icons).
+
+The script, icon and doc paths in a manifest are read relative to it,
+and each listed script is read for its `@name` and `@description`.
+Categories a README doesn't name are left out. A category can be in
+more than one table. Each run also lists what's left out, by manifest:
+its categories, and `[libraries]` for its libraries.
+
+* From a GitHub file page (`https://github.com/<owner>/<repo>/blob/<ref>/<path>`),
+  the manifest and its files are read from raw.githubusercontent.com,
+  and scripts and docs link to their GitHub pages, as they do for a
+  manifest in this repo. Icons link the raw files.
+* From another URL, a row links the script at its URL. Its doc link
+  points at GitHub's page for the doc, for a manifest on a GitHub Pages
+  project site (published from its default branch's root) or on
+  raw.githubusercontent.com, and at the doc's own URL otherwise.
+* From a file, the links are paths relative to README.md, which only
+  work on GitHub when the file is inside this repo.
 
 A script entry's `site_icons` (written by update_site_icons.py) are shown
 as small images before its name, in the README and on the `#` title line
@@ -33,7 +62,8 @@ of its doc, which is rewritten as the icons followed by `@name`.
 
 For a library (an entry in the manifest's `libraries` list) there is
 no metadata block to read, so the row's name is the filename and its
-description is the file's first line (see `read_library_metadata`).
+description is the file's first line (see `parse_library_metadata`).
+Doc title lines are only rewritten for this collection's own scripts.
 
 Usage:
   update_readme.py                  # rewrite README.md in place
@@ -51,7 +81,10 @@ import os
 import re
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
+from urllib.parse import urljoin
 
 
 def find_repo_root():
@@ -73,8 +106,37 @@ REPO_ROOT = find_repo_root()
 MANIFEST = REPO_ROOT / 'script_manifest.json'
 README = REPO_ROOT / 'README.md'
 
-PLACEHOLDER_RE = re.compile(
-    r'<!--\s*update_readme\.py\s+(?:category=([\w-]+)|(libraries))\s*-->')
+PLACEHOLDER_RE = re.compile(r'<!--\s*update_readme\.py\s+(.*?)\s*-->')
+CATEGORY_RE = re.compile(r'[\w-]+')
+
+
+def parse_placeholder(text):
+  """Return the placeholder's settings from the text after `update_readme.py`.
+
+  {'manifest': a UrlManifest or FileManifest, plus either
+  'libraries': True for a libraries table, or 'categories': [...] (None
+  for all) for a script table}.
+  """
+  tokens = text.split()
+  libraries = bool(tokens) and tokens[0] == 'libraries'
+  if libraries:
+    tokens = tokens[1:]
+  allowed = ('manifest',) if libraries else ('category', 'manifest')
+  fields = {}
+  for token in tokens:
+    key, eq, value = token.partition('=')
+    if not eq or key not in allowed or key in fields or not value:
+      sys.exit(f'README.md: bad placeholder "{text}": expected '
+               '"[category=<a>,...] [manifest=<path or URL>]", or '
+               '"libraries [manifest=<path or URL>]"')
+    fields[key] = value
+  if libraries:
+    return {'libraries': True, 'manifest': manifest_source(fields.get('manifest'))}
+  categories = fields['category'].split(',') if 'category' in fields else None
+  if categories and not all(CATEGORY_RE.fullmatch(c) for c in categories):
+    sys.exit(f'README.md: bad category list in placeholder "{text}"')
+  manifest = fields.get('manifest')
+  return {'categories': categories, 'manifest': manifest_source(manifest)}
 
 # Table rows are built as lists of cells, ending with Doc, GF and
 # Description, so table_line() can drop Doc and GF as columns rather than
@@ -126,14 +188,13 @@ def table_lines(header, rows, icons=False):
   return [table_line(cells, show_doc) for cells in header + rows]
 
 
-def load_manifest():
-  """Return (scripts, libraries) as lists of entry objects.
+def parse_manifest(data):
+  """Return (scripts, libraries) from a manifest's parsed JSON.
 
   The manifest is either a bare list of scripts or an object with
   `scripts` and (optionally) `libraries` lists. An entry may be written
   as a bare path string.
   """
-  data = json.loads(MANIFEST.read_text(encoding='utf-8'))
   if isinstance(data, list):
     scripts, libraries = data, []
   else:
@@ -142,7 +203,7 @@ def load_manifest():
   return normalize(scripts), normalize(libraries)
 
 
-def read_metadata(script_path):
+def parse_metadata(text, filename):
   """Return (name, description) from a userscript's metadata block.
 
   With no `@name` the name is the filename, and with no `@description`
@@ -150,30 +211,30 @@ def read_metadata(script_path):
   (a deliberately bad example, say) still gets a row.
   """
   fields = {}
-  for line in script_path.read_text(encoding='utf-8').splitlines():
+  for line in text.splitlines():
     if line.strip() == '// ==/UserScript==':
       break
     m = re.match(r'//\s*@(\w+)\s+(.*)', line)
     if m:
       fields.setdefault(m.group(1), m.group(2).strip())
-  return fields.get('name', script_path.name), fields.get('description', '')
+  return fields.get('name', filename), fields.get('description', '')
 
 
-def read_library_metadata(library_path):
+def parse_library_metadata(text, filename, label):
   """Return (name, description) for a shared `@require` library.
 
   Libraries are plain `.js` files with no metadata block, so there's no
-  `@name` or `@description` to read. The name is the filename — that's
-  what a script's `@require` line names it by — and the description is
-  the file's first line, which by convention is a one-sentence `//`
-  comment saying what the file is.
+  `@name` or `@description` to read. The name is the filename (what a
+  script's `@require` line names it by), and the description is the
+  file's first line, which by convention is a one-sentence `//` comment
+  saying what the file is. `label` names the file in an error.
   """
-  lines = library_path.read_text(encoding='utf-8').splitlines()
+  lines = text.splitlines()
   m = re.match(r'\s*//\s*(\S.*)', lines[0]) if lines else None
   if not m:
-    sys.exit(f'{library_path}: first line should be a "//" comment describing '
+    sys.exit(f'{label}: first line should be a "//" comment describing '
              'the library; that is what the README table shows')
-  return library_path.name, m.group(1).strip()
+  return filename, m.group(1).strip()
 
 
 def escape_cell(text):
@@ -181,10 +242,13 @@ def escape_cell(text):
   return text.replace('|', '\\|').replace('<', '&lt;').replace('>', '&gt;')
 
 
-def sibling_doc(rel, suffix):
-  """The doc file beside a script or library, or None if there isn't one."""
-  doc = rel[: -len(suffix)] + '.md'
-  return doc if (REPO_ROOT / doc).exists() else None
+def doc_path(rel):
+  """The path of the doc beside a script (`.user.js`) or library (`.js`),
+  whether or not it exists; None for another kind of file."""
+  for suffix in ('.user.js', '.js'):
+    if rel.endswith(suffix):
+      return rel[: -len(suffix)] + '.md'
+  return None
 
 
 def doc_cell(doc):
@@ -198,12 +262,15 @@ def gf_cell(entry):
   return f'[GF]({gf["url"]})' if gf else ''
 
 
-def icons_html(entry, size, base='.', sep=' '):
+def icons_html(entry, size, base='.', sep=' ', src=None):
   """The entry's site icons as <img> tags (with a trailing space), or ''.
 
   `base` is the directory the HTML is in, relative to the repo root.
+  `src`, for another collection's entry, maps each icon path to its
+  link instead.
   """
-  tags = [f'<img src="{os.path.relpath(icon, base)}" width="{size}" height="{size}" alt="">'
+  src = src or (lambda icon: os.path.relpath(icon, base))
+  tags = [f'<img src="{src(icon)}" width="{size}" height="{size}" alt="">'
           for icon in entry.get('site_icons', [])]
   return sep.join(tags) + ' ' if tags else ''
 
@@ -217,11 +284,11 @@ def doc_title_updates(scripts):
   updates = {}
   for entry in scripts:
     rel = entry['path']
-    doc_rel = sibling_doc(rel, '.user.js')
-    if not doc_rel:
+    doc_rel = doc_path(rel)
+    if not doc_rel or not (REPO_ROOT / doc_rel).exists():
       continue
     doc = REPO_ROOT / doc_rel
-    name, _ = read_metadata(REPO_ROOT / rel)
+    name, _ = parse_metadata((REPO_ROOT / rel).read_text(encoding='utf-8'), Path(rel).name)
     title = f'# {icons_html(entry, 24, os.path.dirname(rel))}{name}'
     text = doc.read_text(encoding='utf-8')
     first, sep, rest = text.partition('\n')
@@ -242,50 +309,251 @@ def sort_key(name):
   return site.strip().casefold(), title.strip().casefold()
 
 
-def build_rows(scripts):
-  """Return {category: [row cells, ...]}, sorted by script name.
+def fetch(url, method='GET'):
+  """The response to a request for `url`, or exit naming the URL."""
+  request = urllib.request.Request(url, method=method,
+                                   headers={'User-Agent': 'update_readme.py'})
+  try:
+    return urllib.request.urlopen(request, timeout=30)
+  except urllib.error.HTTPError:
+    raise
+  except (OSError, ValueError) as e:
+    sys.exit(f'{url}: {e}')
 
-  The manifest is in path order, but the table shows `@name`, which
-  can sort differently.
+
+def fetch_text(url):
+  """The text at `url`, or exit naming it."""
+  try:
+    with fetch(url) as response:
+      return response.read().decode('utf-8')
+  except urllib.error.HTTPError as e:
+    sys.exit(f'{url}: HTTP {e.code}')
+
+
+def url_exists(url):
+  """Whether `url` is there: True on a success, False on a 404."""
+  try:
+    with fetch(url, method='HEAD'):
+      return True
+  except urllib.error.HTTPError as e:
+    if e.code == 404:
+      return False
+    sys.exit(f'{url}: HTTP {e.code}')
+
+
+def github_page_url(url):
+  """GitHub's page for a file served from GitHub Pages or raw.githubusercontent.com.
+
+  A Pages URL is taken as a project site (`<owner>.github.io/<repo>/`)
+  published from the root of the default branch (`HEAD`). Other URLs
+  come back unchanged.
   """
-  rows = {}
-  for entry in scripts:
+  m = re.match(r'https://([\w-]+)\.github\.io/([^/]+)/(.+)', url)
+  if m:
+    return f'https://github.com/{m[1]}/{m[2]}/blob/HEAD/{m[3]}'
+  m = re.match(r'https://raw\.githubusercontent\.com/([^/]+)/([^/]+)/(.+)', url)
+  if m:
+    return f'https://github.com/{m[1]}/{m[2]}/blob/{m[3]}'
+  return url
+
+
+class UrlManifest:
+  """A manifest at a URL.
+
+  A GitHub file page (`github.com/<owner>/<repo>/blob/<ref>/<path>`) is
+  read from raw.githubusercontent.com, and its scripts and docs link to
+  their GitHub pages, as this collection's own do. Icons come from the
+  raw files, since a GitHub page isn't an image.
+  """
+
+  def __init__(self, url):
+    self.name = url
+    m = re.match(r'https://github\.com/([^/]+)/([^/]+)/blob/(.+)', url)
+    self.github = bool(m)
+    # Where files are read from.
+    self.url = f'https://raw.githubusercontent.com/{m[1]}/{m[2]}/{m[3]}' if m else url
+    # Where scripts and docs link to.
+    self.page_url = url
+
+  def read_manifest(self):
+    return fetch_text(self.url)
+
+  def read(self, rel):
+    return fetch_text(urljoin(self.url, rel))
+
+  def exists(self, rel):
+    return url_exists(urljoin(self.url, rel))
+
+  def link(self, rel):
+    """A script's link: its GitHub page, or else its URL, which installs it."""
+    return urljoin(self.page_url if self.github else self.url, rel)
+
+  def doc_link(self, rel):
+    """A doc's link: GitHub's rendered page for it where there is one."""
+    return urljoin(self.page_url, rel) if self.github else github_page_url(urljoin(self.url, rel))
+
+  def icon_src(self, icon):
+    return urljoin(self.url, icon)
+
+
+class FileManifest:
+  """A manifest in a local file: this collection's, or another's.
+
+  Links are relative to the README's directory, so they work in a
+  checkout, but not on GitHub when the file is outside this repo.
+  """
+
+  def __init__(self, path):
+    self.path = path
+    self.dir = path.parent
+    self.name = os.path.relpath(path, REPO_ROOT)
+
+  def read_manifest(self):
+    try:
+      return self.path.read_text(encoding='utf-8')
+    except OSError as e:
+      sys.exit(f'{self.name}: {e.strerror}')
+
+  def read(self, rel):
+    try:
+      return (self.dir / rel).read_text(encoding='utf-8')
+    except OSError as e:
+      sys.exit(f'{self.name}: {rel}: {e.strerror}')
+
+  def exists(self, rel):
+    return (self.dir / rel).exists()
+
+  def link(self, rel):
+    return os.path.relpath(self.dir / rel, REPO_ROOT)
+
+  doc_link = link
+  icon_src = link
+
+
+def manifest_source(value):
+  """The manifest a placeholder's `manifest=` names, or this collection's.
+
+  A value with a URL scheme is a URL; anything else is a file path,
+  relative to the --root directory (where README.md is).
+  """
+  if value is None:
+    return FileManifest(MANIFEST.resolve())
+  if re.match(r'[a-zA-Z][\w+.-]*://', value):
+    return UrlManifest(value)
+  return FileManifest((REPO_ROOT / value).resolve())
+
+
+_manifest_scripts = {}
+
+
+def read_manifest_once(manifest):
+  """(scripts, libraries) from a manifest, read once."""
+  if manifest.name not in _manifest_scripts:
+    try:
+      data = json.loads(manifest.read_manifest())
+    except json.JSONDecodeError as e:
+      sys.exit(f'{manifest.name}: not valid JSON: {e}')
+    _manifest_scripts[manifest.name] = parse_manifest(data)
+  return _manifest_scripts[manifest.name]
+
+
+def manifest_scripts(manifest):
+  """The script entries in a manifest."""
+  return read_manifest_once(manifest)[0]
+
+
+def manifest_libraries(manifest):
+  """The library entries in a manifest, or exit when it has none."""
+  libraries = read_manifest_once(manifest)[1]
+  if not libraries:
+    sys.exit(f'{manifest.name}: a "libraries" placeholder names it, but it lists no libraries')
+  return libraries
+
+
+def manifest_entries(manifest, categories):
+  """The entries in the given categories of a manifest, or all of them
+  when `categories` is None."""
+  scripts = manifest_scripts(manifest)
+  if categories is None:
+    return scripts
+  present = {e.get('category', 'default') for e in scripts}
+  missing = [c for c in categories if c not in present]
+  if missing:
+    sys.exit(f'{manifest.name}: no scripts in categories: {", ".join(missing)}')
+  return [e for e in scripts if e.get('category', 'default') in categories]
+
+
+def build_script_rows(manifest, entries):
+  """[(sort key, row cells), ...] for a manifest's script entries."""
+  named = []
+  for entry in entries:
     rel = entry['path']
-    script = REPO_ROOT / rel
-    if not script.exists():
-      sys.exit(f'{rel}: listed in the manifest but not found')
-    doc = sibling_doc(rel, '.user.js')
-    name, description = read_metadata(script)
-    # Joined by &nbsp;, so the icons don't wrap onto separate lines.
-    row = [icons_html(entry, 16, sep="&nbsp;").strip(),
-           f'[{escape_cell(name)}]({rel})', doc_cell(doc),
+    name, description = parse_metadata(manifest.read(rel), rel.rsplit('/', 1)[-1])
+    doc_rel = doc_path(rel)
+    doc = manifest.doc_link(doc_rel) if doc_rel and manifest.exists(doc_rel) else None
+    row = [icons_html(entry, 16, sep='&nbsp;', src=manifest.icon_src).strip(),
+           f'[{escape_cell(name)}]({manifest.link(rel)})', doc_cell(doc),
            gf_cell(entry), escape_cell(description)]
-    rows.setdefault(entry.get('category', 'default'), []).append((sort_key(name), row))
-  return {category: [row for _, row in sorted(named)]
-          for category, named in rows.items()}
+    named.append((sort_key(name), row))
+  return named
 
 
-def build_library_rows(libraries):
-  """Return [row cells, ...] for the libraries table, in manifest order."""
+def build_library_rows(manifest):
+  """Return [row cells, ...] for a manifest's libraries, in manifest order."""
   rows = []
-  for entry in libraries:
+  for entry in manifest_libraries(manifest):
     rel = entry['path']
-    library = REPO_ROOT / rel
-    if not library.exists():
-      sys.exit(f'{rel}: listed in the manifest but not found')
-    doc = sibling_doc(rel, '.js')
-    name, description = read_library_metadata(library)
-    rows.append([f'[{escape_cell(name)}]({rel})', doc_cell(doc),
+    name, description = parse_library_metadata(
+        manifest.read(rel), rel.rsplit('/', 1)[-1], f'{manifest.name}: {rel}')
+    doc_rel = doc_path(rel)
+    doc = manifest.doc_link(doc_rel) if doc_rel and manifest.exists(doc_rel) else None
+    rows.append([f'[{escape_cell(name)}]({manifest.link(rel)})', doc_cell(doc),
                  gf_cell(entry), escape_cell(description)])
   return rows
 
 
-def render(readme_text, rows, library_rows):
-  """Return README text with each placeholder's table replaced."""
+def left_out(tables):
+  """'<manifest>: <category>, ...' for each manifest with categories no
+  table shows, including this collection's even when no table uses it.
+  Libraries no table shows are listed as `[libraries]`.
+
+  `tables` is the placeholders, as parse_placeholder() returns them.
+  """
+  manifests = {}
+  shown = {}
+  for p in [{'manifest': manifest_source(None), 'categories': []}] + tables:
+    name = p['manifest'].name
+    manifests.setdefault(name, p['manifest'])
+    if p.get('libraries'):
+      shown.setdefault(name, set()).add('[libraries]')
+      continue
+    present = {e.get('category', 'default') for e in manifest_scripts(p['manifest'])}
+    shown.setdefault(name, set()).update(present if p['categories'] is None else p['categories'])
+  out = []
+  for name, manifest in manifests.items():
+    present = {e.get('category', 'default') for e in manifest_scripts(manifest)}
+    if read_manifest_once(manifest)[1]:
+      present.add('[libraries]')
+    missing = sorted(present - shown[name])
+    if missing:
+      out.append(f'{name}: {", ".join(missing)}')
+  return out
+
+
+def placeholders(readme_text):
+  """Each placeholder in the README, as parse_placeholder() returns it."""
+  return [parse_placeholder(m.group(1)) for line in readme_text.splitlines()
+          if (m := PLACEHOLDER_RE.search(line))]
+
+
+def render(readme_text, tables):
+  """Return README text with each placeholder's table replaced.
+
+  `tables` is placeholders(readme_text), in the same order.
+  """
+  tables = iter(tables)
   lines = readme_text.splitlines()
   out = []
-  seen = []
-  libraries_seen = 0
   i = 0
   while i < len(lines):
     line = lines[i]
@@ -294,44 +562,18 @@ def render(readme_text, rows, library_rows):
     m = PLACEHOLDER_RE.search(line)
     if not m:
       continue
-    category = m.group(1)
-    if category:
-      seen.append(category)
-    else:
-      libraries_seen += 1
+    placeholder = next(tables)
     while i < len(lines) and lines[i].strip():  # drop the old table
       i += 1
-    if category:
-      table = rows.get(category, [])
-      icons = icon_column_header([row[0] for row in table])
-      header = [[cell.format(icons=icons) for cell in SCRIPT_HEADER[0]]] + SCRIPT_HEADER[1:]
-      out.extend(table_lines(header, table, icons=True))
-    else:
-      out.extend(table_lines(LIBRARY_HEADER, library_rows))
-
-  manifest_categories = set(rows)
-  readme_categories = set(seen)
-  if len(seen) != len(readme_categories):
-    dupes = sorted({c for c in seen if seen.count(c) > 1})
-    sys.exit(f'README.md: duplicate category placeholders: {", ".join(dupes)}')
-  if manifest_categories != readme_categories:
-    only_manifest = sorted(manifest_categories - readme_categories)
-    only_readme = sorted(readme_categories - manifest_categories)
-    problems = []
-    if only_manifest:
-      problems.append('in the manifest but with no README placeholder: '
-                      + ', '.join(only_manifest))
-    if only_readme:
-      problems.append('with a README placeholder but no scripts: '
-                      + ', '.join(only_readme))
-    sys.exit('Category mismatch: ' + '; '.join(problems))
-  if libraries_seen > 1:
-    sys.exit('README.md: more than one "libraries" placeholder')
-  if bool(library_rows) != bool(libraries_seen):
-    sys.exit('README.md: the manifest lists libraries but README.md has no '
-             '"libraries" placeholder' if library_rows else
-             'README.md: has a "libraries" placeholder but the manifest lists '
-             'no libraries')
+    if placeholder.get('libraries'):
+      out.extend(table_lines(LIBRARY_HEADER, build_library_rows(placeholder['manifest'])))
+      continue
+    manifest = placeholder['manifest']
+    named = build_script_rows(manifest, manifest_entries(manifest, placeholder['categories']))
+    table = [row for _, row in sorted(named, key=lambda pair: pair[0])]
+    icons = icon_column_header([row[0] for row in table])
+    header = [[cell.format(icons=icons) for cell in SCRIPT_HEADER[0]]] + SCRIPT_HEADER[1:]
+    out.extend(table_lines(header, table, icons=True))
 
   return '\n'.join(out) + '\n'
 
@@ -354,26 +596,40 @@ def main():
 
   if not MANIFEST.is_file():
     sys.exit(f'{MANIFEST}: not found; run this inside a collection, or pass --root')
-  scripts, libraries = load_manifest()
-  SHOW_GF = any(entry.get('greasyfork') for entry in scripts + libraries)
+  own = manifest_source(None)
+  scripts, libraries = read_manifest_once(own)
+  for entry in scripts + libraries:
+    if not own.exists(entry['path']):
+      sys.exit(f'{own.name}: {entry["path"]}: listed but not found')
   old = README.read_text(encoding='utf-8')
-  new = render(old, build_rows(scripts), build_library_rows(libraries))
+  tables = placeholders(old)
+  shown = [entry for p in tables
+           for entry in (manifest_libraries(p['manifest']) if p.get('libraries')
+                         else manifest_entries(p['manifest'], p['categories']))]
+  SHOW_GF = any(entry.get('greasyfork') for entry in shown)
+  new = render(old, tables)
   docs = doc_title_updates(scripts)
+
+  not_shown = left_out(tables)
+  left_out_line = 'Not in any table: ' + '; '.join(not_shown) if not_shown else None
 
   if new == old and not docs:
     print('README.md and doc titles are up to date.')
-    return
-  if args.check:
+  elif args.check:
     stale = (['README.md'] if new != old else []) + [
         str(d.relative_to(REPO_ROOT)) for d in docs]
-    sys.exit(f'Out of date: {", ".join(stale)}; run update_readme.py.')
-  if new != old:
-    README.write_text(new, encoding='utf-8')
-    print('README.md updated.')
-  for doc, text in docs.items():
-    doc.write_text(text, encoding='utf-8')
-    print(f'{doc.relative_to(REPO_ROOT)}: title updated.')
-
+    print(f'Out of date: {", ".join(stale)}; run update_readme.py.', file=sys.stderr)
+  else:
+    if new != old:
+      README.write_text(new, encoding='utf-8')
+      print('README.md updated.')
+    for doc, text in docs.items():
+      doc.write_text(text, encoding='utf-8')
+      print(f'{doc.relative_to(REPO_ROOT)}: title updated.')
+  if left_out_line:
+    print(left_out_line)
+  if args.check and (new != old or docs):
+    sys.exit(1)
 
 if __name__ == '__main__':
   main()

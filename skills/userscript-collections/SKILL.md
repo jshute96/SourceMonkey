@@ -101,10 +101,11 @@ need `sm-dev` of its own.
   `sm-dev manifest --dir . sites --create --format object`, which lists
   each script under `sites/`. Add a `"libraries": []` list beside
   `scripts` if there are libraries.
-* In `README.md`, add a `<!-- update_readme.py category=default -->`
-  line where the table should go, followed by a blank line, plus one
-  per other category and a `<!-- update_readme.py libraries -->` line
-  if there are libraries.
+* In `README.md`, add a `<!-- update_readme.py -->` line where the
+  table should go, followed by a blank line, and a
+  `<!-- update_readme.py libraries -->` line if there are libraries.
+  For separate tables per category, use `category=<name>,...` on each
+  (see [references/manifest-and-readme.md](references/manifest-and-readme.md)).
 * Give each script a doc, then run `update_site_icons.py` and
   `update_readme.py`.
 * Install the collection in SourceMonkey (see `install-in-SourceMonkey`).
