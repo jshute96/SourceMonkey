@@ -417,3 +417,15 @@ test('a page relays one clear per script it forgets', async () => {
   await asPage(() => forgetScriptLogs(['s1', 's2']));
   assert.deepEqual(sent.map((m) => [m.op, m.scriptId]), [['clear', 's1'], ['clear', 's2']]);
 });
+
+test('a transient entry keeps its level in the Log but never bumps the max log level', async () => {
+  // About one page (a tab that can't message SourceMonkey), not the
+  // script, so it leaves no lasting ERROR on the collections page.
+  await appendScriptLog('s1', { level: 'error', transient: true, source: 'script-wrapper', message: 'no messaging', timestamp: 1 });
+  assert.equal(await getMaxLogLevel('s1'), undefined);
+  const [entry] = await getScriptLog('s1');
+  assert.equal(entry.level, 'error');
+  assert.equal(entry.transient, true);
+  await appendScriptLog('s1', { level: 'warning', source: 'x', message: 'w', timestamp: 2 });
+  assert.equal(await getMaxLogLevel('s1'), 'warning');
+});

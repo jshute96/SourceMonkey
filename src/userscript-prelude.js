@@ -914,7 +914,7 @@
         if (entry.decision.reason === "no-decision") {
           /* Said here too: the report below goes the way the question
              did, so it may not get through either. */
-          try { console.info("[SourceMonkey] " + cfg.name + ": It did not run. " + sentence(entry.decision.detail)); } catch (_ce) {}
+          try { console.info("[SourceMonkey] " + cfg.name + ": Script did not run. " + sentence(entry.decision.detail)); } catch (_ce) {}
         }
         send({
           type: "sm:abandoned",

@@ -10,6 +10,7 @@ import {
   type PopupView,
   USER_SCRIPTS_OFF_HEADING,
 } from './popup-view.js';
+import { TAB_NO_MESSAGING_HEADING } from './tab-messaging.js';
 import {
   BADGE_GREEN,
   BADGE_GREY,
@@ -76,6 +77,8 @@ export function summarizeToolbar(view: PopupView, state: TabMatchState | null): 
   // Nothing on the page can run until they're enabled, so that is the
   // whole story: no "skipped" line, and no reload to suggest.
   else if (view.userScriptsDisabled) lines.push(USER_SCRIPTS_OFF_HEADING);
+  // Likewise: the tab can't tell us what its scripts did.
+  else if (view.noMessaging) lines.push(TAB_NO_MESSAGING_HEADING);
   else if (!anyStatus) lines.push(POPUP_NO_SCRIPTS);
   else {
     if (running > 0) lines.push(`${scripts(running)} running.`);
@@ -102,7 +105,7 @@ export function summarizeToolbar(view: PopupView, state: TabMatchState | null): 
   // off green for good.
   let color: string | null = null;
   if (anyBadged) {
-    if (errors + rejected + invalid > 0 || view.userScriptsDisabled) color = BADGE_RED;
+    if (errors + rejected + invalid > 0 || view.userScriptsDisabled || view.noMessaging) color = BADGE_RED;
     else if (updated + added + removed + untracked > 0) color = BADGE_PURPLE;
     else if (missing + unexpected > 0) color = BADGE_ORANGE;
     // Grey says nothing ran: not for a tab where some scripts were kept

@@ -101,6 +101,7 @@ import { MISSING_BLOB_MESSAGE } from '../../dist/extension/script-blobs.js';
 import { remapStackText } from '../../dist/stack-link.js';
 import { buildRequireSourceUrl, buildSourceUrl } from '../../dist/script-source-url.js';
 import { WRAPPER_BRIDGE, WRAPPER_PRELUDE } from '../../dist/generated-wrappers.js';
+import { TAB_CANNOT_MESSAGE, TAB_NO_MESSAGING, TAB_NO_MESSAGING_FIX, withTabMessagingTexts } from '../../dist/extension/tab-messaging.js';
 import { matchPattern, pageMatcher, urlMatchesScript } from '../../dist/url-match.js';
 
 // ---------- normalizeDeclaredRunAt ----------
@@ -1895,14 +1896,19 @@ function setupBridgeHarness(opts = {}) {
     },
     dispatchEvent(ev) { posted.push({ type: ev.type, ...JSON.parse(ev.detail) }); return true; },
   };
+  // `noMessaging`: a world Chrome left without messaging, where
+  // `chrome.runtime.sendMessage` is missing.
+  const chromeArg = opts.noMessaging ? { runtime: {} } : fakeChrome;
+  const infos = [];
+  const fakeConsole = { info: (...args) => infos.push(args.join(' ')) };
   // eslint-disable-next-line no-new-func
-  new Function('window', 'document', 'chrome', WRAPPER_BRIDGE)(fakeWindow, fakeDocument, fakeChrome);
+  new Function('window', 'document', 'chrome', 'console', withTabMessagingTexts(WRAPPER_BRIDGE))(fakeWindow, fakeDocument, chromeArg, fakeConsole);
   if (!syncListener) throw new Error('bridge did not install the DOM-event listener');
   // Raw `detail`, for the malformed cases.
   const dispatchRaw = (detail) => syncListener({ detail });
   // The shape every page-side sender builds: {requestId?, payload}.
   const dispatch = (payload, requestId) => dispatchRaw(JSON.stringify({ requestId, payload }));
-  return { sent, posted, dispatch, dispatchRaw, messageListener, fakeWindow };
+  return { sent, posted, dispatch, dispatchRaw, messageListener, fakeWindow, infos };
 }
 
 test('wrapper-bridge: forwards a well-formed sm:start event, stamped', () => {
@@ -2007,6 +2013,48 @@ test('wrapper-bridge: a sendMessage that throws still answers the requestId', as
   assert.deepEqual(posted[0].reply, { bridgeError: 'Asking SourceMonkey failed: extension context invalidated' });
 });
 
+test('wrapper-bridge: with no messaging, a decision request is answered at once with why', () => {
+  const { sent, posted, infos, dispatch } = setupBridgeHarness({ noMessaging: true });
+  dispatch({ type: 'sm:check-pending', id: 's1', name: 'Demo' }, 'req-10');
+  assert.equal(sent.length, 0);
+  assert.equal(posted.length, 1, 'replied synchronously');
+  assert.equal(posted[0].type, eventName('reply'));
+  assert.equal(posted[0].requestId, 'req-10');
+  assert.deepEqual(posted[0].reply, { bridgeError: TAB_CANNOT_MESSAGE });
+  // The prelude says it didn't run; the bridge adds nothing.
+  assert.deepEqual(infos, []);
+});
+
+test('wrapper-bridge: with no messaging, a lost start report is said once, by name', () => {
+  const { posted, infos, dispatch } = setupBridgeHarness({ noMessaging: true });
+  dispatch({ type: 'sm:start', id: 's1', name: 'Demo' });
+  dispatch({ type: 'sm:start', id: 's1', name: 'Demo' });
+  assert.equal(posted.length, 0);
+  assert.deepEqual(infos, [
+    `[SourceMonkey] Demo: Script ran, but couldn't report status to SourceMonkey. ${TAB_NO_MESSAGING}. ${TAB_NO_MESSAGING_FIX}`,
+  ]);
+});
+
+test('wrapper-bridge: with no messaging, an error report and GM_* calls are said once each', () => {
+  const { posted, infos, dispatch } = setupBridgeHarness({ noMessaging: true });
+  dispatch({ type: 'sm:check-pending', id: 's1', name: 'Demo' }, 'req-1');
+  dispatch({ type: 'sm:error', id: 's1', name: 'Demo', message: 'boom' });
+  dispatch({ type: 'sm:gm-xhr-start', scriptId: 's1', url: 'https://e/' }, 'req-2');
+  dispatch({ type: 'sm:gm-batch-write', scriptId: 's1', writes: [] });
+  assert.deepEqual(posted[1].reply, { bridgeError: `${TAB_NO_MESSAGING}. ${TAB_NO_MESSAGING_FIX}` });
+  assert.deepEqual(infos, [
+    `[SourceMonkey] Demo: Script error, but couldn't report status to SourceMonkey. ${TAB_NO_MESSAGING}. ${TAB_NO_MESSAGING_FIX}`,
+    `[SourceMonkey] Demo: A GM_* call couldn't reach SourceMonkey. ${TAB_NO_MESSAGING}. ${TAB_NO_MESSAGING_FIX}`,
+  ]);
+});
+
+test('wrapper-bridge: with no messaging, unlisted types get nothing', () => {
+  const { posted, infos, dispatch } = setupBridgeHarness({ noMessaging: true });
+  dispatch({ type: 'sm:exec', code: 'evil' }, 'req-11');
+  assert.equal(posted.length, 0);
+  assert.deepEqual(infos, []);
+});
+
 test('wrapper-bridge: fire-and-forget swallows a rejected sendMessage', async () => {
   // No requestId means nobody is listening for an answer, so the bridge
   // has to attach its own `.catch` — an unhandled rejection would
@@ -2028,16 +2076,6 @@ test('wrapper-bridge: fire-and-forget swallows a rejected sendMessage', async ()
   } finally {
     process.off('unhandledRejection', onUnhandled);
   }
-});
-
-test('wrapper-bridge: silently no-ops when chrome.runtime is unavailable', () => {
-  let syncListener = null;
-  const fakeDocument = {
-    addEventListener(type, fn) { if (type === eventName('sync')) syncListener = fn; },
-  };
-  // eslint-disable-next-line no-new-func
-  new Function('window', 'document', 'chrome', WRAPPER_BRIDGE)({ addEventListener() {} }, fakeDocument, {});
-  assert.equal(syncListener, null);
 });
 
 // ---------- collectActiveSpecs ----------

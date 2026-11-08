@@ -43,6 +43,7 @@ import {
   type PopupViewRequest,
   type ReloadMode,
 } from './popup-view.js';
+import { TAB_NO_MESSAGING_DETAIL, TAB_NO_MESSAGING_HEADING } from './tab-messaging.js';
 import { SM_DEV_CONTROL_LABEL } from './tab-status.js';
 import { closeMenu, moreMenuButton, openMenu as openSharedMenu, type MenuItem as SharedMenuItem } from './more-menu.js';
 import { collectionAnchorId, EDIT_COLLECTION_HASH_PREFIX, makeCollectionTypeBubble } from './collection-display.js';
@@ -397,6 +398,16 @@ function draw(v: PopupView | null): void {
     return;
   }
   if (v.smDev) bannersEl.append(el('div', { class: 'banner-row sm-dev' }, el('span', {}, SM_DEV_CONTROL_LABEL)));
+  // Not while user scripts are off: that banner explains the page.
+  if (v.noMessaging && !userScriptsOff) {
+    const reload = el('button', { type: 'button' }, 'Reload');
+    reload.addEventListener('click', () => quietly(reloadPlain()));
+    const reopen = el('button', { type: 'button' }, 'Open in new tab');
+    reopen.addEventListener('click', () => quietly(openInNewTab()));
+    bannersEl.append(el('div', { class: 'banner-row no-messaging' },
+      el('span', {}, el('strong', {}, TAB_NO_MESSAGING_HEADING), TAB_NO_MESSAGING_DETAIL),
+      el('div', { class: 'actions' }, reload, reopen)));
+  }
   // Not while user scripts are off: a reload wouldn't run them. Once
   // they're on again, a page that loaded meanwhile asks for a reload
   // (UNTRACKED).
@@ -700,6 +711,15 @@ function onOpenClick(
 
 async function reloadPlain(): Promise<void> {
   if (tabId !== null) await chrome.tabs.reload(tabId);
+}
+
+// The page's URL in a new tab just to its right: the fix for a tab that
+// can't message SourceMonkey when a reload doesn't help.
+async function openInNewTab(): Promise<void> {
+  if (tabId === null) return;
+  const tab = await chrome.tabs.get(tabId);
+  if (!tab.url) return;
+  await chrome.tabs.create({ url: tab.url, windowId: tab.windowId, index: tab.index + 1, openerTabId: tabId });
 }
 
 async function reloadTab(mode: ReloadMode): Promise<void> {

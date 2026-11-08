@@ -177,7 +177,64 @@
      document we would be posting into. Relaying these unconditionally
      leaks nothing the page doesn't already have. */
   var PUSHED_ANY_WORLD = ["sm:gm-resync-hint", "sm:url-change"];
-  if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.sendMessage) return;
+  /* The texts for a world with no messaging, swapped in from
+     src/extension/tab-messaging.ts, which says when this happens
+     (`withTabMessagingTexts`). */
+  var NO_MESSAGING = "__SM_NO_MESSAGING__";
+  var NO_MESSAGING_FIX = "__SM_NO_MESSAGING_FIX__";
+  var CANNOT_MESSAGE = "__SM_CANNOT_MESSAGE__";
+  /* For a world with no messaging, though SourceMonkey turns it on
+     (`configureWorld` in injector.ts). Nothing can reach the SW from
+     here. Rather than leave each message held, or dropped unseen:
+     - A request is taken and answered at once with why. A script
+       waiting on its decision then says it didn't run (the prelude
+       prints that); a GM_* call fails with it.
+     - What would have been lost is said in the page console, once per
+       script for each kind: a start or error report (the script did
+       run), and GM_* calls.
+     - `sm:abandoned` follows a decision the prelude already explained,
+       and `sm:focus` names no script and only checks for edits, so
+       those go unsaid.
+     The SW finds the same thing on its own for the badge
+     (`userWorldCanMessage` in injector.ts). */
+  function answerWithoutMessaging() {
+    var names = {};
+    var told = {};
+    function tell(id, kind, text) {
+      var key = kind + ":" + id;
+      if (told[key]) return;
+      told[key] = true;
+      try { console.info("[SourceMonkey] " + (names[id] || id) + ": " + text + " " + NO_MESSAGING + ". " + NO_MESSAGING_FIX); } catch (_e) {}
+    }
+    document.addEventListener(SYNC_EVENT, function (ev) {
+      try {
+        if (ev && typeof ev.preventDefault === "function") ev.preventDefault();
+        if (!ev || typeof ev.detail !== "string") return;
+        var env = JSON.parse(ev.detail);
+        if (!env || typeof env !== "object") return;
+        var payload = env.payload;
+        if (!payload || typeof payload !== "object" || ALLOWED.indexOf(payload.type) === -1) return;
+        var id = scriptOf(payload);
+        if (!ours(id)) return;
+        if (typeof id === "string" && typeof payload.name === "string") names[id] = payload.name;
+        var type = payload.type;
+        if (typeof id === "string") {
+          if (type === "sm:start" || type === "sm:swapped") {
+            tell(id, "start", "Script ran, but couldn't report status to SourceMonkey.");
+          } else if (type === "sm:error") {
+            tell(id, "error", "Script error, but couldn't report status to SourceMonkey.");
+          } else if (type.indexOf("sm:gm-") === 0) {
+            tell(id, "gm", "A GM_* call couldn't reach SourceMonkey.");
+          }
+        }
+        if (typeof env.requestId !== "string") return;
+        var why = type === "sm:check-pending" ? CANNOT_MESSAGE : NO_MESSAGING + ". " + NO_MESSAGING_FIX;
+        toPage(REPLY_EVENT, { requestId: env.requestId, reply: { bridgeError: why } });
+      } catch (_e) {}
+    }, true);
+    /* Senders that asked before this listener was in send again now. */
+    try { window.dispatchEvent(new CustomEvent(READY_MARKER)); } catch (_e2) {}
+  }
   /* Once per document and key. A manual script's run injects the
      bridge again (docs/manual-scripts.md), and a second copy would
      forward every message twice. A run carries its document's own key,
@@ -188,6 +245,38 @@
   var installed = "__smBridgeInstalled_" + SM_KEY;
   if (window[installed]) return;
   window[installed] = true;
+
+  /* GM_addStyle / GM_addElement's insert, for a MAIN-world script.
+     Appended from this world, the element is checked against this
+     world's CSP instead of the page's, so a strict page CSP doesn't
+     drop the style, as in TM. The event's target is the parent and its
+     `relatedTarget` the new element; cancelling it tells the runtime
+     we did the insert. This world's `appendChild` is out of the page's
+     reach, and the event's name carries the channel key, so the page
+     can't send it to get the same exemption for an element of its own.
+
+     On `window`, capturing: the first stop of any dispatch in the
+     document. Installed whether or not this world can message us, since
+     the insert doesn't need it. */
+  var appendChild = null;
+  try { appendChild = Node.prototype.appendChild; } catch (_ne) {}
+  if (appendChild) window.addEventListener(INSERT_EVENT, function (ev) {
+    try {
+      var el = ev.relatedTarget;
+      /* Composed, so a parent in a shadow root reaches us too; the
+         path's first entry is it, where `target` is its host. */
+      var parent = ev.composedPath()[0];
+      if (!(el instanceof Element) || !(parent instanceof Node)) return;
+      appendChild.call(parent, el);
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+    } catch (_e) {}
+  }, true);
+
+  if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.sendMessage) {
+    answerWithoutMessaging();
+    return;
+  }
   /* Copy the page-supplied payload and stamp __viaBridge:true LAST so
      the page can't pre-set it false. The SW treats __viaBridge as
      "this request may be page-forged" and refuses to act on behalf of
@@ -260,32 +349,6 @@
       var env = JSON.parse(ev.detail);
       if (!env || typeof env !== "object") return;
       relay(env.payload, env.requestId);
-    } catch (_e) {}
-  }, true);
-
-  /* GM_addStyle / GM_addElement's insert, for a MAIN-world script.
-     Appended from this world, the element is checked against this
-     world's CSP instead of the page's, so a strict page CSP doesn't
-     drop the style, as in TM. The event's target is the parent and its
-     `relatedTarget` the new element; cancelling it tells the runtime
-     we did the insert. This world's `appendChild` is out of the page's
-     reach, and the event's name carries the channel key, so the page
-     can't send it to get the same exemption for an element of its own.
-
-     On `window`, capturing: the first stop of any dispatch in the
-     document. */
-  var appendChild = null;
-  try { appendChild = Node.prototype.appendChild; } catch (_ne) {}
-  if (appendChild) window.addEventListener(INSERT_EVENT, function (ev) {
-    try {
-      var el = ev.relatedTarget;
-      /* Composed, so a parent in a shadow root reaches us too; the
-         path's first entry is it, where `target` is its host. */
-      var parent = ev.composedPath()[0];
-      if (!(el instanceof Element) || !(parent instanceof Node)) return;
-      appendChild.call(parent, el);
-      ev.preventDefault();
-      ev.stopImmediatePropagation();
     } catch (_e) {}
   }, true);
 

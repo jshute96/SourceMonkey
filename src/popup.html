@@ -76,6 +76,13 @@
       .banner-row.user-scripts-off { background: #fdecea; color: #b71c1c; border-bottom: 1px solid #f5c2c0; font-weight: 400; }
       .banner-row.user-scripts-off strong { display: block; font-weight: 600; }
       .banner-row.user-scripts-off a { color: inherit; }
+      /* A page-level error (src/extension/tab-messaging.ts): the text, then
+         its buttons on their own line, filled as the reload banner's. */
+      .banner-row.no-messaging { background: #fdecea; color: #b71c1c; border-bottom: 1px solid #f5c2c0; font-weight: 400; flex-wrap: wrap; }
+      .banner-row.no-messaging strong { display: block; font-weight: 600; }
+      .banner-row.no-messaging .actions { flex-basis: 100%; display: flex; justify-content: flex-end; gap: 6px; }
+      .banner-row.no-messaging button { background: #b71c1c; border-color: #b71c1c; color: #fff; }
+      .banner-row.no-messaging button:hover { background: #9a1515; }
       .banner-row.user-scripts-off code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; }
 
       /* Only the script list gives up height at the popup's cap. */

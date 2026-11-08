@@ -168,6 +168,9 @@ export interface PopupView {
   injectable: boolean;
   // As in the input. The toolbar says so in place of everything else.
   userScriptsDisabled?: boolean;
+  // The tab can't message SourceMonkey (src/extension/tab-messaging.ts):
+  // a page-level error, in place of the reload banner.
+  noMessaging?: boolean;
   smDev: boolean;
   // `Reload required: …`, or null.
   banner: string | null;
@@ -359,6 +362,7 @@ export function buildPopupView(input: PopupViewInput): PopupView {
   const view: PopupView = {
     url: input.url,
     ...(input.userScriptsDisabled ? { userScriptsDisabled: true } : {}),
+    ...(input.injectable && state?.noMessaging ? { noMessaging: true } : {}),
     injectable: input.injectable,
     smDev,
     banner: null,
@@ -567,6 +571,7 @@ export function buildPopupView(input: PopupViewInput): PopupView {
       })).sort((a, b) => compareScriptNames(a.name, b.name)),
     });
   }
-  view.banner = bannerText(causes);
+  // The no-messaging banner gives the fix, a reload among it.
+  view.banner = view.noMessaging ? null : bannerText(causes);
   return view;
 }

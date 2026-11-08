@@ -140,7 +140,7 @@ stay directly in `src/` so the extension's URLs have no folder in them.
 | `src/glyph-sprite.svg` | The one copy of every inline SVG glyph, inlined into each page at `<!--#include glyph-sprite-->` by the build |
 | `src/styles.css` | Cross-page shared stylesheet linked by every extension page: the header bar and page column, the button surface, collection bubble + scheme chip, display-name, warning banner, modal dialog shell, install-target select, tab strip, site favicons |
 | `src/userscript-prelude.js` | Per-world prelude spliced into each script: run decision, @run-at gate, error capture, sandbox `window` |
-| `src/wrapper-bridge.js` | USER_SCRIPT-world bridge for MAIN-world scripts: relays sm:* + GM_* traffic, does GM DOM inserts, spots sandboxed pages |
+| `src/wrapper-bridge.js` | USER_SCRIPT-world bridge for MAIN-world scripts: relays sm:* + GM_* traffic, does GM DOM inserts, spots sandboxed pages and missing messaging |
 | `src/wrapper-gm-runtime.js` | Shared per-world `GM_*` runtime — puts itself in the world's registry (shim cache, dual transport, storage cache + stored-value codec + batched writes) |
 | `src/icons/icon-{16,48,128}.png` | Toolbar action icons (placeholder) |
 
@@ -224,6 +224,7 @@ scripts, storage, the injector. Compiled into `dist/extension/`.
 | `src/extension/injector.ts` | Incrementally syncs the enabled script set into `chrome.userScripts`, re-checking unverified rows first, and wraps each body with an activation/error shim |
 | `src/extension/tab-status.ts` | Pure helpers for per-tab script status (expected ∪ actual, runs in frames), badge colors, and per-tab document LRU |
 | `src/extension/toolbar-summary.ts` | Pure: the toolbar badge's count and color and its tooltip's status lines, from the popup's view |
+| `src/extension/tab-messaging.ts` | The message for a tab whose isolated world can't message the extension, shared by the bridge and the SW |
 | `src/extension/missing-scripts.ts` | Log warnings for scripts that matched a page but never started |
 | `src/extension/storage-breakdown.ts` | Storage per script, per stored file (with shared copies) and GM values per script, plus sorting, for the debug page |
 | `src/extension/storage-usage.ts` | Sorts storage rows into the Options page's usage table: scripts, `@require`/`@resource` files, shared bodies, GM values, icons |
@@ -401,6 +402,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/tld-hosts.spec.ts` | `.tld` hosts ("any public suffix") in `@match` / `@include` / `@exclude` run where the header says, and only there |
 | `tests/e2e/include-regex.spec.ts` | A regex `@include` beside a `@match` registers `<all_urls>` and runs on the regex's pages too |
 | `tests/e2e/injection.spec.ts` | End-to-end userscript injection: matching, non-matching, lenient-`@match`, and multiple-script cases |
+| `tests/e2e/no-messaging.spec.ts` | A tab with no messaging: scripts say why at once, and the badge and Log show it as an error |
 | `tests/e2e/late-bridge.spec.ts` | Page-world scripts injected before the bridge or GM runtime: start, errors and `GM_*` calls still reach the worker |
 | `tests/e2e/sync-window.spec.ts` | A navigation racing a registration sync still gets injected, and the set never empties mid-sync |
 | `tests/e2e/badge.spec.ts` | Per-tab badge and tooltip: green/red/orange/purple, MISSING, RELOAD, disabled since load, warnings |

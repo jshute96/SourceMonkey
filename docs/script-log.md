@@ -18,7 +18,8 @@
   script-originated entry in this log has carried so far** (`'info' |
   'warning' | 'error'`). Bumped on `appendScriptLog` only when the new
   entry's level is strictly higher than the stored one **and the entry
-  carries no `state`** (see [Entry shape](#entry-shape)); cleared on
+  carries no `state`** (see [Entry shape](#entry-shape)) **and isn't
+  `transient`** (see [Transient entries](#transient-entries)); cleared on
   `clearScriptLog` alongside the entries, and by an entry with
   `resetsLogLevel` (see
   [A new version starts the badge over](#a-new-version-starts-the-badge-over)).
@@ -50,6 +51,7 @@ interface LogEntry {
   location?: DiagnosticLocation;  // a place in the script's own files
   state?: LoadState;       // the Status-badge state this event moved the script into
   resetsLogLevel?: boolean;  // clears `loglevel:` as it is written — a fresh start
+  transient?: boolean;     // about one page, not the script: never bumps `loglevel:`
   collapseKey?: string;    // later entries with this key fold into this one
   count?: number;          // how many it stands for, once folded
 }
@@ -83,6 +85,16 @@ because they are derived *from* the sentinel. It drives two things:
     a runtime error, a parse-time diagnostic, a refused `GM_download`.
   - A transient refresh failure therefore leaves no residue once it
     recovers.
+
+### Transient entries
+
+`transient` is set on a warning or error about one page rather than the
+script, such as a tab that can't message SourceMonkey (see "A tab with
+no messaging" in [injection.md](injection.md#no-decision)):
+
+- The Log tab shows its level as usual.
+- It never bumps `loglevel:`, so it leaves no WARNING / ERROR on the
+  collections page.
 
 ### A new version starts the badge over
 

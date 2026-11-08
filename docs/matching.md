@@ -348,6 +348,7 @@ Click for details. Double-click for collections.
 | `N scripts have warnings.` | Running with a warning (see [status-popup.md](status-popup.md#warnings)) | none |
 | `N scripts skipped on this load.` | `NOT_LOADED` | grey `#757575`, if no script is running |
 | `User scripts are not allowed yet.` (alone) | A page loaded while user scripts were disabled, while they still are | red |
+| `SourceMonkey can't reach this tab's scripts.` (alone) | The tab's isolated world can't message SourceMonkey (`noMessaging`; see "A tab with no messaging" in [injection.md](injection.md#no-decision)) | red |
 
 - Lines use the singular for one (`1 script has errors.`).
 - Warnings take no color: a header warning shows on every load, so
@@ -484,6 +485,10 @@ why (`src/extension/missing-scripts.ts`):
   - A script that got no decision reports so (an error, with why), and
     so isn't listed here: see
     [injection.md](injection.md#no-decision).
+  - In a tab that can't message SourceMonkey (`noMessaging`), each
+    entry gives that cause instead, as a transient error (see "A tab
+    with no messaging" in [injection.md](injection.md#no-decision)).
+    The rows stay MISSING.
 - **Which scripts**: those that matched when the document was first
   seen (`loadMatchIds`), with no report, and not already explained by
   REJECTED or NOT_LOADED.

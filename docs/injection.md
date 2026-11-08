@@ -2422,7 +2422,7 @@ When the wrapper can't get a decision, the script does **not** run.
   leaves a cold or busy SW room to start, so failing closed doesn't
   drop scripts on a slow start.
 - What it says:
-  - a `console.info` line in the page: `<name>: It did not run.
+  - a `console.info` line in the page: `<name>: Script did not run.
     <why>.`;
   - an `sm:abandoned` report with `reason: "no-decision"` and the why
     as `detail`, when the SW is there to receive it. That's an error in
@@ -2432,6 +2432,40 @@ When the wrapper can't get a decision, the script does **not** run.
     still waiting isn't explained as one the page blocked.
 - A snapshot read that fails is not "no decision": the decision
   stands, and a storage script aborts as above.
+- **A tab with no messaging.** Chrome can leave a tab's isolated world
+  without the messaging `configureWorld` turns on
+  (`src/extension/tab-messaging.ts` says when). Nothing from that tab
+  reaches the SW, so the bridge, finding no
+  `chrome.runtime.sendMessage`, still takes each message:
+  - A request gets a `bridgeError` at once. A decision request's says
+    the script couldn't ask whether to run, which the prelude prints as
+    "Script did not run"; a `GM_*` call fails with it.
+  - The `GM_addStyle` / `GM_addElement` insert listener, which needs
+    no messaging, is still installed.
+  - What it couldn't pass on, it says in the page console, once per
+    script for each kind: a start report ("Script ran, but couldn't
+    report status"), an error report, `GM_*` calls.
+  - The SW asks the tab whether its isolated world can message
+    (`probeTabMessaging`, by `userScripts.execute`, whose result needs
+    no messaging) 1s after the load, for a page with scripts to run
+    that none has reported from yet. On most pages a script has
+    reported by then, so nothing is asked. The "never started" check
+    asks again, if still nothing has reported.
+    - It asks outside the tab's work queue, since an `alert()` open in
+      the page holds the call up, and gives up after 3s.
+    - Only a "no" is stored: the tab state gets `noMessaging`, shown as
+      a red badge, a tooltip line and a popup banner for the whole page
+      ([status-popup.md](status-popup.md#layout)). The rows keep their
+      statuses.
+    - A report from the page clears it (`notePageReport`), since a
+      report needed messaging.
+    - The "never started" check logs, for each missing script, a
+      transient error ([script-log.md](script-log.md#transient-entries))
+      saying SourceMonkey can't get its status: a `document-start`
+      script on a first load runs without asking, so the SW can't tell
+      whether it ran.
+  - A page with only isolated-world scripts has no bridge, so those
+    still wait out the timeout.
 - Outside a tab (`sender.tab` missing), the SW makes the same
   decision less the tab's own parts (a claim, a reload skip, a reload
   swap): a run's own script still skips, and a `.tld` rule is still

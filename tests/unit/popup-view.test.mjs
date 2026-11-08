@@ -516,3 +516,15 @@ test('a frames-only script disabled since the page loaded is Still running, in i
   assert.deepEqual(names(v.frames), ['A: framed=STILL_RUNNING']);
   assert.equal(v.banner, 'Reload required: Scripts disabled');
 });
+
+test('a tab that can\'t message SourceMonkey: flagged for its own banner, in place of the reload one', () => {
+  const st = state({ matches: [m('a')], loadMatchIds: ['a'], missingChecked: true });
+  const before = view({ st, scripts: [script('a', 'A')] });
+  assert.equal(before.noMessaging, undefined);
+  assert.equal(before.banner, 'Reload required: Some scripts are missing');
+  const v = view({ st: { ...st, noMessaging: true }, scripts: [script('a', 'A')] });
+  assert.equal(v.noMessaging, true);
+  assert.equal(v.banner, null);
+  // The rows keep their own statuses.
+  assert.deepEqual(names(v.enabled), ['A: a=MISSING']);
+});

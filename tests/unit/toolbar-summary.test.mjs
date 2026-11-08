@@ -196,3 +196,11 @@ test('a page loaded while user scripts are still disabled: red, saying so and no
   assert.equal(s.color, BADGE_RED);
   assert.equal(s.count, 1);
 });
+
+test('a tab that can\'t message SourceMonkey: red, saying so in place of the script lines', () => {
+  const st = { documentId: 'd', url: URL_, matches: [m('a'), m('b')], actual: {}, loadMatchIds: ['a', 'b'], noMessaging: true };
+  const s = summary({ st, scripts: [script('a'), script('b')] });
+  assert.deepEqual(lines(s), ['SourceMonkey can\'t reach this tab\'s scripts.']);
+  assert.equal(s.color, BADGE_RED);
+  assert.equal(s.count, 2);
+});

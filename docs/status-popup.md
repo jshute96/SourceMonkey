@@ -131,6 +131,16 @@ From top to bottom:
     they show as Reload (purple), and the reload banner reads
     `Reload required: Page loaded while user scripts were disabled`
     (see [matching.md](matching.md#pages-loaded-while-user-scripts-were-disabled)).
+- Red **no-messaging banner**, when the tab's isolated world can't
+  message SourceMonkey (`noMessaging` on the tab state; see "A tab with
+  no messaging" in [injection.md](injection.md#no-decision)):
+  `SourceMonkey can't reach this tab's scripts.`, then why and the fix.
+  - Two buttons under the text: **Reload**, and **Open in new tab**,
+    which opens the page's URL in a new tab just to its right. In the
+    stale tabs this was seen in, a reload didn't help but a new tab did.
+  - It hides the reload banner, since a reload is part of its fix. The
+    rows keep their own statuses (MISSING, usually).
+  - Not shown under the user scripts banner, which explains the page.
 - Cyan **sm-dev banner**, only when the page is under sm-dev's
   control: `Page under sm-dev control`, replacing the menu's row of
   that name.

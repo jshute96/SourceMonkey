@@ -429,6 +429,6 @@ for (const [what, cause, detail] of [
     const abandoned = env.sent.find((m) => m.type === 'sm:abandoned');
     assert.equal(abandoned?.reason, 'no-decision');
     assert.match(abandoned.detail, detail);
-    assert.ok(env.infos.some((line) => /Demo: It did not run\. .*[^.]\.$/.test(line)), env.infos.join('\n'));
+    assert.ok(env.infos.some((line) => /Demo: Script did not run\. .*[^.]\.$/.test(line)), env.infos.join('\n'));
   });
 }

@@ -105,6 +105,12 @@ test('notePageReport: records worlds and the opaque origin, identity when nothin
   assert.equal(notePageReport(s0, 'MAIN', false).opaqueOrigin, undefined);
 });
 
+test('notePageReport: a report clears noMessaging, since it needed messaging', () => {
+  const s1 = notePageReport(state({ reportedWorlds: ['USER_SCRIPT'], noMessaging: true }), 'USER_SCRIPT', false);
+  assert.equal(s1.noMessaging, undefined);
+  assert.deepEqual(s1.reportedWorlds, ['USER_SCRIPT']);
+});
+
 test('findMissingScripts: scripts an sm-dev claim kept out are not missing', () => {
   const s = state({ matches: [script('a', 'MAIN'), script('b', 'MAIN')], smDevAllow: ['a'] });
   assert.deepEqual(findMissingScripts(s).map((m) => m.id), ['a']);

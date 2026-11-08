@@ -85,6 +85,7 @@ import {
   buildManualRunInjections,
   buildIsolatedFallbackInjections,
   pageWorldRuns,
+  userWorldCanMessage,
   buildSwapEvalBody,
   executeManualRun,
   isManualRunCandidate,
@@ -138,6 +139,7 @@ import {
   type TabRecord,
 } from './tab-status.js';
 import { describeMissingScript, findMissingScripts } from './missing-scripts.js';
+import { TAB_NO_STATUS } from './tab-messaging.js';
 import { summarizeToolbar } from './toolbar-summary.js';
 import {
   _resetUpdaterStateForTests,
@@ -1709,6 +1711,7 @@ async function updateTabMatches(
     if (prev.reportedWorlds) state.reportedWorlds = prev.reportedWorlds;
     if (prev.opaqueOrigin) state.opaqueOrigin = true;
     if (prev.missingChecked) state.missingChecked = true;
+    if (prev.noMessaging) state.noMessaging = true;
     if (prev.settleBy !== undefined) state.settleBy = prev.settleBy;
     if (prev.loadMatchIds) state.loadMatchIds = prev.loadMatchIds;
     if (prev.loadUrl) state.loadUrl = prev.loadUrl;
@@ -3062,9 +3065,11 @@ function installNavigationListeners(): void {
   wn.onCompleted.addListener((d) => {
     if (d.frameId !== 0 || !d.documentId) return;
     const documentId = d.documentId;
-    setTimeout(() => {
-      enqueueTabWork(d.tabId, () => logMissingScripts(d.tabId, documentId));
-    }, MISSING_SCRIPT_GRACE_MS);
+    setTimeout(() => { void checkMissingScripts(d.tabId, documentId); }, MISSING_SCRIPT_GRACE_MS);
+    // Whether the tab can message us, for the popup and badge, without
+    // waiting out the grace period. Shortly after the load, so on most
+    // pages a script has reported by then and nothing needs asking.
+    setTimeout(() => { void probeTabMessaging(d.tabId, documentId).catch(() => {}); }, MESSAGING_PROBE_DELAY_MS);
   });
 }
 
@@ -3076,21 +3081,86 @@ const MISSING_SCRIPT_GRACE_MS = WRAPPER_DECISION_TIMEOUT_MS + 1000;
 // should its load event, and so the check below, never come.
 const SETTLE_CAP_MS = 20_000;
 
+// How long after the load `probeTabMessaging` first asks, and how long
+// it waits on the page before giving up.
+const MESSAGING_PROBE_DELAY_MS = 1000;
+const MESSAGING_PROBE_TIMEOUT_MS = 3000;
+
+// The never-started check, after the load and its grace period. Asks
+// about messaging first, in case the earlier probe got no answer, but
+// runs whatever that gives.
+async function checkMissingScripts(tabId: number, documentId: string): Promise<void> {
+  try {
+    await probeTabMessaging(tabId, documentId);
+  } catch (err) {
+    console.info(`[SourceMonkey] could not check messaging in tab=${tabId}: ${describeError(err)}`);
+  }
+  enqueueTabWork(tabId, () => logMissingScripts(tabId, documentId));
+}
+
+// For a document with scripts to run that none has reported from yet:
+// whether its isolated world can message us
+// (src/extension/tab-messaging.ts), as `noMessaging` on its state,
+// which the popup and badge show for the whole page. Only a "no" is
+// stored: a page that can message costs no write, and is asked again
+// only by the never-started check, if still nothing has reported.
+//
+// The probe runs outside the tab's work queue: it runs in the page, and
+// an alert() open there holds it up, which mustn't hold up the tab's
+// other bookkeeping. A probe that fails (the tab closed or navigated)
+// or takes too long says nothing, and a later call asks again.
+async function probeTabMessaging(tabId: number, documentId: string): Promise<void> {
+  const asked = await inTabQueue(tabId, async () => {
+    const state = getDocState(await getTabRecord(tabId), documentId);
+    return !!state && !state.noMessaging && !state.reportedWorlds?.length && state.matches.length > 0;
+  });
+  if (!asked) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), MESSAGING_PROBE_TIMEOUT_MS); });
+  let canMessage: boolean | null;
+  try {
+    canMessage = await Promise.race([userWorldCanMessage(tabId, documentId).catch(() => null), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+  if (canMessage !== false) return;
+  await inTabQueue(tabId, async () => {
+    const record = await getTabRecord(tabId);
+    const state = getDocState(record, documentId);
+    // A report since the probe proves it wrong.
+    if (!state || state.noMessaging || state.reportedWorlds?.length) return;
+    const next: TabMatchState = { ...state, noMessaging: true };
+    await setTabRecord(tabId, writeDocState(record, documentId, next));
+    if (record?.currentDocId !== documentId) return;
+    console.log(`[SourceMonkey] tab=${tabId} has no messaging ${state.url}`);
+    // Tells an open popup too.
+    await renderBadge(tabId, next);
+  });
+}
+
 // Once per document: a Log warning for each script that matched it but
 // never reported, with what the document's other reports suggest about
 // why. The badge already shows these as MISSING; this says it where the
 // script's own history is kept. See src/extension/missing-scripts.ts.
+// In a tab that can't message us (`noMessaging`), that explains them
+// all: the entry says so, as a transient error, since it is about the
+// tab rather than the script.
 async function logMissingScripts(tabId: number, documentId: string): Promise<void> {
   const record = await getTabRecord(tabId);
   const state = getDocState(record, documentId);
   if (!state || state.missingChecked) return;
+  const noMessaging = state.noMessaging === true;
   for (const script of findMissingScripts(state, await rejectedScriptIds())) {
-    console.log(`[SourceMonkey] never started ${getScriptLogLabel(script.id)} tab=${tabId} ${state.url}`);
+    console.log(
+      `[SourceMonkey] never started ${getScriptLogLabel(script.id)} tab=${tabId} ${state.url}`
+      + (noMessaging ? ' (the tab has no messaging)' : ''),
+    );
     logScriptEvent(script.id, {
-      level: 'warning',
+      level: noMessaging ? 'error' : 'warning',
       source: 'script-wrapper',
       tabId,
-      message: describeMissingScript(script, state),
+      message: noMessaging ? TAB_NO_STATUS : describeMissingScript(script, state),
+      ...(noMessaging ? { transient: true } : {}),
     });
   }
   const { settleBy, ...rest } = state;

@@ -89,6 +89,11 @@ export interface TabMatchState {
   //     on an http(s) page means a CSP `sandbox` header.
   reportedWorlds?: InjectionWorld[];
   opaqueOrigin?: boolean;
+  // The document's isolated world can't message us
+  // (src/extension/tab-messaging.ts), found by `probeTabMessaging` in
+  // background.ts. The popup and toolbar say so for the whole page. A
+  // report from the document clears it (`notePageReport`).
+  noMessaging?: boolean;
   // Set once the post-load check for scripts that never started has
   // run, so it logs at most once per document.
   missingChecked?: boolean;
@@ -526,8 +531,10 @@ export function noteManualRun(state: TabMatchState, id: string): TabMatchState {
 }
 
 // Pure: note that a wrapper in `world` reported from this document, and
-// whether it saw an opaque origin. Identity-returns when nothing is new,
-// so the caller can skip a storage write.
+// whether it saw an opaque origin. A report needed messaging, so it also
+// clears `noMessaging`, should a probe have got that wrong.
+// Identity-returns when nothing is new, so the caller can skip a
+// storage write.
 export function notePageReport(
   state: TabMatchState,
   world: InjectionWorld,
@@ -536,9 +543,10 @@ export function notePageReport(
   const worlds = state.reportedWorlds ?? [];
   const newWorld = !worlds.includes(world);
   const newOpaque = opaqueOrigin && !state.opaqueOrigin;
-  if (!newWorld && !newOpaque) return state;
+  if (!newWorld && !newOpaque && !state.noMessaging) return state;
+  const { noMessaging: _, ...rest } = state;
   return {
-    ...state,
+    ...rest,
     ...(newWorld ? { reportedWorlds: [...worlds, world] } : {}),
     ...(newOpaque ? { opaqueOrigin: true } : {}),
   };

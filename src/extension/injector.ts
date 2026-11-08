@@ -108,6 +108,7 @@ import {
 } from './gm-bindings.js';
 import { iconRefFromHeader } from '../script-icon.js';
 import { channelKey, loadChannelKey, onlyScript, registryExpr, withChannelKey } from './channel.js';
+import { withTabMessagingTexts } from './tab-messaging.js';
 import {
   buildSourceMap,
   inlineSourceMapComment,
@@ -145,6 +146,8 @@ const COLLECTION_PREFIX = 'collection:';
 // that start with `_`, so we use a `sourcemonkey-` prefix; stored
 // script ids are UUIDs and won't collide.
 export const BRIDGE_SCRIPT_ID = 'sourcemonkey-bridge';
+// The bridge with its no-messaging texts in place.
+const BRIDGE = withTabMessagingTexts(WRAPPER_BRIDGE);
 
 // Reserved registration id for the USER_SCRIPT-world GM_* shared
 // runtime. Registered at document_start so it is in the world's
@@ -1290,7 +1293,7 @@ const HELPER_ALL_FRAMES = true;
 // than from one sync's spec list. `scope` is never empty: a MAIN-world
 // script that reached registration had at least one pattern.
 function bridgeSpec(scope: BridgeScope): RegistrationSpec {
-  const code = scope.mainInFrames ? withChannelKey(WRAPPER_BRIDGE) : noMainInFrames(withChannelKey(WRAPPER_BRIDGE));
+  const code = scope.mainInFrames ? withChannelKey(BRIDGE) : noMainInFrames(withChannelKey(BRIDGE));
   const spec: RegistrationSpec = {
     id: BRIDGE_SCRIPT_ID,
     js: [{ code: code + `\n//# sourceURL=${BRIDGE_SOURCE_URL}\n` }],
@@ -1412,7 +1415,7 @@ export async function buildManualRunInjections(
   const out: ManualRunInjection[] = [];
   if (world === 'MAIN') {
     // Relaying only this script's traffic: see `documentKey`.
-    out.push({ world: 'USER_SCRIPT', js: [{ code: onlyScript(withChannelKey(WRAPPER_BRIDGE), script.id) + `\n//# sourceURL=${BRIDGE_SOURCE_URL}\n` }] });
+    out.push({ world: 'USER_SCRIPT', js: [{ code: onlyScript(withChannelKey(BRIDGE), script.id) + `\n//# sourceURL=${BRIDGE_SOURCE_URL}\n` }] });
   }
   if (needsGmRuntime(script.header)) {
     out.push({ world, js: [{ code: withChannelKey(WRAPPER_GM_RUNTIME) + `\n//# sourceURL=${GM_RUNTIME_SOURCE_URL}\n` }] });
@@ -1465,19 +1468,35 @@ interface UserScriptsExecute {
   }): Promise<unknown>;
 }
 
-// Whether document `documentId` of `tabId` runs script in its own
-// (MAIN) world. Chrome drops a MAIN-world injection into a page whose
-// sandbox turns that off, with no error, so this asks for a result.
-export async function pageWorldRuns(tabId: number, documentId: string): Promise<boolean> {
+// Run `code` in document `documentId` of `tabId`, in `world`, and say
+// whether it gave `true`. The result comes back without the page's
+// messaging.
+async function executeGivesTrue(tabId: number, documentId: string, world: 'MAIN' | 'USER_SCRIPT', code: string): Promise<boolean> {
   await ensureWorldConfigured();
   const api = chrome.userScripts as unknown as UserScriptsExecute;
   const results = await api.execute({
     target: { tabId, documentIds: [documentId] },
-    js: [{ code: 'true' }],
-    world: 'MAIN',
+    js: [{ code }],
+    world,
     injectImmediately: true,
   }) as { result?: unknown }[] | undefined;
   return results?.[0]?.result === true;
+}
+
+// Whether document `documentId` of `tabId` runs script in its own
+// (MAIN) world. Chrome drops a MAIN-world injection into a page whose
+// sandbox turns that off, with no error, so this asks for a result.
+export function pageWorldRuns(tabId: number, documentId: string): Promise<boolean> {
+  return executeGivesTrue(tabId, documentId, 'MAIN', 'true');
+}
+
+// Whether document `documentId` of `tabId` can message us from the
+// isolated (USER_SCRIPT) world. Chrome can leave a tab without the
+// messaging `configureWorld` turned on (see tab-messaging.ts); its
+// scripts then can't reach us at all.
+export function userWorldCanMessage(tabId: number, documentId: string): Promise<boolean> {
+  return executeGivesTrue(tabId, documentId, 'USER_SCRIPT',
+    'typeof chrome !== "undefined" && !!chrome.runtime && typeof chrome.runtime.sendMessage === "function"');
 }
 
 // Inject a manual run (or a sandboxed page's fallback) into document

@@ -25,7 +25,8 @@
 // on `clearScriptLog` and by an entry that `resetsLogLevel` (new content
 // loaded). Entries that record a load-state transition
 // (`state` set — see `LogEntry.state`) never touch it: their badge
-// comes from the row and clears with it. It lives in session storage
+// comes from the row and clears with it. Nor do `transient` ones,
+// about one page rather than the script. It lives in session storage
 // (not on the StoredScript row) because:
 //   - Lifetime matches the log itself — Chrome shutdown drops both
 //     together, so a WARNING/ERROR badge can't outlive its entries.
@@ -88,6 +89,11 @@ export interface LogEntry {
   // resets. Set on the `Loaded new content` row — see
   // `emitScriptOutcomeLog` for why.
   resetsLogLevel?: boolean;
+  // A warning or error about one page, not the script: the Log shows its
+  // level, but it never bumps the `loglevel:` sentinel, so it leaves no
+  // WARNING / ERROR on the collections page. A tab that can't message
+  // SourceMonkey is one (src/extension/tab-messaging.ts).
+  transient?: boolean;
   // Where in the script's own files the entry is about, when it was
   // derived from their content (a bad header line, a syntax error).
   // The log pane renders it as a link into the matching code tab.
@@ -163,6 +169,8 @@ export interface AppendLogInput {
   state?: LoadState;
   // See `LogEntry.resetsLogLevel`.
   resetsLogLevel?: boolean;
+  // See `LogEntry.transient`.
+  transient?: boolean;
   // Fold into the entry already written with this `key`, if it's still
   // in the Log, rather than adding a row: it keeps its place and first
   // time, its count goes up, and `message(count)` rewords it. Worker
@@ -279,6 +287,7 @@ async function writeEntry(
   // empty badge.
   if (isLoadState(input.state)) entry.state = input.state;
   if (input.resetsLogLevel === true) entry.resetsLogLevel = true;
+  if (input.transient === true) entry.transient = true;
   const next = prior.length >= LOG_CAP
     ? [...prior.slice(prior.length - LOG_CAP + 1), entry]
     : [...prior, entry];
@@ -287,8 +296,8 @@ async function writeEntry(
   // otherwise a `refresh-failed` entry would leave WARNING behind for
   // the rest of the session after the row had already recovered. A
   // resetting entry doesn't count itself either: it's the boundary,
-  // not the first event past it.
-  const counts = entry.state === undefined && !entry.resetsLogLevel;
+  // not the first event past it. A transient entry is about one page.
+  const counts = entry.state === undefined && !entry.resetsLogLevel && !entry.transient;
   if (counts && isHigher(input.level, priorLevel)) toSet[mk] = input.level;
   await chrome.storage.session.set(toSet);
   try {
