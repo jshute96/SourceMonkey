@@ -380,7 +380,7 @@ test('start with no scripts: a blank page, and the lists say there are no script
   expect(lines).toContain('  No scripts are loaded');
 });
 
-test('start, update and load give a page --timeout-seconds to load', async ({ fixtureServer, scriptsDir }) => {
+test('start, update and load give a page --timeout-seconds to load, and only warn when it doesn\'t', async ({ fixtureServer, scriptsDir }) => {
   // Its image holds load back for 5 seconds.
   const page = `${fixtureServer.baseUrl}/stalled-load.html`;
   const write = (name: string) => scriptsDir.write({
@@ -392,11 +392,11 @@ test('start, update and load give a page --timeout-seconds to load', async ({ fi
   const b = write('B');
   const lines = await driveCli([a, page, '--timeout-seconds', '1'], [
     ['did not finish loading within 1s', () => { touch(a); return 'update --timeout-seconds 1'; }],
-    ['T1 could not be reloaded', `load ${b} --timeout-seconds 1`],
-    ['T1 could not be reloaded', 'exit'],
+    ['did not finish loading within 1s', `load ${b} --timeout-seconds 1`],
+    ['did not finish loading within 1s', 'exit'],
   ]);
-  expect(lines).toContain('[sm-dev] Navigation failed: The page did not finish loading within 1s');
-  expect(lines.filter((l) => l === '[sm-dev] T1 could not be reloaded: The page did not finish loading within 1s')).toHaveLength(2);
+  expect(lines.filter((l) => /^\[sm-dev\] T1 did not finish loading within 1s: /.test(l))).toHaveLength(3);
+  expect(lines.some((l) => /Navigation failed|could not be reloaded/.test(l))).toBe(false);
 });
 
 test('a script running only in an iframe: its lines name the frame, a frame\'s stackless error is the page\'s, and update reloads its tab', async ({ fixtureServer, scriptsDir }) => {
@@ -892,8 +892,7 @@ test('a saved page that times out on the live site\'s files suggests --offline',
     ['Started as run', `open --from-saved '${file}' --timeout-seconds 0.5`],
     ['--from-saved --offline to block', 'exit'],
   ]);
-  expect(lines).toContain('[sm-dev] Navigation failed: The page did not finish loading within 0.5s. '
-    + 'The saved page still loads its images, scripts and styles from the live site. Open it with --from-saved --offline to block those.');
+  expect(lines).toContainEqual(expect.stringMatching(/^\[sm-dev\] T1 did not finish loading within 0\.5s: .*\. The saved page still loads its images, scripts and styles from the live site\. Open it with --from-saved --offline to block those\.$/));
 });
 
 test('--from-saved lasts for its URL only, --offline lets links out, and a missing file is said', async ({ fixtureServer, scriptsDir }) => {

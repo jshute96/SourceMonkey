@@ -50,7 +50,7 @@ import {
 import { err as errorLine, message, MISTAKE_PREFIX, paintAs, paintOutput, quoted, streamHasColor, ui } from './output-style.js';
 // The roles for marked-up output, as S.id(...): their names are common locals here.
 import * as S from './output-style.js';
-import { budgeted, deadlineIn, inBudget, shownMs, loadPage, PageNotLoaded, seconds, settleTabs, timeoutFlagMs, waitFor, within } from './wait.js';
+import { budgeted, deadlineIn, inBudget, inLimit, LOAD_TIMEOUT_MS, notLoadedMessage, notSettledMessage, SETTLE_TIMEOUT_MS, settleTab, shownMs, loadPage, PageNotLoaded, seconds, timeoutFlagMs, waitFor, within } from './wait.js';
 import { userscriptLabel, type SavedPageHeader } from './save-html.js';
 import { visibleCommands } from '../menu-captions.js';
 import {
@@ -86,8 +86,8 @@ export interface ControlledTab {
    */
   targetId?: string | null;
   /**
-   * Its last load failed, or its scripts never reported (said already),
-   * so the waits after it don't wait on it again.
+   * Its last load failed or didn't finish (said already), so `start`
+   * doesn't wait on its scripts again.
    */
   stalled?: boolean;
 }
@@ -121,7 +121,7 @@ export interface ConsoleContext {
    * Open a new controlled tab, at `url` or blank, for `newtab`.
    * Absent where the caller can't open one.
    */
-  newTab?: (url?: string, options?: { noScript?: boolean; saved?: SavedPageStart; timeoutMs?: number }) => Promise<ControlledTab>;
+  newTab?: (url?: string, options?: { noScript?: boolean; saved?: SavedPageStart; timeoutMs?: number; noWait?: boolean }) => Promise<ControlledTab>;
   /** Switch a tab to running no scripts, or back, for `open --noscript` / `--script`. */
   setTabScripts?: (tab: ControlledTab, noScript: boolean) => Promise<void>;
   /** Load another script from disk, for `load`. */
@@ -965,8 +965,7 @@ export async function runConsoleCommand(
         // All at once, so one slow page holds up no other.
         const all = reloadable(ctx.tabs(), ctx.out);
         for (const t of all) if (!await switchScripts(ctx, t, mode)) return false;
-        const loaded = await Promise.all(all.map((t) => reloadTab(t, ctx.host, ctx.out, timeoutMs, force)));
-        if (!noWait) await settleTabs(ctx.host, all.filter((_, i) => loaded[i]), ctx.out, timeoutMs);
+        await Promise.all(all.map((t) => reloadTab(t, ctx.host, ctx.out, { timeoutMs, force, noWait })));
         return;
       }
       const target = named !== undefined ? pickTab(ctx, named) : tab;
@@ -974,7 +973,7 @@ export async function runConsoleCommand(
       if (force) await answerDialog(target, false);
       if (blockedByDialog([target])) return false;
       if (!await switchScripts(ctx, target, mode)) return false;
-      if (await reloadTab(target, ctx.host, ctx.out, timeoutMs, force) && !noWait) await settleTabs(ctx.host, [target], ctx.out, timeoutMs);
+      await reloadTab(target, ctx.host, ctx.out, { timeoutMs, force, noWait });
       return;
     }
     case 'load': {
@@ -1066,8 +1065,7 @@ export async function runConsoleCommand(
         await serveSavedPage(target.tab, opening.saved, ctx.out, target.tab.noScript === true || ctx.scripts.length === 0);
         ctx.out(openingSavedLine(opening.saved.given, url, tabName(target.tab)));
       }
-      if (!await gotoInTab(target.tab, ctx.host, url, ctx.out, timeoutMs)) return false;
-      if (!noWait) await settleTabs(ctx.host, [target.tab], ctx.out, timeoutMs);
+      if (!await gotoInTab(target.tab, ctx.host, url, ctx.out, { timeoutMs, noWait })) return false;
       return;
     }
     case 'wait':
@@ -1953,109 +1951,132 @@ export function reloadable(tabs: ControlledTab[], out: (line: string) => void): 
 }
 
 /**
- * Reload one tab, saying so if it fails. False when it failed, or its
- * scripts never reported (said already), so nothing waits on it more.
- * `force`: a `beforeunload` dialog the reload opens is accepted.
+ * Reload one tab, as `loadInTab` loads it. False when the reload
+ * failed (said already). `force`: a `beforeunload` dialog the reload
+ * opens is accepted.
  */
-export function reloadTab(tab: ControlledTab, host: HarnessHost, out: (line: string) => void, timeoutMs?: number, force = false): Promise<boolean> {
+export function reloadTab(
+  tab: ControlledTab, host: HarnessHost, out: (line: string) => void, { timeoutMs, force = false, noWait = false }: LoadOptions = {},
+): Promise<boolean> {
   const saved = showingSaved(tab);
-  const reload = (): Promise<void> => loadPage(tab.page, (o) => tab.page.reload(o), timeoutMs);
+  const reload = (): Promise<boolean> => loadPage(tab.page, (o) => tab.page.reload(o), timeoutMs);
   const load = force && tab.dialogs ? () => tab.dialogs!.leavingPage(reload) : reload;
-  return loadInTab(tab, host, () => withOfflineHint(tab, saved, load), `[sm-dev] ${tabName(tab)} could not be reloaded`, out);
+  return loadInTab(tab, host, () => withOfflineHint(tab, saved, load), `[sm-dev] ${tabName(tab)} could not be reloaded`, out, { timeoutMs, noWait, hint: offlineHint(tab, saved) });
 }
 
 /** Navigate one tab to `url`, as `reloadTab` reloads it. */
-export function gotoInTab(tab: ControlledTab, host: HarnessHost, url: string, out: (line: string) => void, timeoutMs?: number): Promise<boolean> {
+export function gotoInTab(
+  tab: ControlledTab, host: HarnessHost, url: string, out: (line: string) => void, { timeoutMs, noWait = false }: LoadOptions = {},
+): Promise<boolean> {
   const saved = tab.saved !== undefined && comparableUrl(url) === comparableUrl(tab.saved.url);
-  const load = (): Promise<void> => loadPage(tab.page, (o) => tab.page.goto(url, o), timeoutMs);
-  return loadInTab(tab, host, () => withOfflineHint(tab, saved, load), '[sm-dev] Navigation failed', out);
+  const load = (): Promise<boolean> => loadPage(tab.page, (o) => tab.page.goto(url, o), timeoutMs);
+  return loadInTab(tab, host, () => withOfflineHint(tab, saved, load), '[sm-dev] Navigation failed', out, { timeoutMs, noWait, hint: offlineHint(tab, saved) });
+}
+
+/** How `loadInTab` loads a page. */
+export interface LoadOptions {
+  /** `--timeout-seconds`, for the whole load. */
+  timeoutMs?: number;
+  /** Return once the page has loaded, without waiting for it to settle. */
+  noWait?: boolean;
+  /** `reload --force`: accept a `beforeunload` dialog the reload opens. */
+  force?: boolean;
+  /** Said after a warning that the page didn't finish loading. */
+  hint?: string;
 }
 
 // A saved page without --offline still loads its images, scripts and
 // styles from the live site, and one that never answers holds up its load
 // (as a site that needs a login does). So a load of one that timed
 // out says how to stop that.
-async function withOfflineHint(tab: ControlledTab, saved: boolean, load: () => Promise<void>): Promise<void> {
+function offlineHint(tab: ControlledTab, saved: boolean): string | undefined {
+  return saved && !tab.saved?.offline
+    ? 'The saved page still loads its images, scripts and styles from the live site. Open it with --from-saved --offline to block those.'
+    : undefined;
+}
+
+async function withOfflineHint(tab: ControlledTab, saved: boolean, load: () => Promise<boolean>): Promise<boolean> {
   try {
-    await load();
+    return await load();
   } catch (err) {
-    if (err instanceof PageNotLoaded && saved && !tab.saved?.offline) {
-      throw new PageNotLoaded(`${err.message}. The saved page still loads its images, scripts and styles from the live site. Open it with --from-saved --offline to block those.`);
-    }
+    const hint = offlineHint(tab, saved);
+    if (err instanceof PageNotLoaded && hint) throw new PageNotLoaded(`${err.message}. ${hint}`);
     throw err;
   }
 }
 
-// A backstop for a script that never reports, not a guess at when the
-// output is done: every injected script reports once per document.
-// Counted from the load's end, so a slow page isn't blamed on them.
-const SCRIPTS_REPORT_MAX_MS = 10_000;
+// The longest one round trip into a loaded page may take.
+const PAGE_ROUND_TRIP_MS = 1000;
 
 /**
- * Load a page in `tab`, done once each script injected there has
- * started, been skipped or thrown in the new document, and what their
- * bodies printed has arrived. So a command that loads a page ends with
- * its scripts' output rather than before it. Also done when a dialog
- * opens, since the page waits on it, or the tab closes. `failed` is
- * what to say, before the error, if the load fails.
+ * Load a page in `tab`, within the load's limit (`--timeout-seconds`,
+ * or 30 seconds):
+ * - The page must start loading, or the load fails, said after `failed`.
+ * - It should finish loading. A page that doesn't (an ad that never
+ *   finishes) still works, so it gets a warning naming what it was
+ *   busy with, plus `hint`, and the load ends there.
+ * - Unless `noWait`, it should then settle (see wait.ts), its scripts
+ *   started included, within 5 seconds, or it gets a warning. So a
+ *   command that loads a page ends with its scripts' output rather
+ *   than before it.
+ * A dialog the page opens ends the wait, as the page waits on it; so
+ * does the tab closing. What the load does after that prints nothing.
+ * False when the load failed.
  */
 async function loadInTab(
-  tab: ControlledTab, host: HarnessHost, load: () => Promise<void>, failed: string, out: (line: string) => void,
+  tab: ControlledTab, host: HarnessHost, load: () => Promise<boolean>, failed: string, out: (line: string) => void,
+  { timeoutMs, noWait = false, hint }: LoadOptions,
 ): Promise<boolean> {
-  const scripts = tab.link.injectedScripts().filter((s) => s.id);
-  const ids = scripts.map((s) => s.id!);
-  const before = tab.link.documentStart();
-  let since = before;
-  // Ends the wait on the scripts however it ends, so it stops checking.
-  const stopped = new AbortController();
-  let timer: NodeJS.Timeout | undefined;
-  let onClose!: () => void;
-  let loadFailed = false;
-  // How long the scripts got to report, for saying so.
-  let reportMs = SCRIPTS_REPORT_MAX_MS;
-  // Marked on the tab too, so the waits after it (settleTabs) skip it.
-  const result = (ok: boolean): boolean => {
-    tab.stalled = !ok;
-    return ok;
+  const limitMs = timeoutMs ?? LOAD_TIMEOUT_MS;
+  // Set once the wait has ended on a dialog or the tab closing.
+  let ended = false;
+  const say = (line: string): void => {
+    if (!ended) out(line);
   };
-  const outcome = new Promise<boolean>((resolve) => {
+  // Whether the page loaded in full; false when it didn't finish.
+  let complete = true;
+  // False when the load itself failed.
+  const work = inLimit(limitMs, async (): Promise<boolean> => {
+    let loaded: boolean;
+    try {
+      loaded = await load();
+    } catch (err) {
+      say(`${failed}: ${(err as Error).message}`);
+      return false;
+    }
+    if (ended || tab.page.isClosed()) return true;
+    // Each a round trip into the page, which a dialog in a tab sharing
+    // its process (one it opened) holds up for good: bounded.
+    await within(tab.link.caughtUp(), PAGE_ROUND_TRIP_MS);
+    if (!loaded) {
+      complete = false;
+      if (ended) return true;
+      const message = await notLoadedMessage(tab, host, limitMs);
+      say(`[sm-dev] ${hint ? `${message}. ${hint}` : message}`);
+      return true;
+    }
+    if (noWait || ended) return true;
+    const settleMs = budgeted(SETTLE_TIMEOUT_MS);
+    const outcome = await settleTab(tab, host, settleMs);
+    if (!outcome.settled && 'busy' in outcome) say(`[sm-dev] ${notSettledMessage(tab, settleMs, outcome.busy)}`);
+    // What the scripts' bodies printed comes through another session.
+    await within(tab.link.drain(), PAGE_ROUND_TRIP_MS);
+    return true;
+  });
+  let onClose!: () => void;
+  const closed = new Promise<boolean>((resolve) => {
     onClose = () => resolve(true);
     tab.page.once('close', onClose);
-    load().then(
-      async () => {
-        await tab.link.caughtUp();
-        since = tab.link.documentStart();
-        // Only the hash changed: no new document, so nothing starts again.
-        if (since === before || ids.length === 0) {
-          resolve(true);
-          return;
-        }
-        reportMs = budgeted(SCRIPTS_REPORT_MAX_MS);
-        timer = setTimeout(() => resolve(false), reportMs);
-        // Reports from the new document only, not late ones from the old.
-        await host.untilReported(tab.link, ids, since, stopped.signal);
-        // A script's start report comes before its body runs.
-        await tab.link.drain();
-        resolve(true);
-      },
-      (err: Error) => {
-        out(`${failed}: ${err.message}`);
-        loadFailed = true;
-        resolve(true);
-      },
-    );
   });
   try {
-    if (await (tab.dialogs ? tab.dialogs.untilDialog(outcome) : outcome)) return result(!loadFailed);
-    const waiting = host.unreported(tab.link, ids, since);
-    const names = scripts.filter((s) => waiting.includes(s.id!)).map(preparedScriptName);
-    if (names.length > 0) {
-      out(`[sm-dev] ${ui`${names.map((n) => S.name(n)).join(', ')} had not started on ${S.id(tabName(tab))} after ${seconds(shownMs(reportMs))}`}`);
-    }
-    return result(false);
+    const raced = Promise.race([work, closed]);
+    // A dialog counts as loaded: the page is there, waiting on it.
+    const ok = await (tab.dialogs ? tab.dialogs.untilDialog(raced) : raced);
+    ended = true;
+    // So `start` doesn't wait on the scripts of a tab whose load gave up.
+    tab.stalled = !ok || !complete;
+    return ok;
   } finally {
-    stopped.abort();
-    clearTimeout(timer);
     tab.page.off('close', onClose);
   }
 }
@@ -2408,7 +2429,7 @@ async function openNewTab(ctx: ConsoleContext, rest: string[], given: Record<str
   const pages = await pagesToOpen(named, flags, cwd);
   const open = async (page?: PageToOpen): Promise<ControlledTab | null> => {
     try {
-      return await ctx.newTab!(page?.url, { noScript, saved: page?.saved, timeoutMs });
+      return await ctx.newTab!(page?.url, { noScript, saved: page?.saved, timeoutMs, noWait });
     } catch (err) {
       ctx.out(`[sm-dev] The new tab could not be opened: ${(err as Error).message}`);
       return null;
@@ -2419,8 +2440,10 @@ async function openNewTab(ctx: ConsoleContext, rest: string[], given: Record<str
   const [tab] = opened;
   if (!tab) return;
   ctx.tab = tab;
-  await focusTab(tab.page).catch(() => undefined);
-  if (!noWait) await settleTabs(ctx.host, opened, ctx.out, timeoutMs);
+  // A new session on a page showing a dialog waits for it to close, so
+  // that page is left where it is, and a dialog opening meanwhile only
+  // holds this up a moment.
+  if (!tab.dialogs?.current) await within(focusTab(tab.page).catch(() => undefined), PAGE_ROUND_TRIP_MS);
   ctx.out(`[sm-dev] The page commands now act on ${tabName(tab)} (${tab.page.url()})`);
 }
 
@@ -2447,7 +2470,7 @@ async function openScriptPages(ctx: ConsoleContext, noScript: boolean, noWait: b
   const opened: ControlledTab[] = [];
   await Promise.all([...pages].map(async ([url, scripts]) => {
     try {
-      opened.push(await ctx.newTab!(url, { noScript, timeoutMs }));
+      opened.push(await ctx.newTab!(url, { noScript, timeoutMs, noWait }));
     } catch (err) {
       for (const script of scripts) {
         const i = ctx.scripts.indexOf(script);
@@ -2455,7 +2478,6 @@ async function openScriptPages(ctx: ConsoleContext, noScript: boolean, noWait: b
       }
     }
   }));
-  if (!noWait) await settleTabs(ctx.host, opened, ctx.out, timeoutMs);
   for (const line of skipped) if (line) ctx.out(line);
 }
 

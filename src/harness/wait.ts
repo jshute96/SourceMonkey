@@ -71,10 +71,13 @@ const LOG_MATCHED = '[sm-dev] Wait matched log line: ';
  */
 const commandDeadline = new AsyncLocalStorage<CommandDeadline>();
 
-/** When a command must be done by, and the time it was given (`ms`). */
+/**
+ * When a command must be done by, and its `--timeout-seconds` (`ms`),
+ * unset for a load's own limit within a command given none.
+ */
 export interface CommandDeadline {
   at: number;
-  ms: number;
+  ms?: number;
 }
 
 /** A deadline `ms` from now, for `inBudget`, or none for no `ms`. */
@@ -94,6 +97,19 @@ export function budgeted(ms: number): number {
 }
 
 /**
+ * Runs `work` with its waits keeping to `ms` from now, or to the
+ * command's own deadline when that is sooner: a page load within a
+ * command, whose waits share the load's limit.
+ */
+export function inLimit<T>(ms: number, work: () => T): T {
+  const outer = commandDeadline.getStore();
+  const at = Math.min(Date.now() + ms, outer?.at ?? Infinity);
+  // Only the command's own `--timeout-seconds` is named in messages:
+  // a wait cut short by the load's limit names its own.
+  return commandDeadline.run({ at, ms: outer?.ms }, work);
+}
+
+/**
  * The limit to name when a wait of `ms` gives up: the command's own
  * `--timeout-seconds` when it was given one, which is what ran out,
  * rather than the part of it the wait had left.
@@ -103,6 +119,8 @@ export function shownMs(ms: number): number {
 }
 
 // ---------- Settling ----------
+
+const STILL_LOADING = 'the page is still loading';
 
 export type SettleOutcome =
   | { settled: true }
@@ -152,7 +170,7 @@ async function busyWith(tab: ControlledTab, host: HarnessHost, lookMs: number, s
   const activity = await within(link.activity().catch(() => null), lookMs);
   if (activity === 'timeout') return ['the page\'s JavaScript is busy'];
   if (activity === null) return tab.page.isClosed() ? [] : ['the page has no document yet'];
-  if (activity.readyState !== 'complete') busy.push('the page is still loading');
+  if (activity.readyState !== 'complete') busy.push(STILL_LOADING);
   // The scripts the document runs report once there; one whose rules
   // don't cover the page may say nothing (as on about:blank), and has
   // nothing to wait for anyway. Reports from the document's first
@@ -179,23 +197,7 @@ async function busyWith(tab: ControlledTab, host: HarnessHost, lookMs: number, s
   return busy;
 }
 
-/**
- * After a load, an action or `start`: each tab settling, all at once.
- * One that doesn't in time is said, without failing anything, since
- * what came before worked. A dialog or a closed tab says so elsewhere,
- * and a tab whose load already gave up (`stalled`) isn't waited on
- * again.
- */
-export async function settleTabs(host: HarnessHost, tabs: ControlledTab[], out: (line: string) => void, timeoutMs = SETTLE_TIMEOUT_MS): Promise<void> {
-  // Only real tabs: a caller's `newTab` (a test's) may return none.
-  const ms = budgeted(timeoutMs);
-  await Promise.all(tabs.filter((t) => t?.page && !t.stalled).map(async (t) => {
-    const outcome = await settleTab(t, host, ms);
-    if (!outcome.settled && 'busy' in outcome) out(`[sm-dev] ${notSettledMessage(t, ms, outcome.busy)}`);
-  }));
-}
-
-/** How long a load (`open`, `reload`, the tabs `start` opens) may take. */
+/** How long a load (`open`, `reload`, the tabs `start` opens) may take, settling included. */
 export const LOAD_TIMEOUT_MS = 30_000;
 
 /**
@@ -214,23 +216,30 @@ export function timeoutFlagMs(flags: Record<string, string | true>, out: (line: 
 // How often a load looks for a page that stopped itself.
 const STOPPED_POLL_MS = 100;
 
-/** A navigation whose page didn't finish loading in time. */
+/** A navigation whose page didn't start loading in time. */
 export class PageNotLoaded extends Error {}
 
 /**
- * Runs a navigation (`page.goto`, `page.reload`) until the new page
- * has loaded. A page that stops its own load with `window.stop()`
- * counts as loaded: its readyState goes to complete, but it never
- * fires `load`, which a plain `goto` waits for until it times out.
- * Rejects with the navigation's own error, or when the page doesn't
- * load in time.
+ * Runs a navigation (`page.goto`, `page.reload`), keeping to the
+ * command's time (see `budgeted`). Rejects when the page doesn't
+ * start loading in time (`PageNotLoaded`), or with the navigation's
+ * own error. Then resolves to whether it finished loading in the time
+ * left: a page that never fires `load` (an ad that never finishes)
+ * still works, so that is for the caller to warn about. A page that
+ * stops its own load with `window.stop()` counts as loaded: its
+ * readyState goes to complete, but it never fires `load`.
  */
 export async function loadPage(
   page: Page, navigate: (opts: { waitUntil: 'commit'; timeout: number }) => Promise<unknown>, timeoutMs = LOAD_TIMEOUT_MS,
-): Promise<void> {
+): Promise<boolean> {
   timeoutMs = budgeted(timeoutMs);
   const deadline = Date.now() + timeoutMs;
-  await navigate({ waitUntil: 'commit', timeout: timeoutMs });
+  try {
+    await navigate({ waitUntil: 'commit', timeout: timeoutMs });
+  } catch (err) {
+    if ((err as Error).name === 'TimeoutError') throw new PageNotLoaded(`The page did not start loading within ${seconds(shownMs(timeoutMs))}`);
+    throw err;
+  }
   let ended = false;
   const load = page.waitForLoadState('load', { timeout: Math.max(1, deadline - Date.now()) }).then(
     () => true,
@@ -249,11 +258,21 @@ export async function loadPage(
     return false;
   })();
   try {
-    if (!await Promise.race([load, stopped])) throw new PageNotLoaded(`The page did not finish loading within ${seconds(shownMs(timeoutMs))}`);
+    return await Promise.race([load, stopped]);
   } finally {
     ended = true;
     load.catch(() => undefined);
   }
+}
+
+/**
+ * The message when `tab`'s page started loading but didn't finish in
+ * time: what it was still waiting on, as `busy` lists it.
+ */
+export async function notLoadedMessage(tab: ControlledTab, host: HarnessHost, timeoutMs: number): Promise<string> {
+  const busy = (await busyWith(tab, host, LOOK_MS, 0)).filter((b) => b !== STILL_LOADING);
+  const list = busy.join('; ');
+  return `${tabName(tab)} did not finish loading within ${seconds(shownMs(timeoutMs))}${list ? `: ${list.charAt(0).toUpperCase()}${list.slice(1)}` : ''}`;
 }
 
 /** The message when `tab` didn't settle in time, as every wait says it. */

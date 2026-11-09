@@ -689,7 +689,7 @@ running, --stop-after-seconds N to watch it for a while, or commands after --.`
 | `--log-source <source>` | The log sources the stream shows (see [Logs](#logs)) |
 | `--lang zh-CN,en` | The languages the run's tabs prefer |
 | `--nowait` | Don't wait for the pages to settle |
-| `--timeout-seconds S` | Give up after S seconds (default: 30 to load, then 5 to settle) |
+| `--timeout-seconds S` | Give up after S seconds (default: 30, with at most 5 seconds to settle) |
 | `--stop-after-seconds N` | Stop the run after N seconds |
 | `--stop-after-idle-seconds N` | Stop after N idle seconds (default 30 minutes; `0` never) |
 
@@ -832,8 +832,8 @@ The run's lifetime:
     stop`, so it can't expire mid-test.
 - `--nowait`: don't wait for the pages to settle before continuing. It
   still waits for the scripts to start.
-- `--timeout-seconds S`: give up after S seconds (default: 30 to load,
-  then 5 to settle).
+- `--timeout-seconds S`: give up after S seconds (default: 30, with at
+  most 5 seconds to settle).
 
 ### Which tab `start` uses
 
@@ -1999,6 +1999,7 @@ Limits of the heuristic:
   returning). `start --nowait` skips that.
 - `click`, `hover`, `type`, `key`, `reload`, `open` and `newtab` settle
   the tabs they touch before returning. Each takes `--nowait`.
+- `load`, `update` and `--watch` saves settle the tabs they reload.
 
 ### Giving up
 
@@ -2015,12 +2016,16 @@ Limits of the heuristic:
   says the rest weren't run.
 - A command's own wait that gives up only says so, since the command
   itself worked.
-- A command still running past that limit fails, and the run takes the
+- A command still running past its limit fails, and the run takes the
   next command. `wait`, `cdp`, `start` and `attach` have no such limit.
   - A page stuck running JavaScript is stopped then, so it answers
     commands again.
   - The command keeps running behind, so what it does (a page load,
     say) can still happen while the next command runs.
+- A page load fails only when the page doesn't start loading within 30
+  seconds (or `--timeout-seconds`). A page that started but hasn't
+  finished by then gets a warning naming what it is still waiting on,
+  and the command goes on without waiting for it to settle.
 
 ### `wait log`
 

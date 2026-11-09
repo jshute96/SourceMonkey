@@ -14,7 +14,7 @@ import type { Browser, BrowserContext, ConsoleMessage, Frame, Page } from '@play
 
 import { shellWord } from './command-lines.js';
 import {
-  commandOutput, commandRunner, DialogTracker, dismissSettingUpDialogs, gotoInTab, hasUntrackedDialog, leaveDialogsOpen, trackSettingUp, onlyInspects, reloadTab, reloadable, serveSavedPage, setCommandsListening, shortValue, skippedScriptLine, targetIdSuffix, withoutQuery,
+  commandOutput, commandRunner, type LoadOptions, DialogTracker, dismissSettingUpDialogs, gotoInTab, hasUntrackedDialog, leaveDialogsOpen, trackSettingUp, onlyInspects, reloadTab, reloadable, serveSavedPage, setCommandsListening, shortValue, skippedScriptLine, targetIdSuffix, withoutQuery,
   type CommandRunner, type ConsoleContext, type ControlledTab,
 } from './console-commands.js';
 import { applyLang, langLaunchArgs } from './browser-lang.js';
@@ -49,7 +49,7 @@ import { browserSentence, checkRunsDir, ownRunsDir, processAlive, RunControl, ru
 import { cspBlocksPageScripts, sandboxedPageNote, sandboxedPageWarning } from '../sandboxed-page.js';
 import { waitForStuckTabs } from './stuck-tabs.js';
 import { NO_TABS } from './tab-refs.js';
-import { budgeted, deadlineIn, inBudget, loadPage, settleTabs } from './wait.js';
+import { budgeted, deadlineIn, inBudget, loadPage } from './wait.js';
 
 export interface RunOptions extends ConnectOptions {
   files: string[];
@@ -1228,8 +1228,8 @@ async function runInBrowser(
     if (t1) tabs.announce(t1, urls[0]);
     for (const { tab, url } of opened) tabs.announce(tab, url);
     await inBudget(startDeadline, () => Promise.all([
-      ...(t1 && urls[0] ? [tabs.navigate(t1, urls[0], opts.timeoutMs)] : []),
-      ...opened.map(({ tab, url }) => tabs.navigate(tab, url, opts.timeoutMs)),
+      ...(t1 && urls[0] ? [tabs.navigate(t1, urls[0], { timeoutMs: opts.timeoutMs, noWait: opts.noWait })] : []),
+      ...opened.map(({ tab, url }) => tabs.navigate(tab, url, { timeoutMs: opts.timeoutMs, noWait: opts.noWait })),
     ]));
     printSkipped(opts, start);
   } else {
@@ -1254,9 +1254,6 @@ async function runInBrowser(
       // sequence of commands would otherwise hit exactly that.
       // Nothing will start with no scripts, or no tab to run in.
       if (prepared.length > 0 && page) await inBudget(startDeadline, () => waitForReports(host, tabs.list()));
-      // Then for the tabs to settle (see wait.ts), so the first command,
-      // or `--detach`'s return, sees the page as its scripts left it.
-      if (!opts.noWait) await inBudget(startDeadline, () => settleTabs(host, tabs.list(), opts.out, opts.timeoutMs));
       const ctx: ConsoleContext = {
         host,
         tabs: () => tabs.list(),
@@ -1486,7 +1483,7 @@ class FollowedTabs {
         if (!tab.page.isClosed()) this.opts.out(`[sm-dev] T${tab.n} could not be updated: ${(err as Error).message}`);
         return;
       }
-      if (reload.includes(tab)) await reloadTab(tab, this.host, this.opts.out, timeoutMs);
+      if (reload.includes(tab)) await reloadTab(tab, this.host, this.opts.out, { timeoutMs });
     }));
   }
 
@@ -1536,11 +1533,11 @@ class FollowedTabs {
    * tabs the page opens. `noScript`: one the scripts stay out of, for
    * `newtab --noscript`.
    */
-  async newTab(url?: string, { noScript = false, saved, timeoutMs }: { noScript?: boolean; saved?: SavedPageStart; timeoutMs?: number } = {}): Promise<ControlledTab> {
+  async newTab(url?: string, { noScript = false, saved, timeoutMs, noWait }: { noScript?: boolean; saved?: SavedPageStart; timeoutMs?: number; noWait?: boolean } = {}): Promise<ControlledTab> {
     const tab = await this.createTab(noScript);
     if (saved) await serveSavedPage(tab, saved, this.opts.out, noScript || this.scripts.length === 0);
     this.announce(tab, url);
-    if (url) await this.navigate(tab, url, timeoutMs);
+    if (url) await this.navigate(tab, url, { timeoutMs, noWait });
     return tab;
   }
 
@@ -1585,8 +1582,8 @@ class FollowedTabs {
       : `[sm-dev] ${S.ui`Opening ${S.url(url)} in ${S.id(`T${tab.n}`)}${targetIdSuffix(tab.targetId)}`}`);
   }
 
-  async navigate(tab: ControlledTab, url: string, timeoutMs?: number): Promise<void> {
-    await gotoInTab(tab, this.host, url, this.opts.out, timeoutMs);
+  async navigate(tab: ControlledTab, url: string, options: LoadOptions = {}): Promise<void> {
+    await gotoInTab(tab, this.host, url, this.opts.out, options);
   }
 
   private track(work: Promise<unknown>): void {

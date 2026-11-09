@@ -632,11 +632,19 @@ test.describe('sm-dev typed commands', () => {
     expect(await run('open 3')).toEqual(['[sm-dev] There is no script 3. Use `scripts` to list them.']);
 
     // --timeout-seconds: how long a page may take to load. This one's
-    // image never comes, so it never fires load.
+    // image never comes, so it never fires load, which only warns.
     await page.route('**/never.png', () => undefined);
     await page.route('**/stuck.html', (route) => route.fulfill({ contentType: 'text/html', body: '<img src="never.png">' }));
     expect(await run(`open ${fixtureServer.baseUrl}/stuck.html --nowait --timeout-seconds 0.5`)).toEqual([
-      '[sm-dev] Navigation failed: The page did not finish loading within 0.5s',
+      '[sm-dev] T1 did not finish loading within 0.5s: 1 request pending (/never.png)',
+    ]);
+    // A page that loads but never goes quiet: the settle warning names
+    // its own 5 seconds, not the load's 30.
+    await page.route('**/ticking.html', (route) => route.fulfill({
+      contentType: 'text/html', body: '<p id="t"></p><script>setInterval(() => { t.textContent = Date.now(); }, 50)</script>',
+    }));
+    expect(await run(`open ${fixtureServer.baseUrl}/ticking.html`)).toEqual([
+      expect.stringMatching(/^\[sm-dev\] T1 did not settle within 5s: The DOM is still changing/),
     ]);
     expect(await run('reload --timeout-seconds 0')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The --timeout-seconds flag needs a number of seconds/)]);
     await page.unrouteAll({ behavior: 'ignoreErrors' });

@@ -204,7 +204,7 @@ asked to.
 | `reload [T2\|all]` | Reload. `--force` leaves a page that asks first ("Leave site?") |
 | `focus [T2]` | Bring to the front |
 | `--from-saved [--offline] [--url U]` | On `newtab`/`open`/`start`: serve `.html` files at their recorded URL |
-| `--timeout-seconds S` | On `newtab`/`open`/`reload`: give up after S seconds (default 30 to load, then 5 to settle) |
+| `--timeout-seconds S` | On `newtab`/`open`/`reload`: give up after S seconds (default 30, with at most 5 seconds to settle) |
 
 ## Reading the page
 

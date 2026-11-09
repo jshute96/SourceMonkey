@@ -276,20 +276,33 @@ Serves `sm-dev list`, `stop`, `attach` and the commands sent to a run.
 The reply ends when the command does, with no wait after it. Commands
 instead wait out what they set off that has a known end:
 
-- Every page load a command or `--watch` save makes (`loadInTab`)
-  waits for each script in the tab to report starting, being skipped,
-  or throwing in the new document (the host's `untilReported`, filled
-  by `ExtensionHost`), or for a dialog.
+- Every page load a command or `--watch` save makes (`loadInTab`) has
+  three steps, all within the load's limit (30 seconds, or
+  `--timeout-seconds`):
+  - The page starts loading (the navigation commits). Not in time, the
+    load fails.
+  - It finishes loading (`load`, or readyState `complete` after a
+    `window.stop()`). Not in time, it only gets a warning naming what
+    is busy, and the load ends there: a page held up by an ad that never
+    finishes still works.
+  - It settles (wait.ts), within 5 seconds and never past the limit.
+    Not in time, a warning. `--nowait` skips this step.
+- A dialog the page opens ends the wait, as the page waits on it. What
+  the load does after that (a late warning) prints nothing.
+- The round trips into the page after a load (`caughtUp`, `drain`) are
+  bounded to a second: a dialog in a tab sharing the page's process
+  (one it opened) holds them up for good.
+- Settling includes each script in the tab reporting starting, being
+  skipped, or throwing in the new document (the host's `unreported`,
+  filled by `ExtensionHost`).
   - Only reports stamped at or after the new document's start count, so
     late ones from the old document don't end it.
-  - A hash-only change loads no document, and waits for nothing.
+  - A hash-only change loads no document, so it waits only to settle.
   - A script the manager has turned off is never injected, so it isn't
     waited on (the host's `isOff`). `ExtensionHost.refreshOff` reads
     which ones are off from SourceMonkey before the commands that load
     pages or show what runs, after `script` and `collection` commands,
     and before a `--watch` save's reloads.
-  - A 10-second backstop, counted from the load, covers a script that
-    never reports. It is not how the end is found.
 - `drain` (in `page-watch.ts`) then makes a round trip through each CDP
   session, after a `setTimeout(0)` in the page.
   - Needed because a script reports its start before its body runs,

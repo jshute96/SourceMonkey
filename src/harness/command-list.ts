@@ -413,7 +413,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     options: [
       { term: '--noscript', about: 'Run no scripts in the tab. (Sticky)', commands: TAB_LOADS },
       { term: '--script', about: 'Run the scripts in the tab again. (Undo `--noscript`.)', commands: TAB_LOADS },
-      { term: '--timeout-seconds S', about: 'Give up after `S` seconds (default: `30` to load, then `5` to settle).', commands: TAB_LOADS },
+      { term: '--timeout-seconds S', about: 'Give up after `S` seconds (default: `30`, with at most `5` seconds to settle).', commands: TAB_LOADS },
       { term: '--from-saved', about: 'Serve `.html` files as saved page snapshots, at their embedded URLs by default.', commands: ['newtab', 'open'] },
       { term: '--url URL', about: 'With `--from-saved` and one `.html` file: The URL to serve it at.', commands: ['newtab', 'open'] },
       { term: '--offline', about: 'With `--from-saved`: Block network requests from the saved pages.', commands: ['newtab', 'open'] },
@@ -1080,7 +1080,7 @@ export const HELP_SECTIONS: HelpSection[] = [
             term: '--timeout-seconds S',
             about: [
               'The longest the command may take (default: `60`).',
-              'Without it, each wait in the command also has its own limit: `5` seconds for an element to be ready to click, `30` for a page to load, `5` for it to settle, and `5` for a screenshot.',
+              'Without it, each wait has its own limit: `5` seconds for elements to appear, `5` seconds for pages to settle, `30` seconds for page loads, and `5` seconds for screenshots.',
             ],
             commands: TIMED,
           },
