@@ -747,7 +747,7 @@ export const HELP_SECTIONS: HelpSection[] = [
           'A dialog box blocks the page, or the script\'s request, until it\'s answered. These include the page\'s `alert`, `confirm` and `prompt`, Chrome\'s "Leave site?" and file chooser, and SourceMonkey\'s connection permission prompt.',
           'Use `dialog` commands to see and answer them. Each one shows in the run\'s output as it opens, with the commands to answer it.',
           '',
-          'Each dialog has an id: its tab and a number (`T1.2`). `dialog` commands apply to the default dialog: the one `dialog select` picked, else the oldest on the current tab, else the oldest in the run.',
+          'Each dialog has an id: its tab and a number (`T1.2`). `dialog` commands apply to the default dialog: the one `dialog select` picked, else one on the current tab, else one in the run. A dialog that blocks its page comes first, then the oldest.',
           '',
           'File chooser dialogs take file paths relative to the directory sm-dev ran in. For example, `dialog accept data.json` chooses `data.json` from there.',
         ],
@@ -761,7 +761,7 @@ export const HELP_SECTIONS: HelpSection[] = [
         ],
         options: [
           { term: '--dialog <id>', about: 'Act on that dialog (`T1.2`) for this command only.', commands: DIALOG_ACTS },
-          { term: '--tab <tab>', about: 'Act on the selected dialog if it\'s on that tab, else the tab\'s oldest.', commands: DIALOG_ACTS },
+          { term: '--tab <tab>', about: 'Act on the selected dialog if it\'s on that tab, else the default one on that tab.', commands: DIALOG_ACTS },
         ],
       },
     ],

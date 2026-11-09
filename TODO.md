@@ -1148,19 +1148,48 @@ See [docs/harness-design.md](docs/harness-design.md).
 
 ## sm-dev dialogs
 
-One `dialog` command for every box that waits for an answer. It covers
-the page's JavaScript dialogs, connection prompts and file choosers now. Design:
-[docs/sm-dev-dialogs.md](docs/sm-dev-dialogs.md). Steps left:
+The `dialog` command answers the page's JavaScript dialogs, "Leave
+site?", SourceMonkey's connection prompts and file choosers. Design:
+[docs/sm-dev-dialogs.md](docs/sm-dev-dialogs.md). To try them, use
+`userscripts/examples/dialogs/`, which has a button for each kind.
 
-1. **Test first**: what headless and visible Chrome send and accept over CDP
-   for the File System Access pickers and for an HTTP Basic auth
-   challenge, and what headless does with each today.
-2. **Pickers**, over CDP or a stub, by what that testing finds.
-3. **Sign in**, always on or behind a `start` flag, by its cost.
-4. **Later**: list a manager's own prompts (Tampermonkey's `@connect`
-   page) as dialogs; a `start` flag to grant or deny site permissions;
-   catch file choosers in cross-site iframes, which are targets of their
-   own that the tab's session doesn't reach.
+Known limits:
+
+- **The File System Access pickers** (`showOpenFilePicker`,
+  `showSaveFilePicker`, `showDirectoryPicker`) can't be answered.
+  - While a run takes commands, sm-dev catches file choosers, and
+    Chrome then fails the pickers at once with an `AbortError`. The
+    run warns when that happens.
+  - In headless Chrome without that, a picker never returns.
+  - In a visible browser, Chrome should show its real picker (not
+    tried), but catching file choosers takes that away.
+- **Under Tampermonkey**, a request to a site the script's `@connect`
+  lines don't name opens TM's own page, which sm-dev doesn't see. With
+  no answer, TM refuses the request after about 20 seconds.
+- **A file chooser in a cross-site iframe** isn't caught. That iframe
+  is a target of its own, which the tab's session doesn't reach.
+
+Might do later:
+
+- **Pickers, with a stub** that replaces the three picker functions
+  before the page's code runs and serves their handles through sm-dev
+  (see [Pickers](docs/sm-dev-dialogs.md#pickers)).
+  - Userscripts rarely use the pickers: they're Chromium-only, so
+    scripts that import or export files use an `<input type=file>` or
+    a download instead.
+  - It's a fair amount of work, and it would only work under
+    SourceMonkey, since a stub can't reach TM's or VM's script world.
+- **Pickers in a visible browser**: leave file choosers to Chrome when
+  the browser is on screen, so the real pickers work. `dialog accept
+  <file>` wouldn't answer a chooser there.
+- **Sign in**: answer an HTTP Basic auth challenge
+  ([Sign in](docs/sm-dev-dialogs.md#sign-in)). Catching it pauses
+  every request, which slows pages and conflicts with a person's own
+  `cdp Fetch.*` calls, so it would need a `start` flag. Userscripts
+  rarely meet one.
+- List a manager's own prompts (TM's `@connect` page) as dialogs.
+- A `start` flag to grant or deny site permissions.
+- Catch file choosers in cross-site iframes.
 
 ## Tabs that predate the first script install
 

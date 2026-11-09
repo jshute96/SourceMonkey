@@ -6,7 +6,9 @@ The code is in `src/harness/dialogs.ts`, with the command in
 
 - **Built:** the page's JavaScript dialogs, Chrome's "Leave site?",
   SourceMonkey's connection prompts, and file choosers.
-- **Planned:** the File System Access pickers, and HTTP sign-in. The steps are in TODO.md, under "sm-dev dialogs".
+- **Not built:** the File System Access pickers, and HTTP sign-in.
+  Their known limits and what might be done later are in TODO.md,
+  under "sm-dev dialogs".
 - How a page's JavaScript dialogs are caught is in
   [sm-dev-design.md](sm-dev-design.md#dialogs).
 
@@ -30,8 +32,8 @@ The code is in `src/harness/dialogs.ts`, with the command in
 | Leave site | A `beforeunload` handler | Chrome | Playwright's `dialog` event |
 | Connection permission | A request to a host the script's `@connect` lines don't cover | SourceMonkey | The extension's `connect-prompt` event |
 | File chooser | Clicking an `<input type=file>`, in the document or not | Chrome | `Page.setInterceptFileChooserDialog` |
-| Open, Save and Directory pickers (planned) | `showOpenFilePicker`, `showSaveFilePicker`, `showDirectoryPicker` | Chrome | To be found (see [Pickers](#pickers)) |
-| Sign in (planned) | A server's HTTP Basic auth challenge | Chrome | `Fetch` with `handleAuthRequests` (see [Sign in](#sign-in)) |
+| Open, Save and Directory pickers (not built) | `showOpenFilePicker`, `showSaveFilePicker`, `showDirectoryPicker` | Chrome | None yet: refused while file choosers are caught (see [Pickers](#pickers)) |
+| Sign in (not built) | A server's HTTP Basic auth challenge | Chrome | `Fetch` with `handleAuthRequests` (see [Sign in](#sign-in)) |
 
 - **From** names who wrote the text: the page for its own message,
   Chrome for its own boxes, or SourceMonkey.
@@ -65,12 +67,20 @@ The code is in `src/harness/dialogs.ts`, with the command in
   - Event lines, `dialog show` and `tabs` show the id.
 - **`dialog` commands act on**, in order:
   - the one `--dialog T1.2` names, for that command only;
-  - with `--tab`, the selected dialog if it's on that tab, else that
-    tab's oldest;
+  - with `--tab`, the selected dialog if it's on that tab, else one on
+    that tab, picked as below;
   - else the default dialog (`defaultDialog`):
     - the one `dialog select T1.2` picked, while it is still waiting;
-    - the oldest waiting on the current tab;
-    - the oldest waiting in the run.
+    - one waiting on the current tab;
+    - one waiting in the run.
+  - Among those on a tab or in the run, a dialog that blocks its page
+    comes first, then the oldest (`firstToAnswer`).
+    - A file chooser's answer runs on its page (its `change` or
+      `cancel` event), so it would wait while a prompt holds the page.
+      Putting the prompt first makes the default the one that can be
+      answered.
+    - Answering a file chooser while a JavaScript dialog blocks its page
+      is refused, naming that dialog.
 - So with one dialog waiting, which is the usual case, no id or tab is
   needed, even for a dialog on another tab.
 
@@ -204,10 +214,10 @@ T1.1  Connection permission
 |---|---|---|
 | Prompt | `text` | The page's default value |
 | File chooser | `file`, or `files` when it takes multiple files | None |
-| Open picker (planned) | `file`, or `files` when it takes multiple files | None |
-| Save picker (planned) | `file` | The page's suggested name, in the run's downloads folder |
-| Directory picker (planned) | `directory` | None |
-| Sign in (planned) | `username`, `password` | None |
+| Open picker (not built) | `file`, or `files` when it takes multiple files | None |
+| Save picker (not built) | `file` | The page's suggested name, in the run's downloads folder |
+| Directory picker (not built) | `directory` | None |
+| Sign in (not built) | `username`, `password` | None |
 
 - **A default is only what the page gives** (a prompt's default text,
   a save's suggested name). A chooser starts with no file, as Chrome's
@@ -218,9 +228,9 @@ T1.1  Connection permission
   ([sm-dev-design.md](sm-dev-design.md#file-arguments-checksts-path-argsts)).
 - **`Accepts`** is shown, not enforced, as Chrome's own chooser lets a
   person pick other files too.
-- **A password** (planned, for Sign in) would show as `(set)`, and
+- **A password** (not built, for Sign in) would show as `(set)`, and
   stay out of the run's log.
-- **A save** (planned, for the Save picker) would write into the run's
+- **A save** (not built, for the Save picker) would write into the run's
   downloads folder, made for a connected browser's run too, and be
   reported like a download.
 
@@ -265,17 +275,27 @@ T1.1  Connection permission
 
 ### Pickers
 
-The File System Access pickers need testing in headless and visible
-Chrome before this part is designed:
+Not built. What's known, from the dialogs example
+(`userscripts/examples/dialogs/`):
 
-- `Page.fileChooserOpened` gives `backendNodeId` only for an
-  `<input type=file>`, which suggests Chrome also sends the event for a
-  picker. Whether it does, in headless and visible, and how to answer
-  one with no input to set, is unknown.
-- Failing that, a stub replaces the pickers before the page's code runs.
-  - The stub asks sm-dev through a CDP binding (`Runtime.addBinding`),
-    and returns handles whose `getFile()` and `createWritable()` read
-    and write through sm-dev.
+- **CDP can't hand a picker to sm-dev.**
+  - While `Page.setInterceptFileChooserDialog` is on, Chrome sends
+    `Page.fileChooserOpened` for `showOpenFilePicker`,
+    `showSaveFilePicker` and `showDirectoryPicker` too, with no
+    `backendNodeId`. It fails the call at once with an `AbortError`
+    ("Intercepted by Page.setInterceptFileChooserDialog()").
+  - So there's nothing to answer. sm-dev prints a warning
+    (`PICKER_REFUSED`) rather than listing a chooser.
+  - In headless Chrome with interception off, a picker never returns.
+  - In a visible browser with interception off, Chrome should show its
+    real picker. That hasn't been tried.
+- **Under Tampermonkey**, the script's sandbox can't call the pickers
+  at all ("Illegal invocation").
+- **A stub is the remaining way** to answer them, if it's ever worth it:
+  - It replaces the pickers before the page's code runs, asks sm-dev
+    through a CDP binding (`Runtime.addBinding`), and returns handles
+    whose `getFile()` and `createWritable()` read and write through
+    sm-dev.
   - A stub set over CDP runs in the page's world only. A script with
     grants runs in the `USER_SCRIPT` world, where it calls the real
     pickers. SourceMonkey's prelude could install the stub there too.
@@ -372,8 +392,8 @@ there too, and `dialog` answers them the same way.
 - **JavaScript dialogs** show in the browser as well, so the person can
   answer them there instead.
 - **A caught file chooser doesn't show in the browser.** Chrome either
-  shows its own chooser or hands it to sm-dev, not both. The pickers
-  (planned) would be the same.
+  shows its own chooser or hands it to sm-dev, not both. While it
+  hands choosers to sm-dev, it refuses the pickers.
   - So in a visible browser, the person answers it with `dialog` too.
   - The event says that the browser doesn't show it, so a person who
     clicked Upload and saw nothing can find it.

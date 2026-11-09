@@ -1,4 +1,5 @@
 [
+  "dialogs/dialogs.user.js",
   "frames/every-frame.user.js",
   "frames/frame-b-only.user.js",
   "frames/top-only.user.js",

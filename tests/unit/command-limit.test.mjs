@@ -18,6 +18,9 @@ test('givenTimeoutMs: --timeout-seconds in either spelling, or none', () => {
 test('commandLimitMs: the default, none for the commands with their own, and the given time plus grace', () => {
   assert.equal(commandLimitMs('eval', undefined), COMMAND_LIMIT_MS);
   assert.equal(commandLimitMs('eval', undefined, 2000), 2000);
+  // `dialog` has a shorter one, and a shorter run default still wins.
+  assert.equal(commandLimitMs('dialog', undefined), 10_000);
+  assert.equal(commandLimitMs('dialog', undefined, 2000), 2000);
   for (const command of ['wait', 'stop', 'exit', 'start', 'attach', 'cdp']) assert.equal(commandLimitMs(command, 5000), null);
   assert.equal(commandLimitMs('open', 50_000), 53_000);
   assert.equal(commandLimitMs('open', 2000), 5000);

@@ -376,7 +376,11 @@ $R screenshot btn.png --selector '.save'   # just one element
   answered the page is frozen, and most commands refuse. `dialog show`
   shows it again.
 - A file chooser doesn't freeze the page. Answer it with
-  `dialog accept <file>`, from the directory the command runs in.
+  `dialog accept <file>`, from the directory sm-dev runs in.
+- `showOpenFilePicker`, `showSaveFilePicker` and `showDirectoryPicker`
+  fail at once with an `AbortError` in a run that takes commands, and
+  the run warns. Test a script's picker path in a spec, or have it fall
+  back to an `<input type=file>`.
 - SourceMonkey's permission prompt shows as a dialog too, and needs an
   answer before that request goes on: see
   [Permission prompts](#permission-prompts).
@@ -814,9 +818,10 @@ and whatever the script does with its response wait.
   script, so later requests to that site don't ask again in the run.
 - With more than one dialog waiting, the block's commands carry
   `--dialog T1.2` to name theirs.
-- Answer right after the command that set off the request. The prompt
-  goes away when the script's own request times out (some time out in
-  a few seconds), and the run says it closed without an answer.
+- The request waits on the prompt for up to 4 minutes. The script's
+  own `timeout` doesn't start until the prompt is answered. The prompt
+  closes without an answer when the script aborts the request or the
+  4 minutes pass, and the run reports it.
 - When testing a script's real behavior, note which sites it asked
   about: its `@connect` lines may be missing some.
 

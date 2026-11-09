@@ -1626,6 +1626,10 @@ opens, rather than answering it automatically. The design is in
       sm-dev ran in; `dialog cancel` sends the input its `cancel`.
     - Chrome doesn't show a chooser the run catches, even in a visible
       browser. It isn't caught in a cross-site iframe.
+- The File System Access pickers (`showOpenFilePicker`,
+  `showSaveFilePicker`, `showDirectoryPicker`) aren't dialogs sm-dev
+  can answer. While the run catches file choosers, Chrome fails them at
+  once with an `AbortError`, and the run warns.
 - Each has an id: its tab and a number counting that tab's dialogs
   (`T1.2`).
 - The run's output shows its whole block as it opens: what it asks, its
@@ -1637,10 +1641,13 @@ opens, rather than answering it automatically. The design is in
   - A value with spaces has to be quoted: `dialog accept "Ann Lee"`.
 - Which dialog the commands apply to, in order:
   - the one `--dialog T1.2` names, for that command only;
-  - with `--tab T2`, the selected dialog if it's on that tab, else that
-    tab's oldest;
+  - with `--tab T2`, the selected dialog if it's on that tab, else the
+    default one on that tab;
   - the one `dialog select T1.2` picked, while it's still waiting;
-  - the oldest on the current tab, else the oldest in the run.
+  - one on the current tab, else one in the run. A dialog that blocks
+    its page comes first, then the oldest.
+- A file chooser can't be answered while a JavaScript dialog blocks its
+  page.
 - In a browser on screen, a page's dialog can be answered there too.
 - In a headless run that can't take commands (it couldn't open its
   socket for other shells), nothing could answer a page's dialog, so it

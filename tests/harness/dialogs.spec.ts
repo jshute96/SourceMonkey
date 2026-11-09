@@ -1,17 +1,26 @@
-// The `dialog` command's file chooser: a click on an `<input type=file>`,
-// in the document or not, is caught before Chrome shows its chooser,
-// shown as a dialog, and answered with files given from where the
-// command ran. The page's JavaScript dialogs and connection prompts are
-// covered in console-commands.spec.ts and run-tabs.spec.ts.
+// The `dialog` command:
+// - A click on an `<input type=file>`, in the document or not, is
+//   caught before Chrome shows its chooser, shown as a dialog, and
+//   answered with files given from where the command ran.
+// - Multiple dialogs at once get their own ids, a dialog that blocks
+//   the page is the default, and a chooser it blocks is refused.
+// - The last test answers the dialogs example's dialogs
+//   (userscripts/examples/dialogs/), and checks its pickers are refused.
+// The page's JavaScript dialogs and connection prompts are covered
+// further in console-commands.spec.ts and run-tabs.spec.ts.
 
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { test, expect } from '../fixtures/harness.js';
 import { DialogTracker, runConsoleCommand, type ConsoleContext } from '../../lib/harness/console-commands.js';
+import { PICKER_REFUSED } from '../../lib/harness/dialogs.js';
 import { plainLine } from '../../lib/harness/output-style.js';
 import { jsonResultData } from '../../lib/harness/json-output.js';
+
+const EXAMPLE = fileURLToPath(new URL('../../userscripts/examples/dialogs', import.meta.url));
 
 let dir: string;
 test.beforeEach(() => {
@@ -153,8 +162,9 @@ test('two dialogs in a row, and two at once, each get their own id', async ({ pa
   expect(await run('dialog accept')).toEqual(['[sm-dev] Clicked OK on Confirm dialog T1.2']);
   await expect.poll(() => page.evaluate(() => (window as unknown as { second?: boolean }).second)).toBe(true);
 
-  // A chooser, then an alert while it waits: the alert's commands name
-  // it, since the chooser is the default.
+  // A chooser, then an alert while it waits. The alert stops the page,
+  // so it becomes the default, while its block still names it, as a
+  // block shown with another dialog waiting does.
   await run('click #one');
   await expect.poll(() => dialogs.waiting.length).toBe(1);
   lines.length = 0;
@@ -162,12 +172,14 @@ test('two dialogs in a row, and two at once, each get their own id', async ({ pa
   await expect.poll(() => dialogs.waiting.length).toBe(2);
   expect(lines.find((l) => l.includes('*DIALOG* T1.4'))).toContain('    OK      dialog accept --dialog T1.4');
   const shown = await run('dialog show');
-  expect(shown[0]).toBe('T1 has 2 dialogs waiting. `dialog` commands apply to T1.3 by default. Use --dialog or `dialog select` to choose another.');
-  expect(shown).toContain('T1.3  File chooser (default for `dialog` commands)');
-  expect(shown).toContain('T1.4  Alert');
+  expect(shown[0]).toBe('T1 has 2 dialogs waiting. `dialog` commands apply to T1.4 by default. Use --dialog or `dialog select` to choose another.');
+  expect(shown).toContain('T1.3  File chooser');
+  expect(shown).toContain('T1.4  Alert (default for `dialog` commands)');
+  // The chooser's answer would wait on the page, which the alert holds.
+  expect(await run('dialog cancel --dialog T1.3')).toEqual(['[sm-dev] ERROR: File chooser dialog T1.3 can\'t be answered while Alert dialog T1.4 blocks its page. Answer T1.4 first. Use `dialog show` to see how.']);
   // The page's own backtick stays text: the command after it is intact.
   expect(await run('tabs')).toContain('    Waiting on Alert dialog T1.4: "Press ` to go on". Use `dialog show` to see how to answer it.');
-  expect(await run('dialog accept --dialog T1.4')).toEqual(['[sm-dev] Clicked OK on Alert dialog T1.4']);
+  expect(await run('dialog accept')).toEqual(['[sm-dev] Clicked OK on Alert dialog T1.4']);
   expect(await run('dialog cancel')).toEqual(['[sm-dev] Clicked Cancel on File chooser dialog T1.3']);
   expect(await run('dialog accept --dialog T1.4')).toEqual(['[sm-dev] No dialog T1.4 is waiting, and no others are']);
 });
@@ -186,4 +198,62 @@ test('a dialog from a cross-site iframe stays listed while the rest of the page 
   expect(dialogs.waiting.map((d) => d.title)).toEqual(['Alert']);
   void host;
   void attachment;
+});
+
+// The dialogs example (userscripts/examples/dialogs/), answered with
+// `dialog` commands as a person at sm-dev would.
+test('the dialogs example: its dialogs answered with `dialog`, and its pickers refused', async ({ page, fixtureServer, host, attachment, loadUserscript }) => {
+  const lines: string[] = [];
+  const dialogs = await DialogTracker.attach(page, (t) => lines.push(plainLine(`[sm-dev] ${t}`)), { visible: false, commandsComing: true });
+  const url = `${fixtureServer.baseUrl}/dialogs/dialogs.html`;
+  await loadUserscript(path.join(EXAMPLE, 'dialogs.user.js'), { url });
+  await page.goto(url);
+  await expect(page.locator('#runStatus')).toHaveClass(/ran/);
+  const tabs = [{ n: 1, page, link: attachment, dialogs }];
+  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [], out: (l) => lines.push(plainLine(l)), stop: () => undefined };
+  const run = async (line: string) => {
+    lines.length = 0;
+    await runConsoleCommand(line, ctx, { cwd: dir });
+    return [...lines];
+  };
+  const result = (kind: string) => page.locator(`#log li[data-kind="${kind}"]`).first();
+
+  await run('click #btn-confirm');
+  // A message's blank line stays blank, and its later lines line up.
+  expect(lines.find((l) => l.includes('*DIALOG* T1.1'))).toContain('  Message:  Delete the sample item?\n\n            This can\'t be undone.\n');
+  await run('dialog accept');
+  await expect(result('confirm')).toHaveAttribute('data-result', 'true');
+
+  await run('click #btn-prompt');
+  await run('dialog accept "Ann Lee Jr"');
+  await expect(result('prompt')).toHaveAttribute('data-result', 'Ann Lee Jr');
+
+  await run('click #btn-two-confirms');
+  expect(await run('dialog accept')).toEqual(['[sm-dev] Clicked OK on Confirm dialog T1.3']);
+  await expect.poll(() => dialogs.waiting.map((d) => d.id)).toEqual(['T1.4']);
+  await run('dialog cancel');
+  await expect(result('two-confirms')).toHaveAttribute('data-result', 'true,false');
+
+  await run('click #btn-file');
+  await run('dialog accept a.json');
+  await expect(result('file')).toContainText('a.json (7 bytes)');
+  await run('click #btn-files');
+  await run('dialog cancel');
+  await expect(result('files')).toHaveAttribute('data-result', 'cancelled');
+
+  // Chrome refuses a picker while file choosers are caught, so nothing
+  // is left waiting, and the run says why.
+  for (const kind of ['open', 'save', 'directory']) {
+    await run(`click #btn-${kind}-picker`);
+    await expect(result(`${kind}-picker`)).toHaveAttribute('data-result', 'cancelled');
+    await expect.poll(() => lines).toContain(plainLine(`[sm-dev] Warning: ${PICKER_REFUSED}`));
+  }
+  expect(dialogs.waiting).toEqual([]);
+
+  await run('click #leave');
+  await run('reload');
+  await expect.poll(() => dialogs.waiting.map((d) => d.title)).toEqual(['Leave site']);
+  await run('dialog cancel');
+  // The page stayed: a reload would have cleared its log.
+  await expect(result('file')).toContainText('a.json');
 });

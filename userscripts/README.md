@@ -54,6 +54,7 @@ Violentmonkey. See the [examples README](examples/README.md).
 <!-- update_readme.py category=examples -->
 | Site | Script | Description |
 | :---: | --- | --- |
+| <img src="site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png" width="16" height="16" alt=""> | [SourceMonkey example: dialogs: dialog boxes](examples/dialogs/dialogs.user.js) | Click buttons to open each kind of dialog box: alert, confirm, prompt, Leave site, file choosers, pickers and a connection prompt. |
 | <img src="site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png" width="16" height="16" alt=""> | [SourceMonkey example: frames: every frame](examples/frames/every-frame.user.js) | Runs in the page and each of its frames, sharing a counter across them. |
 | <img src="site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png" width="16" height="16" alt=""> | [SourceMonkey example: frames: Frame B only](examples/frames/frame-b-only.user.js) | Matches only Frame B, so it runs on a page it doesn't match. |
 | <img src="site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png" width="16" height="16" alt=""> | [SourceMonkey example: frames: top frame only](examples/frames/top-only.user.js) | Matches the page and its frames, but @noframes keeps it to the top frame. |

@@ -178,6 +178,7 @@ All the example userscripts, by directory, generated from this directory's
 <!-- update_readme.py category=default -->
 | Script | Description |
 | --- | --- |
+| [SourceMonkey example: dialogs: dialog boxes](dialogs/dialogs.user.js) | Click buttons to open each kind of dialog box: alert, confirm, prompt, Leave site, file choosers, pickers and a connection prompt. |
 | [SourceMonkey example: frames: every frame](frames/every-frame.user.js) | Runs in the page and each of its frames, sharing a counter across them. |
 | [SourceMonkey example: frames: Frame B only](frames/frame-b-only.user.js) | Matches only Frame B, so it runs on a page it doesn't match. |
 | [SourceMonkey example: frames: top frame only](frames/top-only.user.js) | Matches the page and its frames, but @noframes keeps it to the top frame. |

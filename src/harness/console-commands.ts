@@ -44,7 +44,7 @@ import { representativeMatch } from '../match-targets.js';
 import { RUN_SCRIPT_LABEL, isContextMenuRunAt } from '../userscript-header.js';
 import { currentTab, defaultOf, dialogWaitingError, dialogWaitingMessage, NO_TABS, pickTab, runTrackers, showCommand, tabName } from './tab-refs.js';
 import {
-  buttonList, dialogBlock, dialogJson, dialogSummary, namesDialog, parseDialogId, setRunningCommand, setTrackersListening,
+  buttonList, dialogBlock, dialogJson, dialogName, dialogSummary, firstToAnswer, namesDialog, parseDialogId, setRunningCommand, setTrackersListening,
   settingUpTracker, type DialogButton, type DialogTracker, type WaitingDialog,
 } from './dialogs.js';
 import { runLogLabel } from './run-log.js';
@@ -335,8 +335,8 @@ function targetDialog(ctx: ConsoleContext, parsed: ParsedArgs): WaitingDialog | 
   if (parsed.tab !== undefined) {
     const tracker = tabDialogs(ctx, parsed.tab);
     if (!tracker) return false;
-    // The selected one when it's on that tab, as for the default.
-    const found = tracker.waiting.find((d) => d.id === ctx.selectedDialog) ?? tracker.waiting[0];
+    // The selected one when it's on that tab, else as for the default.
+    const found = tracker.waiting.find((d) => d.id === ctx.selectedDialog) ?? firstToAnswer(tracker.waiting);
     if (!found) ctx.out(`[sm-dev] No dialog is waiting on T${tracker.tab}.${elsewhereHint(ctx, tracker.tab)}`);
     return found;
   }
@@ -420,6 +420,12 @@ async function dialogCommand(ctx: ConsoleContext, parsed: ParsedArgs, cwd: strin
   }
   if (!button) {
     ctx.out(`${MISTAKE_PREFIX}${d.title} dialog ${d.id} has no OK button. Its buttons are ${buttonList(d)}.`);
+    return false;
+  }
+  // Its answer would wait on the page, which a JavaScript dialog holds.
+  const holder = d.needsPage ? ctx.tabs().find((t) => t.n === d.tab)?.dialogs?.stopping : undefined;
+  if (holder && holder !== d) {
+    ctx.out(`${MISTAKE_PREFIX}${dialogName(d)} can't be answered while ${dialogName(holder)} blocks its page. Answer ${holder.id} first. Use ${quoted(showCommand(ctx, holder))} to see how.`);
     return false;
   }
   const values = Object.fromEntries(d.fields.map((f) => [f.name, f.value ?? f.default]));

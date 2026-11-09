@@ -106,6 +106,13 @@
       "category": "debugging"
     },
     {
+      "path": "examples/dialogs/dialogs.user.js",
+      "category": "examples",
+      "site_icons": [
+        "site-icons/icon-jshute96.github.io_SourceMonkey_src_icons_icon-48.png"
+      ]
+    },
+    {
       "path": "examples/frames/every-frame.user.js",
       "category": "examples",
       "site_icons": [

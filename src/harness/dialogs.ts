@@ -59,6 +59,11 @@ export interface DialogSpec {
   stopsPage: boolean;
   /** The browser doesn't show it, as sm-dev answers it (a file chooser). */
   hidden?: boolean;
+  /**
+   * Answering it runs on its page (a file chooser's `change` or
+   * `cancel` event), so it waits while a JavaScript dialog blocks the page.
+   */
+  needsPage?: boolean;
   /** The run script it's about (`PreparedScript.id`): a connection prompt's. */
   scriptId?: string;
   /** A connection prompt's request: its host, method and URL without the query. */
@@ -138,15 +143,19 @@ function javascriptSpec(dialog: Dialog, url: string, answered: () => void): Dial
 interface ChooserEvent {
   frameId: string;
   mode: 'selectSingle' | 'selectMultiple';
+  /** Absent for a File System Access picker, which `chooserOpened` doesn't list. */
   backendNodeId?: number;
 }
 
+/** Shown when the page asked for a File System Access picker while file choosers are caught. */
+export const PICKER_REFUSED = 'Chrome refused the page\'s File System Access picker (`showOpenFilePicker`, `showSaveFilePicker` or `showDirectoryPicker`) with an AbortError. Chrome refuses these pickers while sm-dev catches file choosers, which it does while the run takes commands.';
+
 // An `<input type=file>`'s chooser, caught before Chrome shows it.
-async function chooserSpec(cdp: CDPSession, event: ChooserEvent, url: string): Promise<DialogSpec> {
+async function chooserSpec(cdp: CDPSession, event: ChooserEvent & { backendNodeId: number }, url: string): Promise<DialogSpec> {
   const multiple = event.mode === 'selectMultiple';
   let accepts = '';
   let directory = false;
-  if (event.backendNodeId !== undefined) {
+  {
     try {
       const { node } = await cdp.send('DOM.describeNode', { backendNodeId: event.backendNodeId });
       const attrs = node.attributes ?? [];
@@ -166,7 +175,6 @@ async function chooserSpec(cdp: CDPSession, event: ChooserEvent, url: string): P
   // A page waiting on the chooser hears of a cancel through the input's
   // `cancel` event, as Chrome's own chooser sends it.
   const cancel = async (): Promise<boolean> => {
-    if (event.backendNodeId === undefined) return true;
     const { object } = await cdp.send('DOM.resolveNode', { backendNodeId: event.backendNodeId });
     if (!object.objectId) return false;
     await cdp.send('Runtime.callFunctionOn', {
@@ -179,7 +187,7 @@ async function chooserSpec(cdp: CDPSession, event: ChooserEvent, url: string): P
     title: 'File chooser', from: 'Chrome', fromText: `Chrome, for an <input type=file> on ${url}`, details,
     fields: [field],
     buttons: [{ label: 'Open', role: 'accept' }, { label: 'Cancel', role: 'cancel' }],
-    stopsPage: false, hidden: true,
+    stopsPage: false, hidden: true, needsPage: true,
     press: async (button, values) => {
       const cancelling = button === 'close' || button.role === 'cancel';
       const files = values[field.name];
@@ -188,7 +196,6 @@ async function chooserSpec(cdp: CDPSession, event: ChooserEvent, url: string): P
       }
       try {
         if (cancelling) return await cancel();
-        if (event.backendNodeId === undefined) return false;
         await cdp.send('DOM.setFileInputFiles', { files: files!, backendNodeId: event.backendNodeId });
         return true;
       } catch {
@@ -293,7 +300,7 @@ export function dialogBlock(d: WaitingDialog, { isDefault, now, heading = '' }: 
     // rest hold text a page or script wrote (a message, a script's
     // name), so they go in as text. A message's later lines line up
     // under its first.
-    const shown = value.split('\n').join(`\n  ${' '.repeat(width)}`);
+    const shown = value.split('\n').map((l, i) => (i === 0 || l === '' ? l : `  ${' '.repeat(width)}${l}`)).join('\n');
     lines.push(label === 'Opened' ? ui`  ${text}${message(value)}` : ui`  ${text}${shown}`);
   }
   if (d.fields.length > 0) {
@@ -531,7 +538,14 @@ export class DialogTracker {
 
   // A file chooser Chrome handed over instead of showing it.
   private async chooserOpened(cdp: CDPSession, event: ChooserEvent): Promise<void> {
-    const spec = await chooserSpec(cdp, event, this.page.url());
+    // No input: a File System Access picker. Chrome
+    // has already failed the call with an AbortError, so nothing waits
+    // to be answered.
+    if (event.backendNodeId === undefined) {
+      this.say(S.WARNING_PREFIX + PICKER_REFUSED);
+      return;
+    }
+    const spec = await chooserSpec(cdp, { ...event, backendNodeId: event.backendNodeId }, this.page.url());
     const key = {};
     const press = spec.press;
     spec.press = async (button, values) => {
@@ -831,8 +845,17 @@ export interface DialogScope {
 export function defaultDialog(scope: DialogScope): WaitingDialog | undefined {
   const all = scope.trackers.flatMap((t) => t.waiting).sort((a, b) => a.openedAt - b.openedAt);
   return all.find((d) => d.id === scope.selected)
-    ?? all.find((d) => d.tab === scope.currentTab)
-    ?? all[0];
+    ?? firstToAnswer(all.filter((d) => d.tab === scope.currentTab))
+    ?? firstToAnswer(all);
+}
+
+/**
+ * Of `dialogs` (oldest first), the one to answer first: one that blocks
+ * its page, since the others on that page can't be answered until it
+ * is, else the oldest.
+ */
+export function firstToAnswer(dialogs: WaitingDialog[]): WaitingDialog | undefined {
+  return dialogs.find((d) => d.stopsPage) ?? dialogs[0];
 }
 
 /** A dialog's id as given (`t1.2` too), or null when it isn't shaped like one. */

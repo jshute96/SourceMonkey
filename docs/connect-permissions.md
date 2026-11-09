@@ -81,9 +81,9 @@ Worker side: `connect-prompt.ts`. Window: `connect-prompt.html` and
 - Each request waits up to 4 minutes (`CONNECT_PROMPT_WAIT_MS`), under
   the page's own 5-minute give-up, then fails with a message saying
   the prompt had no answer.
-- A prompt with no request left waiting on it (timed out, aborted, or
-  its tab closed) closes, so it doesn't ask about nothing or keep the
-  worker running.
+- A prompt with no request left waiting on it (past the 4 minutes,
+  aborted, or its tab closed) closes, so it doesn't ask about nothing
+  or keep the worker running.
 - A script gets at most 3 prompt windows at once
   (`MAX_PROMPTS_PER_SCRIPT`). A request for a fourth site fails at once,
   so a script looping over hosts can't bury the user in windows.
@@ -92,8 +92,9 @@ Worker side: `connect-prompt.ts`. Window: `connect-prompt.html` and
 - The answer carries the script id and host, so it is saved even if
   the worker restarted and lost track of the window. The worker takes
   answers only from the prompt page itself.
-- A request aborted (or whose tab closed, or whose `timeout` fired)
-  while it waits stops waiting at once. `reserveXhr` makes it abortable
+- A request aborted (or whose tab closed) while it waits stops waiting
+  at once. The request's own `timeout` starts only in `runXhr`, after
+  the prompt is answered. `reserveXhr` makes it abortable
   before `runXhr` starts, and the post-redirect check is given the
   request's abort signal too.
 - The Log tab (`gm-xhr` source) gets:

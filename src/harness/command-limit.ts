@@ -34,6 +34,11 @@ const GRACE_MS = 3000;
 // own limit, and a block may hold many.
 const UNLIMITED = new Set(['wait', 'stop', 'exit', 'start', 'attach', 'cdp']);
 
+// Commands with a shorter backstop, since they wait on nothing that
+// can be slow: answering a dialog is one CDP call or one message to the
+// extension, and `dialog` doesn't wait for what the page does after.
+const SHORT_LIMITS_MS: Record<string, number> = { dialog: 10_000 };
+
 /**
  * The `--timeout-seconds` given in `line`, in ms, or undefined when
  * none is (or it isn't a number of seconds, which the command itself
@@ -52,7 +57,7 @@ export function givenTimeoutMs(line: string): number | undefined {
 export function commandLimitMs(command: string, givenMs: number | undefined, defaultMs = COMMAND_LIMIT_MS): number | null {
   if (UNLIMITED.has(command)) return null;
   // Node's timers take at most 2^31 - 1 ms, and fire at once past it.
-  return givenMs === undefined ? defaultMs : Math.min(givenMs + GRACE_MS, MAX_TIMER_SECONDS * 1000);
+  return givenMs === undefined ? Math.min(defaultMs, SHORT_LIMITS_MS[command] ?? defaultMs) : Math.min(givenMs + GRACE_MS, MAX_TIMER_SECONDS * 1000);
 }
 
 // How long a page has to answer before it counts as stuck: well past a

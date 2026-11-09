@@ -236,8 +236,8 @@ Serves `sm-dev list`, `stop`, `attach` and the commands sent to a run.
   - `start` keeps one deadline for its loads, script reports and
     settling.
 - Each command also has a backstop for hangs (`command-limit.ts`):
-  60 seconds, or S plus 3 seconds of grace for the last wait to say
-  why it gave up.
+  60 seconds (10 for `dialog`, whose answers are one quick call), or S
+  plus 3 seconds of grace for the last wait to say why it gave up.
   It also ends what isn't a wait, such as an `eval`'s expression.
   - `wait`, `stop`, `exit`, `start`, `attach` and `cdp` have none.
     Each `cdp` call has its own limit, and a block may make many.
