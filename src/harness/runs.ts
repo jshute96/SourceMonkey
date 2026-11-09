@@ -16,6 +16,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
+import { killLeftBrowser } from './browser-process.js';
 import { STDERR_LINE } from './json-output.js';
 import { err as errorLine, escapeMarkup, heading, id as idRole, markupLines, plainLine, quoted, roleCell, tableLines, textCell, url, type Cell } from './output-style.js';
 import { LOG_SOURCES, type LogSource } from './run-logs.js';
@@ -31,6 +32,9 @@ export interface RunRecord {
   browser: string;
   /** A browser the run launched, which closes when the run ends. */
   owned?: boolean;
+  /** That browser's main process and temp profile, for sm-dev to kill it if the run dies first. */
+  browserPid?: number;
+  browserProfile?: string;
   /** A browser without a window. */
   headless?: boolean;
   /** The loaded scripts' full paths. `list` shows their file names. */
@@ -491,7 +495,12 @@ export async function liveRuns(): Promise<RunRecord[]> {
       return;
     }
     if (processAlive(record.pid) && await listening(id) !== false) runs.push(record);
-    else await forget(id, record.pid);
+    else {
+      await forget(id, record.pid);
+      // A run that died (killed outright, say) never closed the browser
+      // it launched.
+      if (record.owned && record.browserPid !== undefined && record.browserProfile && !processAlive(record.pid)) killLeftBrowser(record.browserPid, record.browserProfile);
+    }
   }));
   return runs.sort((a, b) => a.started - b.started);
 }
@@ -650,20 +659,23 @@ export async function sendLine(id: string, line: string, out: (line: string) => 
   }
 }
 
-// How long a run gets to answer `stop`, and once it has,
-// how long to finish ending (a tab stopped on a dialog takes a while to
-// let go). Past either, it is sent SIGTERM, and given the first again
-// to go.
-const STOP_WAIT_MS = 15_000;
-const TEARDOWN_WAIT_MS = 60_000;
+// How long a run gets to answer `stop`, and once it has, to finish
+// ending: its teardown steps are bounded, and a browser it launched
+// that won't close is killed. Past either, it is sent SIGTERM, and
+// given the first again to go, and then SIGKILL.
+const STOP_WAIT_MS = 5_000;
+const TEARDOWN_WAIT_MS = 40_000;
 
 /**
  * Ends a run as its `stop` would, passing on what it prints as it ends.
  * One that doesn't answer, or doesn't finish ending in time, is sent
  * SIGTERM: it ends one that never got the `stop` as Ctrl-C would, and
- * kills one stuck ending. A run found to have ended already is never
- * signalled, since its pid may be another process's by now. Resolves to
- * whether the run has gone. `markup`: as for sendLine.
+ * kills one stuck ending. One that SIGTERM doesn't end is killed. A
+ * browser the run launched is killed too, if it's still running, so
+ * a run that died leaves none behind. A run found to have ended
+ * already is never signalled, since its pid may be another process's
+ * by now. Resolves to whether the run has gone. `markup`: as for
+ * sendLine.
  */
 export async function stopRun(record: RunRecord, out: (line: string) => void, markup = false): Promise<boolean> {
   const abort = new AbortController();
@@ -680,22 +692,44 @@ export async function stopRun(record: RunRecord, out: (line: string) => void, ma
   if (outcome === 'closed' && !answered) outcome = 'failed';
   // So a connection still open can't keep this process alive.
   abort.abort();
+  // Its browser, once the run is gone, if the run didn't close it.
+  const leftBrowser = (): void => {
+    if (record.owned && record.browserPid !== undefined && record.browserProfile && killLeftBrowser(record.browserPid, record.browserProfile)) {
+      out(`[sm-dev] The browser run ${record.id} launched was still running, so it was killed`);
+    }
+  };
   if (outcome === 'gone') {
     await forget(record.id, record.pid);
+    leftBrowser();
     out(`[sm-dev] Run ${record.id} had already ended`);
     return true;
   }
-  if (outcome === 'closed' && await exited(record.pid, STOP_WAIT_MS)) return true;
+  if (outcome === 'closed' && await exited(record.pid, STOP_WAIT_MS)) {
+    leftBrowser();
+    return true;
+  }
   try {
     process.kill(record.pid, 'SIGTERM');
   } catch {
     // Gone meanwhile.
   }
   if (await exited(record.pid, STOP_WAIT_MS)) {
+    leftBrowser();
     out(`[sm-dev] Run ${record.id} ${answered ? 'did not finish ending' : 'did not answer'}, so it was sent SIGTERM, and has ended`);
     return true;
   }
-  out(`[sm-dev] Run ${record.id} (pid ${record.pid}) has not ended, even after SIGTERM`);
+  try {
+    process.kill(record.pid, 'SIGKILL');
+  } catch {
+    // Gone meanwhile.
+  }
+  if (await exited(record.pid, STOP_WAIT_MS)) {
+    await forget(record.id, record.pid);
+    leftBrowser();
+    out(`[sm-dev] Run ${record.id} did not end after SIGTERM, so it was killed`);
+    return true;
+  }
+  out(`[sm-dev] Run ${record.id} (pid ${record.pid}) has not ended, even after SIGKILL`);
   return false;
 }
 

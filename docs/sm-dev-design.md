@@ -360,13 +360,40 @@ The format is in [sm-dev-json.md](sm-dev-json.md). How it gets there:
 ### Stopping
 
 - `stop` expects the run's `Stopping run D1` line first.
-  - With it, it waits a minute for the teardown before `SIGTERM`.
-  - Without it (no answer in 15 seconds, or a close without it), it
+  - With it, it waits 40 seconds for the teardown before `SIGTERM`.
+  - Without it (no answer in 5 seconds, or a close without it), it
     signals at once.
+  - A run that `SIGTERM` doesn't end within 5 seconds gets `SIGKILL`.
   - Its connection is dropped either way, so `stop` itself never hangs.
 - The run handles `SIGTERM` as `stop` (on Windows it kills outright,
   with no cleanup). The signal drops the handlers, so a second one
   during teardown kills the run.
+
+#### Teardown and the launched browser
+
+- Each teardown step (downloads, tabs, the extension link, another
+  manager) gets 3 seconds: a stuck page or a browser gone quiet answers
+  none of them.
+  - Removing the run's scripts from a person's own Tampermonkey or
+    Violentmonkey gets 10, as it may have many to go through. Past
+    that, the run says the next run removes them.
+- A launched browser then gets 5 seconds to close, and its process
+  group is killed either way (`browser-process.ts`).
+  - It runs as its own process group (Playwright and `chrome-launch.ts`
+    both spawn it detached), so killing the group ends its helpers too.
+  - The run reads its main process's pid over CDP
+    (`SystemInfo.getProcessInfo`) and keeps it in its record
+    (`browserPid`), with its temp profile (`browserProfile`).
+- A run that dies without its teardown (killed outright, say):
+  - Playwright's Chromium ends with it anyway, as it talks to the run
+    over a pipe.
+  - A temp Google Chrome doesn't. `chrome-launch.ts` ends it on the
+    signals the run doesn't handle, but nothing can on `SIGKILL`.
+  - So when sm-dev finds a run dead (any command that lists runs, `stop`
+    included), it kills that run's browser if it is still running.
+  - It checks first that the pid's command line names the run's temp
+    profile, so a process that got the pid since is left alone. Windows
+    has no such check, so nothing is killed there.
 
 ### The log (`run-log.ts`)
 

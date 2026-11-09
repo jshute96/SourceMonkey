@@ -2107,7 +2107,10 @@ sm-dev stop                               # or stop D1, or stop --all
   its own, until the run ends or Ctrl-C, which leaves it going.
 - `sm-dev stop [ID]` stops the run sm-dev works with (or the one
   named); `--all` stops all of them. One that doesn't respond is
-  killed.
+  killed, along with a browser it launched.
+- A browser a run launched ends with the run: one that doesn't close
+  in time is killed. One left by a run that was itself killed is killed
+  once sm-dev next looks at the runs (not on Windows).
 - `exit` (or Ctrl-C) ends sm-dev. A run it started without `--detach`
   stops with it; a run it only attached to goes on.
 - At the prompt or on stdin, `start`, `attach`, `stop`, `exit` and

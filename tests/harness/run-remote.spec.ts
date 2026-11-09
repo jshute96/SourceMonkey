@@ -16,6 +16,7 @@ import { existsSync, readFileSync, readlinkSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { alive } from '../../lib/harness/browser-process.js';
 import { stuckTabs } from '../../lib/harness/stuck-tabs.js';
 import { launchDebugBrowser, openTab } from '../fixtures/debug-browser.js';
 import { test, expect } from '../fixtures/harness.js';
@@ -499,8 +500,10 @@ test('a new run closes the last run\'s tab; nodes print as tags; own refs decode
     });
     const first = await setup.cli('--root', scriptsDir.path, 'start', '--browser', String(setup.port), ticker, url, '--', 'wait', 'log', 'tick', '--', 'wait', '1s');
     // A line ticking every 10ms shows once in each command's output,
-    // then how many more times it came.
-    expect(first.filter((l) => l === '[script log] [ticker] tick').length).toBeLessThan(6);
+    // then how many more times it came. Each other line between ticks
+    // (the start event, a command's echo, stopping) shows it again, so a
+    // few more than one per command, but never the hundreds it came.
+    expect(first.filter((l) => l === '[script log] [ticker] tick').length).toBeLessThan(10);
     const during = first.slice(first.indexOf('arg > wait 1s'));
     expect(during).toContainEqual(expect.stringMatching(/^\[sm-dev\] Repeated \d{2,} more times$/));
     expect(first).toContain('[sm-dev] Run D1 ended');
@@ -629,6 +632,27 @@ test('a dialog in a tab the run doesn\'t own is left open in a temp browser too'
     expect(await within(answered, 2000)).toBeUndefined();
     ws.close();
     await setup.cli('--run', 'D2', 'stop');
+  } finally {
+    await setup.cleanup();
+  }
+});
+
+test('stop ends a run whose page is stuck in a loop, with its browser', async ({ fixtureServer }) => {
+  test.setTimeout(90_000);
+  const setup = await setUp();
+  const record = (id: string): { pid: number; browserPid?: number } => JSON.parse(readFileSync(path.join(setup.env.SM_DEV_RUNS_DIR!, `${id}.json`), 'utf8'));
+  try {
+    // A page stuck in a loop: `stop` still ends the run, and its browser.
+    expect((await setup.cli('--temp-browser', '--run', 'D3', 'start', `${fixtureServer.baseUrl}/target.html`, '--detach')).join('\n')).toMatch(/Started as run D3/);
+    const stuck = record('D3');
+    expect(stuck.browserPid).toEqual(expect.any(Number));
+    const looping = setup.cli('--run', 'D3', 'eval', 'while (true) {}');
+    await new Promise((r) => setTimeout(r, 1000));
+    const started = Date.now();
+    await setup.cli('--run', 'D3', 'stop');
+    expect(Date.now() - started).toBeLessThan(25_000);
+    await expect.poll(() => alive(stuck.browserPid!)).toBe(false);
+    await looping;
   } finally {
     await setup.cleanup();
   }

@@ -299,6 +299,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/page-commands.ts` | The run commands that drive and read a tab's page, from `click` and `eval` to `snapshot` and raw `cdp` calls |
 | `src/harness/snapshot.ts` | `snapshot`'s element refs, the parts it shows (on screen, a selector's matches, `--find`), and `probe --css`'s suggested CSS selectors |
 | `src/harness/browser-lang.ts` | `sm-dev start --lang`: checks the tags and sets them on tabs; builds GM requests' `Accept-Language` |
+| `src/harness/browser-process.ts` | Ending a browser a run launched, its whole process group, however the run ends |
 | `src/harness/browser-launch.ts` | `sm-dev --open-browser`: starts a browser that stays open, on a kept profile for each browser and port, unless one is up |
 | `src/harness/chrome-launch.ts` | `--temp-browser --browser-type chrome`: a throwaway Google Chrome with the manager loaded over CDP |
 | `src/harness/rebuild-advice.ts` | Gives the steps to rebuild or update sm-dev, by whether it's a local build or a published copy |

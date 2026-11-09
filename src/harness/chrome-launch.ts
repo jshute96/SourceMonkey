@@ -67,7 +67,7 @@ export interface TempChromeOptions {
  * `close` closes it and deletes the profile. Throws an error saying why
  * when it can't launch it.
  */
-export async function launchTempChrome(options: TempChromeOptions): Promise<{ endpoint: string; close(): Promise<void> }> {
+export async function launchTempChrome(options: TempChromeOptions): Promise<{ endpoint: string; profile: string; close(): Promise<void> }> {
   const { manager, port } = options;
   const dir = managerDir(manager);
   const { file, name } = await browserBinary('chrome');
@@ -134,7 +134,7 @@ export async function launchTempChrome(options: TempChromeOptions): Promise<{ en
     const loaded = await loadUnpacked(endpoint, dir);
     await allowUserScripts(endpoint, loaded);
     await settleTabs(endpoint, manager, loaded);
-    return { endpoint, close };
+    return { endpoint, profile, close };
   } catch (err) {
     await close();
     if (err instanceof ExtensionMissingError) throw new Error(extensionNotLoaded(name, dir));

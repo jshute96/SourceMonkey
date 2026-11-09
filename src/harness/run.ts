@@ -23,6 +23,7 @@ import { managerState, managersIn, otherManagersWarning, stateLabel, type Manage
 import { managerUnusable, useTempBrowser } from './manager-advice.js';
 import { ExtensionHost } from './extension-host.js';
 import type { BrowserType } from './browser-launch.js';
+import { browserPid, killBrowser } from './browser-process.js';
 import { launchTempChrome } from './chrome-launch.js';
 import { launchExtensionBrowser } from './extension-launch.js';
 import { fetchManager, fetchedVersion } from './manager-fetch.js';
@@ -49,7 +50,7 @@ import { browserSentence, checkRunsDir, ownRunsDir, processAlive, RunControl, ru
 import { cspBlocksPageScripts, sandboxedPageNote, sandboxedPageWarning } from '../sandboxed-page.js';
 import { waitForStuckTabs } from './stuck-tabs.js';
 import { NO_TABS } from './tab-refs.js';
-import { budgeted, deadlineIn, inBudget, loadPage } from './wait.js';
+import { budgeted, deadlineIn, inBudget, loadPage, within } from './wait.js';
 
 export interface RunOptions extends ConnectOptions {
   files: string[];
@@ -237,12 +238,23 @@ export interface BrowserSession {
    * (`run`), or printed at once by `connectBrowser`.
    */
   notes: string[];
+  /** A launched browser's main process, when it could be read, and its temp profile. */
+  browserPid?: number;
+  browserProfile?: string;
   /**
    * End the session: a launched browser is closed; a connected one is
    * only disconnected, and its tabs, this page included, stay open.
    */
   done(): Promise<void>;
 }
+
+// How long each step of a run's teardown may take, and closing a
+// launched browser, before the run moves on (and kills the browser).
+const TEARDOWN_STEP_MS = 3000;
+const BROWSER_CLOSE_MS = 5000;
+// Removing the run's scripts from a person's own manager, which may
+// have many to go through.
+const REMOVE_SCRIPTS_MS = 10_000;
 
 /**
  * `runTab`: in a connected browser, open the run's tab with
@@ -306,6 +318,9 @@ async function openBrowser(
   // Closes a launched browser, which the run reaches over a CDP
   // connection of its own (see extension-launch.ts).
   let closeLaunched: (() => Promise<void>) | undefined;
+  // A launched browser's main process and its temp profile.
+  let launchedPid: number | undefined;
+  let launchedProfile: string | undefined;
   let downloadsDir: string | undefined;
   if (opts.tempBrowser) {
     let launched;
@@ -335,6 +350,10 @@ async function openBrowser(
       return null;
     }
     launchedAt = launched.endpoint;
+    // So the browser can be killed, helpers and all, at the end of the
+    // teardown, or by sm-dev once this run has died without closing it.
+    launchedPid = await browserPid(browser);
+    launchedProfile = launched.profile;
   } else {
     endpoint = cdpSetting(opts);
     try {
@@ -384,14 +403,22 @@ async function openBrowser(
     context,
     page,
     notes,
+    ...(launchedPid !== undefined && launchedProfile !== undefined ? { browserPid: launchedPid, browserProfile: launchedProfile } : {}),
     // On a connected browser `close()` only drops the connection; the
-    // browser and its tabs stay as they are.
+    // browser and its tabs stay as they are. A launched one is then
+    // killed, process group and all: one that closed leaves nothing to
+    // kill, and one that didn't in time (stuck, or gone quiet) is ended,
+    // and its profile then removed.
     done: async () => {
-      try {
-        await browser.close();
-      } finally {
-        await closeLaunched?.();
-      }
+      const closed = await within((async () => {
+        try {
+          await browser.close();
+        } finally {
+          await closeLaunched?.();
+        }
+      })().catch(() => undefined), BROWSER_CLOSE_MS);
+      if (launchedPid !== undefined) killBrowser(launchedPid);
+      if (closed === 'timeout') await within((closeLaunched?.() ?? Promise.resolve()).catch(() => undefined), BROWSER_CLOSE_MS);
     },
   };
 }
@@ -637,6 +664,7 @@ export async function run(opts: RunOptions): Promise<number> {
       started: remote.startedAt,
       browser: session.endpoint,
       ...(session.launched ? { owned: true } : {}),
+      ...(session.browserPid !== undefined ? { browserPid: session.browserPid, browserProfile: session.browserProfile } : {}),
       ...(session.headless ? { headless: true } : {}),
       scripts: opts.files,
       ...(manager !== DEFAULT_MANAGER ? { manager } : {}),
@@ -661,21 +689,31 @@ export async function run(opts: RunOptions): Promise<number> {
     ending = true;
     // No sent command runs against tabs being let go.
     remote.disarm();
+    // Each step bounded: a stuck page or a browser gone quiet answers
+    // none of them, and the run must still end. `session.done` then
+    // kills a launched browser that doesn't close.
+    const step = (work: () => Promise<unknown> | undefined): Promise<unknown> =>
+      within(Promise.resolve().then(work).catch(() => undefined), TEARDOWN_STEP_MS);
     // Also on a throw partway through, so a failed run leaves no
     // attachment behind in a browser the developer keeps using.
-    await held.downloads?.stop();
-    await held.tabs?.dispose().catch(() => undefined);
-    await held.attachment?.dispose().catch(() => undefined);
+    await step(() => held.downloads?.stop());
+    await step(() => held.tabs?.dispose());
+    await step(() => held.attachment?.dispose());
     // Its tabs run the extension's scripts again from their next load,
     // and the extension removes its test collection.
-    await held.extension?.close();
+    await step(() => held.extension?.close());
     if (held.external) {
       // Not from a browser that's gone: a throwaway one takes them with
       // it, and the next run in a person's own removes them as it starts.
       if (!session.launched && session.browser.isConnected()) {
-        await held.external.scripts.removeAll().catch((err) => opts.out(`[sm-dev] The run's scripts could not be removed from ${held.external!.manager.label}: ${(err as Error).message}`));
+        // Longer: a person's manager may have many scripts to go through.
+        const removed = await within(held.external.scripts.removeAll().then(
+          () => undefined,
+          (err: Error) => opts.out(`[sm-dev] The run's scripts could not be removed from ${held.external!.manager.label}: ${err.message}`),
+        ), REMOVE_SCRIPTS_MS);
+        if (removed === 'timeout') opts.out(`[sm-dev] The run's scripts were not all removed from ${held.external.manager.label} in time. The next run removes them as it starts.`);
       }
-      await held.external.manager.close().catch(() => undefined);
+      await step(() => held.external!.manager.close());
     }
     await session.done().catch(() => undefined);
     // On every way out, so a page tested after this is never taken

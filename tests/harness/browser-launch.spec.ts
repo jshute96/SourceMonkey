@@ -5,7 +5,7 @@
 // `--temp-browser --browser-type chrome` (chrome-launch.ts).
 
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -205,6 +205,28 @@ test('--temp-browser --browser-type chrome is a throwaway Google Chrome with the
     expect(readdirSync(temp)).toEqual([]);
   } finally {
     cli('--run', 'DChrome', 'stop');
+    await new Promise((r) => setTimeout(r, 500));
+    cleanUp();
+  }
+});
+
+test('the temp Chrome of a run that was killed outright is killed once the run is found dead', async () => {
+  test.skip(!CHROME_INSTALLED, 'Needs Google Chrome');
+  test.skip(process.platform === 'win32', 'Needs pgrep');
+  test.setTimeout(90_000);
+  const { temp, env, cli, cleanUp } = tempChromeSetup();
+  try {
+    expect(cli('--run', 'DKilled', '--browser-type', 'chrome', 'start', 'about:blank', '--detach').code).toBe(0);
+    const record = JSON.parse(readFileSync(path.join(env.SM_DEV_RUNS_DIR!, 'DKilled.json'), 'utf8')) as { pid: number };
+    // A signal Node can't handle: nothing in the run gets to close Chrome.
+    process.kill(record.pid, 'SIGKILL');
+    await new Promise((r) => setTimeout(r, 500));
+    expect(chromeIn(temp)).toBe(true);
+    // Any look at the runs finds it dead, and kills its Chrome.
+    cli('list');
+    await expect.poll(() => chromeIn(temp)).toBe(false);
+  } finally {
+    cli('--run', 'DKilled', 'stop');
     await new Promise((r) => setTimeout(r, 500));
     cleanUp();
   }
