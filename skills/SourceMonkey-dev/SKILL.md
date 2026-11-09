@@ -77,6 +77,8 @@ Where to look:
     `--timeout-seconds S` to any command that waits, after the command
     name (`wait selector .x --timeout-seconds 20`), for a slow site, and keep
     S under your shell tool's own time limit.
+  - An `eval` that awaits something slow needs `--timeout-seconds`, or
+    it fails after 60 seconds.
   - With no signal to wait for (sampling something over time), use
     `wait 2s`, not `sleep`.
 - **Don't use `--stop-after-seconds`.** A run that expires mid-test leaves pages

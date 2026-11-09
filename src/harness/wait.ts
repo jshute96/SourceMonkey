@@ -19,6 +19,8 @@
 // short one that matters changes the DOM when it fires, which the
 // window catches, since it starts no earlier than the wait.
 
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 import type { Frame, Page } from '@playwright/test';
 
 import type { ConsoleContext, ControlledTab } from './console-commands.js';
@@ -58,6 +60,48 @@ const SELECTOR_LOOK_MS = 1000;
 const WAIT_DONE = '[sm-dev] Wait done: ';
 const LOG_MATCHED = '[sm-dev] Wait matched log line: ';
 
+// ---------- The command's time budget ----------
+
+/**
+ * When the running command must be done by, from its
+ * `--timeout-seconds`: the limit on the whole command, so each wait in
+ * it keeps to what's left (see `budgeted`). Unset without the flag:
+ * each wait then takes its own default. A store of its own, as commands
+ * can run at once.
+ */
+const commandDeadline = new AsyncLocalStorage<CommandDeadline>();
+
+/** When a command must be done by, and the time it was given (`ms`). */
+export interface CommandDeadline {
+  at: number;
+  ms: number;
+}
+
+/** A deadline `ms` from now, for `inBudget`, or none for no `ms`. */
+export function deadlineIn(ms: number | undefined): CommandDeadline | undefined {
+  return ms === undefined ? undefined : { at: Date.now() + ms, ms };
+}
+
+/** Runs `work` with each wait in it keeping to `deadline` (see `budgeted`). */
+export function inBudget<T>(deadline: CommandDeadline | undefined, work: () => T): T {
+  return deadline ? commandDeadline.run(deadline, work) : work();
+}
+
+/** A wait's limit `ms`, cut to what's left of the command's time. */
+export function budgeted(ms: number): number {
+  const deadline = commandDeadline.getStore();
+  return deadline ? Math.max(1, Math.min(ms, deadline.at - Date.now())) : ms;
+}
+
+/**
+ * The limit to name when a wait of `ms` gives up: the command's own
+ * `--timeout-seconds` when it was given one, which is what ran out,
+ * rather than the part of it the wait had left.
+ */
+export function shownMs(ms: number): number {
+  return commandDeadline.getStore()?.ms ?? ms;
+}
+
 // ---------- Settling ----------
 
 export type SettleOutcome =
@@ -71,6 +115,7 @@ export type SettleOutcome =
 
 /** Waits for `tab` to settle, up to `timeoutMs`. */
 export async function settleTab(tab: ControlledTab, host: HarnessHost, timeoutMs = SETTLE_TIMEOUT_MS): Promise<SettleOutcome> {
+  timeoutMs = budgeted(timeoutMs);
   const started = Date.now();
   const deadline = started + timeoutMs;
   // Each look bounded by the time left too, so a short timeout holds.
@@ -143,9 +188,10 @@ async function busyWith(tab: ControlledTab, host: HarnessHost, lookMs: number, s
  */
 export async function settleTabs(host: HarnessHost, tabs: ControlledTab[], out: (line: string) => void, timeoutMs = SETTLE_TIMEOUT_MS): Promise<void> {
   // Only real tabs: a caller's `newTab` (a test's) may return none.
+  const ms = budgeted(timeoutMs);
   await Promise.all(tabs.filter((t) => t?.page && !t.stalled).map(async (t) => {
-    const outcome = await settleTab(t, host, timeoutMs);
-    if (!outcome.settled && 'busy' in outcome) out(`[sm-dev] ${notSettledMessage(t, timeoutMs, outcome.busy)}`);
+    const outcome = await settleTab(t, host, ms);
+    if (!outcome.settled && 'busy' in outcome) out(`[sm-dev] ${notSettledMessage(t, ms, outcome.busy)}`);
   }));
 }
 
@@ -182,6 +228,7 @@ export class PageNotLoaded extends Error {}
 export async function loadPage(
   page: Page, navigate: (opts: { waitUntil: 'commit'; timeout: number }) => Promise<unknown>, timeoutMs = LOAD_TIMEOUT_MS,
 ): Promise<void> {
+  timeoutMs = budgeted(timeoutMs);
   const deadline = Date.now() + timeoutMs;
   await navigate({ waitUntil: 'commit', timeout: timeoutMs });
   let ended = false;
@@ -202,7 +249,7 @@ export async function loadPage(
     return false;
   })();
   try {
-    if (!await Promise.race([load, stopped])) throw new PageNotLoaded(`The page did not finish loading within ${seconds(timeoutMs)}`);
+    if (!await Promise.race([load, stopped])) throw new PageNotLoaded(`The page did not finish loading within ${seconds(shownMs(timeoutMs))}`);
   } finally {
     ended = true;
     load.catch(() => undefined);
@@ -212,7 +259,7 @@ export async function loadPage(
 /** The message when `tab` didn't settle in time, as every wait says it. */
 export function notSettledMessage(tab: { n: number }, timeoutMs: number, busy: string[]): string {
   const list = busy.join('; ');
-  return `T${tab.n} did not settle within ${seconds(timeoutMs)}: ${list.charAt(0).toUpperCase()}${list.slice(1)}`;
+  return `T${tab.n} did not settle within ${seconds(shownMs(timeoutMs))}: ${list.charAt(0).toUpperCase()}${list.slice(1)}`;
 }
 
 // ---------- The wait command ----------
@@ -231,7 +278,7 @@ export async function waitFor(ctx: ConsoleContext, parsed: ParsedArgs): Promise<
   const timeout = parsed.flags['--timeout-seconds'];
   const given = timeoutFlagMs(parsed.flags, ctx.out);
   if (given === null) return false;
-  const timeoutMs = given ?? SETTLE_TIMEOUT_MS;
+  const timeoutMs = budgeted(given ?? SETTLE_TIMEOUT_MS);
 
   if (parsed.form === 'log') return waitForLog(ctx, parsed, timeoutMs);
 
@@ -245,7 +292,7 @@ export async function waitFor(ctx: ConsoleContext, parsed: ParsedArgs): Promise<
   const delay = delayWord !== undefined ? parseDelay(delayWord) : null;
   if (delay !== null) {
     if (delay > MAX_TIMER_SECONDS * 1000) return mistake(`A delay can be at most ${MAX_TIMER_SECONDS}s`);
-    if (timeout !== undefined && delay > timeoutMs) return mistake(`The delay ${delayWord} is longer than --timeout-seconds ${timeout}. Give a timeout at least as long, or none.`);
+    if (given !== undefined && delay > given) return mistake(`The delay ${delayWord} is longer than --timeout-seconds ${timeout}. Give a timeout at least as long, or none.`);
     if (parsed.tab !== undefined && !pickTab(ctx, parsed.tab)) return false;
     await new Promise((resolve) => setTimeout(resolve, delay));
     return true;
@@ -350,7 +397,7 @@ async function waitForSelector(
       return true;
     }
     if (Date.now() >= deadline) {
-      const limit = seconds(timeoutMs);
+      const limit = seconds(shownMs(timeoutMs));
       ctx.out(`${WAIT_FAILED}The selector ${selector} ${present ? `matched nothing on ${name} within` : `still matched on ${name} after`} ${limit}`);
       return false;
     }
@@ -416,7 +463,7 @@ async function waitForLog(ctx: ConsoleContext, parsed: ParsedArgs, timeoutMs: nu
   // Seen as it streamed, if its source streams; said again, so the
   // reply says it was found.
   if (later) return found(later);
-  ctx.out(`${WAIT_FAILED}No log line${named ? ` from ${tabName(named)}` : ''} matched ${matcher.shown} within ${seconds(timeoutMs)}`);
+  ctx.out(`${WAIT_FAILED}No log line${named ? ` from ${tabName(named)}` : ''} matched ${matcher.shown} within ${seconds(shownMs(timeoutMs))}`);
   ctx.out(searchedUpTo(logs.position()));
   return false;
 }

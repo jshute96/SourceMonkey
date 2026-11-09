@@ -413,7 +413,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     options: [
       { term: '--noscript', about: 'Run no scripts in the tab. (Sticky)', commands: TAB_LOADS },
       { term: '--script', about: 'Run the scripts in the tab again. (Undo `--noscript`.)', commands: TAB_LOADS },
-      { term: '--timeout-seconds S', about: 'Give up on the page loading after `S` seconds (default: `30`), or settling (default: `5`).', commands: TAB_LOADS },
+      { term: '--timeout-seconds S', about: 'Give up after `S` seconds (default: `30` to load, then `5` to settle).', commands: TAB_LOADS },
       { term: '--from-saved', about: 'Serve `.html` files as saved page snapshots, at their embedded URLs by default.', commands: ['newtab', 'open'] },
       { term: '--url URL', about: 'With `--from-saved` and one `.html` file: The URL to serve it at.', commands: ['newtab', 'open'] },
       { term: '--offline', about: 'With `--from-saved`: Block network requests from the saved pages.', commands: ['newtab', 'open'] },
@@ -669,7 +669,7 @@ export const HELP_SECTIONS: HelpSection[] = [
           { usage: 'cdp --file <path>', about: 'Make multiple `Method` calls from a file, one per line.', gap: true },
         ],
         options: [
-          { term: '--timeout-seconds S', about: 'Give up on each call after `S` seconds (default: `10`).', commands: ['cdp'] },
+          { term: '--timeout-seconds S', about: 'Give up after `S` seconds (default: `10` for each call).', commands: ['cdp'] },
           { term: '--reset', about: 'Drop the tab\'s session first, which undoes what its calls set (overrides, init scripts).', commands: ['cdp'] },
         ],
       },
@@ -1079,8 +1079,8 @@ export const HELP_SECTIONS: HelpSection[] = [
           {
             term: '--timeout-seconds S',
             about: [
-              'For all commands that wait: the longest each wait may take, in place of its default.',
-              'e.g. an element being ready to click (default: `5`), a page loading (`30`) or settling (`5`), a screenshot (`5`).',
+              'The longest the command may take (default: `60`).',
+              'Without it, each wait in the command also has its own limit: `5` seconds for an element to be ready to click, `30` for a page to load, `5` for it to settle, and `5` for a screenshot.',
             ],
             commands: TIMED,
           },

@@ -49,7 +49,7 @@ import { browserSentence, checkRunsDir, ownRunsDir, processAlive, RunControl, ru
 import { cspBlocksPageScripts, sandboxedPageNote, sandboxedPageWarning } from '../sandboxed-page.js';
 import { waitForStuckTabs } from './stuck-tabs.js';
 import { NO_TABS } from './tab-refs.js';
-import { loadPage, settleTabs } from './wait.js';
+import { budgeted, deadlineIn, inBudget, loadPage, settleTabs } from './wait.js';
 
 export interface RunOptions extends ConnectOptions {
   files: string[];
@@ -1202,6 +1202,9 @@ async function runInBrowser(
   // script wrote since survive it.
   if (!(await push(prepared, true))) return 1;
   await tabs.setScripts(prepared);
+  // `start --timeout-seconds`: the longest its tabs may take to load,
+  // their scripts to report and the tabs to settle, all together.
+  const startDeadline = deadlineIn(opts.timeoutMs);
   if (page) {
     const t1 = tabs.list()[0];
     // The other URLs given, or with --all the other scripts' pages, each
@@ -1224,10 +1227,10 @@ async function runInBrowser(
     // T1 is gone only if a page closed it on its own already.
     if (t1) tabs.announce(t1, urls[0]);
     for (const { tab, url } of opened) tabs.announce(tab, url);
-    await Promise.all([
+    await inBudget(startDeadline, () => Promise.all([
       ...(t1 && urls[0] ? [tabs.navigate(t1, urls[0], opts.timeoutMs)] : []),
       ...opened.map(({ tab, url }) => tabs.navigate(tab, url, opts.timeoutMs)),
-    ]);
+    ]));
     printSkipped(opts, start);
   } else {
     opts.out(NO_TABS);
@@ -1250,10 +1253,10 @@ async function runInBrowser(
       // page whose script has not registered anything yet. A piped
       // sequence of commands would otherwise hit exactly that.
       // Nothing will start with no scripts, or no tab to run in.
-      if (prepared.length > 0 && page) await waitForReports(host, tabs.list());
+      if (prepared.length > 0 && page) await inBudget(startDeadline, () => waitForReports(host, tabs.list()));
       // Then for the tabs to settle (see wait.ts), so the first command,
       // or `--detach`'s return, sees the page as its scripts left it.
-      if (!opts.noWait) await settleTabs(host, tabs.list(), opts.out, opts.timeoutMs);
+      if (!opts.noWait) await inBudget(startDeadline, () => settleTabs(host, tabs.list(), opts.out, opts.timeoutMs));
       const ctx: ConsoleContext = {
         host,
         tabs: () => tabs.list(),
@@ -1773,7 +1776,7 @@ class FollowedTabs {
 // grace period, for one that never says (a page that never loads).
 async function waitForReports(host: ExtensionHost, tabs: ControlledTab[], timeoutMs = 5000): Promise<void> {
   const giveUp = new AbortController();
-  const timer = setTimeout(() => giveUp.abort(), timeoutMs);
+  const timer = setTimeout(() => giveUp.abort(), budgeted(timeoutMs));
   const gaveUp = new Promise<void>((resolve) => giveUp.signal.addEventListener('abort', () => resolve()));
   try {
     await Promise.race([

@@ -20,7 +20,7 @@ import type { ControlledTab } from './console-commands.js';
 import { NoDocument, NoEvalHook, ScriptThrew, type ScriptScope } from './page-watch.js';
 import { jsonResult, type ProbeData } from './json-output.js';
 import { readInputFile, writeProblem } from './input-file.js';
-import { notSettledMessage, seconds, SETTLE_TIMEOUT_MS, settleTab, timeoutFlagMs } from './wait.js';
+import { budgeted, shownMs, notSettledMessage, seconds, SETTLE_TIMEOUT_MS, settleTab, timeoutFlagMs } from './wait.js';
 import { savePageHtml } from './save-html.js';
 import { shownPath } from './prepare.js';
 import { findFrame, frameNodes, parseFrameRef, type FrameIds } from './frames.js';
@@ -108,18 +108,19 @@ export async function runPageCommand(
   // A mistake in the command: `[sm-dev] ERROR: ...`, which ends it with exit code 2.
   const sayMistake = (text: string): void => say(`${ERROR_PREFIX}${text}`);
   const { page } = tab;
-  // `--timeout-seconds`: each wait the command does, in place of that
-  // wait's default.
+  // Each wait's limit: its default, or with `--timeout-seconds`, what's
+  // left of the command's time (see `budgeted`).
   const given = timeoutFlagMs(input.flags, out);
   if (given === null) return false;
-  const within = (defaultMs: number): number => given ?? defaultMs;
+  const within = (defaultMs: number): number => budgeted(given ?? defaultMs);
   // `--frame F2`: the iframe the selector or expression is for.
   const frame = await pickFrame(input.flags['--frame'], tab, say);
   if (frame === null) return false;
   // After a selector in what a command says it did, marked up.
   const frameShown = frame ? idRole(`F${tab.link.host.frameIds.number(frame)}`) : '';
   const inFrame = frame ? ui` in ${frameShown}` : '';
-  const actionMs = within(ACTION_TIMEOUT_MS);
+  // Each action's wait gets what's left when it starts.
+  const actionMs = (): number => within(ACTION_TIMEOUT_MS);
   // A file it names, from `cwd`, and as said back.
   const file = (name: string): string => path.resolve(cwd, name);
   const shown = (name: string): string => shownPath(file(name), cwd);
@@ -145,13 +146,14 @@ export async function runPageCommand(
       say(what);
       return;
     }
-    const settled = await settleTab(tab, tab.link.host, within(SETTLE_TIMEOUT_MS));
+    const settleMs = within(SETTLE_TIMEOUT_MS);
+    const settled = await settleTab(tab, tab.link.host, settleMs);
     if (!settled.settled && 'dialog' in settled) {
       say(ui`${what}. The page opened a dialog, which is waiting for an answer.`);
       return;
     }
     say(what);
-    if (!settled.settled && 'busy' in settled) say(notSettledMessage(tab, within(SETTLE_TIMEOUT_MS), settled.busy));
+    if (!settled.settled && 'busy' in settled) say(notSettledMessage(tab, settleMs, settled.busy));
   };
   try {
     switch (command) {
@@ -190,16 +192,17 @@ export async function runPageCommand(
         // A bare `eval` whose script has no scope runs its code in the
         // page, as said. With `--script` the script was asked for, so
         // that's a failure.
+        // With --timeout-seconds, what's left of it: how long to wait for
+        // a document, on a page between them.
+        const documentMs = (): number | undefined => (given === undefined ? undefined : budgeted(given));
         const evaluate = (): Promise<string> => {
-          // --timeout-seconds (`given`): how long to wait for a document,
-          // on a page between them.
-          if (typeof evalIn === 'string') return tab.link.evaluate(expression, evalIn, given, frame);
-          const inScript = evalIn.scope ? tab.link.evaluate(expression, evalIn.scope, given, frame) : Promise.reject(new NoEvalHook());
+          if (typeof evalIn === 'string') return tab.link.evaluate(expression, evalIn, documentMs(), frame);
+          const inScript = evalIn.scope ? tab.link.evaluate(expression, evalIn.scope, documentMs(), frame) : Promise.reject(new NoEvalHook());
           return inScript.catch((err: unknown) => {
             if (!(err instanceof NoEvalHook)) throw err;
             if (!evalIn.inPageIfMissing) throw err;
             say(ui`${noScope}, so this ran in the page`);
-            return tab.link.evaluate(expression, 'page', given, frame);
+            return tab.link.evaluate(expression, 'page', documentMs(), frame);
           });
         };
         const evaluated = evaluate().then((r) => { result = r; });
@@ -276,20 +279,20 @@ export async function runPageCommand(
         if (count === null) return false;
         const { target, which } = await firstVisible(page, selector, frame, count);
         const action = (command === 'click'
-          ? target.click({ ...options.click, timeout: actionMs })
-          : target.hover({ modifiers: options.click.modifiers, position: options.click.position, timeout: actionMs }))
+          ? target.click({ ...options.click, timeout: actionMs() })
+          : target.hover({ modifiers: options.click.modifiers, position: options.click.position, timeout: actionMs() }))
           // A point it can't reach says so, rather than that the element
           // was covered (by whatever is at that point) or not ready.
           .catch(async (err: Error) => {
             if (!/Timeout \d+ms exceeded/.test(err.message)) throw err;
             const why = plain(err);
             // The call log's own reasons (hidden, disabled, moving) stand.
-            if (why !== notReadyGeneral(actionMs / 1000) && !why.startsWith(COVERED)) throw err;
+            if (why !== notReadyGeneral(shownMs(actionMs()) / 1000) && !why.startsWith(COVERED)) throw err;
             const place = await placeProblem(page, target, options.click.position);
             if (place) throw new Error(place);
             // A headed browser's background tab can stall, which reads as
             // an element that never got ready.
-            if (why === notReadyGeneral(actionMs / 1000) && await inBackground(page)) {
+            if (why === notReadyGeneral(shownMs(actionMs()) / 1000) && await inBackground(page)) {
               // One sentence: plain() drops a final period.
               throw new Error(`${why}, and the tab is in the background, where the browser may pause it; use ${quoted('focus')} to bring it to the front, then try again`);
             }
@@ -343,8 +346,8 @@ export async function runPageCommand(
         if (count === null) return false;
         const { target: element, which } = await firstVisible(page, selector, frame, count);
         const typing = (async () => {
-          if (clear) await element.clear({ timeout: actionMs });
-          if (text) await element.pressSequentially(text, { timeout: actionMs });
+          if (clear) await element.clear({ timeout: actionMs() });
+          if (text) await element.pressSequentially(text, { timeout: actionMs() });
         })();
         const done = !text ? 'Cleared' : clear ? 'Cleared and typed into' : 'Typed into';
         await act(typing, ui`${done} ${namedMarked(page, selector)}${inFrame}${which && ` (${which})`}`);
@@ -395,7 +398,7 @@ export async function runPageCommand(
           // The whole page is `:root`, not `body`: scripts often add their
           // panels to <html>, after <body>.
           const whole = (frame ?? page).locator(':root');
-          tree = await whole.ariaSnapshot({ mode: 'ai', boxes: visible, timeout: actionMs });
+          tree = await whole.ariaSnapshot({ mode: 'ai', boxes: visible, timeout: actionMs() });
           noteRefs(page, tree, doc, frame);
           if (visible) {
             // A frame's boxes are from its own corner, so by its window.
@@ -413,7 +416,7 @@ export async function runPageCommand(
           const tops: string[][] = [];
           let rest: { total?: number; unsearched?: number } = {};
           for (let i = 0; found && i < count; i++) {
-            tops.push(await refsOf(found.nth(i), actionMs));
+            tops.push(await refsOf(found.nth(i), actionMs()));
             if (parts.limit > 0 && i + 1 < count && treeParts(tree, { ...parts, matches: tops }).length >= parts.limit) {
               // The selector's count is the total, but --find's hits in
               // the matches not looked at are unknown.
@@ -424,7 +427,7 @@ export async function runPageCommand(
           // Refs resolve against the latest snapshot only, so the whole
           // is taken again, after the matches'. Failing, it costs only the
           // refs outside the last match.
-          if (found) await whole.ariaSnapshot({ mode: 'ai', timeout: actionMs }).catch(() => null);
+          if (found) await whole.ariaSnapshot({ mode: 'ai', timeout: actionMs() }).catch(() => null);
           // A part can be the whole, however named (`:root`, `html`).
           const shown = treeParts(tree, { ...parts, matches: found ? tops : undefined }).map((part) => tidy(withoutDocument(part)));
           tree = shown.length === 0 ? '' : partsText(shown, parts.limit, rest);
@@ -471,20 +474,20 @@ export async function runPageCommand(
           if (count === null) return false;
           const picked = await firstVisible(page, selector, frame, count);
           which = picked.which;
-          await write(image, () => picked.target.screenshot({ path: file(image), timeout: actionMs }));
+          await write(image, () => picked.target.screenshot({ path: file(image), timeout: actionMs() }));
         } else if (frame) {
           // The frame as it shows on the page: its <iframe> element.
           if (input.flags['--full']) {
             sayMistake('The `--full` flag is for the whole page, not a frame');
             return;
           }
-          await write(image, async () => (await frame.frameElement()).screenshot({ path: file(image), timeout: actionMs }));
+          await write(image, async () => (await frame.frameElement()).screenshot({ path: file(image), timeout: actionMs() }));
         } else {
           try {
             await write(image, () => page.screenshot({ path: file(image), fullPage: input.flags['--full'] === true, timeout: within(SCREENSHOT_TIMEOUT_MS) }));
           } catch (err) {
             if ((err as Error).name !== 'TimeoutError' || page.isClosed()) throw err;
-            say(`Screenshot failed: Browser did not capture the page within ${seconds(within(SCREENSHOT_TIMEOUT_MS))}`);
+            say(`Screenshot failed: Browser did not capture the page within ${seconds(shownMs(given ?? SCREENSHOT_TIMEOUT_MS))}`);
             return false;
           }
         }
@@ -533,7 +536,7 @@ export async function runPageCommand(
               }
               entry.count = count;
               if (count === 0 || (!css && !html)) return;
-              const found = await probeMatches(page, selector, max, actionMs, frame).catch((err: Error) => plain(err));
+              const found = await probeMatches(page, selector, max, actionMs(), frame).catch((err: Error) => plain(err));
               if (typeof found === 'string') {
                 say(`The matches of ${quoted(selector)} could not be read: ${found}`);
                 return;
@@ -565,7 +568,7 @@ export async function runPageCommand(
             else {
               lines.push(ui`found    ${code(selector)}  (${count})`);
               if (!css && !html) return;
-              const found = await probeMatches(page, selector, max, actionMs, frame).catch((err: Error) => plain(err));
+              const found = await probeMatches(page, selector, max, actionMs(), frame).catch((err: Error) => plain(err));
               if (typeof found === 'string') {
                 lines.push(`    The matches could not be read: ${found}`);
                 return;
@@ -702,7 +705,7 @@ export async function runPageCommand(
                 say(`${method} got no answer, since the page navigated`);
                 return;
               }
-              say(`${method} got no answer within ${seconds(within(CDP_TIMEOUT_MS))}. A paused page never answers.`);
+              say(`${method} got no answer within ${seconds(shownMs(given ?? CDP_TIMEOUT_MS))}. A paused page never answers.`);
               return false;
             }
             if (!outcome) {
@@ -1101,7 +1104,7 @@ export function plain(err: Error): string {
   const key = /Unknown key: "(.+)"/.exec(first);
   if (key) return `${quoted(key[1])} is not a key name. Keys are named as in ${quoted('Enter')}, ${quoted('ArrowLeft')}, ${quoted('Shift+Tab')} (case-insensitive), or a single character.`;
   const timeout = /Timeout (\d+)ms exceeded/.exec(first);
-  if (timeout) return notReady(err.message, Number(timeout[1]) / 1000);
+  if (timeout) return notReady(err.message, shownMs(Number(timeout[1])) / 1000);
   return first.charAt(0).toUpperCase() + first.slice(1);
 }
 

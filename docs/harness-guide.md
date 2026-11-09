@@ -689,7 +689,7 @@ running, --stop-after-seconds N to watch it for a while, or commands after --.`
 | `--log-source <source>` | The log sources the stream shows (see [Logs](#logs)) |
 | `--lang zh-CN,en` | The languages the run's tabs prefer |
 | `--nowait` | Don't wait for the pages to settle |
-| `--timeout-seconds S` | The longest the pages may take to load, and then to settle |
+| `--timeout-seconds S` | Give up after S seconds (default: 30 to load, then 5 to settle) |
 | `--stop-after-seconds N` | Stop the run after N seconds |
 | `--stop-after-idle-seconds N` | Stop after N idle seconds (default 30 minutes; `0` never) |
 
@@ -832,8 +832,8 @@ The run's lifetime:
     stop`, so it can't expire mid-test.
 - `--nowait`: don't wait for the pages to settle before continuing. It
   still waits for the scripts to start.
-- `--timeout-seconds S`: the longest each page may take to load
-  (default 30 seconds), and then to settle (default 5).
+- `--timeout-seconds S`: give up after S seconds (default: 30 to load,
+  then 5 to settle).
 
 ### Which tab `start` uses
 
@@ -2003,20 +2003,24 @@ Limits of the heuristic:
 ### Giving up
 
 - The waits other than a delay give up after 5 seconds (a page load
-  after 30), or `--timeout-seconds S`, and say what was still busy:
+  after 30, a `cdp` call after 10), and say what was still busy:
   `T1 did not settle within 5s: 2 requests pending (/api/poll,
   /ads.js); the DOM is still changing (div#ticker)`.
-- `--timeout-seconds S` works on every command that waits, and sets
-  each of its waits (an element being ready, a load, settling).
-  - On `cdp`, it's each call's limit (default 10 seconds).
-  - Every other command takes it too, unlisted, and ignores it, so a
-    timeout given out of habit (`accept --timeout-seconds 5`) isn't a
-    mistake.
+- `--timeout-seconds S` is the longest the command may take (default
+  60), in place of those defaults.
+  - Every command takes it, so a timeout given out of habit
+    (`accept --timeout-seconds 5`) isn't a mistake.
 - An explicit `wait` that gives up fails, so a line of several commands
   (or a list in one argument, or commands piped in) stops there, and
   says the rest weren't run.
 - A command's own wait that gives up only says so, since the command
   itself worked.
+- A command still running past that limit fails, and the run takes the
+  next command. `wait`, `cdp`, `start` and `attach` have no such limit.
+  - A page stuck running JavaScript is stopped then, so it answers
+    commands again.
+  - The command keeps running behind, so what it does (a page load,
+    say) can still happen while the next command runs.
 
 ### `wait log`
 

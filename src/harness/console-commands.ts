@@ -32,7 +32,8 @@ import {
   collectionList, count, managerVerb, noSuchScript, noSuchVerb, scriptList, type ManagerControl, type ManagerRun, type RunView,
 } from './manager-commands.js';
 import { helpRequest, helpSubcommand, parseCommandArgs, splitWords, unquoteWhole, type ParsedArgs } from './command-args.js';
-import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, SAME_COMMANDS, commandHelp, commandSuggestion, commandSyntax, unsupportedCommand } from './command-list.js';
+import { commandLimitMs, givenTimeoutMs, pageBusy, stopPageScript } from './command-limit.js';
+import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, SAME_COMMANDS, TIMEOUT_FLAG, commandHelp, commandSuggestion, commandSyntax, unsupportedCommand } from './command-list.js';
 import { errorSentence, readJsonFile, writeProblem } from './input-file.js';
 import { CDP_FRAME_ARG, PAGE_COMMANDS, runPageCommand, type EvalIn } from './page-commands.js';
 import { editMultiLine } from './prompt-editor.js';
@@ -49,7 +50,7 @@ import {
 import { err as errorLine, message, MISTAKE_PREFIX, paintAs, paintOutput, quoted, streamHasColor, ui } from './output-style.js';
 // The roles for marked-up output, as S.id(...): their names are common locals here.
 import * as S from './output-style.js';
-import { loadPage, PageNotLoaded, seconds, settleTabs, timeoutFlagMs, waitFor, within } from './wait.js';
+import { budgeted, deadlineIn, inBudget, shownMs, loadPage, PageNotLoaded, seconds, settleTabs, timeoutFlagMs, waitFor, within } from './wait.js';
 import { userscriptLabel, type SavedPageHeader } from './save-html.js';
 import { visibleCommands } from '../menu-captions.js';
 import {
@@ -2010,6 +2011,8 @@ async function loadInTab(
   let timer: NodeJS.Timeout | undefined;
   let onClose!: () => void;
   let loadFailed = false;
+  // How long the scripts got to report, for saying so.
+  let reportMs = SCRIPTS_REPORT_MAX_MS;
   // Marked on the tab too, so the waits after it (settleTabs) skip it.
   const result = (ok: boolean): boolean => {
     tab.stalled = !ok;
@@ -2027,7 +2030,8 @@ async function loadInTab(
           resolve(true);
           return;
         }
-        timer = setTimeout(() => resolve(false), SCRIPTS_REPORT_MAX_MS);
+        reportMs = budgeted(SCRIPTS_REPORT_MAX_MS);
+        timer = setTimeout(() => resolve(false), reportMs);
         // Reports from the new document only, not late ones from the old.
         await host.untilReported(tab.link, ids, since, stopped.signal);
         // A script's start report comes before its body runs.
@@ -2046,7 +2050,7 @@ async function loadInTab(
     const waiting = host.unreported(tab.link, ids, since);
     const names = scripts.filter((s) => waiting.includes(s.id!)).map(preparedScriptName);
     if (names.length > 0) {
-      out(`[sm-dev] ${ui`${names.map((n) => S.name(n)).join(', ')} had not started on ${S.id(tabName(tab))} after ${SCRIPTS_REPORT_MAX_MS / 1000} seconds`}`);
+      out(`[sm-dev] ${ui`${names.map((n) => S.name(n)).join(', ')} had not started on ${S.id(tabName(tab))} after ${seconds(shownMs(reportMs))}`}`);
     }
     return result(false);
   } finally {
@@ -2335,6 +2339,7 @@ async function answerDialog(tab: ControlledTab, leave: boolean): Promise<void> {
 // or it didn't close in time.
 async function closeTab(ctx: ConsoleContext, tab: ControlledTab, force: boolean, timeoutMs: number): Promise<void> {
   const { page } = tab;
+  timeoutMs = budgeted(timeoutMs);
   if (force) {
     // A page stopped on a dialog never finishes closing.
     await answerDialog(tab, true);
@@ -2358,7 +2363,7 @@ async function closeTab(ctx: ConsoleContext, tab: ControlledTab, force: boolean,
   clearTimeout(timer);
   page.off('close', onClose);
   if (!asked && !page.isClosed()) {
-    ctx.out(`[sm-dev] ${tabName(tab)} didn't close within ${seconds(timeoutMs)}. Use ${quoted('closetab --force')} to close it without running its beforeunload handlers.`);
+    ctx.out(`[sm-dev] ${tabName(tab)} didn't close within ${seconds(shownMs(timeoutMs))}. Use ${quoted('closetab --force')} to close it without running its beforeunload handlers.`);
   }
 }
 
@@ -2744,7 +2749,7 @@ function looseMenuMatch(commands: MenuEntry[], argument: string): { entry?: Menu
 async function fireMenu(ctx: ConsoleContext, tab: ControlledTab, argument: string, timeoutMs?: number): Promise<boolean> {
   const all = (): MenuEntry[] => menuGroups(ctx, tab).flatMap((group) => group.commands);
   const numbered = /^[Mm](\d+)$/.exec(argument);
-  const deadline = Date.now() + (timeoutMs ?? MENU_WAIT_MS);
+  const deadline = Date.now() + budgeted(timeoutMs ?? MENU_WAIT_MS);
   for (;;) {
     const commands = all();
     // A label wins over a number, for a command whose label is one.
@@ -3520,7 +3525,36 @@ function commandContext(shared: ConsoleContext): ConsoleContext {
   });
 }
 
-export function commandRunner(shared: ConsoleContext): CommandRunner {
+/**
+ * Says that `command` ran past its limit (see command-limit.ts). With
+ * `stopPages`, it also stops the JavaScript of any page stuck in it,
+ * which is likely what the command waits on, and would hold up the
+ * next one too. A command that never reaches into a page (one that
+ * runs beside the queue) leaves the pages alone, since what runs there
+ * may be another command's.
+ */
+async function overLimit(ctx: ConsoleContext, command: string, limitMs: number, stopPages: boolean, say: (line: string) => void): Promise<void> {
+  say(`[sm-dev] ${errorLine(`The ${quoted(command)} command did not finish within ${seconds(limitMs)}. The run stopped waiting for it.`)}`);
+  // A page showing a dialog doesn't answer either, but isn't running
+  // anything: the dialog is said elsewhere.
+  const tabs = stopPages ? ctx.tabs().filter((t) => !t.dialogs?.current) : [];
+  const busy = (await Promise.all(tabs.map(async (t) => (await pageBusy(t.page) ? t : null)))).filter((t) => t !== null);
+  for (const tab of busy) {
+    say(await stopPageScript(tab.link)
+      ? `[sm-dev] ${ui`${S.id(tabName(tab))}'s page didn't answer for 3 seconds. sm-dev stopped the JavaScript running there.`}`
+      : `[sm-dev] ${ui`${S.id(tabName(tab))}'s page didn't answer for 3 seconds, and sm-dev could not stop the JavaScript running there`}`);
+  }
+  if (tabs.length > 0 && busy.length === 0) {
+    say('[sm-dev] No page is busy running JavaScript. The command is waiting for something else that hasn\'t finished, such as a promise or a request.');
+  }
+  say(`[sm-dev] Use ${quoted(TIMEOUT_FLAG)} to give it longer`);
+}
+
+/**
+ * Runs commands against `shared`. `limitMs`: each command's limit when
+ * it isn't given `--timeout-seconds`, shorter in tests.
+ */
+export function commandRunner(shared: ConsoleContext, { limitMs }: { limitMs?: number } = {}): CommandRunner {
   // The commands that take turns, each after the one before.
   let queue: Promise<unknown> = Promise.resolve();
   return (line, hooks) => {
@@ -3530,29 +3564,51 @@ export function commandRunner(shared: ConsoleContext): CommandRunner {
     // for 1); else 0. A throw is 2 for an invalid command (a file that
     // isn't there), 1 otherwise.
     let code = 0;
+    const typed = line.trim().split(/\s+/)[0];
+    const command = RUN_ALIASES[typed] ?? typed;
+    const beside = runsBeside(line);
+    // `--timeout-seconds`: the longest the whole command may take.
+    const given = givenTimeoutMs(line);
+    const limit = commandLimitMs(command, given, limitMs);
     const run = async (): Promise<void> => {
       let mistaken = false;
+      // Past its limit, the command's work runs on, but what it prints
+      // after that is dropped.
+      let abandoned = false;
       const out = ctx.out;
       // In JSON mode, the command's other lines (a note beside its
       // result, or its failure in place of one) go to stderr as text.
       ctx.json = hasJsonForm(line) ? hooks?.json === true : undefined;
-      const said: string[] = [];
-      ctx.out = (l) => {
-        said.push(l);
-        if (l.startsWith(MISTAKE_PREFIX)) mistaken = true;
+      const print = (l: string): void => {
         if (!ctx.json) out(l);
         else if (isJsonLine(l)) out(ctx.jsonLayout ? withLayout(l, ctx.jsonLayout) : l);
         else out(STDERR_LINE + l);
+      };
+      const said: string[] = [];
+      ctx.out = (l) => {
+        if (abandoned) return;
+        said.push(l);
+        if (l.startsWith(MISTAKE_PREFIX)) mistaken = true;
+        print(l);
       };
       const before = waitingState(ctx);
       try {
         // Typed at a person's prompt, `menu` needn't wait for a command
         // still to register: the person can see what there is.
         ctx.interactive = hooks?.interactive === true;
-        const result = await runConsoleCommand(line, ctx, { cwd: hooks?.cwd, words: hooks?.words });
+        // Its waits keep to that time, counted from its turn.
+        const work = inBudget(deadlineIn(given), () => runConsoleCommand(line, ctx, { cwd: hooks?.cwd, words: hooks?.words }));
+        const result = limit === null ? await work : await within(work, limit);
+        if (result === 'timeout') {
+          abandoned = true;
+          work.catch(() => undefined);
+          await overLimit(ctx, command, given ?? limit!, !beside, print);
+          code = 1;
+          return;
+        }
         // Not after a command that ends the run, nor a line saying the
         // same thing already (a command refused for an open dialog).
-        if (!ENDS_RUN.has(line.trim().split(/\s+/)[0])) {
+        if (!ENDS_RUN.has(typed)) {
           for (const reminder of waitingReminders(ctx, before, said)) ctx.out(reminder);
         }
         code = result === false ? 1 : typeof result === 'number' ? result : 0;
@@ -3564,13 +3620,12 @@ export function commandRunner(shared: ConsoleContext): CommandRunner {
         code = err instanceof UsageError ? 2 : 1;
       } finally {
         // What the command started that prints after it ends goes out
-        // plainly, as the page's own lines do.
+        // plainly, as the page's own lines do, unless it was abandoned.
         ctx.json = undefined;
         ctx.jsonLayout = undefined;
-        ctx.out = out;
+        ctx.out = abandoned ? () => undefined : out;
       }
     };
-    const beside = runsBeside(line);
     const done = (beside ? Promise.resolve() : queue).then(async () => {
       hooks?.start?.();
       const output = hooks?.answer && { line: hooks.answer, live: true };
@@ -3578,12 +3633,11 @@ export function commandRunner(shared: ConsoleContext): CommandRunner {
       // that only looks or waits, or an empty line (a message's turn):
       // what the command before it set off still counts.
       const began = shared.logs?.position();
-      const name = line.trim().split(/\s+/)[0];
       try {
         await inCommand.run({ inspects: onlyInspects(line) }, () => (output ? commandOutput.run(output, run) : run()));
       } finally {
         if (output) output.live = false;
-        if (name && name !== 'wait' && !onlyInspects(line)) shared.previousStart = began;
+        if (typed && typed !== 'wait' && !onlyInspects(line)) shared.previousStart = began;
         hooks?.end?.();
       }
     });

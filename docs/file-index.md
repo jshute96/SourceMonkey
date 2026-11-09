@@ -286,6 +286,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/path-args.ts` | Globs (`*`, `**`) and directory searches for sm-dev's file arguments |
 | `src/harness/playwright-chromium.ts` | Loads the repo's Playwright or sm-dev's own, and explains a missing Chromium build and the fix |
 | `src/harness/command-lines.ts` | Input lines into a run's commands: multi-line `{{ ... }}` blocks (`eval`, `set`, `type`, `cdp`), comments, sent lists |
+| `src/harness/command-limit.ts` | The time limit on a run's commands, and stopping a page stuck running JavaScript |
 | `src/harness/command-list.ts` | Every sm-dev command in one list, in the help's named sections, with subcommands, their options, and the help views |
 | `src/harness/output-style.ts` | Output markup by role (IDs, URLs, commands), sm-dev's message prefixes, tables, and painting lines for a terminal |
 | `src/harness/help-format.ts` | Help text layout: wrapping by shown width, bullets, `code` spans, and painting them in color for a terminal |
@@ -326,7 +327,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/run-log.ts` | A run's log file and temp browser downloads folder: timestamped names in `/tmp/sm-dev-logs-<user>`, stamped lines, per-run links |
 | `src/harness/download-watch.ts` | Prints where a download from one of the run's tabs was saved, from Chrome's CDP download events |
 | `src/harness/tab-refs.ts` | Naming and picking a run's tabs (`T2`, target ids), the current tab, the dialog message |
-| `src/harness/wait.ts` | The `wait` command, when a tab has settled (loaded, scripts started, quiet), and when a load is done |
+| `src/harness/wait.ts` | The `wait` command, when a tab has settled or a load is done, and the `--timeout-seconds` budget waits share |
 | `src/harness/runs.ts` | The runs on this machine: record files, control sockets, and the client connection (`RunClient`) to one |
 | `src/harness/launcher.ts` | The `sm-dev` bin: runs the project's own copy of sm-dev when there is one, else its own CLI |
 | `src/harness/cli.ts` | The `sm-dev` client: global options, `start`, `attach`, `stop`, `exit`, `validate`, `match`, `clear`, `list`, `--stdin`, `--interactive`, `--version` |
@@ -496,6 +497,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `tests/e2e/script-viewer-links.spec.ts` | E2E tests for the viewer's link rendering: Match-row anchors, Location anchor, body header `@match` / URL linkification |
 | `tests/unit/sw-teardown.test.mjs` | Unit tests for the `No SW` recognizer and the unhandledrejection handler that marks it handled |
 | `tests/unit/script-log-id.test.mjs` | Unit tests for `computeLogIds`: `#E<n>` for numbered scripts, the basename or `#N` for unnumbered ones |
+| `tests/unit/command-limit.test.mjs` | Unit tests for the command time limit and the `--timeout-seconds` budget its waits share |
 | `tests/unit/manager-commands.test.mjs` | Unit tests for the `collection` and `script` verbs: listings, naming, refusals, what the extension lists |
 | `tests/unit/sticky-numbers.test.mjs` | Unit tests for sticky numbers: lowest free first, the 7-day hold, shared numbers, which items get none |
 | `tests/unit/script-log.test.mjs` | Unit tests for the per-script log store: append/get/clear, concurrent appends, LOG_CAP rotation |
@@ -662,6 +664,7 @@ built extension loaded; fixtures in `tests/fixtures/harness.ts`.
 
 | File | Description |
 |------|-------------|
+| `tests/harness/command-limit.spec.ts` | A command past its time limit: the run takes the next one, and a page stuck in JavaScript is stopped |
 | `tests/harness/console-commands.spec.ts` | The commands typed into `sm-dev start`: `scripts`, `values`, `menu` by M number, dialogs, several tabs, stopped loads |
 | `tests/harness/frames.spec.ts` | sm-dev on the frames example: frame ids, `frames`, scripts per frame, menus, `match --frames`, `--frame`, JSON |
 | `tests/harness/run-tabs.spec.ts` | `sm-dev start` end to end: followed tabs, `--all`, `--notab`, `load` / `update` / `--watch` reloads, `--from-saved`, sandboxed pages, `--lang` |

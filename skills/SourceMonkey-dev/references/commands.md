@@ -204,7 +204,7 @@ asked to.
 | `reload [T2\|all]` | Reload. `--force` leaves a page that asks first ("Leave site?") |
 | `focus [T2]` | Bring to the front |
 | `--from-saved [--offline] [--url U]` | On `newtab`/`open`/`start`: serve `.html` files at their recorded URL |
-| `--timeout-seconds S` | On `newtab`/`open`/`reload`: give a slow page S seconds to load (default 30) and settle (default 5) |
+| `--timeout-seconds S` | On `newtab`/`open`/`reload`: give up after S seconds (default 30 to load, then 5 to settle) |
 
 ## Reading the page
 
@@ -246,7 +246,7 @@ asked to.
 | `accept [text]`, `dismiss` | Answer an open dialog (`--tab T2` for another tab's) |
 | `connect once\|cancel\|allow\|deny\|allow-all [host]` | Answer SourceMonkey's prompt for a host the selected script's `@connect` doesn't cover |
 | `--nowait` | On any of these: don't wait for the page to settle |
-| `--timeout-seconds S` | On any command that waits (these, `start`, `eval`, `snapshot`, `probe`, `screenshot`, `closetab`, `load`, `update`, `menu`): S seconds for each wait, in place of its default. On `cdp`, for each call (default 10) |
+| `--timeout-seconds S` | The longest the command may take (default 60), in place of each wait's own default (`cdp`: 10 for each call) |
 
 ## Waiting
 

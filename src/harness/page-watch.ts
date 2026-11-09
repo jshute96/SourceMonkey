@@ -295,6 +295,21 @@ export class PageAttachment implements PageLink {
     await this.cdp.send('Runtime.evaluate', { expression: '0' }).catch(() => undefined);
   }
 
+  /**
+   * Ends the JavaScript running in the page's main thread, for a page
+   * stuck in a script that never yields. Sent over this session, which
+   * was attached before the page got stuck: Playwright closes a stuck
+   * page when a new session attaches to it.
+   */
+  async stopScript(): Promise<void> {
+    if (this.closed) throw new Error('The tab has closed');
+    await this.cdp.send('Runtime.terminateExecution');
+    // When the script ends on its own first, the termination could stay
+    // pending and end the page's next script instead. This expression
+    // takes it, whichever way it went.
+    await this.cdp.send('Runtime.evaluate', { expression: '0' }).catch(() => undefined);
+  }
+
   // The main frame moved to the document `loaderId` names.
   private enterDocument(loaderId: string, url: string): void {
     const now = Date.now();

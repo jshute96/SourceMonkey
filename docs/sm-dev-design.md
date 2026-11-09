@@ -223,6 +223,54 @@ Serves `sm-dev list`, `stop`, `attach` and the commands sent to a run.
 - Lines arriving before the page has loaded wait for it.
 - Once the run starts tearing down, sent lines are refused.
 
+#### Command time limit
+
+- `--timeout-seconds S` is the limit on the whole command, not on
+  each wait in it.
+  - The runner sets the command's deadline (`inBudget` in `wait.ts`),
+    an `AsyncLocalStorage`, so commands running at once each have
+    their own. Each wait cuts its limit to the time left (`budgeted`),
+    so no signature along the way carries it.
+  - Without the flag, each wait keeps its own default (load 30s,
+    settle 5s, an element 5s, a `cdp` call 10s).
+  - `start` keeps one deadline for its loads, script reports and
+    settling.
+- Each command also has a backstop for hangs (`command-limit.ts`):
+  60 seconds, or S plus 3 seconds of grace for the last wait to say
+  why it gave up.
+  It also ends what isn't a wait, such as an `eval`'s expression.
+  - `wait`, `stop`, `exit`, `start`, `attach` and `cdp` have none.
+    Each `cdp` call has its own limit, and a block may make many.
+- Past the limit, the runner reports the command as failed and takes
+  the next one.
+  - The command's work can't be cancelled from Node, so it runs on.
+    What it prints through the command's own output is dropped. What
+    `load` and `update` print goes through the run's (`opts.out`), so
+    it still shows in the stream.
+  - An abandoned `load` or `update` still holds the run's `serial`
+    queue, and the budget of one waiting behind a `--watch` save counts
+    the wait too.
+  - What it does still lands: an abandoned `open` or `load` can
+    navigate a tab, or set the current tab, while the next command
+    runs. So after a timeout, commands can interleave.
+- A command in the queue then checks each tab that isn't showing a
+  dialog. A page that doesn't run a trivial expression within 3
+  seconds is stuck in JavaScript.
+  - That page gets `Runtime.terminateExecution` over the tab's own CDP
+    session (`PageAttachment.stopScript`), which ends the running
+    script in any world, the page's or a userscript's.
+  - It has to be a session attached before the page got stuck:
+    Playwright closes a stuck page when a new session attaches.
+  - An expression run right after takes a termination left pending,
+    in case the script ended on its own first, so the page's next
+    script isn't ended instead.
+  - Only the top frame's process is checked, so a cross-site iframe
+    stuck in its own process isn't found.
+- A command running beside the queue never reaches into a page, so it
+  leaves the pages alone: what runs there may be another command's.
+- With no stuck page, the command was waiting on something else that
+  hasn't finished (a promise, a request), and the runner says so.
+
 #### When a command is done
 
 The reply ends when the command does, with no wait after it. Commands
@@ -573,8 +621,8 @@ sm-dev's up-front check runs it too.
   - Once the subcommand is known, a flag it doesn't take is refused,
     wherever it was given (`script --out x enable`).
   - A quoted word is never a flag.
-  - `--timeout-seconds` is taken by any command: one that waits on
-    nothing (`accept`) checks its value and ignores it, unlisted.
+  - `--timeout-seconds` is taken by any command: on one that waits on
+    nothing (`accept`), unlisted, it only sets the backstop for hangs.
   - `--help` where a flag can go is a request for the command's help
     (`help` in the result). The prompt, stdin and the run show
     `help <command>`'s text for it, or the subcommand's
