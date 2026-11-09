@@ -29,7 +29,7 @@ manager about as well as under SourceMonkey (SM).
 - Keeping other scripts out of a run's tabs. SM can limit a run's
   scripts to its tabs, and other scripts to the rest; VM and TM run
   every enabled script that matches.
-- `eval` inside a script's scope, `connect`, and SM's reports (the
+- `eval` inside a script's scope, SM's connection prompts, and SM's reports (the
   `sm` log source, `wait` for a script start).
 - Following tabs a page opens.
 
@@ -317,7 +317,8 @@ Where VM defines these (links are to v2.49.0):
 | `match`, `validate` | sm-dev's own checks, as now |
 | `logs`, `wait log` | See [Logs and errors](#logs-and-errors) |
 | `values`, `get`, `set`, `--values`, `menu` | Refused (see [Future and alternate work](#future-and-alternate-work)) |
-| `eval` in a script, `connect` | Refused |
+| `eval` in a script | Refused |
+| `dialog` | The page's own dialogs, as under SM. The manager's own prompts aren't caught |
 
 ## Differences from SourceMonkey
 

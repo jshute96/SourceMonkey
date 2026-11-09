@@ -369,12 +369,17 @@ $R screenshot btn.png --selector '.save'   # just one element
   [Mouse wheel](references/cdp.md#mouse-wheel)).
 - Keys go to the page, not to Chrome: Chrome's shortcuts (back, reload,
   zoom, Escape leaving fullscreen) don't fire.
-- A command that opens a dialog (`alert`, `confirm`, `prompt`) returns
-  once it's up. Answer with `accept [text]` or `dismiss` (`--tab T2`
-  for another tab); until then the page is frozen, and most commands
-  refuse.
-- A `*PERMISSION PROMPT*` line needs an answer before that request
-  goes on: see [Permission prompts](#permission-prompts).
+- A command that opens a dialog (`alert`, `confirm`, `prompt`,
+  "Leave site?") returns once it's up. The run shows a `*DIALOG*`
+  block listing its buttons and the command for each: `dialog accept
+  [text]`, `dialog cancel`, `dialog click <button>`. Until it's
+  answered the page is frozen, and most commands refuse. `dialog show`
+  shows it again.
+- A file chooser doesn't freeze the page. Answer it with
+  `dialog accept <file>`, from the directory the command runs in.
+- SourceMonkey's permission prompt shows as a dialog too, and needs an
+  answer before that request goes on: see
+  [Permission prompts](#permission-prompts).
 - `logs` reads the run's log back for the tab: its script's lines and
   events, timestamped. `logs --tab all`, `logs --script 2` (one script),
   `--log-source all` (the site's own too), `--find <text|/re/>`,
@@ -586,7 +591,8 @@ $R savehtml pages/some-page.html              # the DOM, with the URL recorded
   `menu T2.M1`.
 - `closetab` closes the current tab; `closetab T2 T3` or `closetab all`
   close others. A page that asks first ("Leave site?") shows its
-  dialog, answered with `accept` or `dismiss`; `--force` skips it.
+  dialog, answered with `dialog accept` (leave) or `dialog cancel`;
+  `--force` skips it.
   - Closing the last tab leaves a blank tab open. `stop` ends the run.
 - `tabs` lists them with their `targetId`s, for your own CDP clients.
   In a script: `$R --json tabs | jq -r '.tabs[] | select(.id == "T2") | .targetId'`.
@@ -796,20 +802,21 @@ user. Any script that uses `GM_xmlhttpRequest` can hit one, and one
 with no `@connect` lines likely will. Until it's answered, that request
 and whatever the script does with its response wait.
 
-- The run prints `*PERMISSION PROMPT*: <script> requests permission to
-  connect to <host> ...`. Answer it with `connect`:
-  - `connect allow` to test the script as a user who allowed it (the
-    usual case), or `connect allow-all` for one that reaches many sites;
-  - `connect deny` to test what the script does when refused;
-  - `connect once` or `connect cancel` for a one-time answer: the next
-    request asks again.
-- `allow`, `deny` and `allow-all` are kept for the run's copy of the
+- The run shows a `*DIALOG* T1.1  Connection permission` block naming
+  the script and host, with the command for each button:
+  - `dialog click Allow` to test the script as a user who allowed it
+    (the usual case), or `dialog click "Allow all sites"` for one that
+    reaches many sites;
+  - `dialog click Deny` to test what the script does when refused;
+  - `dialog accept` (Allow once) or `dialog cancel` for a one-time
+    answer: the next request asks again.
+- Allow, Deny and Allow all sites are kept for the run's copy of the
   script, so later requests to that site don't ask again in the run.
-- `connect` answers the selected script's prompt; with several scripts
-  loaded, `script N` first.
+- With more than one dialog waiting, the block's commands carry
+  `--dialog T1.2` to name theirs.
 - Answer right after the command that set off the request. The prompt
   goes away when the script's own request times out (some time out in
-  a few seconds), and a later `connect` then finds no prompt waiting.
+  a few seconds), and the run says it closed without an answer.
 - When testing a script's real behavior, note which sites it asked
   about: its `@connect` lines may be missing some.
 
@@ -924,10 +931,10 @@ node "${CLAUDE_SKILL_DIR}/scripts/gather-scripts.mjs" --out <temp dir> <source>.
   the build, taken at install time.
 - **`start` hangs connecting**: a tab in that browser is showing a
   dialog. The run names it; answer it or close the tab.
-- **Commands refuse with a dialog open**: `accept` or `dismiss` first.
+- **Commands refuse with a dialog open**: `dialog show`, then answer it.
 - **A `GM_xmlhttpRequest` never finishes, or the script stops after
-  one**: look for a `*PERMISSION PROMPT*` line; the request is waiting
-  for `connect` (see [Permission prompts](#permission-prompts)).
+  one**: look for a `*DIALOG*` connection permission block; the request
+  is waiting for an answer (see [Permission prompts](#permission-prompts)).
 - **A wait gave up**: its message says what was still busy (requests,
   DOM changes). A page with a slow API or a never-ending resource never
   settles; `wait selector` for the element you need instead.

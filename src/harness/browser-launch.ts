@@ -13,8 +13,8 @@
 //   `--profile` picks another.
 // - Idempotent: a browser already answering on the port is used as is.
 //   With `--profile`, it must be the browser using that profile.
-//   Otherwise sm-dev stops with an error, without running any commands,
-//   rather than use the wrong browser.
+//   Otherwise sm-dev exits with an error before running the commands
+//   given (`start` and the rest), rather than use the wrong browser.
 // - Google Chrome when it's installed (better at Google sign-in than
 //   other builds), else Playwright's Chromium. `--browser-type` picks
 //   one, with no fallback, and is checked against a browser already on

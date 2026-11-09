@@ -108,8 +108,8 @@ Worker side: `connect-prompt.ts`. Window: `connect-prompt.html` and
   `Undeclared in @connect:`), each with
   a Reset button that clears it (see
   [script-viewer.md](script-viewer.md)).
-- sm-dev reports each prompt and answers it with `connect` (see
-  [sm-dev-design.md](sm-dev-design.md)).
+- sm-dev shows each prompt as a dialog and answers it with `dialog`
+  commands (see [sm-dev-dialogs.md](sm-dev-dialogs.md)).
 
 ## Rules
 

@@ -24,6 +24,20 @@
 
 import { getValues, type ParsedHeader } from './userscript-header.js';
 
+/**
+ * The connection prompt window's buttons, in its order: each answer,
+ * the label and tooltip the window shows, and what it does, for
+ * sm-dev's `dialog show`. The window takes its labels from here, so
+ * the two can't drift apart.
+ */
+export const CONNECT_BUTTONS = [
+  { choice: 'once', label: 'Allow once', title: 'Allow this request one time', does: 'Lets this request through' },
+  { choice: 'cancel', label: 'Cancel', title: 'Deny this request one time', does: 'Fails this request' },
+  { choice: 'allow', label: 'Allow', title: 'Allow access to this site every time', does: 'Allows the host for this script from now on' },
+  { choice: 'deny', label: 'Deny', title: 'Deny access to this site every time', does: 'Fails the script\'s requests to the host from now on' },
+  { choice: 'allow-all', label: 'Allow all sites', title: 'Allow this script all access to ALL sites', does: 'Allows all hosts for this script from now on' },
+] as const;
+
 // Each entry is one parsed @connect line.
 export interface ConnectRule {
   // `host` is a bare host (`example.com`) and `subdomain` a

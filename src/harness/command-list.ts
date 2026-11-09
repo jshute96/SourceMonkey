@@ -165,9 +165,14 @@ const IN_FRAME = ['eval', 'click', 'hover', 'type', 'snapshot', 'screenshot', 'p
 // The commands that take a tab only as `--tab`, so list it. Those
 // whose argument is a tab take it too, unlisted (`ArgSyntax.tab`).
 // `logs` lists its own, which takes `all`.
-const ON_TAB = ['open', 'snapshot', 'screenshot', 'savehtml', 'probe', 'click', 'hover', 'type', 'key', 'eval', 'cdp', 'accept', 'dismiss', 'wait selector', 'wait selector-gone'];
+const ON_TAB = ['open', 'snapshot', 'screenshot', 'savehtml', 'probe', 'click', 'hover', 'type', 'key', 'eval', 'cdp', 'wait selector', 'wait selector-gone'];
 // `status` and `tabs` print each tab's frame tree with this.
 const FRAMES_OPTION: HelpItem = { term: '--frames', about: 'Show each tab\'s frames as a tree, with the scripts running in each (see `help frames`).' };
+// The `dialog` forms that act on one dialog, so take `--dialog` and `--tab`.
+const DIALOG_ACTS = ['dialog show', 'dialog set', 'dialog accept', 'dialog cancel', 'dialog click'];
+// The commands whose help lists `--json`: of `dialog`, only `show` has
+// a JSON form.
+const JSON_HELP_COMMANDS = JSON_COMMANDS.map((c) => (c === 'dialog' ? 'dialog show' : c));
 // The commands that work through SourceMonkey, which a run under
 // another manager doesn't have.
 const SM: ManagerName[] = ['sourcemonkey'];
@@ -396,7 +401,7 @@ export const HELP_SECTIONS: HelpSection[] = [
       {
         usage: 'closetab [T<n>...|all]',
         syntax: { args: 'words', tab: 'word', tabAll: true },
-        about: ['Close this tab, the tabs named, or all tabs.', 'Closing the last tab leaves a blank tab open.', 'A page that asks first ("Leave site?") shows its dialog, for `accept` or `dismiss`.'],
+        about: ['Close this tab, the tabs named, or all tabs.', 'Closing the last tab leaves a blank tab open.', 'A page that asks first ("Leave site?") shows its dialog: `dialog accept` leaves, `dialog cancel` stays.'],
         options: [{ term: '--force', about: 'Close without running the pages\' `beforeunload` handlers.' }],
         gap: true,
       },
@@ -738,19 +743,25 @@ export const HELP_SECTIONS: HelpSection[] = [
         title: 'Dialog boxes',
         name: 'dialogs',
         summary: 'Answer dialog boxes',
+        text: [
+          'A dialog box blocks the page, or the script\'s request, until it\'s answered. These include the page\'s `alert`, `confirm` and `prompt`, Chrome\'s "Leave site?" and file chooser, and SourceMonkey\'s connection permission prompt.',
+          'Use `dialog` commands to see and answer them. Each one shows in the run\'s output as it opens, with the commands to answer it.',
+          '',
+          'Each dialog has an id: its tab and a number (`T1.2`). `dialog` commands apply to the default dialog: the one `dialog select` picked, else the oldest on the current tab, else the oldest in the run.',
+          '',
+          'File chooser dialogs take file paths relative to the directory sm-dev ran in. For example, `dialog accept data.json` chooses `data.json` from there.',
+        ],
         commands: [
-          { usage: 'accept [text]', syntax: { args: 'text', tab: 'flag' }, about: 'Answer an open dialog with OK, and a prompt with the text.' },
-          { usage: 'dismiss', syntax: { args: 'none', tab: 'flag' }, about: 'Answer an open dialog with Cancel.' },
-          {
-            managers: SM,
-            usage: 'connect once|cancel|allow|deny|allow-all [host]',
-            syntax: { args: 'words', max: 2 },
-            about: [
-              'Answer SourceMonkey\'s permission prompt for the selected script to connect to a host its `@connect` lines don\'t cover.',
-              '`once` or `cancel` are one-time answers. `allow`, `deny` or `allow-all` are persistent for the script.',
-              'Answers the script\'s oldest waiting permission prompt, or the one for `host`.',
-            ],
-          },
+          { usage: 'dialog show', syntax: { args: 'none', tab: 'flag' }, about: 'Show the dialogs waiting on a tab: what each asks, its fields and buttons, and the commands to answer it.' },
+          { usage: 'dialog select <id>', syntax: { args: 'words', max: 1 }, about: 'Make that dialog the default.' },
+          { usage: 'dialog set <field> <value...>', syntax: { args: 'words', tab: 'flag' }, about: 'Set a field of the dialog.' },
+          { usage: 'dialog accept [value...]', syntax: { args: 'words', tab: 'flag' }, about: 'Click the dialog\'s OK button. For a dialog with one field, values given fill that field.' },
+          { usage: 'dialog cancel', syntax: { args: 'none', tab: 'flag' }, about: 'Cancel the dialog.' },
+          { usage: 'dialog click <button>', syntax: { args: 'text', tab: 'flag' }, about: 'Click that button (`dialog click Allow`).' },
+        ],
+        options: [
+          { term: '--dialog <id>', about: 'Act on that dialog (`T1.2`) for this command only.', commands: DIALOG_ACTS },
+          { term: '--tab <tab>', about: 'Act on the selected dialog if it\'s on that tab, else the tab\'s oldest.', commands: DIALOG_ACTS },
         ],
       },
     ],
@@ -795,7 +806,7 @@ export const HELP_SECTIONS: HelpSection[] = [
     text: [
       'sm-dev works with one userscript manager, picked with `--manager`: SourceMonkey (the default), Tampermonkey or Violentmonkey. A run works with the one it started with.',
       'Under Tampermonkey or Violentmonkey, a run installs its scripts into it, marked as the run\'s, and removes them when it ends. The manager runs all its scripts in every tab, so `scripts` and `status` show the ones each tab is expected to run, by their match rules.',
-      'The commands that work through SourceMonkey alone (`values`, `menu`, `connect`, ...) are refused under the others.',
+      'The commands that work through SourceMonkey alone (`values`, `menu`, `set`, ...) are refused under the others.',
       'A temp browser has the manager installed. Another browser gets it with `manager install`.',
       'A manager enabled beside the chosen one runs its scripts too, so sm-dev warns of one when it connects, and in `status`.',
       'These act on the run\'s browser, with a run picked (by `--run`, `start` or `attach`). Without one, they need `--existing-browser` or `--open-browser`.',
@@ -1097,12 +1108,12 @@ export const HELP_SECTIONS: HelpSection[] = [
           {
             term: '--json[=single|multi]',
             about: ['Print the result as JSON: on one line (`single`), or multi-line (`multi`).', '(Default: the global `--json`\'s, else `multi` at a terminal and `single` when piped)'],
-            commands: JSON_COMMANDS,
+            commands: JSON_HELP_COMMANDS,
           },
           {
             term: '--nojson',
             about: 'Print the result as text, despite the global `--json`.',
-            commands: JSON_COMMANDS,
+            commands: JSON_HELP_COMMANDS,
           },
           // All commands take it, but it's read apart from their flags, so no
           // command lists it as one of its own.
@@ -1437,7 +1448,7 @@ export const COMMAND_NAMES = [...new Set(allSections().flatMap((section) => (sec
 const GUESSED_NAMES: Record<string, string[]> = {
   goto: ['open'], navigate: ['open'], visit: ['open'],
   log: ['logs'], console: ['logs'],
-  dialog: ['accept', 'dismiss'], dialogs: ['accept', 'dismiss'], alert: ['accept', 'dismiss'], confirm: ['accept'],
+  dialogs: ['dialog'], accept: ['dialog'], dismiss: ['dialog'], connect: ['dialog'], alert: ['dialog'], confirm: ['dialog'], prompt: ['dialog'], upload: ['dialog'],
   js: ['eval'], exec: ['eval'], evaluate: ['eval'],
   fill: ['type'], press: ['key'], 'close-tab': ['closetab'], 'new-tab': ['newtab'], refresh: ['reload'],
 };

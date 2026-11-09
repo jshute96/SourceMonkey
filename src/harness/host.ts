@@ -210,7 +210,7 @@ export interface HostEventMap {
   'menu-command': [MenuCommandRecord];
   notification: [NotificationRecord];
   download: [DownloadRecord];
-  /** A connection prompt opened, or was answered (`answer` set). */
+  /** A connection prompt opened, was answered (`answer` set), or closed with nobody waiting (`closed`). */
   'connect-prompt': [ConnectPromptRecord];
 }
 

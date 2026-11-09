@@ -13,6 +13,20 @@ import { plainLine } from '../../lib/harness/output-style.js';
 import { jsonResultData } from '../../lib/harness/json-output.js';
 import { prepareScript } from '../../lib/harness/prepare.js';
 
+// The block the stream shows for a "Leave site?" dialog as it opens.
+function leaveBlock(id: string, url: string): string {
+  return [
+    `[sm-dev] *DIALOG* ${id}  Leave site`,
+    `  From:     Chrome, for ${url}`,
+    '  Message:  Leave site? Changes you made may not be saved.',
+    '',
+    '  Buttons:',
+    '    Button  Command        Does',
+    '    Leave   dialog accept  Leaves the page',
+    '    Cancel  dialog cancel  Stays on the page',
+  ].join('\n');
+}
+
 test.describe('sm-dev typed commands', () => {
   test('scripts picks the script values, get and set act on', async ({ page, fixtureServer, host, attachment, loadScript, scriptsDir }) => {
     const spec = (name: string, value: string) => ({
@@ -224,7 +238,7 @@ test.describe('sm-dev typed commands', () => {
     await expect.poll(() => host.getValue(script.id!, 'said')).toBe('hi');
   });
 
-  test('a dialog a menu command opens waits for accept, and blocks page commands meanwhile', async ({ page, fixtureServer, host, attachment, loadScript }) => {
+  test('a dialog a menu command opens waits for dialog accept, and blocks page commands meanwhile', async ({ page, fixtureServer, host, attachment, loadScript }) => {
     const script = await loadScript({
       relativePath: 'ask.user.js',
       meta: { name: 'Ask', match: ['*://*/target.html'], grant: ['GM_registerMenuCommand', 'GM_setValue'] },
@@ -248,23 +262,38 @@ test.describe('sm-dev typed commands', () => {
 
     // Either order: in the page's world the command reaches the script
     // over the bridge, so the dialog can open after `Fired` is printed.
-    expect((await run('menu M1')).sort()).toEqual([
-      '[sm-dev] Fired "Ask"',
-      '[sm-dev] The page opened a prompt dialog: "Name?". Use `accept [text]` or `dismiss`.',
-    ]);
-    // These would wait on the stopped page, and hold up the accept.
-    const blocked = ['[sm-dev] The page is waiting on a prompt dialog. Use `accept` or `dismiss` first.'];
+    // The dialog's whole block, so the commands that answer it are there.
+    const block = (id: string) => [
+      `[sm-dev] *DIALOG* ${id}  Prompt`,
+      `  From:     The page (${fixtureServer.baseUrl}/target.html)`,
+      '  Message:  Name?',
+      '',
+      '  Fields:',
+      '    Field  Value            Set with',
+      '    text   "Bob" (default)  dialog set text <text>',
+      '',
+      '  Buttons:',
+      '    Button  Command',
+      '    OK      dialog accept [text]',
+      '    Cancel  dialog cancel',
+    ].join('\n');
+    expect((await run('menu M1')).sort()).toEqual([block('T1.1'), '[sm-dev] Fired "Ask"']);
+    // These would wait on the stopped page, and hold up the answer.
+    const blocked = ['[sm-dev] The page is waiting on Prompt dialog T1.1: "Name?". Use `dialog show` to see how to answer it.'];
     expect(await run('menu M1')).toEqual(blocked);
     expect(await run('set name "x"')).toEqual(blocked);
-    expect(await run('dismiss now')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The `dismiss` command takes no arguments\.\n {2}Usage: /)]);
-    expect(await run('accept Alice')).toEqual(['[sm-dev] Accepted the dialog']);
+    expect(await run('dialog cancel now')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The `dialog cancel` command takes no arguments\.\n {2}Usage: /)]);
+    expect(await run('dialog accept two words')).toEqual(['[sm-dev] ERROR: The text field of Prompt dialog T1.1 takes one value. Quote a value that has spaces in it.']);
+    expect(await run('dialog set text Alice')).toEqual(['[sm-dev] Set text to "Alice" on Prompt dialog T1.1']);
+    expect((await run('dialog show')).join('\n')).toContain('    text   "Alice"  dialog set text <text>');
+    expect(await run('dialog accept')).toEqual(['[sm-dev] Clicked OK on Prompt dialog T1.1']);
     await expect.poll(() => host.getValue(script.id!, 'name')).toBe('Alice');
-    expect(await run('accept')).toEqual(['[sm-dev] No dialog is open']);
+    expect(await run('dialog accept')).toEqual(['[sm-dev] No dialogs are waiting']);
 
     // A later prompt is tracked as the open one, not cleared by the
     // first one closing.
     await run('menu M1');
-    expect(await run('accept')).toEqual(['[sm-dev] Accepted the dialog']);
+    expect(await run('dialog accept')).toEqual(['[sm-dev] Clicked OK on Prompt dialog T1.2']);
     await expect.poll(() => host.getValue(script.id!, 'name')).toBe('Bob');
   });
 
@@ -464,10 +493,10 @@ test.describe('sm-dev typed commands', () => {
     expect(await run('closetab')).toEqual(['[sm-dev] No tabs are active. Use `newtab` to open one.']);
   });
 
-  test('closetab runs beforeunload, so a page that asks first waits on accept or dismiss', async ({ page, fixtureServer, host, attachment }) => {
+  test('closetab runs beforeunload, so a page that asks first waits on dialog accept or cancel', async ({ page, fixtureServer, host, attachment }) => {
     const lines: string[] = [];
     const asker = await page.context().newPage();
-    const dialogs = await DialogTracker.attach(asker, (t) => lines.push(plainLine(`[sm-dev] ${t}`)), { visible: false, commandsComing: true });
+    const dialogs = await DialogTracker.attach(asker, (t) => lines.push(plainLine(`[sm-dev] ${t}`)), { visible: false, commandsComing: true, tab: 2 });
     await asker.goto(`${fixtureServer.baseUrl}/target.html`);
     await asker.evaluate(() => window.addEventListener('beforeunload', (e) => e.preventDefault()));
     // Chrome asks only on a page the person has used. Waited for, since
@@ -483,17 +512,17 @@ test.describe('sm-dev typed commands', () => {
     };
     await run('tabs T2');
 
-    const asks = ['[sm-dev] The page opened a beforeunload dialog. Use `accept` to leave the page or `dismiss` to stay.'];
-    expect(await run('closetab')).toEqual(asks);
+    const target = `${fixtureServer.baseUrl}/target.html`;
+    expect(await run('closetab')).toEqual([leaveBlock('T2.1', target)]);
     // Waiting on it, it's left open; the others still close.
     const other = await page.context().newPage();
     tabs.push({ n: 3, page: other, link: attachment });
-    expect(await run('closetab T2 T3')).toEqual(['[sm-dev] T2 is waiting on a beforeunload dialog, so it was not closed. Answer it, or use `closetab T2 --force`.']);
+    expect(await run('closetab T2 T3')).toEqual(['[sm-dev] T2 is waiting on Leave site dialog T2.1: "Leave site? Changes you made may not be saved.", so it was not closed. Answer it, or use `closetab T2 --force`.']);
     expect([asker.isClosed(), other.isClosed()]).toEqual([false, true]);
-    await run('dismiss');
+    expect(await run('dialog cancel')).toEqual(['[sm-dev] Clicked Cancel on Leave site dialog T2.1']);
     expect(asker.isClosed()).toBe(false);
-    expect(await run('closetab')).toEqual(asks);
-    await run('accept');
+    expect(await run('closetab')).toEqual([leaveBlock('T2.2', target)]);
+    expect(await run('dialog accept')).toEqual(['[sm-dev] Clicked Leave on Leave site dialog T2.2']);
     await expect.poll(() => asker.isClosed()).toBe(true);
 
     // A page whose beforeunload handler takes longer than --timeout-seconds.
@@ -510,7 +539,7 @@ test.describe('sm-dev typed commands', () => {
   test('closetab --force closes a tab whose dialog waits', async ({ page, fixtureServer, host, attachment }) => {
     const lines: string[] = [];
     const asker = await page.context().newPage();
-    const dialogs = await DialogTracker.attach(asker, (t) => lines.push(plainLine(`[sm-dev] ${t}`)), { visible: false, commandsComing: true });
+    const dialogs = await DialogTracker.attach(asker, (t) => lines.push(plainLine(`[sm-dev] ${t}`)), { visible: false, commandsComing: true, tab: 2 });
     await asker.goto(`${fixtureServer.baseUrl}/target.html`);
     await asker.evaluate(() => window.addEventListener('beforeunload', (e) => e.preventDefault()));
     await asker.mouse.click(5, 5);
@@ -518,7 +547,7 @@ test.describe('sm-dev typed commands', () => {
     const tabs = [{ n: 1, page, link: attachment }, { n: 2, page: asker, link: attachment, dialogs }];
     const ctx: ConsoleContext = { host, tabs: () => tabs.filter((t) => !t.page.isClosed()), scripts: [], out: (l) => lines.push(plainLine(l)), stop: () => undefined };
     await runConsoleCommand('closetab T2', ctx);
-    expect(lines).toEqual(['[sm-dev] The page opened a beforeunload dialog. Use `accept` to leave the page or `dismiss` to stay.']);
+    expect(lines).toEqual([leaveBlock('T2.1', `${fixtureServer.baseUrl}/target.html`)]);
     // Forced, even while its dialog waits.
     lines.length = 0;
     await runConsoleCommand('closetab T2 --force', ctx);
@@ -554,7 +583,7 @@ test.describe('sm-dev typed commands', () => {
 
     // Asked by a plain reload, then forced past it.
     await ask(2);
-    expect(await run('reload --nowait')).toEqual(['[sm-dev] The page opened a beforeunload dialog. Use `accept` to leave the page or `dismiss` to stay.']);
+    expect(await run('reload --nowait')).toEqual([leaveBlock('T1.1', `${fixtureServer.baseUrl}/target.html`)]);
     expect(await run('reload --force --nowait')).toEqual([]);
     await expect.poll(marker).toBe(null);
     expect(dialogs.current).toBe(null);
@@ -682,7 +711,7 @@ test.describe('sm-dev typed commands', () => {
     expect(opened).toEqual([target]);
   });
 
-  test('a dialog on another tab blocks set, and accept points to it', async ({ page, fixtureServer, host, attachment, loadScript, watchPage }) => {
+  test('a dialog on another tab blocks set, and dialog commands reach it', async ({ page, fixtureServer, host, attachment, loadScript, watchPage }) => {
     const script = await loadScript({
       relativePath: 'store.user.js',
       meta: { name: 'Store', match: ['*://*/target.html', '*://*/other.html'], grant: ['GM_setValue'] },
@@ -694,7 +723,7 @@ test.describe('sm-dev typed commands', () => {
     try {
       await attachment2.inject(script);
       const lines: string[] = [];
-      const dialogs2 = await DialogTracker.attach(page2, (t) => lines.push(plainLine(`[sm-dev] ${t}`)), { visible: false, commandsComing: true, tabRef: () => 'T2' });
+      const dialogs2 = await DialogTracker.attach(page2, (t) => lines.push(plainLine(`[sm-dev] ${t}`)), { visible: false, commandsComing: true, tab: 2 });
       await page2.goto(`${fixtureServer.baseUrl}/other.html`);
       const tabs = [{ n: 1, page, link: attachment }, { n: 2, page: page2, link: attachment2, dialogs: dialogs2, openedBy: 1 }];
       const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [script], out: (l) => lines.push(plainLine(l)), stop: () => undefined };
@@ -705,18 +734,34 @@ test.describe('sm-dev typed commands', () => {
       };
       void page2.evaluate(() => setTimeout(() => alert('Hi'), 0));
       await expect.poll(() => dialogs2.current !== null).toBe(true);
-      // With several tabs, the notice names the tab to answer it from.
-      expect(lines).toEqual(['[sm-dev] The page opened an alert dialog: "Hi". Use `accept --tab T2` or `dismiss --tab T2`.']);
+      const alertBlock = [
+        '  From:     The page (' + `${fixtureServer.baseUrl}/other.html)`,
+        '  Message:  Hi',
+        '',
+        '  Buttons:',
+        '    Button  Command',
+        '    OK      dialog accept',
+      ];
+      expect(lines).toEqual([['[sm-dev] *DIALOG* T2.1  Alert', ...alertBlock].join('\n')]);
 
       // `set` reaches every tab, so T2's dialog would hold it up.
-      expect(await run('set k 1')).toEqual(['[sm-dev] T2 is waiting on an alert dialog. Use `accept --tab T2` or `dismiss --tab T2` first.']);
-      expect(await run('accept')).toEqual(['[sm-dev] No dialog is open on T1. T2 has one; name its tab: `accept --tab T2`.']);
+      expect(await run('set k 1')).toEqual(['[sm-dev] T2 is waiting on Alert dialog T2.1: "Hi". Use `dialog show` to see how to answer it.']);
       expect(await run('tabs')).toEqual([
         'Tabs:', `* T1: ${fixtureServer.baseUrl}/target.html`, '   * 1: Store',
-        `  T2: ${fixtureServer.baseUrl}/other.html (opened by T1)`, '    Waiting on an alert dialog: "Hi"', '     1: Store',
+        `  T2: ${fixtureServer.baseUrl}/other.html (opened by T1)`, '    Waiting on Alert dialog T2.1: "Hi". Use `dialog show` to see how to answer it.', '     1: Store',
       ]);
-      // Answered from T1, naming the tab.
-      expect(await run('accept --tab T2')).toEqual(['[sm-dev] Accepted the dialog']);
+      // With none on the current tab, the run's oldest is the default.
+      const shown = await run('dialog show');
+      expect(shown.slice(0, 3)).toEqual(['T2 has 1 dialog waiting.', '', 'T2.1  Alert (default for `dialog` commands)']);
+      expect(shown[3]).toBe(alertBlock[0]);
+      expect(shown[4]).toMatch(/^ {2}Opened: {3}\d+ seconds? ago$/);
+      expect(shown.slice(5)).toEqual(alertBlock.slice(1));
+      expect(await run('dialog show --tab T1')).toEqual(['[sm-dev] No dialog is waiting on T1. T2 has one: use `dialog show --tab T2`.']);
+      expect(await run('dialog accept --dialog T2.7')).toEqual(['[sm-dev] No dialog T2.7 is waiting. T2 has one: use `dialog show --tab T2`.']);
+      expect(await run('dialog select t2.1')).toEqual(['[sm-dev] `dialog` commands now apply to Alert dialog T2.1: "Hi" by default']);
+      expect(await run('dialog click Nope')).toEqual(['[sm-dev] ERROR: Alert dialog T2.1 has no Nope button. Its buttons are OK.']);
+      expect(await run('dialog click ok')).toEqual(['[sm-dev] Clicked OK on Alert dialog T2.1']);
+      expect(ctx.selectedDialog).toBe(undefined);
       expect(await run('set k 1')).toEqual(['[sm-dev] Set `k`']);
     } finally {
       await attachment2.dispose();

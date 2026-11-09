@@ -107,11 +107,12 @@ test('a dialog an opened tab shows before the run takes it over is handled like 
     `,
   });
   const lines = await driveCli([file, `${fixtureServer.baseUrl}/target.html`, '--root', scriptsDir.path], [
-    ['The page opened a confirm dialog: "keep?"', 'accept --tab T2'],
+    ['*DIALOG* T2.1  Confirm', 'dialog accept --tab T2'],
     ['[opener] answered true', 'exit'],
   ]);
   const text = lines.join('\n');
-  expect(text).toContain('Use `accept --tab T2` or `dismiss --tab T2`');
+  expect(text).toContain('OK      dialog accept');
+  expect(text).toContain('[sm-dev] Clicked OK on Confirm dialog T2.1');
   expect(text).not.toContain("couldn't follow");
 });
 
@@ -749,18 +750,18 @@ test('a tab waiting on a dialog is left out of reload all, and blocks update', a
   });
   const lines = await driveCli([a, b, `${base}/target.html`], [
     ['Started as run', `newtab ${base}/other.html`],
-    ['opened an alert dialog', 'reload all'],
+    ['*DIALOG* T2.1  Alert', 'reload all'],
     // T1 still reloads; then update, which would reach T2, refuses.
     ['[event] A started on', () => { touch(b); return 'update 2'; }],
-    ['is waiting on an alert dialog', 'exit'],
+    ['is waiting on Alert dialog', 'exit'],
   ]);
-  expect(lines).toContain('[sm-dev] T2 is waiting on a dialog, so it was not reloaded');
+  expect(lines).toContain('[sm-dev] T2 is waiting on Alert dialog T2.1: "Hi", so it was not reloaded');
   // T2 is the current tab, having just been opened.
-  expect(lines).toContain('[sm-dev] The page is waiting on an alert dialog. Use `accept` or `dismiss` first.');
+  expect(lines).toContain('[sm-dev] The page is waiting on Alert dialog T2.1: "Hi". Use `dialog show` to see how to answer it.');
   expect(lines.filter((l) => l.startsWith('[sm-dev] Reloading'))).toEqual([]);
   // `reload all` began with the dialog up, so it ends with a reminder;
   // `update` named it already in refusing, so it doesn't repeat it.
-  expect(lines.filter((l) => l === '[sm-dev] *DIALOG* still waiting: The page is showing an alert dialog. Answer using `accept` or `dismiss`.'))
+  expect(lines.filter((l) => l === '[sm-dev] *DIALOG* still waiting: Alert dialog T2.1: "Hi". Use `dialog show` to see how to answer it.'))
     .toHaveLength(1);
 });
 
@@ -986,7 +987,7 @@ test('newtab of several saved pages picks the first, serves their _files folders
   expect(lines.some((l) => /^\* T2: \S*\/target\.html \(from saved: .*x one\.html, offline\)/.test(l))).toBe(true);
 });
 
-test('a request to an undeclared host reports SourceMonkey\'s prompt, and connect answers it', async ({ fixtureServer, scriptsDir }) => {
+test('a request to an undeclared host shows SourceMonkey\'s prompt as a dialog, and dialog click answers it', async ({ fixtureServer, scriptsDir }) => {
   const base = fixtureServer.baseUrl;
   // The same server under another host name: cross-origin, undeclared.
   const other = base.replace('127.0.0.1', 'localhost');
@@ -996,24 +997,42 @@ test('a request to an undeclared host reports SourceMonkey\'s prompt, and connec
     body: `GM_xmlhttpRequest({ url: '${other}/other.html', onload: (r) => console.log('[asks] got ' + r.status) });`,
   });
   const lines = await driveCli([file, `${base}/target.html`], [
-    ['*PERMISSION PROMPT*', 'status'],
-    ['still waiting', 'connect allow'],
+    ['*DIALOG* T1.1  Connection permission', 'status'],
+    ['T1: Running', 'wait 1s'],
+    ['still waiting', 'dialog click allow'],
     ['[script log] [asks] got 200', 'exit'],
   ]);
-  expect(lines).toContain(
-    `[event] *PERMISSION PROMPT*: Asks requests permission to connect to localhost (GET ${other}/other.html). Answer using connect once|cancel|allow|deny|allow-all.`,
-  );
-  // `status` lists it under the script, and the command ends with a
-  // reminder, since it was waiting when the command began.
-  expect(lines.some((l) => l.includes(`*PERMISSION PROMPT* waiting: localhost (GET ${other}/other.html). Answer using \`connect\`.`))).toBe(true);
-  expect(lines).toContain(
-    '[sm-dev] *PERMISSION PROMPT* still waiting: Asks requests permission to connect to localhost. Answer using `connect once|cancel|allow|deny|allow-all`.',
-  );
-  expect(lines).toContain('[sm-dev] Allowed localhost for Asks');
+  const text = lines.join('\n');
+  expect(text).toContain(`  Message:  Asks requests permission to connect to localhost (GET ${other}/other.html).`);
+  expect(text).toContain('    Allow once       dialog accept                   Lets this request through');
+  expect(text).toContain('    Allow all sites  dialog click "Allow all sites"  Allows all hosts for this script from now on');
+  // `status` lists it under the script, and the next command ends with
+  // a reminder, since it was waiting when the command began.
+  expect(lines.some((l) => l.includes('*DIALOG* waiting: Connection permission dialog T1.1: "Asks requests permission'))).toBe(true);
+  expect(lines.some((l) => l.startsWith('[sm-dev] *DIALOG* still waiting: Connection permission dialog T1.1: '))).toBe(true);
+  expect(lines).toContain('[sm-dev] Clicked Allow on Connection permission dialog T1.1');
   // Answered: the reminder stops.
-  expect(lines.slice(lines.indexOf('[sm-dev] Allowed localhost for Asks')).some((l) => l.includes('still waiting'))).toBe(false);
+  expect(lines.slice(lines.indexOf('[sm-dev] Clicked Allow on Connection permission dialog T1.1')).some((l) => l.includes('still waiting'))).toBe(false);
   // The prompt's own Log entry would only repeat the line above.
   expect(lines.some((l) => l.includes('Opened permission request window'))).toBe(false);
+});
+
+test('a connection prompt whose request is aborted is dropped, and the run says so', async ({ fixtureServer, scriptsDir }) => {
+  const base = fixtureServer.baseUrl;
+  const other = base.replace('127.0.0.1', 'localhost');
+  const file = scriptsDir.write({
+    relativePath: 'asks.user.js',
+    meta: { name: 'Asks', match: ['*://*/target.html'], grant: ['GM_xmlhttpRequest'] },
+    body: `const request = GM_xmlhttpRequest({ url: '${other}/other.html' }); setTimeout(() => request.abort(), 1500);`,
+  });
+  const lines = await driveCli([file, `${base}/target.html`], [
+    ['closed without an answer', 'tabs'],
+    ['Tabs:', 'exit'],
+  ]);
+  expect(lines.some((l) => /^\[event\] \*DIALOG\* Connection permission dialog T1\.1: ".*" closed without an answer\. The script's requests to localhost timed out or were aborted\.$/.test(l))).toBe(true);
+  // Gone from the tab's list, and no reminder follows.
+  const after = lines.slice(lines.findIndex((l) => l.includes('closed without an answer')));
+  expect(after.some((l) => l.includes('Waiting on') || l.includes('still waiting'))).toBe(false);
 });
 
 test('--lang sets the languages of each tab, in a launched browser and in one connected to', async ({ fixtureServer, scriptsDir }) => {

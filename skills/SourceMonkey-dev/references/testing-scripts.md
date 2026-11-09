@@ -189,9 +189,9 @@ While a run is live:
 - `@run-at document-start` code may run after the page's first inline scripts,
   where SourceMonkey alone would run it first. A script that hooks `fetch` or
   `XMLHttpRequest` early may miss page code for that reason; say so in the note.
-- A `*PERMISSION PROMPT*` is SourceMonkey asking whether the script may reach a
-  site its `@connect` lines don't cover.
-  - If the site fits the feature, answer `connect allow`, as a user trying the
+- A connection permission `*DIALOG*` is SourceMonkey asking whether the script
+  may reach a site its `@connect` lines don't cover.
+  - If the site fits the feature, answer `dialog click Allow`, as a user trying the
     script would, and name it in the note. Tampermonkey asks about the same ones.
   - If it doesn't fit, treat it as below.
 - Stay alert. If a script starts doing something strange (requests to unexpected

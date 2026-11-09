@@ -55,7 +55,7 @@ export const STDERR_LINE = '\u0000sm-dev:stderr ';
  * (`hasJsonForm`).
  */
 export const JSON_COMMANDS = [
-  'list', 'status', 'scripts', 'tabs', 'frames', 'values', 'get', 'match', 'validate', 'menu', 'logs', 'probe', 'collection', 'script',
+  'list', 'status', 'scripts', 'tabs', 'frames', 'values', 'get', 'match', 'validate', 'menu', 'logs', 'probe', 'collection', 'script', 'dialog',
 ];
 
 /** The line carrying `command`'s result, `data`'s fields after `command`. */
@@ -131,8 +131,8 @@ export interface Tab {
   offline?: boolean;
   /** The tab that opened it. */
   openedBy?: string;
-  /** A dialog waiting for an answer. */
-  dialog?: { kind: string; message: string };
+  /** The dialogs waiting on it for an answer, oldest first (`dialog show` has the rest). */
+  dialogs?: { id: string; title: string; message?: string }[];
   /** The ids of the run's scripts running in its top frame. */
   scripts: string[];
   /** Its iframes, each after its parent; absent for none. */
@@ -269,8 +269,8 @@ export interface StatusScript extends Script {
    */
   errors?: number;
   lastError?: string;
-  /** Its permission prompts waiting for an answer (`connect`). */
-  permissionPrompts?: { host: string; method: string; url: string }[];
+  /** Its connection prompts waiting for an answer (each also a dialog, for `dialog show`). */
+  permissionPrompts?: { host: string; method: string; url: string; dialog: string }[];
 }
 
 // ---------- Each command's result ----------
@@ -375,6 +375,37 @@ export interface StatusRunsData {
 
 export interface TabsData {
   tabs: Tab[];
+}
+
+/** One dialog waiting for an answer, as `dialog show` gives it. */
+export interface WaitingDialog {
+  /** `T1.2`: its tab, and a number counting that tab's dialogs. */
+  id: string;
+  tab: string;
+  /** Its kind: `Confirm`, `Connection permission`. */
+  title: string;
+  /** Who wrote its text. */
+  from: 'page' | 'Chrome' | 'SourceMonkey';
+  /** The `From:` line in text output. */
+  fromText: string;
+  message?: string;
+  /** When it opened, as an ISO 8601 time. */
+  openedAt: string;
+  /** The command running when it opened. */
+  openedDuring?: string;
+  /** Whether `dialog` commands apply to it by default. */
+  default: boolean;
+  fields: { name: string; value?: string[]; default?: string[]; multiple?: boolean; command: string }[];
+  buttons: { label: string; role?: 'accept' | 'cancel'; does?: string; command: string }[];
+}
+
+/** `dialog show`: the dialogs waiting on one tab. */
+export interface DialogShowData {
+  /** The id of the dialog `dialog` commands apply to by default; absent with none waiting. */
+  default?: string;
+  dialogs: WaitingDialog[];
+  /** The other tabs with dialogs waiting. */
+  otherTabs?: string[];
 }
 
 export interface FramesData {

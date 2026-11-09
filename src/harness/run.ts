@@ -19,6 +19,7 @@ import {
 } from './console-commands.js';
 import { applyLang, langLaunchArgs } from './browser-lang.js';
 import { watchDownloads, type DownloadWatch } from './download-watch.js';
+import { connectSpec, dialogSummary } from './dialogs.js';
 import { managerState, managersIn, otherManagersWarning, stateLabel, type ManagerState } from './browser-extensions.js';
 import { managerUnusable, useTempBrowser } from './manager-advice.js';
 import { ExtensionHost } from './extension-host.js';
@@ -30,7 +31,7 @@ import { fetchManager, fetchedVersion } from './manager-fetch.js';
 import { DEFAULT_MANAGER, MANAGERS, managerFlag, type ManagerName } from './managers.js';
 import { ExtensionLink, linkRunId, type ExtensionEvent } from './extension-link.js';
 import { ExternalRunScripts, externalControl, externalOff, externalOthers, openExternalManager, type ExternalManager } from './external-manager.js';
-import type { ErrorReport, ManualReport, PageLink, SkipReport, StartReport } from './host.js';
+import type { ConnectPromptRecord, ErrorReport, ManualReport, PageLink, SkipReport, StartReport } from './host.js';
 import { attachPage, targetIdOf, type AttachOptions, type PageAttachment } from './page-watch.js';
 import { pageSays } from './page-commands.js';
 import { consoleSource, consoleText, decodeOwnRefs, formatConsoleArgs, isPreludeLine, pageErrorSource } from './page-output.js';
@@ -1050,11 +1051,18 @@ async function runInBrowser(
     void host.catchUpLogs();
   });
   // Commands are only read once the page has loaded, but a prompt
-  // opened before then can still wait for a typed or sent accept.
+  // opened before then can still wait for a `dialog accept`.
   const commandsComing = opts.until !== undefined && remote.reachable;
   const tabs = new FollowedTabs(host, opts, session.context, commandsComing, link, () => remote.setTabs(tabs.list().length));
   held.tabs = tabs;
-  wireHostOutput(host, opts.emit!, (record) => tabs.tabOf(record));
+  // A connection prompt goes to its tab's tracker, or the first tab's
+  // when its tab isn't the run's.
+  const trackerOf = (record: object): DialogTracker | undefined => {
+    const n = tabs.tabOf(record);
+    const list = tabs.list();
+    return (list.find((t) => t.n === n) ?? list[0])?.dialogs;
+  };
+  wireHostOutput(host, opts.emit!, (record) => tabs.tabOf(record), trackerOf);
   held.downloads = await watchDownloads(session.browser, () => tabs.list(), (n, text) => tabEvent(opts.emit!, n, 'download')(text), opts.out, { downloadsDir: session.downloadsDir });
   // T1, unless `--notab`; then the first tab `newtab` opens is T1.
   if (page) {
@@ -1065,7 +1073,7 @@ async function runInBrowser(
     wirePageOutput(page, 1, opts.emit!, host, link.origin, () => tabs.firstTabScripts);
     wireSandboxCheck(page, () => tabs.firstTabScripts, opts.out, link.linked);
     const dialogs = await DialogTracker.attach(page, tabEvent(opts.emit!, 1, 'dialog'), {
-      visible: browserVisible(opts), commandsComing, tabRef: () => (tabs.list().length > 1 ? 'T1' : undefined),
+      visible: browserVisible(opts), commandsComing, tab: 1,
     });
     await applyLang(page, opts.lang, opts.out);
     const attachment = await attachPage(page, host, tabs.attachOptions);
@@ -1656,10 +1664,9 @@ class FollowedTabs {
     const dialogs = await DialogTracker.attach(page, tabEvent(this.opts.emit!, n, 'dialog'), {
       visible: browserVisible(this.opts),
       commandsComing: this.commandsComing,
-      // T2 on is named even while it is set up, before list() has it.
-      tabRef: () => (n > 1 || this.list().length > 1 ? `T${n}` : undefined),
+      tab: n,
     });
-    // Until the tab is listed, `accept T<n>` reaches its tracker here:
+    // Until the tab is listed, `dialog accept --tab T<n>` reaches its tracker here:
     // a dialog it showed before the run took it over holds up the setup
     // below until it's answered.
     trackSettingUp(`T${n}`, dialogs);
@@ -1972,7 +1979,10 @@ const IN_A_FRAME = 'in a frame ';
 const FRAME_START = ` started ${IN_A_FRAME}`;
 
 // `prefix` tags each report with the tab it came from.
-function wireHostOutput(host: ExtensionHost, emit: (fields: LogFields) => void, tabOf: (record: object) => number | undefined): void {
+function wireHostOutput(
+  host: ExtensionHost, emit: (fields: LogFields) => void, tabOf: (record: object) => number | undefined,
+  trackerOf: (record: object) => DialogTracker | undefined,
+): void {
   // A report or menu command from an iframe names it (`T1.F3`).
   // A line about one script starts with its name (`subject`).
   const event = (record: { scriptId?: string; frameNumber?: number }, kind: string, text: string, also?: LogSource[], subject?: string): void => emit({
@@ -2000,15 +2010,36 @@ function wireHostOutput(host: ExtensionHost, emit: (fields: LogFields) => void, 
   host.on('tab', (r) => event(r, 'open-tab', `GM_openInTab ${r.url}`));
   host.on('menu-command', (r) => event(r, 'menu-command', `GM_registerMenuCommand "${r.name}"`));
   host.on('notification', (r) => event(r, 'notification', `GM_notification "${r.title || r.text}"`));
-  // Only the asking: the answer is the script's Log entry. Set apart and
-  // streamed whatever the sources: the run waits on an answer, and the
-  // line is easy to miss among the page's own output.
+  // A dialog on its tab, which the tracker shows as it opens. The
+  // answer is the script's Log entry. Each prompt's tracker is kept, so
+  // it's dropped from the one it went to.
+  const prompts = new WeakMap<ConnectPromptRecord, DialogTracker>();
   host.on('connect-prompt', (r) => {
-    if (r.answer) return;
-    emit({
-      source: 'event', kind: 'permission-prompt', tab: tabOf(r), scriptId: r.scriptId, always: true, subject: r.name,
-      text: `*PERMISSION PROMPT*: ${r.name} requests permission to connect to ${r.host} (${r.method} ${withoutQuery(r.url)}). Answer using connect once|cancel|allow|deny|allow-all.`,
-    });
+    if (r.answer || r.closed) {
+      const dropped = prompts.get(r)?.drop(r);
+      if (dropped && r.closed && !r.answer) {
+        emit({
+          source: 'event', kind: 'dialog', tab: dropped.tab, scriptId: r.scriptId, always: true,
+          text: S.ui`*DIALOG* ${dialogSummary(dropped)} closed without an answer. The script's requests to ${r.host} timed out or were aborted.`,
+        });
+      }
+      return;
+    }
+    const tracker = trackerOf(r);
+    if (!tracker) {
+      // No tab to put it on (all closed): only its window can answer it.
+      emit({
+        source: 'event', kind: 'dialog', scriptId: r.scriptId, always: true, subject: r.name,
+        text: `*DIALOG* ${r.name} requests permission to connect to ${r.host} (${r.method} ${withoutQuery(r.url)}). The run has no tab to show it on, so answer it in its window.`,
+      });
+      return;
+    }
+    prompts.set(r, tracker);
+    tracker.add(r, connectSpec(r, async (choice) => {
+      const answered = await host.answerConnectPrompt(r.promptId, choice);
+      tracker.drop(r);
+      return answered;
+    }));
   });
   host.on('download', (r) => event(r, 'download', `GM_download ${r.url}: ${r.outcome}${r.filename ? ' -> ' + r.filename : ''}${r.error ? ' ' + r.error : ''}`));
   host.on('value-write', (r) => {
@@ -2058,8 +2089,8 @@ const SCRIPT_IN_PAGE: Record<'script' | 'page', Partial<LogFields>> = { script: 
 
 // What happened in tab `n`, said as an `event` line of `kind`. A dialog
 // box is streamed whatever the sources, as the page waits on an answer.
-function tabEvent(emit: (fields: LogFields) => void, n: number, kind: string): (text: string) => void {
-  return (text) => emit({ source: 'event', kind, tab: n, text, ...(kind === 'dialog' ? { always: true } : {}) });
+function tabEvent(emit: (fields: LogFields) => void, n: number, kind: string): (text: string, scriptId?: string) => void {
+  return (text, scriptId) => emit({ source: 'event', kind, tab: n, text, ...(scriptId ? { scriptId } : {}), ...(kind === 'dialog' ? { always: true } : {}) });
 }
 
 // A tab's lines are tagged `[T<n>]`, except T1's, as the run's own are.

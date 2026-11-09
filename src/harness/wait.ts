@@ -33,6 +33,13 @@ import { explainMatch, preparedScriptName } from './prepare.js';
 import { ALL_LOG_SOURCES, foundAt, inSources, linesLost, parseLogSources, parsePosition, searchedUpTo, streamText, textMatcher, type LogRecord } from './run-logs.js';
 import { refProblem } from './snapshot.js';
 import { currentTab, dialogWaitingMessage, NO_TABS, pickTab, tabName } from './tab-refs.js';
+import * as S from './output-style.js';
+
+// A wait that gave up on a tab stopped on a dialog. Marked up whole, in
+// error color, since the dialog's own text goes in as text.
+function waitFailedOnDialog(ctx: ConsoleContext, tab: ControlledTab): string {
+  return S.SM_DEV_PREFIX + S.asError(S.ui`${WAIT_FAILED.slice(S.SM_DEV_PREFIX.length)}${dialogWaitingMessage(ctx, tab)}`);
+}
 
 /** How long every signal must stay quiet. */
 const QUIET_MS = 200;
@@ -365,7 +372,7 @@ async function waitToSettle(ctx: ConsoleContext, tabs: ControlledTab[], timeoutM
     if (outcome.settled) return;
     ok = false;
     const t = tabs[i];
-    ctx.out('dialog' in outcome ? `${WAIT_FAILED}${dialogWaitingMessage(t, currentTab(ctx))}`
+    ctx.out('dialog' in outcome ? waitFailedOnDialog(ctx, t)
       : 'closed' in outcome ? `${WAIT_FAILED}${tabName(t)} closed`
         : `[sm-dev] ${notSettledMessage(t, timeoutMs, outcome.busy)}`);
   });
@@ -403,7 +410,7 @@ async function waitForSelector(
       return false;
     }
     if (tab.dialogs?.current) {
-      ctx.out(`${WAIT_FAILED}${dialogWaitingMessage(tab, currentTab(ctx))}`);
+      ctx.out(waitFailedOnDialog(ctx, tab));
       return false;
     }
     const count = await within(countOf(tab.page, selector, frame), Math.max(1, Math.min(SELECTOR_LOOK_MS, deadline - Date.now())));

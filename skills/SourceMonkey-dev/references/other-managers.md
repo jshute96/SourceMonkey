@@ -50,9 +50,9 @@ What differs from SourceMonkey:
   (`snapshot`, `eval --page`) to see a script worked.
 - **Every script in the manager runs in every tab**, the person's own and other
   runs' too: nothing keeps them out of the run's tabs.
-- **No reach into a script:** `values`, `get`, `set`, `menu`,
-  `connect` and `--values` are refused, and `eval` runs in the page,
-  not inside the script.
+- **No reach into a script:** `values`, `get`, `set`, `menu` and
+  `--values` are refused, and `eval` runs in the page, not inside the
+  script. The page's own dialogs still show for `dialog` commands.
 - **A script's uncaught error** is a `[script error]` log line, not a
   `threw` event.
 - `collection` and `script` work on the manager's scripts, in one

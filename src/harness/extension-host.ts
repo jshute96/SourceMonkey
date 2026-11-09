@@ -556,6 +556,7 @@ export class ExtensionHost extends HarnessHost {
     if (!record || record.answer || record.closed) return;
     if (event.op === 'closed') {
       record.closed = true;
+      this.notify('connect-prompt', record);
       return;
     }
     if (!event.answer) return;

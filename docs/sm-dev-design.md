@@ -662,7 +662,7 @@ sm-dev's up-front check runs it too.
     wherever it was given (`script --out x enable`).
   - A quoted word is never a flag.
   - `--timeout-seconds` is taken by any command: on one that waits on
-    nothing (`accept`), unlisted, it only sets the backstop for hangs.
+    nothing (`dialog cancel`), unlisted, it only sets the backstop for hangs.
   - `--help` where a flag can go is a request for the command's help
     (`help` in the result). The prompt, stdin and the run show
     `help <command>`'s text for it, or the subcommand's
@@ -741,7 +741,7 @@ one rule, so a guess is usually right:
   `command-list.ts`). A guess at where something goes then shows the
   right form in one step.
 - A word that is no command suggests the closest one: a known guess
-  (`goto` for `open`, `dialogs` for `accept`/`dismiss`), or a name one
+  (`goto` for `open`, `accept` for `dialog`), or a name one
   or two edits away (`commandSuggestion`).
 
 ### Lines, blocks and lists (`command-lines.ts`)
@@ -1255,6 +1255,10 @@ and waits for them.
 
 ### Dialogs
 
+The `dialog` command and the shape every kind of dialog shares are in
+[sm-dev-dialogs.md](sm-dev-dialogs.md). This section covers how a page's
+JavaScript dialogs are caught (`DialogTracker`, `dialogs.ts`).
+
 - Playwright dismisses any dialog nobody listens for, in every tab it's
   attached to, the person's own included.
   - So `run.ts` gives every page of the browser a dialog listener
@@ -1262,30 +1266,36 @@ and waits for them.
     it launched, where its connection is the launch's second client.
   - Also, when that dialog is gone before the dismiss lands, the error
     is unhandled, and ends the run.
-- The run's own tabs get a `DialogTracker` (`console-commands.ts`),
-  which keeps dialogs open for the person or an `accept` /
-  `dismiss`. Otherwise a script's `prompt()` would be answered with
-  Cancel.
+- The run's own tabs get a `DialogTracker`, which keeps dialogs open
+  for the person or a `dialog` command. Otherwise a script's `prompt()`
+  would be answered with Cancel.
 - A tab a run tab opens can show a dialog before the run takes it over
   (a script's `confirm()` during the tab's first load).
   - The browser-wide listener records it by page, and the tab's
     tracker takes it when it attaches, and handles it as one shown
-    after: reported with `accept --tab T2`, or dismissed in a hidden run
-    that takes no commands.
+    after: shown for `dialog accept --tab T2`, or dismissed in a hidden
+    run that takes no commands.
   - The page runs no code while the dialog is open, so the takeover
     matches the tab by its URL rather than reading its document, and
     `Page.enable` on a new session doesn't return until the dialog
     closes. The tracker uses that return as the dialog's close.
   - The rest of the tab's setup waits for the dialog to close, so the
-    tab joins the run's list only then. Until it does, `accept --tab T2`
+    tab joins the run's list only then. Until it does, `--tab T2`
     reaches its tracker by name (`trackSettingUp`), and a run that
     ends dismisses the dialog.
+- A dialog's close comes from the tab's own CDP session
+  (`Page.javascriptDialogClosed`), matched by count to the dialogs
+  Playwright reported, since the two arrive in no fixed order.
+  - A close can still go unseen (the session went away with the page's
+    process). So before each command, the tracker checks a dialog it
+    holds: a page that runs code within 300 ms has none open
+    (`verify`).
 - A page stopped on a dialog answers no CDP call until it is answered.
   - So `load` / `update` refuse while one is open.
   - `PageAttachment.dispose` gives up on the page after a second;
     detaching the session drops what it registered anyway.
 - A command that opens a dialog would wait on it for good, and hold up
-  the `accept` queued behind it.
+  the `dialog` command queued behind it.
   - So each page action races the tab's dialog tracker (`untilDialog`,
     as `menu` does), and returns once a dialog is up.
   - The settle wait's limit is kept in Node too, since a stopped page's
@@ -1293,7 +1303,8 @@ and waits for them.
 - `closetab` closes with the page's `beforeunload` handlers run, as a
   person closing the tab would.
   - A page that asks first opens a `beforeunload` dialog, which the
-    tracker reports like any other: `accept` leaves, `dismiss` stays.
+    tracker shows like any other: `dialog accept` leaves, `dialog
+    cancel` stays.
   - Playwright doesn't wait for such a close, so `closetab` races the
     close against the tracker for 5 seconds (or `--timeout-seconds`),
     and names a tab that did neither.
@@ -1314,9 +1325,6 @@ and waits for them.
     browser of its own. `stop` is how a run ends.
   - In a shared browser, the person's own tabs keep it open, so nothing
     extra opens.
-  - The blank tab opens before the closes start, so a tab that stays
-    (its "Leave site?" dialog dismissed, or a close that timed out)
-    leaves it beside that tab.
 
 ### Connection prompts
 
@@ -1324,39 +1332,41 @@ and waits for them.
   `@connect` lines don't cover gets SourceMonkey's prompt window, as a
   person's would ([connect-permissions.md](connect-permissions.md)).
 - An agent can't click it, so the extension sends a `connect-prompt`
-  event, and the run prints a line naming the script, host and request,
-  and the `connect` command to answer with.
-- `connect once|cancel|allow|deny|allow-all [host]` answers the
-  selected script's oldest waiting prompt, or its one for `host`,
-  through `answerConnectPrompt`.
+  event, and `run.ts` hands the prompt to the tracker of the tab whose
+  request opened it, as a dialog (`connectSpec`).
   - A prompt is per script and site: all of that script's requests
     there, from any tab, wait on it.
-  - With none for the selected script, it names another script that
-    has one, and how to select it.
-  The window closes as if clicked.
+  - With no tab of the run to put it on, the run says to answer it in
+    its window.
+- A button press calls `answerConnectPrompt`, and the window closes as
+  if clicked.
+- The buttons' labels come from `CONNECT_BUTTONS` in `src/gm-connect.ts`,
+  which the window takes its labels from too.
 - A prompt that closes with nobody waiting (its requests timed out or
-  were aborted) sends a `closed` event, so `connect` skips it.
+  were aborted) sends a `closed` event. The tracker drops it, and the
+  run says it closed without an answer.
+- An answer given in the window drops it the same way. The answer
+  prints as the script's Log entry (`gm-xhr`).
 - `status` lists a script's waiting prompts first under the script
   (`permissionPrompts` in JSON).
-
-### Reminders of what's waiting
-
-A permission prompt or a page dialog leaves something stuck until it's
-answered, and the line announcing it may come between commands, where
-only the run's log sees it. So each command ends with a reminder of
-each one still waiting (`waitingReminders` in `console-commands.ts`):
-
-- `*PERMISSION PROMPT* still waiting: ...` and `*DIALOG* still
-  waiting: ...`, each saying how to answer it.
-- Only for what was already waiting as the command began: one that
-  opened during it was just announced in its output.
-- Not when the command's output already named that dialog (a command
-  refused for it), nor after `exit` or `stop`.
-- The answer prints as the script's Log entry (`gm-xhr`), so a prompt
-  answered in the window shows up too.
 - The answer is kept like any other: a run's scripts are removed with
   its test collection, and their answers with them.
 - Needs protocol minor 3.
+
+### Reminders of what's waiting
+
+A dialog leaves something stuck until it's answered, and the event
+showing it may come between commands, where only the run's log sees
+it. So each command ends with a reminder of each one still waiting
+(`waitingReminders` in `console-commands.ts`):
+
+- `*DIALOG* still waiting: Confirm dialog T1.1: "..."`, with the
+  `dialog show` that shows it.
+- Only for what was already waiting as the command began: one that
+  opened during it was just shown in its output.
+- Not when the command's output already said how to answer that dialog
+  (a command refused for it) or showed it (`dialog show`), nor after
+  `exit` or `stop`.
 
 ## Tabs
 
@@ -1507,7 +1517,7 @@ User-facing behavior is in [harness-guide.md](harness-guide.md).
 - Commands that only use Chrome, CDP or sm-dev never touch the
   extension:
   - `snapshot`, `click`, `type`, `hover`, `screenshot`, `savehtml`;
-  - `cdp`, `tabs`, `closetab`, `accept`, `dismiss`;
+  - `cdp`, `tabs`, `closetab`, and `dialog` for a page's own dialogs;
   - `wait <time>`, `wait selector`, `wait log`.
 - The rest go through the run's host and each tab's attachment:
   waiting for scripts to start or a page to settle, the world `eval`

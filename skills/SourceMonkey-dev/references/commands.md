@@ -108,7 +108,7 @@ test a script under VM or TM:
 | `--manager tm manager fetch` | Download or update TM (or VM) from the Chrome Web Store into `~/.cache/sm-dev/managers` |
 | `[--manager tm] manager install` | Load the manager into the browser unpacked, with Allow User Scripts on. No run needed |
 | `[--manager tm] manager enable` / `disable` | Turn it on or off in the browser. Not SourceMonkey while a run uses it |
-| `--manager vm start <script> <url>` | A run under VM (or `tm`): its scripts are installed in the manager, and removed when it ends. `values`, `get`, `set`, `menu`, `connect` and `--values` are refused |
+| `--manager vm start <script> <url>` | A run under VM (or `tm`): its scripts are installed in the manager, and removed when it ends. `values`, `get`, `set`, `menu` and `--values` are refused |
 | `--manager vm script list`, `script E3 show`, ... | The manager's scripts, by E-ids, in one collection, `C0`. `collection C0 disable` is its switch for all scripts |
 
 - A manager enabled beside the chosen one runs its scripts in the run's
@@ -199,7 +199,7 @@ asked to.
 | `frames [T2\|F3\|all]` | A tab's frames (`F1`, ...) as a tree, with the scripts running in each, `(hidden)` ones marked, each one's CDP `frameId`, and the `targetId` of one from another site |
 | `newtab [page...]` | Open a controlled tab (becomes current) |
 | `newtab --noscript <url>` | A tab the scripts stay out of (sticky) |
-| `closetab [T2 T3...\|all]` | Close the current tab, the ones named, or all. Closing the last tab leaves a blank tab open. A page's "Leave site?" dialog waits for `accept`/`dismiss`; `--force` skips it |
+| `closetab [T2 T3...\|all]` | Close the current tab, the ones named, or all. Closing the last tab leaves a blank tab open. A page's "Leave site?" dialog waits for `dialog accept` (leave) or `dialog cancel`; `--force` skips it |
 | `open [page] [--tab T2]` | Navigate the current tab, or the one named |
 | `reload [T2\|all]` | Reload. `--force` leaves a page that asks first ("Leave site?") |
 | `focus [T2]` | Bring to the front |
@@ -243,8 +243,9 @@ asked to.
 | `type <sel> --file <path>` | Type a file's text exactly, including a final line break |
 | `type <sel> --clear [text]` | Empty the field first, then type the text if given |
 | `key <keys>...` | `key j Shift+ArrowRight ctrl+end esc` |
-| `accept [text]`, `dismiss` | Answer an open dialog (`--tab T2` for another tab's) |
-| `connect once\|cancel\|allow\|deny\|allow-all [host]` | Answer SourceMonkey's prompt for a host the selected script's `@connect` doesn't cover |
+| `dialog show` | The dialogs waiting on the tab (a page's `alert`, "Leave site?", a file chooser, SourceMonkey's permission prompt), with the command for each button |
+| `dialog accept [text]`, `dialog cancel`, `dialog click <button>` | Click a dialog's OK, Cancel or other button (`--dialog T1.2` names one) |
+| `dialog set <field> <value...>`, `dialog select <id>` | Fill a dialog's field; pick the dialog the other `dialog` commands apply to |
 | `--nowait` | On any of these: don't wait for the page to settle |
 | `--timeout-seconds S` | The longest the command may take (default 60), in place of each wait's own default (`cdp`: 10 for each call) |
 

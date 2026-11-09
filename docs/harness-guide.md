@@ -570,7 +570,7 @@ sm-dev --existing-browser manager disable          # turn SourceMonkey off there
   - The manager runs its own installed scripts in the run's tabs.
   - Tabs a page opens aren't followed.
   - The commands that work through SourceMonkey alone (`values`,
-    `get`, `set`, `menu`, `connect`, `--values`) are refused: `The
+    `get`, `set`, `menu`, `--values`) are refused: `The
     values command works with SourceMonkey only, and this run uses
     Violentmonkey`.
 - **Under either**, a run loads its scripts too, as normal scripts in
@@ -1427,12 +1427,13 @@ on files only, with no run or browser.
 | `tabs` | Lists the controlled tabs |
 | `tab <tab>` | Picks the current tab, which the page commands act on. `tabs <tab>` works too |
 | `newtab [page...\|all]` | Opens a new tab with the scripts for each page, or a blank tab |
-| `closetab [tab...\|all]` | Closes the current tab, the tabs named, or all of them. Closing the last tab leaves a blank tab open. Runs the pages' `beforeunload` handlers unless `--force` (see [Page dialogs](#page-dialogs)) |
+| `closetab [tab...\|all]` | Closes the current tab, the tabs named, or all of them. Closing the last tab leaves a blank tab open. Runs the pages' `beforeunload` handlers unless `--force` (see [Dialogs](#dialogs)) |
 | `open [page] [--tab T2]` | Navigates the current tab, or the one named, to a URL or file (a glob matching one), or to a script's default page |
 | `reload [tab\|all]` | Reloads the page, another tab's, or all tabs at once. `--noscript` / `--script` switch the tabs' scripts off or back on first. `--force` leaves a page that asks first ("Leave site?") |
 | `focus [T2]` | Brings the tab to the front, un-minimizing its window |
-| `accept [text]`, `dismiss` | Answers an open dialog, on the current tab or the one `--tab` names (see [Page dialogs](#page-dialogs)) |
-| `connect once\|cancel\|allow\|deny\|allow-all [host]` | Answers SourceMonkey's prompt for a host the script's `@connect` lines don't cover: the selected script's oldest waiting, or its one for `host` |
+| `dialog show` | Shows the dialogs waiting on a tab, each with its fields, buttons and the commands that answer it (see [Dialogs](#dialogs)) |
+| `dialog accept [value...]`, `dialog cancel`, `dialog click <button>` | Clicks a waiting dialog's OK, Cancel or other button |
+| `dialog set <field> <value...>`, `dialog select <id>` | Fills a dialog's field; picks the dialog the other `dialog` commands apply to |
 
 - A `[page]` is a URL, a file, a glob, or a script's number for its
   default page (the first page its `@match` names). Only a number
@@ -1458,7 +1459,7 @@ on files only, with no run or browser.
 ### The current tab
 
 - `tabs T2` makes T2 the current tab, which `status`, `menu`, `reload`,
-  `open`, `focus`, `accept`, `dismiss` and the page commands act on. It
+  `open`, `focus`, `dialog` and the page commands act on. It
   starts as T1.
 - If the current tab closes, the first one still open takes over.
 - Any tab can be closed, T1 included, and the run notes it. With none
@@ -1607,46 +1608,73 @@ alongside the run to name the same tab:
   takes the id: whole, its first 6 or more characters, or pasted as
   shown, `targetId=` and all.
 
-### Page dialogs
+### Dialogs
 
-A script's `alert`, `confirm` or `prompt` is left open and reported in
-the stream, rather than being answered automatically.
+A dialog box blocks the page, or the script's request, until it's
+answered. sm-dev leaves it open and shows it in the run's output as it
+opens, rather than answering it automatically. The design is in
+[sm-dev-dialogs.md](sm-dev-dialogs.md).
 
-- In a browser on screen, answer it there.
-- Or use `accept` (a prompt's text after it) or `dismiss`, with
-  `--tab` (`accept --tab T2`) for a dialog on another tab. This works
-  in a headless browser too.
-  - With several tabs, the report names the tab to give:
-    `Use accept --tab T2 or dismiss --tab T2`.
-  - Prompt text that is a tab's name has to be quoted: `accept "T2"`.
+- Kinds of dialogs:
+  - the page's `alert`, `confirm` and `prompt`;
+  - Chrome's "Leave site?", from a `beforeunload` handler;
+  - SourceMonkey's connection permission prompt, for a request to a host
+    the script's `@connect` lines don't cover;
+  - a file chooser, from a click on an `<input type=file>`, whether the
+    input is in the document or not.
+    - `dialog accept data.json` chooses the file, from the directory
+      sm-dev ran in; `dialog cancel` sends the input its `cancel`.
+    - Chrome doesn't show a chooser the run catches, even in a visible
+      browser. It isn't caught in a cross-site iframe.
+- Each has an id: its tab and a number counting that tab's dialogs
+  (`T1.2`).
+- The run's output shows its whole block as it opens: what it asks, its
+  fields and buttons, and the command for each. `dialog show` shows it
+  again, with how long ago it opened.
+- `dialog accept [value...]`, `dialog cancel` and `dialog click <button>`
+  click its buttons; `dialog set <field> <value...>` fills a field
+  first (a prompt's `text`).
+  - A value with spaces has to be quoted: `dialog accept "Ann Lee"`.
+- Which dialog the commands apply to, in order:
+  - the one `--dialog T1.2` names, for that command only;
+  - with `--tab T2`, the selected dialog if it's on that tab, else that
+    tab's oldest;
+  - the one `dialog select T1.2` picked, while it's still waiting;
+  - the oldest on the current tab, else the oldest in the run.
+- In a browser on screen, a page's dialog can be answered there too.
 - In a headless run that can't take commands (it couldn't open its
-  socket for other shells), nothing could answer it, so it is dismissed
-  and reported.
-- While one is open, the page's JavaScript is stopped, so:
+  socket for other shells), nothing could answer a page's dialog, so it
+  is dismissed and reported.
+- While a page's `alert`, `confirm`, `prompt` or "Leave site?" is open,
+  the page's JavaScript is stopped, so:
   - `menu`, `set`, `reload` and `open` refuse until it is answered;
   - `load` and `update` refuse for a dialog in any tab;
   - `reload all` skips that tab and says so;
   - `closetab` leaves that tab open and says so, unless `--force`.
+  - A connection prompt or file chooser doesn't stop the page.
 - `closetab` runs the page's `beforeunload` handlers, as closing a tab
-  by hand does. A page that asks first ("Leave site?") opens a
-  `beforeunload` dialog: `accept` leaves and closes the tab, `dismiss`
-  keeps it open.
+  by hand does. A page that asks first shows "Leave site?":
+  `dialog accept` leaves and closes the tab, `dialog cancel` keeps it
+  open.
   - Chrome only asks on a page that has had a click or key press
     (sm-dev's `click`, `type` and `key` count).
   - `closetab --force` closes without running the handlers, even with
     a dialog open.
 - `reload` asks the same way. `reload --force` leaves the page anyway,
-  accepting its `beforeunload` dialog. It first dismisses any dialog
-  the tab is already waiting on, so a navigation that dialog held back
-  doesn't go ahead too.
+  accepting its "Leave site?". It first cancels any dialog the tab is
+  already waiting on, so a navigation that dialog held back doesn't go
+  ahead too.
 - A command that opens a dialog returns once the dialog is up, and says
   so.
+- Each command ends with a reminder of each dialog still waiting from
+  before it began.
 - A dialog in a tab the run doesn't use stays open, for you to
   answer.
 - A tab one of the run's tabs opens can show a dialog before the run
-  starts following it (a script's `confirm()` at load). The run reports
-  that dialog the same way, naming the tab (`accept --tab T2`), but `tabs`
-  and `status` list the tab only once the dialog is answered.
+  starts following it (a script's `confirm()` at load). The run shows
+  that dialog the same way, and `dialog accept --tab T2` answers it,
+  but `tabs` and `status` list the tab only once the dialog is
+  answered.
 - A tab already showing a dialog when `sm-dev start` starts stops it
   connecting: nothing in that tab answers until the dialog closes. The
   run names the tab and waits; answer the dialog or close the tab to
@@ -1686,7 +1714,7 @@ acts on the current tab, or the one `--tab` names (`--tab T2`,
   [Waiting](#waiting)) before returning, so the next command sees what
   they did. `--nowait` skips that.
 - One that opens a dialog returns once the dialog is up; answer it with
-  `accept` or `dismiss`.
+  `dialog accept` or `dialog cancel`.
 - `click` and `hover` wait up to 5 seconds (or `--timeout-seconds S`)
   for their element to be visible, not moving, and not covered by
   another element (`click`: also enabled).
@@ -2010,7 +2038,7 @@ Limits of the heuristic:
 - `--timeout-seconds S` is the longest the command may take (default
   60), in place of those defaults.
   - Every command takes it, so a timeout given out of habit
-    (`accept --timeout-seconds 5`) isn't a mistake.
+    (`dialog cancel --timeout-seconds 5`) isn't a mistake.
 - An explicit `wait` that gives up fails, so a line of several commands
   (or a list in one argument, or commands piped in) stops there, and
   says the rest weren't run.
@@ -2426,4 +2454,4 @@ that, since the answer is a function.
   and the reason.
 - **`sm-dev start` hangs at connect**: a tab in the browser is showing
   a dialog. The run names it; answer the dialog or close the tab (see
-  [Page dialogs](#page-dialogs)).
+  [Dialogs](#dialogs)).

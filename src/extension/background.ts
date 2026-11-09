@@ -466,7 +466,7 @@ interface SourceMonkeyApi {
   clickNotification: (notificationId: string) => boolean;
   // Answers a connection prompt (by the id its `connect-prompt` event
   // carried), as the person would in its window. False when it isn't
-  // waiting. sm-dev's `connect` command answers this way.
+  // waiting. sm-dev's `dialog` commands answer this way.
   answerConnectPrompt: (promptId: string, choice: ConnectChoice) => Promise<boolean>;
   // The connection prompts waiting for an answer.
   pendingConnectPrompts: () => { promptId: string; scriptId: string; tabId: number; host: string }[];

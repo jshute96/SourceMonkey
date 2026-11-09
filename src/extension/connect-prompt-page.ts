@@ -4,6 +4,7 @@
 // (`connect-prompt.ts`), and the answer goes back by message. Closing
 // the window instead cancels, which the worker sees for itself.
 
+import { CONNECT_BUTTONS } from '../gm-connect.js';
 import {
   CONNECT_ANSWER_MESSAGE,
   CONNECT_PROMPT_ALIVE_MESSAGE,
@@ -50,7 +51,14 @@ try {
 site.title = `${params.get('method') ?? 'GET'} ${withoutQuery(url)}`;
 
 // Each button's id is the choice it sends.
-const BUTTONS: ConnectChoice[] = ['once', 'cancel', 'allow', 'deny', 'allow-all'];
+const BUTTONS: ConnectChoice[] = CONNECT_BUTTONS.map((b) => b.choice);
+
+// Labels and tooltips from the list sm-dev shows them from.
+for (const { choice, label, title } of CONNECT_BUTTONS) {
+  const button = byId(choice);
+  button.textContent = label;
+  button.title = title;
+}
 
 async function answer(choice: ConnectChoice): Promise<void> {
   for (const id of BUTTONS) byId<HTMLButtonElement>(id).disabled = true;

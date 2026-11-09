@@ -2,10 +2,10 @@
 // (console-commands.ts, wait.ts): `T2`, its target id,
 // the current tab, and what to say when one is stopped on a dialog.
 
-import type { Dialog } from '@playwright/test';
-
 import type { ConsoleContext, ControlledTab } from './console-commands.js';
-import { MISTAKE_PREFIX, quoted } from './output-style.js';
+import { defaultDialog, dialogName, dialogSummary, settingUpTrackers, type DialogTracker, type WaitingDialog } from './dialogs.js';
+import { MISTAKE_PREFIX, quoted, ui } from './output-style.js';
+import * as S from './output-style.js';
 
 /** Where the page commands have no tab to act on; also `start --notab`'s start. */
 export const NO_TABS = '[sm-dev] No tabs are active. Use `newtab` to open one.';
@@ -71,19 +71,37 @@ export function pickTab(ctx: ConsoleContext, input: string): ControlledTab | nul
   return tab ?? null;
 }
 
-export function dialogKind(dialog: Dialog): string {
-  const type = dialog.type();
-  return `${/^[aeiou]/.test(type) ? 'an' : 'a'} ${type}`;
+/** The trackers of the run's tabs, and of those still being set up. */
+export function runTrackers(ctx: ConsoleContext): DialogTracker[] {
+  const trackers = ctx.tabs().flatMap((t) => (t.dialogs ? [t.dialogs] : []));
+  return [...trackers, ...settingUpTrackers().filter((t) => !trackers.includes(t))];
+}
+
+/** The dialog `dialog` commands apply to by default. */
+export function defaultOf(ctx: ConsoleContext): WaitingDialog | undefined {
+  return defaultDialog({ trackers: runTrackers(ctx), currentTab: currentTab(ctx)?.n, selected: ctx.selectedDialog });
+}
+
+/** The `dialog show` that shows `d`: by its tab when it isn't on the default dialog's tab. */
+export function showCommand(ctx: ConsoleContext, d: WaitingDialog): string {
+  return defaultOf(ctx)?.tab === d.tab ? 'dialog show' : `dialog show --tab T${d.tab}`;
 }
 
 /**
- * What to say when `waiting` has a dialog open and a command can't go
- * on until it's answered. `accept` and `dismiss` act on the current tab
- * (`current`), so another tab's needs picking first.
+ * What to say, as markup, when `waiting` is stopped on a dialog and a
+ * command can't go on until it's answered.
  */
-export function dialogWaitingMessage(waiting: ControlledTab, current: ControlledTab | undefined): string {
-  const kind = dialogKind(waiting.dialogs!.current!);
-  return waiting === current
-    ? `The page is waiting on ${kind} dialog. Use ${quoted('accept')} or ${quoted('dismiss')} first.`
-    : `${tabName(waiting)} is waiting on ${kind} dialog. Use ${quoted(`accept --tab ${tabName(waiting)}`)} or ${quoted(`dismiss --tab ${tabName(waiting)}`)} first.`;
+export function dialogWaitingMessage(ctx: ConsoleContext, waiting: ControlledTab): string {
+  const d = waiting.dialogs?.stopping;
+  const who = waiting === currentTab(ctx) ? 'The page' : tabName(waiting);
+  if (!d) return ui`${who} is waiting on a dialog. Use ${S.cmd(`dialog show --tab ${tabName(waiting)}`)} to see how to answer it.`;
+  return ui`${who} is waiting on ${dialogSummary(d)}. Use ${S.cmd(showCommand(ctx, d))} to see how to answer it.`;
+}
+
+/** `dialogWaitingMessage` as plain text, without the page's own text: for an Error's message. */
+export function dialogWaitingError(ctx: ConsoleContext, waiting: ControlledTab): string {
+  const d = waiting.dialogs?.stopping;
+  const who = waiting === currentTab(ctx) ? 'The page' : tabName(waiting);
+  const show = d ? showCommand(ctx, d) : `dialog show --tab ${tabName(waiting)}`;
+  return `${who} is waiting on ${d ? dialogName(d) : 'a dialog'}. Use ${quoted(show)} to see how to answer it.`;
 }

@@ -222,15 +222,15 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('logs')).toContainEqual(expect.stringMatching(/^\d\d:\d\d:\d\d\.\d{3} T1 \[script log\] \[widget\] hovered$/));
   expect(await run('probe \'a[b\'')).toEqual(['invalid  a[b  (It isn\'t a valid selector)']);
 
-  // A click that opens a dialog returns once it's up, so accept can
+  // A click that opens a dialog returns once it's up, so `dialog accept` can
   // answer it, and the page commands wait until it has.
   const clicked = await run('click \'#warn\'');
-  expect(clicked).toContain('[sm-dev] Clicked #warn. It opened a dialog, which is waiting for an answer.');
-  expect(await run('eval 1')).toEqual(['[sm-dev] The page is waiting on an alert dialog. Use `accept` or `dismiss` first.']);
-  expect(await run('accept')).toEqual(['[sm-dev] Accepted the dialog']);
+  expect(clicked).toContain('[sm-dev] Clicked #warn. It opened dialog T1.1, which is waiting for an answer.');
+  expect(await run('eval 1')).toEqual([expect.stringMatching(/^\[sm-dev\] The page is waiting on Alert dialog T1\.1: ".*"\. Use `dialog show` to see how to answer it\.$/)]);
+  expect(await run('dialog accept')).toEqual(['[sm-dev] Clicked OK on Alert dialog T1.1']);
   expect(await run('eval 1')).toEqual(['1']);
-  expect(await run('eval confirm("sure?")')).toContain('[sm-dev] The expression opened a dialog, which is waiting for an answer.');
-  expect(await run('dismiss')).toEqual(['[sm-dev] Dismissed the dialog']);
+  expect(await run('eval confirm("sure?")')).toContain('[sm-dev] The expression opened dialog T1.2, which is waiting for an answer.');
+  expect(await run('dialog cancel')).toEqual(['[sm-dev] Clicked Cancel on Confirm dialog T1.2']);
   expect(await run('screenshot')).toEqual([expect.stringContaining('The `screenshot` command needs a file')]);
   expect(await run('snapshot --deep')).toEqual([expect.stringMatching(/^\[sm-dev\] ERROR: The `snapshot` command has no --deep flag\.\n {2}Usage: /)]);
   // Every command, not only the ones with flags of their own; a quoted
@@ -302,8 +302,8 @@ test('page commands drive the page and read it', async ({ page, fixtureServer, h
   expect(await run('cdp --file calls.txt Page.reload', scriptsDir.path)).toEqual([expect.stringContaining('not both')]);
   expect(await run('cdp --file')).toEqual(['[sm-dev] ERROR: The --file flag needs a value: `--file <path>`']);
   // A dialog a call opens stops the wait, and says so.
-  expect(await run('cdp Runtime.evaluate {"expression": "alert(1)"}')).toContain('[sm-dev] Runtime.evaluate opened a dialog, which is waiting for an answer.');
-  expect(await run('accept')).toEqual(['[sm-dev] Accepted the dialog']);
+  expect(await run('cdp Runtime.evaluate {"expression": "alert(1)"}')).toContain('[sm-dev] Runtime.evaluate opened dialog T1.3, which is waiting for an answer.');
+  expect(await run('dialog accept')).toEqual(['[sm-dev] Clicked OK on Alert dialog T1.3']);
 
   // Enter submitting a form: the command returns once the next page is
   // there, so the next command sees it.

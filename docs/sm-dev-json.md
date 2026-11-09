@@ -123,7 +123,7 @@ interface Tab {
   savedFrom?: string;    // the .html file it serves, with --from-saved
   offline?: boolean;     // a saved page served with --offline
   openedBy?: string;     // the tab that opened it
-  dialog?: { kind: string; message: string }; // waiting for an answer
+  dialogs?: { id: string; title: string; message?: string }[]; // waiting for an answer, oldest first
   scripts: string[];     // the ids of the run's scripts running in its top frame
   frames?: Frame[];      // its iframes, absent for none
 }
@@ -270,8 +270,9 @@ interface StatusScript extends Script {
   // tabs, each tab's are in `tabs`.
   errors?: number;
   lastError?: string;
-  // Its permission prompts waiting for `connect`; the URL without its query.
-  permissionPrompts?: { host: string; method: string; url: string }[];
+  // Its connection prompts waiting for an answer (each also a dialog, for
+  // `dialog show`); the URL without its query.
+  permissionPrompts?: { host: string; method: string; url: string; dialog: string }[]; // dialog: its id
 }
 ```
 
@@ -981,6 +982,59 @@ JSON:
     {
       "selector": "h1",
       "count": 0
+    }
+  ]
+}
+```
+
+### `dialog show`
+
+The dialogs waiting on one tab (see [sm-dev-dialogs.md](sm-dev-dialogs.md)).
+
+```ts
+interface DialogShowData {
+  default?: string;      // the dialog `dialog` commands apply to by default; absent with none waiting
+  dialogs: WaitingDialog[];
+  otherTabs?: string[];  // the other tabs with dialogs waiting
+}
+
+interface WaitingDialog {
+  id: string;            // "T1.2": its tab, and a number counting that tab's dialogs
+  tab: string;
+  title: string;         // its kind: "Confirm", "Leave site", "Connection permission"
+  from: "page" | "Chrome" | "SourceMonkey"; // who wrote its text
+  fromText: string;      // the text output's From: line
+  message?: string;
+  openedAt: string;      // ISO 8601
+  openedDuring?: string; // the command running when it opened
+  default: boolean;      // whether `dialog` commands apply to it by default
+  fields: { name: string; value?: string[]; default?: string[]; multiple?: boolean; command: string }[];
+  buttons: { label: string; role?: "accept" | "cancel"; does?: string; command: string }[];
+}
+```
+
+JSON, for a page's `confirm`:
+
+```json
+{
+  "command": "dialog",
+  "default": "T1.1",
+  "dialogs": [
+    {
+      "id": "T1.1",
+      "tab": "T1",
+      "title": "Confirm",
+      "from": "page",
+      "fromText": "The page (file:///home/me/lists.html)",
+      "message": "Delete 3 items?",
+      "openedAt": "2026-11-08T17:27:37.112Z",
+      "openedDuring": "click 'text=Delete'",
+      "default": true,
+      "fields": [],
+      "buttons": [
+        { "label": "OK", "role": "accept", "command": "dialog accept" },
+        { "label": "Cancel", "role": "cancel", "command": "dialog cancel" }
+      ]
     }
   ]
 }

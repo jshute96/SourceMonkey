@@ -18,7 +18,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
-import type { BrowserContext, Dialog, Frame, Page } from '@playwright/test';
+import type { Frame, Page } from '@playwright/test';
 
 import { CommandAssembler, endsOutsideBlock, listed } from './command-lines.js';
 import { isJsonLine, jsonLayoutMistake, jsonResult, JSON_COMMANDS, markedLine, STDERR_LINE, withLayout, type JsonLayout } from './json-output.js';
@@ -26,7 +26,7 @@ import type * as J from './json-output.js';
 import { managerState, managersText, otherManagersWarning, stateLabel, type InstalledManager } from './browser-extensions.js';
 import { DEFAULT_MANAGER, MANAGERS, type ManagerName } from './managers.js';
 import { firstLine } from './extension-link.js';
-import type { ConnectPromptRecord, ErrorReport, HarnessHost, MenuCommandRecord, WarningRecord } from './host.js';
+import type { ErrorReport, HarnessHost, MenuCommandRecord, WarningRecord } from './host.js';
 import type { PageAttachment } from './page-watch.js';
 import {
   collectionList, count, managerVerb, noSuchScript, noSuchVerb, scriptList, type ManagerControl, type ManagerRun, type RunView,
@@ -42,12 +42,16 @@ import { frameNodes, parseFrameRef } from './frames.js';
 import { defaultPageUrl, explainMatch, NO_DEFAULT_PAGE, preparedNoframes, preparedScriptMatches, preparedScriptName, preparedScriptPath, shownPath, withDefaultScheme, type PreparedScript } from './prepare.js';
 import { representativeMatch } from '../match-targets.js';
 import { RUN_SCRIPT_LABEL, isContextMenuRunAt } from '../userscript-header.js';
-import { currentTab, dialogKind, dialogWaitingMessage, NO_TABS, pickTab, tabName } from './tab-refs.js';
+import { currentTab, defaultOf, dialogWaitingError, dialogWaitingMessage, NO_TABS, pickTab, runTrackers, showCommand, tabName } from './tab-refs.js';
+import {
+  buttonList, dialogBlock, dialogJson, dialogSummary, namesDialog, parseDialogId, setRunningCommand, setTrackersListening,
+  settingUpTracker, type DialogButton, type DialogTracker, type WaitingDialog,
+} from './dialogs.js';
 import { runLogLabel } from './run-log.js';
 import {
   DEFAULT_LOG_SOURCES, isoTime, linesLost, logsLines, logsUpTo, inSources, noLogLines, nowMicros, parseLogSources, parsePosition, parseTail, streamText, textMatcher, type LogRecord, type RunLog,
 } from './run-logs.js';
-import { err as errorLine, message, MISTAKE_PREFIX, paintAs, paintOutput, quoted, streamHasColor, ui } from './output-style.js';
+import { err as errorLine, message, MISTAKE_PREFIX, paintAs, paintOutput, plainLine, quoted, streamHasColor, ui } from './output-style.js';
 // The roles for marked-up output, as S.id(...): their names are common locals here.
 import * as S from './output-style.js';
 import { budgeted, deadlineIn, inBudget, inLimit, LOAD_TIMEOUT_MS, notLoadedMessage, notSettledMessage, SETTLE_TIMEOUT_MS, settleTab, shownMs, loadPage, PageNotLoaded, seconds, timeoutFlagMs, waitFor, within } from './wait.js';
@@ -76,7 +80,7 @@ export interface ControlledTab {
   noScript?: boolean;
   /** Serving a saved page, from `--from-saved`. */
   saved?: SavedPageFile;
-  /** The page's JavaScript dialogs, for `accept` and `dismiss`. */
+  /** The dialogs waiting on the tab, for the `dialog` command. */
   dialogs?: DialogTracker;
   /** The number of the tab that opened this one. */
   openedBy?: number;
@@ -167,6 +171,8 @@ export interface ConsoleContext {
   frames?: Map<ControlledTab, FrameView[]>;
   /** One of `others` picked for `get` and `set` (`scripts E1`), in place of `current`. */
   currentOther?: OtherScript;
+  /** The dialog `dialog select` picked, by id, for `dialog` commands to apply to by default. */
+  selectedDialog?: string;
   /**
    * The script `get` and `set` act on. Starts as the first; `scripts`
    * changes it.
@@ -230,7 +236,7 @@ const NO_SCRIPTS = 'No scripts are loaded';
 
 
 // The commands that act on the current tab, which there may not be.
-const NEEDS_A_TAB = new Set(['menu', 'open', 'reload', 'focus', 'closetab', 'accept', 'dismiss', ...PAGE_COMMANDS]);
+const NEEDS_A_TAB = new Set(['menu', 'open', 'reload', 'focus', 'closetab', ...PAGE_COMMANDS]);
 
 // `script` and `tab` pick one, as `scripts` and `tabs` do given one,
 // so each is run as its plural.
@@ -250,106 +256,262 @@ export function runCommandMistake(input: { line: string } | { words: string[] })
   return 'error' in parsed ? parsed : null;
 }
 
-// The run's permission prompts still waiting for an answer, oldest
-// first.
-function waitingPrompts(ctx: ConsoleContext): ConnectPromptRecord[] {
-  return ctx.host.reports.connectPrompts.filter((r) => !r.answer && !r.closed);
-}
+export { withoutQuery } from './dialogs.js';
 
-// A request URL without its query string or fragment: those can be
-// long (signed CDN links) and hold keys, and the host and path are what
-// the question is about.
-export function withoutQuery(url: string): string {
-  try {
-    const u = new URL(url);
-    return `${u.origin}${u.pathname}`;
-  } catch {
-    return url;
-  }
-}
-
-// What is still waiting for an answer as a command ends: permission
-// prompts, and dialogs open on the run's tabs. Each is a stuck state
-// (a request, or the whole page, can't go on), and the line announcing
-// it may have come between commands, where only the run's log saw it.
-// So each command repeats them, after its own output, until answered.
+// What is still waiting for an answer as a command ends: the dialogs
+// waiting on the run's tabs. Each is a stuck state (a request, or the
+// whole page, can't go on), and the event telling of it may have come
+// between commands, where only the run's log saw it. So each command
+// repeats them, after its own output, until answered.
 //
 // Only what was already waiting when the command began: one that opens
-// during the command has just been announced in its output. Nor a
-// dialog the command's output already named (a command refused for it).
+// during the command has just been shown in its output. Nor a dialog
+// the command's output already named (a command refused for it).
 export function waitingReminders(ctx: ConsoleContext, before: WaitingState, said: readonly string[]): string[] {
   const lines: string[] = [];
-  const selected = selectedScript(ctx);
-  for (const prompt of waitingPrompts(ctx)) {
-    if (!before.prompts.has(prompt.promptId)) continue;
-    const script = ctx.scripts.find((s) => s.id === prompt.scriptId);
-    const select = script && script !== selected && ctx.scripts.length > 1 ? ui` (select it first with ${S.cmd(`script ${ctx.scripts.indexOf(script) + 1}`)})` : '';
-    lines.push(`[sm-dev] ${ui`*PERMISSION PROMPT* still waiting: ${S.name(prompt.name)} requests permission to connect to ${prompt.host}. Answer using ${S.cmd('connect once|cancel|allow|deny|allow-all')}${select}.`}`);
-  }
-  const current = currentTab(ctx);
-  for (const tab of ctx.tabs()) {
-    const dialog = tab.dialogs?.current;
-    if (!dialog || before.dialogs.get(tab) !== dialog) continue;
-    const refusal = dialogWaitingMessage(tab, current);
-    if (said.some((l) => l.includes(refusal))) continue;
-    const named = tab === current ? '' : ` ${tabName(tab)}`;
-    lines.push(`[sm-dev] *DIALOG* still waiting: ${tab === current ? 'The page' : tabName(tab)} is showing ${dialogKind(dialog)} dialog. Answer using ${quoted(`accept${named}`)} or ${quoted(`dismiss${named}`)}.`);
+  for (const d of runDialogs(ctx)) {
+    if (!before.dialogs.has(d.id)) continue;
+    // Not when the output already said how to answer it (a refusal), or
+    // showed it (`dialog show`).
+    if (said.map(plainLine).some((l) => (namesDialog(l, d.id) && l.includes('dialog show')) || l.includes(`${d.id}  ${d.title}`))) continue;
+    lines.push(S.SM_DEV_PREFIX + ui`*DIALOG* still waiting: ${dialogSummary(d)}. Use ${S.cmd(showCommand(ctx, d))} to see how to answer it.`);
   }
   return lines;
 }
 
-// What `waitingReminders` compares against: the prompts and dialogs
-// waiting as a command began.
+// The `dialog` commands that answer or fill one, rather than look.
+const ANSWERS_DIALOG = /^\s*dialog\s+(set|accept|cancel|click)\b/;
+
+// What `waitingReminders` compares against: the dialogs waiting as a
+// command began, by id.
 export interface WaitingState {
-  prompts: Set<string>;
-  dialogs: Map<ControlledTab, unknown>;
+  dialogs: Set<string>;
 }
 
 export function waitingState(ctx: ConsoleContext): WaitingState {
-  return {
-    prompts: new Set(waitingPrompts(ctx).map((r) => r.promptId)),
-    dialogs: new Map(ctx.tabs().flatMap((t) => (t.dialogs?.current ? [[t, t.dialogs.current] as const] : []))),
-  };
+  return { dialogs: new Set(runDialogs(ctx).map((d) => d.id)) };
 }
 
-// `connect once|cancel|allow|deny|allow-all [host]`: answers a connection prompt,
-// as the person would in its window.
-async function answerConnectCommand(ctx: ConsoleContext, args: string[]): Promise<false | void> {
-  const [choice, host] = args;
-  if (choice !== 'once' && choice !== 'cancel' && choice !== 'allow' && choice !== 'deny' && choice !== 'allow-all') {
-    ctx.out(MISTAKE_PREFIX + 'The `connect` command takes `once`, `cancel`, `allow`, `deny` or `allow-all`, then optionally the host.');
+// ---------- The `dialog` command ----------
+
+// The dialogs waiting in the run, oldest first.
+function runDialogs(ctx: ConsoleContext): WaitingDialog[] {
+  return runTrackers(ctx).flatMap((t) => t.waiting).sort((a, b) => a.openedAt - b.openedAt);
+}
+
+// The dialogs waiting on the tab `--tab` names: a listed tab, or one
+// still being set up. Null (said) for no such tab.
+function tabDialogs(ctx: ConsoleContext, name: string): { tab: number; waiting: WaitingDialog[] } | null {
+  const early = settingUpTracker(name);
+  if (early) return { tab: early.tab, waiting: early.waiting };
+  const tab = pickTab(ctx, name);
+  if (!tab) return null;
+  return { tab: tab.n, waiting: tab.dialogs?.waiting ?? [] };
+}
+
+// Where the other dialogs are, after saying none is waiting where asked.
+function elsewhereHint(ctx: ConsoleContext, except?: number): string {
+  const others = runDialogs(ctx).filter((d) => d.tab !== except);
+  if (others.length === 0) return '';
+  const tabs = [...new Set(others.map((d) => d.tab))];
+  return ` ${tabs.map((n) => `T${n}`).join(', ')} ${tabs.length === 1 ? 'has' : 'have'} ${others.length === 1 ? 'one' : 'some'}: use ${quoted(`dialog show --tab T${tabs[0]}`)}.`;
+}
+
+// The dialog a `dialog` command acts on: `--dialog`'s, else `--tab`'s
+// tab's selected or oldest one, else the default. Undefined (said) for none, false
+// (said) for a mistake.
+function targetDialog(ctx: ConsoleContext, parsed: ParsedArgs): WaitingDialog | undefined | false {
+  const flag = parsed.flags['--dialog'];
+  if (typeof flag === 'string') {
+    const id = parseDialogId(flag);
+    if (!id) {
+      ctx.out(`${MISTAKE_PREFIX}The ${quoted('--dialog')} flag takes a dialog's id, such as ${quoted('T1.2')}`);
+      return false;
+    }
+    const found = runDialogs(ctx).find((d) => d.id === id);
+    if (!found) ctx.out(`[sm-dev] No dialog ${id} is waiting${elsewhereHint(ctx) ? `.${elsewhereHint(ctx)}` : ', and no others are'}`);
+    return found;
+  }
+  if (parsed.tab !== undefined) {
+    const tracker = tabDialogs(ctx, parsed.tab);
+    if (!tracker) return false;
+    // The selected one when it's on that tab, as for the default.
+    const found = tracker.waiting.find((d) => d.id === ctx.selectedDialog) ?? tracker.waiting[0];
+    if (!found) ctx.out(`[sm-dev] No dialog is waiting on T${tracker.tab}.${elsewhereHint(ctx, tracker.tab)}`);
+    return found;
+  }
+  const found = defaultOf(ctx);
+  if (!found) ctx.out('[sm-dev] No dialogs are waiting');
+  return found;
+}
+
+// `dialog show|select|set|accept|cancel|click`: the dialogs waiting, and
+// answering them (docs/sm-dev-dialogs.md).
+async function dialogCommand(ctx: ConsoleContext, parsed: ParsedArgs, cwd: string): Promise<false | void> {
+  const form = parsed.form;
+  if (form === undefined) {
+    ctx.out(`${MISTAKE_PREFIX}The ${quoted('dialog')} command takes a subcommand: ${quoted('show')}, ${quoted('select')}, ${quoted('set')}, ${quoted('accept')}, ${quoted('cancel')} or ${quoted('click')}`);
     return false;
   }
-  // The selected script's, as for `get` and `set`. A prompt is per
-  // script and site, so with `host` there is at most one.
-  const script = selectedScript(ctx);
-  const waiting = waitingPrompts(ctx).filter((r) => host === undefined || r.host === host.toLowerCase());
-  const prompt = waiting.find((r) => r.scriptId === script?.id);
-  if (!prompt) {
-    const forHost = host === undefined ? '' : ` for ${host}`;
-    const name = script ? S.name(preparedScriptName(script)) : 'the selected script';
-    const other = waiting.find((r) => r.scriptId !== script?.id);
-    const otherScript = other && ctx.scripts.find((s) => s.id === other.scriptId);
-    ctx.out(`[sm-dev] ${otherScript
-      ? ui`No permission prompt${forHost} is waiting for ${name}. ${S.name(preparedScriptName(otherScript))} has one: select it with ${S.cmd(`script ${ctx.scripts.indexOf(otherScript) + 1}`)}, then use ${S.cmd('connect')} again.`
-      : ui`No permission prompt${forHost} is waiting for ${name}`}`);
+  if (form === 'show') return showDialogs(ctx, parsed);
+  if (form === 'select') {
+    const id = parseDialogId(parsed.words[0] ?? '');
+    if (!id) {
+      ctx.out(`${MISTAKE_PREFIX}The ${quoted('dialog select')} command takes a dialog's id, such as ${quoted('T1.2')}`);
+      return false;
+    }
+    const found = runDialogs(ctx).find((d) => d.id === id);
+    if (!found) {
+      ctx.out(`[sm-dev] No dialog ${id} is waiting${elsewhereHint(ctx) ? `.${elsewhereHint(ctx)}` : ', and no others are'}`);
+      return;
+    }
+    ctx.selectedDialog = id;
+    ctx.out(S.SM_DEV_PREFIX + ui`${S.cmd('dialog')} commands now apply to ${dialogSummary(found)} by default`);
     return;
   }
-  let answered: boolean;
+  const d = targetDialog(ctx, parsed);
+  if (d === false) return false;
+  if (!d) return;
+  if (form === 'set') {
+    const [name, ...values] = parsed.words;
+    const field = d.fields.find((f) => f.name.toLowerCase() === name?.toLowerCase());
+    if (name === undefined) {
+      ctx.out(`${MISTAKE_PREFIX}The ${quoted('dialog set')} command needs a field and a value${d.fields[0] ? `: ${quoted(`dialog set ${d.fields[0].name} ${d.fields[0].placeholder}`)}` : ''}`);
+      return false;
+    }
+    if (!field) {
+      ctx.out(`${MISTAKE_PREFIX}${d.fields.length === 0 ? `${d.title} dialog ${d.id} has no fields to set` : `${d.title} dialog ${d.id} has no ${quoted(name ?? '')} field. Its fields are ${d.fields.map((f) => quoted(f.name)).join(', ')}.`}`);
+      return false;
+    }
+    const given = fieldValues(d, field, values, cwd);
+    if ('error' in given) {
+      ctx.out(`${MISTAKE_PREFIX}${given.error}`);
+      return false;
+    }
+    field.value = given.values;
+    ctx.out(`[sm-dev] Set ${field.name} to ${given.values.map((v) => JSON.stringify(v)).join(' ')} on ${d.title} dialog ${d.id}`);
+    return;
+  }
+  let button: DialogButton | 'close' | undefined;
+  if (form === 'accept') {
+    const values = parsed.words;
+    if (values.length > 0) {
+      if (d.fields.length !== 1) {
+        ctx.out(`${MISTAKE_PREFIX}${d.fields.length === 0 ? `${d.title} dialog ${d.id} has no field to fill` : `${d.title} dialog ${d.id} has more than one field. Use ${quoted('dialog set')} for each.`}`);
+        return false;
+      }
+      const given = fieldValues(d, d.fields[0], values, cwd);
+      if ('error' in given) {
+        ctx.out(`${MISTAKE_PREFIX}${given.error}`);
+        return false;
+      }
+      d.fields[0].value = given.values;
+    }
+    button = d.buttons.find((b) => b.role === 'accept');
+  } else if (form === 'cancel') {
+    button = d.buttons.find((b) => b.role === 'cancel') ?? 'close';
+  } else {
+    const label = unquoteWhole(parsed.text ?? '').text.trim().toLowerCase();
+    button = d.buttons.find((b) => b.label.toLowerCase() === label);
+    if (!button) {
+      ctx.out(`${MISTAKE_PREFIX}${d.title} dialog ${d.id} has no ${quoted(parsed.text ?? '')} button. Its buttons are ${buttonList(d)}.`);
+      return false;
+    }
+  }
+  if (!button) {
+    ctx.out(`${MISTAKE_PREFIX}${d.title} dialog ${d.id} has no OK button. Its buttons are ${buttonList(d)}.`);
+    return false;
+  }
+  const values = Object.fromEntries(d.fields.map((f) => [f.name, f.value ?? f.default]));
+  let pressed: boolean;
   try {
-    answered = await ctx.host.answerConnectPrompt(prompt.promptId, choice);
+    pressed = await d.press(button, values);
   } catch (err) {
     ctx.out(`${MISTAKE_PREFIX}${(err as Error).message}`);
     return false;
   }
-  if (!answered) {
-    ctx.out(`[sm-dev] The permission prompt for ${prompt.host} is no longer waiting`);
+  if (ctx.selectedDialog === d.id) ctx.selectedDialog = undefined;
+  if (!pressed) {
+    ctx.out(`[sm-dev] ${d.title} dialog ${d.id} was already closed`);
     return;
   }
-  const said = choice === 'allow' ? `Allowed ${prompt.host}` : choice === 'allow-all' ? 'Allowed all sites'
-    : choice === 'deny' ? `Denied ${prompt.host}` : choice === 'once' ? `Allowed ${prompt.host} once`
-      : `Cancelled the permission prompt about ${prompt.host}`;
-  ctx.out(`[sm-dev] ${ui`${said} for ${S.name(prompt.name)}`}`);
+  ctx.out(button === 'close' ? `[sm-dev] Closed ${d.title} dialog ${d.id}` : `[sm-dev] Clicked ${button.label} on ${d.title} dialog ${d.id}`);
+}
+
+// `values` as `field` takes them: files resolved from `cwd`, the
+// command's own directory, and checked. Or what's wrong with them.
+function fieldValues(d: WaitingDialog, field: WaitingDialog['fields'][number], values: string[], cwd: string): { values: string[] } | { error: string } {
+  if (values.length === 0) return { error: `The ${quoted('dialog set')} command needs a field and a value: ${quoted(`dialog set ${field.name} ${field.placeholder}`)}` };
+  if (!field.files) {
+    if (values.length > 1 && !field.multiple) return { error: `The ${field.name} field of ${d.title} dialog ${d.id} takes one value. Quote a value that has spaces in it.` };
+    return { values };
+  }
+  let files: string[];
+  try {
+    files = expandPathArgs(values, cwd).map((f) => path.resolve(cwd, f));
+  } catch (err) {
+    return { error: (err as Error).message };
+  }
+  if (files.length > 1 && !field.multiple) return { error: `${d.title} dialog ${d.id} takes one file` };
+  const missing = files.find((f) => !existsSync(f));
+  if (missing) return { error: `There is no file at ${shownPath(missing, cwd)}` };
+  return { values: files };
+}
+
+// `dialog show`: the dialogs waiting on a tab, each with its fields,
+// buttons and the commands that answer it.
+function showDialogs(ctx: ConsoleContext, parsed: ParsedArgs): false | void {
+  const all = runDialogs(ctx);
+  const def = defaultOf(ctx);
+  let shown: WaitingDialog[];
+  let tab: number;
+  if (typeof parsed.flags['--dialog'] === 'string') {
+    const d = targetDialog(ctx, parsed);
+    if (d === false) return false;
+    if (!d) return;
+    shown = [d];
+    tab = d.tab;
+  } else if (parsed.tab !== undefined) {
+    const tracker = tabDialogs(ctx, parsed.tab);
+    if (!tracker) return false;
+    tab = tracker.tab;
+    shown = [...tracker.waiting];
+  } else {
+    if (!def) {
+      if (ctx.json) ctx.out(jsonResult('dialog', { dialogs: [] } satisfies J.DialogShowData));
+      else ctx.out('[sm-dev] No dialogs are waiting');
+      return;
+    }
+    tab = def.tab;
+    shown = all.filter((d) => d.tab === tab);
+  }
+  const elsewhere = [...new Set(all.filter((d) => d.tab !== tab).map((d) => d.tab))];
+  if (ctx.json) {
+    ctx.out(jsonResult('dialog', {
+      ...(def ? { default: def.id } : {}),
+      dialogs: shown.map((d) => dialogJson(d, d === def)),
+      ...(elsewhere.length > 0 ? { otherTabs: elsewhere.map((n) => `T${n}`) } : {}),
+    } satisfies J.DialogShowData));
+    return;
+  }
+  if (shown.length === 0) {
+    ctx.out(`[sm-dev] No dialog is waiting on T${tab}.${elsewhereHint(ctx, tab)}`);
+    return;
+  }
+  const head = `T${tab} has ${shown.length === 1 ? '1 dialog' : `${shown.length} dialogs`} waiting.`;
+  const which = def && (shown.length > 1 || !shown.includes(def))
+    ? ` \`dialog\` commands apply to ${def.id} by default. Use \`--dialog\` or \`dialog select\` to choose another.` : '';
+  ctx.out(message(head + which));
+  const now = Date.now();
+  for (const d of shown) {
+    ctx.out(ui``);
+    for (const line of dialogBlock(d, { isDefault: d === def, now })) ctx.out(line);
+  }
+  for (const n of elsewhere) {
+    const count = all.filter((d) => d.tab === n).length;
+    ctx.out(ui``);
+    ctx.out(message(`T${n} also has ${count === 1 ? '1 dialog' : `${count} dialogs`} waiting. Use \`dialog show --tab T${n}\` to see ${count === 1 ? 'it' : 'them'}.`));
+  }
 }
 
 /**
@@ -455,6 +617,7 @@ export function onlyInspects(line: string): boolean {
   const command = RUN_ALIASES[typed] ?? typed;
   if (INSPECTING.has(command)) return true;
   if (command === 'tabs' || command === 'scripts') return rest.length === 0;
+  if (command === 'dialog') return rest[0] === 'show';
   if (command === 'menu') return rest.length === 0 || (rest.length === 1 && (rest[0] === 'all' || /^[Tt]\d+$/.test(rest[0])));
   return false;
 }
@@ -609,13 +772,13 @@ export async function runConsoleCommand(
   // Only undefined for the commands that don't act on it.
   const tab = picked as ControlledTab;
   // An open dialog blocks the page's JavaScript, so a command that
-  // reaches into the page would wait on it, and hold up the accept or
-  // dismiss typed after it. `set` reaches every tab, so any tab's
+  // reaches into the page would wait on it, and hold up the `dialog`
+  // command given after it. `set` reaches every tab, so any tab's
   // dialog blocks it.
   const blockedByDialog = (tabs: ControlledTab[] = [tab]): boolean => {
     const waiting = tabs.find((t) => t.dialogs?.current);
     if (!waiting) return false;
-    ctx.out(`[sm-dev] ${dialogWaitingMessage(waiting, tab)}`);
+    ctx.out(S.SM_DEV_PREFIX + dialogWaitingMessage(ctx, waiting));
     return true;
   };
 
@@ -1083,43 +1246,8 @@ export async function runConsoleCommand(
         .catch((err) => ctx.out(`[sm-dev] Could not bring ${which} to the front: ${(err as Error).message}`));
       return;
     }
-    case 'connect':
-      return answerConnectCommand(ctx, args);
-    case 'accept':
-    case 'dismiss': {
-      // A tab still being set up, held up by the dialog it showed first.
-      const early = parsed.tab !== undefined ? settingUp.get(parsed.tab.toUpperCase()) : undefined;
-      const target = early ? null : parsed.tab !== undefined ? pickTab(ctx, parsed.tab) : tab;
-      if (!early && !target) return false;
-      const trackerOf = early ?? target!.dialogs;
-      const dialog = trackerOf?.take();
-      if (!dialog && !target) {
-        ctx.out('[sm-dev] No dialog is open');
-        return;
-      }
-      if (!dialog) {
-        const elsewhere = ctx.tabs().find((t) => t.dialogs?.current);
-        ctx.out(elsewhere
-          ? `[sm-dev] No dialog is open on ${tabName(target!)}. ${tabName(elsewhere)} has one; name its tab: ${quoted(`${command}${text ? ' ...' : ''} --tab ${tabName(elsewhere)}`)}.`
-          : '[sm-dev] No dialog is open');
-        return;
-      }
-      if (text && dialog.type() !== 'prompt') {
-        ctx.out(`${MISTAKE_PREFIX}Only a prompt dialog takes text. This one is ${dialogKind(dialog)}.`);
-        trackerOf!.putBack(dialog);
-        return;
-      }
-      // A bare accept keeps the prompt's own default, as pressing OK
-      // on it would.
-      const answered = command === 'accept'
-        ? dialog.accept(text || dialog.defaultValue())
-        : dialog.dismiss();
-      await answered.then(
-        () => ctx.out(`[sm-dev] ${command === 'accept' ? 'Accepted' : 'Dismissed'} the dialog`),
-        () => ctx.out('[sm-dev] The dialog was already closed'),
-      );
-      return;
-    }
+    case 'dialog':
+      return dialogCommand(ctx, parsed, cwd);
     default: {
       if (!PAGE_COMMANDS.has(command)) {
         ctx.out(`${MISTAKE_PREFIX}${notACommand(command)}`);
@@ -1340,7 +1468,7 @@ function managerRun(ctx: ConsoleContext): ManagerRun {
       // It reloads the tabs the script runs in, as `update` does, which
       // an open dialog would hold up.
       const waiting = ctx.tabs().find((t) => t.dialogs?.current);
-      if (waiting) throw new Error(dialogWaitingMessage(waiting, currentTab(ctx)));
+      if (waiting) throw new Error(dialogWaitingError(ctx, waiting));
       await ctx.updateScripts([script]);
     },
     tabsOf: async (managed, label) => {
@@ -1946,7 +2074,7 @@ function activityState(ctx: ConsoleContext, active: boolean, waiting = false): J
  */
 export function reloadable(tabs: ControlledTab[], out: (line: string) => void): ControlledTab[] {
   const waiting = tabs.filter((t) => t.dialogs?.current);
-  for (const t of waiting) out(`[sm-dev] ${tabName(t)} is waiting on a dialog, so it was not reloaded`);
+  for (const t of waiting) out(S.SM_DEV_PREFIX + ui`${tabName(t)} is waiting on ${t.dialogs?.stopping ? dialogSummary(t.dialogs.stopping) : 'a dialog'}, so it was not reloaded`);
   return tabs.filter((t) => !waiting.includes(t));
 }
 
@@ -2095,8 +2223,7 @@ function printTabs(ctx: ConsoleContext, frames = false): void {
     const opener = tab.openedBy ? ui` (opened by ${S.id(`T${tab.openedBy}`)})` : '';
     const none = tab.noScript ? ' (no scripts)' : '';
     ctx.out(ui`${selectMark(tab === current)}${S.id(tabName(tab))}: ${S.url(tab.page.url())}${frameCountSuffix(ctx, tab)}${savedSuffix(tab)}${none}${opener}${targetIdSuffix(tab.targetId)}`);
-    const dialog = tab.dialogs?.current;
-    if (dialog) ctx.out(ui`    Waiting on ${dialogKind(dialog)} dialog: ${S.code(JSON.stringify(dialog.message()))}`);
+    for (const d of tab.dialogs?.waiting ?? []) ctx.out(ui`    Waiting on ${dialogSummary(d)}. Use ${S.cmd(showCommand(ctx, d))} to see how to answer it.`);
     if (frames) {
       // The tab's own line is above; the tree's first line repeats it.
       // Its lines are indented as the tab's frames, two deeper than its
@@ -2128,7 +2255,7 @@ function scriptNumber(ctx: ConsoleContext, script: PreparedScript): string {
 }
 
 function tabJson(ctx: ConsoleContext, tab: ControlledTab): J.Tab {
-  const dialog = tab.dialogs?.current;
+  const dialogs = tab.dialogs?.waiting ?? [];
   const saved = showingSaved(tab) ? tab.saved : undefined;
   return {
     id: tabName(tab),
@@ -2138,7 +2265,7 @@ function tabJson(ctx: ConsoleContext, tab: ControlledTab): J.Tab {
     ...(tab.noScript ? { noScript: true } : {}),
     ...(saved ? { savedFrom: saved.given, ...(saved.offline ? { offline: true } : {}) } : {}),
     ...(tab.openedBy ? { openedBy: `T${tab.openedBy}` } : {}),
-    ...(dialog ? { dialog: { kind: dialogKind(dialog), message: dialog.message() } } : {}),
+    ...(dialogs.length > 0 ? { dialogs: dialogs.map((d) => ({ id: d.id, title: d.title, ...(d.message ? { message: d.message } : {}) })) } : {}),
     scripts: runningOn(ctx, tab).map((script) => scriptNumber(ctx, script)),
     ...framesJson(ctx, tab),
   };
@@ -2249,9 +2376,11 @@ async function statusJson(ctx: ConsoleContext, tab: ControlledTab | undefined): 
       ...(tab ? {} : { errors: errors.length }),
       ...(errors.length > 0 ? { lastError: errors.at(-1)!.message } : {}),
     });
-    const prompts = waitingPrompts(ctx).filter((r) => r.scriptId === id);
+    // The prompts shown as dialogs: one whose tab closed is gone, as
+    // from the text output.
+    const prompts = runDialogs(ctx).filter((d) => d.scriptId === id && d.connect);
     if (prompts.length > 0) {
-      scripts[scripts.length - 1].permissionPrompts = prompts.map((r) => ({ host: r.host, method: r.method, url: withoutQuery(r.url) }));
+      scripts[scripts.length - 1].permissionPrompts = prompts.map((d) => ({ ...d.connect!, dialog: d.id }));
     }
   }
   const others = await otherScriptsJson(ctx, tab) ?? [];
@@ -2303,7 +2432,7 @@ const CLOSE_TIMEOUT_MS = 5000;
 //
 // The page's beforeunload handlers run, as when a person closes a tab,
 // so a page that asks first ("Leave site?") shows its dialog, which the
-// dialog tracker reports for `accept` (leave) or `dismiss` (stay).
+// dialog tracker reports for `dialog accept` (leave) or `dialog cancel` (stay).
 // `--force` skips them.
 async function closeTabs(ctx: ConsoleContext, words: string[], force: boolean, current: ControlledTab, timeoutMs = CLOSE_TIMEOUT_MS): Promise<void | false> {
   let tabs: ControlledTab[];
@@ -2327,7 +2456,7 @@ async function closeTabs(ctx: ConsoleContext, words: string[], force: boolean, c
   // open, as `reload all` leaves it; the rest still close.
   const waiting = force ? [] : tabs.filter((t) => t.dialogs?.current);
   for (const t of waiting) {
-    ctx.out(`[sm-dev] ${tabName(t)} is waiting on ${dialogKind(t.dialogs!.current!)} dialog, so it was not closed. Answer it, or use ${quoted(`closetab ${tabName(t)} --force`)}.`);
+    ctx.out(S.SM_DEV_PREFIX + ui`${tabName(t)} is waiting on ${dialogSummary(t.dialogs!.stopping!)}, so it was not closed. Answer it, or use ${S.cmd(`closetab ${tabName(t)} --force`)}.`);
   }
   const closing = tabs.filter((t) => !waiting.includes(t));
   // Closing the browser's last tab closes the browser, which ends a run
@@ -2375,8 +2504,8 @@ async function closeTab(ctx: ConsoleContext, tab: ControlledTab, force: boolean,
     timer = setTimeout(resolve, timeoutMs);
   });
   // Watched from before the close, which may open it at once. Its
-  // dialog, if it asks, is said by the tracker, along with what accept
-  // and dismiss do with it.
+  // dialog, if it asks, is shown by the tracker, with the commands that
+  // answer it.
   const asking = tab.dialogs?.untilDialog(closedOrLate.then(() => false)) ?? closedOrLate.then(() => false);
   // With beforeunload run, Playwright doesn't wait for the close.
   await page.close({ runBeforeUnload: true }).catch(() => undefined);
@@ -2844,7 +2973,7 @@ function elsewhereFor(ctx: ConsoleContext, tab: ControlledTab, label: string): C
   return ctx.tabs().filter((t) => t !== tab && fromTab(ctx, t, ctx.host.reports.menuCommands).some((c) => c.name === label || looselyNamed(c.name, label)));
 }
 
-// Counts as done once a dialog the command opens is up, so `accept`
+// Counts as done once a dialog the command opens is up, so `dialog accept`
 // can be typed.
 function fire(tab: ControlledTab, fired: Promise<boolean>): Promise<boolean> {
   return tab.dialogs ? tab.dialogs.untilDialog(fired) : fired;
@@ -2869,8 +2998,8 @@ async function statusLines(ctx: ConsoleContext, tab: ControlledTab | undefined):
     lines.push(scriptRow(ctx, script));
     // First under the script, on any tab: the script is stuck until
     // it's answered.
-    for (const prompt of waitingPrompts(ctx).filter((r) => r.scriptId === id)) {
-      lines.push(message(`${DETAIL}*PERMISSION PROMPT* waiting: ${prompt.host} (${prompt.method} ${withoutQuery(prompt.url)}). Answer using ${quoted('connect')}.`));
+    for (const d of runDialogs(ctx).filter((w) => w.scriptId === id)) {
+      lines.push(ui`${DETAIL}*DIALOG* waiting: ${dialogSummary(d)}. Use ${S.cmd(showCommand(ctx, d))} to see how to answer it.`);
     }
     if (!tab) {
       // Errors are the script's, from tabs since closed, so still told.
@@ -3205,230 +3334,9 @@ async function focusTab(page: Page): Promise<void> {
 
 // ---------- Dialogs ----------
 
-
-/**
- * Keeps Playwright from dismissing dialogs in `context`'s pages.
- *
- * - Playwright dismisses a dialog nobody listens for, on the page or its
- *   context, in every tab it's attached to: on a connected browser, the
- *   person's own tabs too.
- * - And when the dialog is gone before its dismiss lands, the error is
- *   unhandled, and ends the process.
- * - A listener that does nothing leaves each dialog to whoever does
- *   answer it: the person, or the run's DialogTracker in its own tabs.
- *   Also for a Playwright client that isn't the run's own.
- */
-export function leaveDialogsOpen(context: BrowserContext): void {
-  context.on('dialog', (dialog) => {
-    const page = dialog.page();
-    if (page && !trackedPages.has(page)) untracked.set(page, dialog);
-  });
-}
-
-// A dialog open in a page no DialogTracker has yet, recorded by the
-// listener above: a tab one of the run's tabs opens can show it before
-// the run takes the tab over. The tab's tracker then reports and
-// answers it as it does a dialog that opens later.
-const untracked = new WeakMap<Page, Dialog>();
-const trackedPages = new WeakSet<Page>();
-
-// The trackers of tabs still being set up, by tab name (`T2`), so that
-// `accept --tab T2` can answer a dialog such a tab showed before the run took
-// it over: the tab joins the run's list only once that dialog is closed.
-const settingUp = new Map<string, DialogTracker>();
-
-/** Lists `tracker` under `name` while its tab is set up; null takes it off. */
-export function trackSettingUp(name: string, tracker: DialogTracker | null): void {
-  if (tracker) settingUp.set(name, tracker);
-  else settingUp.delete(name);
-}
-
-/** Dismisses the dialogs of tabs still being set up, as a run ends. */
-export async function dismissSettingUpDialogs(): Promise<void> {
-  await Promise.all([...settingUp.values()].map((t) => t.take()?.dismiss().catch(() => undefined)));
-}
-
-/**
- * Whether `page` shows a dialog no DialogTracker has yet. Playwright
- * says nothing when the person answers one in the browser, so the
- * record is checked: a page that runs code has no dialog open, and its
- * record is dropped.
- */
-export async function hasUntrackedDialog(page: Page): Promise<boolean> {
-  if (!untracked.has(page)) return false;
-  if (await pageAnswers(page)) {
-    untracked.delete(page);
-    return false;
-  }
-  return true;
-}
-
-// Whether the page runs code within a moment: a page showing a dialog doesn't.
-function pageAnswers(page: Page): Promise<boolean> {
-  return Promise.race([
-    page.evaluate(() => 1).then(() => true, () => false),
-    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 300)),
-  ]);
-}
-
-/**
- * The page's `alert`, `confirm`, `prompt` and `beforeunload` dialogs.
- * Playwright dismisses a dialog nobody listens for, which would answer
- * a script's `prompt` with Cancel before anyone saw it. So each one is
- * reported and left open, for the person at the browser or a typed
- * `accept` / `dismiss`. Only when neither can answer (a headless
- * browser, no command input) is it dismissed, since it would otherwise
- * hang the page for good.
- */
-export class DialogTracker {
-  /** The dialog open now, if any. */
-  current: Dialog | null = null;
-  /**
-   * Whether typed commands are, or are about to be, read, so `accept`
-   * can answer. Set before the page loads when they will be, or a
-   * prompt the script opens on load would be dismissed first.
-   */
-  commandsListening: boolean;
-  private waiters = new Set<() => void>();
-  // Dialogs open one at a time and close in order, so the nth close
-  // on the protocol session is the nth dialog Playwright reported. The
-  // two come over separate sessions, in no fixed order between them,
-  // so a close is matched by count rather than applied to whatever is
-  // current, which may be the next dialog already.
-  private openedCount = 0;
-  private closedCount = 0;
-  private currentOrdinal = 0;
-  // How many `leavingPage` calls are running.
-  private leaving = 0;
-
-  private constructor(
-    private readonly say: (text: string) => void,
-    private readonly visible: boolean,
-    commandsComing: boolean,
-    private readonly tabRef: () => string | undefined,
-  ) {
-    this.commandsListening = commandsComing;
-  }
-
-  /**
-   * `say`: where a dialog opening is told (a run logs it as an event).
-   * `visible`: whether the browser is on screen, for a person to
-   * answer. `commandsComing`: whether typed commands will be read.
-   * `tabRef`: the tab's name for `accept` and `dismiss` to take, when
-   * the run has several tabs and a bare one could reach another.
-   */
-  static async attach(
-    page: Page,
-    say: (text: string) => void,
-    { visible, commandsComing = false, tabRef = () => undefined }: { visible: boolean; commandsComing?: boolean; tabRef?: () => string | undefined },
-  ): Promise<DialogTracker> {
-    const tracker = new DialogTracker(say, visible, commandsComing, tabRef);
-    trackedPages.add(page);
-    // One already open, from before the run had the tab: not one the
-    // person has answered since.
-    const waiting = await hasUntrackedDialog(page) ? untracked.get(page) : undefined;
-    untracked.delete(page);
-    page.on('dialog', (dialog) => tracker.opened(dialog));
-    // Answered in the browser, a dialog closes without Playwright
-    // saying so; the protocol's own event does.
-    const listening = (async () => {
-      try {
-        const cdp = await page.context().newCDPSession(page);
-        await cdp.send('Page.enable');
-        cdp.on('Page.javascriptDialogClosed', () => tracker.closed());
-      } catch {
-        // Then `status` may name a dialog already answered, and
-        // `accept` says it was closed.
-      }
-    })();
-    if (!waiting) {
-      await listening;
-      return tracker;
-    }
-    // Reported (or dismissed) before waiting on the session: while the
-    // dialog is open, `Page.enable` doesn't return, so the session is
-    // ready only once the dialog has closed, by whoever answered it.
-    // The session missed that close, so it's counted here.
-    tracker.opened(waiting);
-    void listening.then(() => tracker.closed());
-    return tracker;
-  }
-
-  /**
-   * `work`, or true as soon as a dialog opens while it runs. A menu
-   * command that opens a dialog blocks the page, and the push that
-   * fired it with it, until the dialog is answered.
-   */
-  async untilDialog(work: Promise<boolean>): Promise<boolean> {
-    let wake!: () => void;
-    const opened = new Promise<boolean>((resolve) => { wake = () => resolve(true); });
-    this.waiters.add(wake);
-    try {
-      return await Promise.race([work, opened]);
-    } finally {
-      this.waiters.delete(wake);
-    }
-  }
-
-  /**
-   * `work`, which leaves the page (`reload --force`): a beforeunload
-   * dialog that opens meanwhile is accepted at once, as leaving was
-   * asked for.
-   */
-  async leavingPage<T>(work: () => Promise<T>): Promise<T> {
-    this.leaving++;
-    try {
-      return await work();
-    } finally {
-      this.leaving--;
-    }
-  }
-
-  /** The open dialog, now claimed by whoever answers it. */
-  take(): Dialog | null {
-    const dialog = this.current;
-    this.current = null;
-    return dialog;
-  }
-
-  putBack(dialog: Dialog): void {
-    this.current ??= dialog;
-  }
-
-  private closed(): void {
-    this.closedCount++;
-    if (this.currentOrdinal <= this.closedCount) this.current = null;
-  }
-
-  private opened(dialog: Dialog): void {
-    const ordinal = ++this.openedCount;
-    // Counted all the same: its close is counted too.
-    if (this.leaving > 0 && dialog.type() === 'beforeunload') {
-      void dialog.accept().catch(() => undefined);
-      return;
-    }
-    for (const wake of this.waiters) wake();
-    const message = dialog.message();
-    // As markup, so backticks in the page's text are only text.
-    const what = ui`The page opened ${dialogKind(dialog)} dialog${message ? `: ${JSON.stringify(message)}` : ''}`;
-    if (!this.visible && !this.commandsListening) {
-      this.say(ui`${what}. Dismissed it, since nothing can answer it in a headless run that takes no commands.`);
-      void dialog.dismiss().catch(() => undefined);
-      return;
-    }
-    this.current = dialog;
-    this.currentOrdinal = ordinal;
-    const tab = this.tabRef();
-    const accept = tab ? `accept --tab ${tab}` : 'accept';
-    const dismiss = tab ? `dismiss --tab ${tab}` : 'dismiss';
-    const answer = dialog.type() === 'beforeunload' ? `use ${quoted(accept)} to leave the page or ${quoted(dismiss)} to stay`
-      : `use ${quoted(dialog.type() === 'prompt' ? `${accept} [text]` : accept)} or ${quoted(dismiss)}`;
-    const how = !this.visible ? `${answer[0].toUpperCase()}${answer.slice(1)}`
-      : this.commandsListening ? `Answer it in the browser, or ${answer}`
-        : 'Answer it in the browser';
-    this.say(ui`${what}. ${S.message(how)}.`);
-  }
-}
+// The tracker and its helpers are in dialogs.ts; run.ts and the tests
+// take them from here too.
+export { DialogTracker, dismissSettingUpDialogs, hasUntrackedDialog, leaveDialogsOpen, trackSettingUp } from './dialogs.js';
 
 // A script's `GM_setValue` reaches the worker a message after the page
 // makes it, and a menu command's own work may take a moment to get
@@ -3613,14 +3521,19 @@ export function commandRunner(shared: ConsoleContext, { limitMs }: { limitMs?: n
         if (l.startsWith(MISTAKE_PREFIX)) mistaken = true;
         print(l);
       };
+      // A JavaScript dialog whose close went unseen isn't waiting. Not
+      // for a command that answers one, which finds out for itself, so
+      // it doesn't wait on the check.
+      if (!ANSWERS_DIALOG.test(line)) await Promise.all(runTrackers(ctx).map((t) => t.verify()));
       const before = waitingState(ctx);
       try {
         // Typed at a person's prompt, `menu` needn't wait for a command
         // still to register: the person can see what there is.
         ctx.interactive = hooks?.interactive === true;
+        setRunningCommand(line);
         // Its waits keep to that time, counted from its turn.
         const work = inBudget(deadlineIn(given), () => runConsoleCommand(line, ctx, { cwd: hooks?.cwd, words: hooks?.words }));
-        const result = limit === null ? await work : await within(work, limit);
+        const result = await (limit === null ? work : within(work, limit)).finally(() => setRunningCommand(undefined));
         if (result === 'timeout') {
           abandoned = true;
           work.catch(() => undefined);
@@ -3669,11 +3582,11 @@ export function commandRunner(shared: ConsoleContext, { limitMs }: { limitMs?: n
 }
 
 /**
- * Whether dialogs wait for a typed (or sent) `accept`, rather than
- * being dismissed in a headless run. On while commands are read.
+ * Whether dialogs wait for a `dialog` command, rather than being
+ * dismissed in a headless run. On while commands are read.
  */
 export function setCommandsListening(tabs: ControlledTab[], listening: boolean): void {
-  for (const tab of tabs) if (tab.dialogs) tab.dialogs.commandsListening = listening;
+  setTrackersListening(tabs.map((t) => t.dialogs), listening);
 }
 
 /** What the prompt needs from whoever runs its commands. */

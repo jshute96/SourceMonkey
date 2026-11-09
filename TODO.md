@@ -1146,6 +1146,22 @@ See [docs/harness-design.md](docs/harness-design.md).
   separate command) could drop given subtrees, inline SVGs and unused
   `<style>` blocks.
 
+## sm-dev dialogs
+
+One `dialog` command for every box that waits for an answer. It covers
+the page's JavaScript dialogs, connection prompts and file choosers now. Design:
+[docs/sm-dev-dialogs.md](docs/sm-dev-dialogs.md). Steps left:
+
+1. **Test first**: what headless and visible Chrome send and accept over CDP
+   for the File System Access pickers and for an HTTP Basic auth
+   challenge, and what headless does with each today.
+2. **Pickers**, over CDP or a stub, by what that testing finds.
+3. **Sign in**, always on or behind a `start` flag, by its cost.
+4. **Later**: list a manager's own prompts (Tampermonkey's `@connect`
+   page) as dialogs; a `start` flag to grant or deny site permissions;
+   catch file choosers in cross-site iframes, which are targets of their
+   own that the tab's session doesn't reach.
+
 ## Tabs that predate the first script install
 
 - In a fresh profile (headless Chromium 153), a tab opened before

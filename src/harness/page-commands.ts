@@ -96,7 +96,7 @@ function shortEvalResult(text: string): string {
  * Runs one of `PAGE_COMMANDS` on `tab`. Reports through `out`, and
  * resolves once the command and what it set off are done, or once a
  * dialog it opened is waiting for an answer: the page stops until then,
- * and `accept` or `dismiss` can't run while this does. False when it
+ * and `dialog accept` can't run while this does. False when it
  * failed (no element, a timeout, an expression that threw), so a line
  * of several commands stops there. A mistake in how it was typed is an
  * `ERROR:` line, which stops the line too.
@@ -127,6 +127,11 @@ export async function runPageCommand(
   // `work`, or false as soon as a dialog opens during it. A dialog stops
   // the page, so `work` would wait on it for good. The tracker says
   // what opened; the command just stops waiting.
+  // The dialog that just opened, by id: `dialog T1.2`.
+  const opened = (): string => {
+    const d = tab.dialogs?.newest();
+    return d ? `dialog ${d.id}` : 'a dialog';
+  };
   const done = async (work: Promise<unknown>): Promise<boolean> => {
     const finished = work.then(() => true);
     // What `work` still does after a dialog is its own affair.
@@ -139,7 +144,7 @@ export async function runPageCommand(
   // action still counts as done.
   const act = async (work: Promise<unknown>, what: string): Promise<void> => {
     if (!await done(work)) {
-      say(ui`${what}. It opened a dialog, which is waiting for an answer.`);
+      say(ui`${what}. It opened ${opened()}, which is waiting for an answer.`);
       return;
     }
     if (input.flags['--nowait']) {
@@ -149,7 +154,7 @@ export async function runPageCommand(
     const settleMs = within(SETTLE_TIMEOUT_MS);
     const settled = await settleTab(tab, tab.link.host, settleMs);
     if (!settled.settled && 'dialog' in settled) {
-      say(ui`${what}. The page opened a dialog, which is waiting for an answer.`);
+      say(ui`${what}. The page opened ${opened()}, which is waiting for an answer.`);
       return;
     }
     say(what);
@@ -208,7 +213,7 @@ export async function runPageCommand(
         const evaluated = evaluate().then((r) => { result = r; });
         try {
           if (!await done(evaluated)) {
-            say('The expression opened a dialog, which is waiting for an answer.');
+            say(`The expression opened ${opened()}, which is waiting for an answer.`);
             return;
           }
         } catch (err) {
@@ -433,7 +438,7 @@ export async function runPageCommand(
           tree = shown.length === 0 ? '' : partsText(shown, parts.limit, rest);
         })();
         if (!await done(taking)) {
-          say('The page opened a dialog during the snapshot, which is waiting for an answer.');
+          say(`The page opened ${opened()} during the snapshot, which is waiting for an answer.`);
           return;
         }
         if (parts && tree === '') {
@@ -550,7 +555,7 @@ export async function runPageCommand(
               }));
             })();
             if (!await done(probing)) {
-              say('The page opened a dialog during the probe, which is waiting for an answer.');
+              say(`The page opened ${opened()} during the probe, which is waiting for an answer.`);
               return false;
             }
             selectors.push(entry);
@@ -590,7 +595,7 @@ export async function runPageCommand(
           const finished = await done(probing);
           for (const line of lines) out(line);
           if (!finished) {
-            say('The page opened a dialog during the probe, which is waiting for an answer.');
+            say(`The page opened ${opened()} during the probe, which is waiting for an answer.`);
             return;
           }
         }
@@ -709,7 +714,7 @@ export async function runPageCommand(
               return false;
             }
             if (!outcome) {
-              say(`${method} opened a dialog, which is waiting for an answer.`);
+              say(`${method} opened ${opened()}, which is waiting for an answer.`);
               return;
             }
             out(JSON.stringify(result, null, 2));
@@ -717,7 +722,7 @@ export async function runPageCommand(
         } finally {
           // Not waited for: with a dialog open, detaching doesn't finish
           // until it's answered, and the command must return so that
-          // accept or dismiss can run.
+          // `dialog accept` can run.
           if (!lasting) session.detach().catch(() => undefined);
           else {
             // What would leave the page waiting on nobody is turned off:
@@ -886,7 +891,7 @@ const PAGE_SIZE_WAIT_MS = 1000;
 // The page's size as its window shows it, for `dropTabSession` to put back.
 function pageSize(page: Page): Promise<PageSize | undefined> {
   // A page showing a dialog or busy in a script doesn't answer, and
-  // `cdp --reset` must still end, to leave `accept` free to run.
+  // `cdp --reset` must still end, to leave `dialog accept` free to run.
   return withTimeout(page.evaluate(() => ({ width: innerWidth, height: innerHeight, deviceScaleFactor: devicePixelRatio })), PAGE_SIZE_WAIT_MS).catch(() => undefined);
 }
 
@@ -908,7 +913,7 @@ async function tabSession(page: Page): Promise<CDPSession> {
 
 // How long `cdp --reset` waits for the session to detach: with a dialog
 // open, it doesn't until the dialog is answered, which the run's next
-// command (`accept`) must be free to do.
+// command (`dialog accept`) must be free to do.
 const DETACH_WAIT_MS = 1000;
 // How long it waits after that for a size override to come undone.
 const SIZE_SETTLE_MS = 2000;

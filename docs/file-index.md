@@ -293,7 +293,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/command-args.ts` | The one parser of every sm-dev command's words: quotes, flags per subcommand, `--tab` or a leading tab, text, blocks, `--help` |
 | `src/harness/prompt-editor.ts` | Multi-line editing of `{{` blocks at the `--interactive` prompt, on top of readline |
 | `src/harness/prompt-history.ts` | The `--interactive` prompt's history file (`~/.sm-dev-history`), shared by parallel sessions |
-| `src/harness/console-commands.ts` | A run's commands across its tabs (`logs` among them), the page-dialog tracker, and the client's `--interactive` prompt |
+| `src/harness/console-commands.ts` | A run's commands across its tabs (`logs` and `dialog` among them), and the client's `--interactive` prompt |
 | `src/harness/json-output.ts` | `--json` output: each command's result type, and the marks a result and a stderr note travel under |
 | `src/harness/input-file.ts` | Reads a file a command names for its contents (`eval`, `set`, `type` and `cdp`'s `--file`, `--values-file`) |
 | `src/harness/page-commands.ts` | The run commands that drive and read a tab's page, from `click` and `eval` to `snapshot` and raw `cdp` calls |
@@ -327,6 +327,7 @@ command. See `docs/harness-design.md` and `docs/sm-dev-design.md`.
 | `src/harness/extension-backend.ts` | Finds SourceMonkey in a browser: its id and its service worker |
 | `src/harness/run-log.ts` | A run's log file and temp browser downloads folder: timestamped names in `/tmp/sm-dev-logs-<user>`, stamped lines, per-run links |
 | `src/harness/download-watch.ts` | Prints where a download from one of the run's tabs was saved, from Chrome's CDP download events |
+| `src/harness/dialogs.ts` | The dialogs waiting on each tab (page, Chrome and SourceMonkey ones), their ids, and how `dialog show` lays them out |
 | `src/harness/tab-refs.ts` | Naming and picking a run's tabs (`T2`, target ids), the current tab, the dialog message |
 | `src/harness/wait.ts` | The `wait` command, when a tab has settled or a load is done, and the `--timeout-seconds` budget waits share |
 | `src/harness/runs.ts` | The runs on this machine: record files, control sockets, and the client connection (`RunClient`) to one |
@@ -667,6 +668,7 @@ built extension loaded; fixtures in `tests/fixtures/harness.ts`.
 |------|-------------|
 | `tests/harness/command-limit.spec.ts` | A command past its time limit: the run takes the next one, and a page stuck in JavaScript is stopped |
 | `tests/harness/console-commands.spec.ts` | The commands typed into `sm-dev start`: `scripts`, `values`, `menu` by M number, dialogs, several tabs, stopped loads |
+| `tests/harness/dialogs.spec.ts` | The `dialog` command's file chooser: caught, shown, answered with files or cancelled, and left to Chrome without commands |
 | `tests/harness/frames.spec.ts` | sm-dev on the frames example: frame ids, `frames`, scripts per frame, menus, `match --frames`, `--frame`, JSON |
 | `tests/harness/run-tabs.spec.ts` | `sm-dev start` end to end: followed tabs, `--all`, `--notab`, `load` / `update` / `--watch` reloads, `--from-saved`, sandboxed pages, `--lang` |
 | `tests/harness/run-downloads.spec.ts` | Download lines from a run's tabs: a temp browser saves beside the run log, a connected browser by its own setting |
@@ -795,6 +797,7 @@ For userscript repos to install, so their coding agents know how to write script
 | `docs/sm-dev-violentmonkey.md` | Design: sm-dev's run scripts and collection/script commands under Violentmonkey, and what other managers share |
 | `docs/sm-dev-tampermonkey.md` | Design: sm-dev under Tampermonkey, as differences from Violentmonkey (dashboard messages, ids, `@require`s, line numbers) |
 | `docs/sm-dev-managers.md` | Design draft: sm-dev commands for managing installed scripts, collections and managers (SM, TM, VM) |
+| `docs/sm-dev-dialogs.md` | The `dialog` command: page, Chrome and SourceMonkey dialogs and file choosers, their ids and output; planned pickers |
 | `docs/sm-dev-frames.md` | Design: how sm-dev shows a tab's iframes, frame ids, and which scripts run in which frame |
 | `docs/sm-dev-logs.md` | A run's logs: the sources, what the stream, `logs` and `wait log` show, positions, and attributing lines |
 | `docs/sm-dev-json.md` | sm-dev's `--json` output: how it prints, each command's result type, and examples |

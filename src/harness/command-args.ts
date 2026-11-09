@@ -389,7 +389,7 @@ function takeFlag(command: string, syntax: CommandSyntax, parsed: ParsedArgs, li
   const name = eq > 0 ? text.slice(0, eq) : text;
   const kind = Object.hasOwn(syntax.flags, name) ? syntax.flags[name] : undefined;
   // Any command takes `--timeout-seconds`, unlisted where it waits for
-  // nothing (`accept`), so a timeout given out of habit isn't a mistake.
+  // nothing (`dialog cancel`), so a timeout given out of habit isn't a mistake.
   // Checked, then left out.
   if (!kind && name === TIMEOUT_FLAG) {
     const value = eq > 0 ? text.slice(eq + 1) : list[i + 1]?.text;
