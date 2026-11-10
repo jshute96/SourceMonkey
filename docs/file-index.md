@@ -30,7 +30,8 @@ One-line descriptions of every source file, grouped by directory.
 
 | File | Description |
 |------|-------------|
-| `.claude/settings.json` | Local dev settings — Bash permissions for `pnpm` commands |
+| `.claude/settings.json` | Local dev settings — Bash permissions for `pnpm` commands, and the SessionStart hook |
+| `.claude/hooks/session-start.sh` | Cloud-session startup: installs deps and Playwright's Chromium, builds `lib/` and `dist/` when stale |
 | `.claude/commands/codereview.md` | `/codereview` slash command — launches a background review subagent |
 | `.claude/skills/SourceMonkey-dev` | Symlink to `skills/SourceMonkey-dev/`, so agents here load the harness skill too |
 | `.claude/skills/SourceMonkey-friction` | Symlink to `skills/SourceMonkey-friction/`, so agents here log tool friction too |
