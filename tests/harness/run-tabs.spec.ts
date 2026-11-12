@@ -1017,6 +1017,41 @@ test('a request to an undeclared host shows SourceMonkey\'s prompt as a dialog, 
   expect(lines.some((l) => l.includes('Opened permission request window'))).toBe(false);
 });
 
+test('a dialog that opens during a command is named at its end, and a chooser it opened isn\'t repeated', async ({ fixtureServer, scriptsDir }) => {
+  const base = fixtureServer.baseUrl;
+  const file = scriptsDir.write({
+    relativePath: 'asks.user.js',
+    meta: { name: 'Asks', match: ['*://*/target.html'], grant: ['GM_registerMenuCommand'] },
+    body: `
+      GM_registerMenuCommand('Ask', () => { const name = prompt('Name?'); alert('Hi ' + name); });
+      GM_registerMenuCommand('Import', () => { const input = document.createElement('input'); input.type = 'file'; input.click(); });
+      // Late enough that the alert opens during the wait after it.
+      GM_registerMenuCommand('Later', () => setTimeout(() => alert('Later'), 1000));
+    `,
+  });
+  const lines = await driveCli([file, `${base}/target.html`], [
+    ['Started as run', 'menu Ask'],
+    ['Prompt dialog T1.1 opened during the command and is waiting for an answer: "Name?"', 'dialog accept Ann'],
+    ['Alert dialog T1.2 opened during the command and is waiting for an answer: "Hi Ann"', 'dialog accept'],
+    ['Clicked OK on Alert dialog T1.2', 'menu Import'],
+    ['File chooser dialog T1.3 opened during the command', 'tabs'],
+    ['Tabs:', 'dialog cancel'],
+    ['Clicked Cancel on File chooser dialog T1.3', 'menu Later'],
+    // A failed command ends a --stdin run, so this step is the last.
+    ['Fired "Later"', 'wait selector #never'],
+  ]);
+  // The answer's output ends with a notice of the alert it led to.
+  const at = lines.indexOf('[sm-dev] Clicked OK on Prompt dialog T1.1');
+  const answered = lines.slice(at + 1, lines.findIndex((l, i) => i > at && l.startsWith('stdin > ')));
+  expect(answered.at(-1)).toBe('[sm-dev] Alert dialog T1.2 opened during the command and is waiting for an answer: "Hi Ann". Use `dialog show` to see how to answer it.');
+  // The chooser doesn't stop the page, and its opening was shown, so
+  // `tabs` doesn't end with a reminder of it.
+  expect(lines.some((l) => l.includes('still waiting: File chooser'))).toBe(false);
+  // A `wait` that failed on a dialog named it already, so it isn't named twice.
+  expect(lines).toContain('[sm-dev] Wait failed: The page is waiting on Alert dialog T1.4: "Later". Use `dialog show` to see how to answer it.');
+  expect(lines.some((l) => l.includes('T1.4') && l.includes('opened during the command'))).toBe(false);
+});
+
 test('a connection prompt whose request is aborted is dropped, and the run says so', async ({ fixtureServer, scriptsDir }) => {
   const base = fixtureServer.baseUrl;
   const other = base.replace('127.0.0.1', 'localhost');

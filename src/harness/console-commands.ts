@@ -32,7 +32,7 @@ import {
   collectionList, count, managerVerb, noSuchScript, noSuchVerb, scriptList, type ManagerControl, type ManagerRun, type RunView,
 } from './manager-commands.js';
 import { helpRequest, helpSubcommand, parseCommandArgs, splitWords, unquoteWhole, type ParsedArgs } from './command-args.js';
-import { commandLimitMs, givenTimeoutMs, pageBusy, stopPageScript } from './command-limit.js';
+import { commandLimitMs, DIALOG_LIMIT_MS, givenTimeoutMs, GRACE_MS, pageBusy, stopPageScript } from './command-limit.js';
 import { ALIASES, COMMAND_NAMES, RUN_COMMAND_NAMES, SAME_COMMANDS, TIMEOUT_FLAG, commandHelp, commandSuggestion, commandSyntax, unsupportedCommand } from './command-list.js';
 import { errorSentence, readJsonFile, writeProblem } from './input-file.js';
 import { CDP_FRAME_ARG, PAGE_COMMANDS, runPageCommand, type EvalIn } from './page-commands.js';
@@ -44,7 +44,7 @@ import { representativeMatch } from '../match-targets.js';
 import { RUN_SCRIPT_LABEL, isContextMenuRunAt } from '../userscript-header.js';
 import { currentTab, defaultOf, dialogWaitingError, dialogWaitingMessage, NO_TABS, pickTab, runTrackers, showCommand, tabName } from './tab-refs.js';
 import {
-  buttonList, dialogBlock, dialogJson, dialogName, dialogSummary, firstToAnswer, namesDialog, parseDialogId, setRunningCommand, setTrackersListening,
+  buttonList, dialogBlock, dialogJson, dialogMessageTail, dialogName, dialogSummary, firstToAnswer, namesDialog, parseDialogId, setRunningCommand, setTrackersListening,
   settingUpTracker, type DialogButton, type DialogTracker, type WaitingDialog,
 } from './dialogs.js';
 import { runLogLabel } from './run-log.js';
@@ -274,9 +274,28 @@ export function waitingReminders(ctx: ConsoleContext, before: WaitingState, said
     // Not when the output already said how to answer it (a refusal), or
     // showed it (`dialog show`).
     if (said.map(plainLine).some((l) => (namesDialog(l, d.id) && l.includes('dialog show')) || l.includes(`${d.id}  ${d.title}`))) continue;
+    // A file chooser doesn't stop the page, and one that opened during
+    // a command was shown in its output, so it isn't repeated after
+    // each later command. One that opened between commands is.
+    if (d.hidden && d.openedDuring) continue;
     lines.push(S.SM_DEV_PREFIX + ui`*DIALOG* still waiting: ${dialogSummary(d)}. Use ${S.cmd(showCommand(ctx, d))} to see how to answer it.`);
   }
   return lines;
+}
+
+// The dialogs that opened during a command and still wait, as its last
+// lines. Their blocks came earlier in its output, among the page's
+// events, where a reader of only its end misses them. Not one the
+// command's own lines already named (`click`'s "It opened dialog
+// T1.2", `wait`'s failure, `dialog show`, `status`). The events'
+// `*DIALOG*` blocks and the reminders aren't counted: the notice
+// exists because the block can be far above the command's last line.
+export function openedNotices(ctx: ConsoleContext, before: WaitingState, said: readonly string[]): string[] {
+  const own = said.map(plainLine).filter((l) => !/\*DIALOG\* (T\d|still waiting)/.test(l));
+  return runDialogs(ctx)
+    .filter((d) => !before.dialogs.has(d.id))
+    .filter((d) => !own.some((l) => namesDialog(l, d.id)))
+    .map((d) => S.SM_DEV_PREFIX + ui`${dialogName(d)} opened during the command and is waiting for an answer${dialogMessageTail(d)}. Use ${S.cmd(showCommand(ctx, d))} to see how to answer it.`);
 }
 
 // The `dialog` commands that answer or fill one, rather than look.
@@ -422,13 +441,15 @@ async function dialogCommand(ctx: ConsoleContext, parsed: ParsedArgs, cwd: strin
     ctx.out(`${MISTAKE_PREFIX}${d.title} dialog ${d.id} has no OK button. Its buttons are ${buttonList(d)}.`);
     return false;
   }
+  const tab = ctx.tabs().find((t) => t.n === d.tab);
   // Its answer would wait on the page, which a JavaScript dialog holds.
-  const holder = d.needsPage ? ctx.tabs().find((t) => t.n === d.tab)?.dialogs?.stopping : undefined;
+  const holder = d.needsPage ? tab?.dialogs?.stopping : undefined;
   if (holder && holder !== d) {
     ctx.out(`${MISTAKE_PREFIX}${dialogName(d)} can't be answered while ${dialogName(holder)} blocks its page. Answer ${holder.id} first. Use ${quoted(showCommand(ctx, holder))} to see how.`);
     return false;
   }
   const values = Object.fromEntries(d.fields.map((f) => [f.name, f.value ?? f.default]));
+  const started = Date.now();
   let pressed: boolean;
   try {
     pressed = await d.press(button, values);
@@ -442,6 +463,17 @@ async function dialogCommand(ctx: ConsoleContext, parsed: ParsedArgs, cwd: strin
     return;
   }
   ctx.out(button === 'close' ? `[sm-dev] Closed ${d.title} dialog ${d.id}` : `[sm-dev] Clicked ${button.label} on ${d.title} dialog ${d.id}`);
+  // Waits for the page to settle, as `click` does, so the GM values
+  // the page's scripts store and the dialogs the page opens after the
+  // answer are printed in this command's output. The run then names a
+  // dialog that opened (`openedNotices`). The wait is limited to the
+  // time remaining in the command's 10-second backstop, so a slow
+  // answer ends with "did not settle" instead of being stopped as hung.
+  if (parsed.flags['--nowait'] || !tab || tab.page.isClosed()) return;
+  const left = DIALOG_LIMIT_MS - GRACE_MS - (Date.now() - started);
+  const settleMs = budgeted(Math.max(1, Math.min(SETTLE_TIMEOUT_MS, left)));
+  const settled = await settleTab(tab, tab.link.host, settleMs);
+  if (!settled.settled && 'busy' in settled) ctx.out(`[sm-dev] ${notSettledMessage(tab, settleMs, settled.busy)}`);
 }
 
 // `values` as `field` takes them: files resolved from `cwd`, the
@@ -3550,7 +3582,9 @@ export function commandRunner(shared: ConsoleContext, { limitMs }: { limitMs?: n
         // Not after a command that ends the run, nor a line saying the
         // same thing already (a command refused for an open dialog).
         if (!ENDS_RUN.has(typed)) {
+          await Promise.all(runTrackers(ctx).map((t) => t.listed()));
           for (const reminder of waitingReminders(ctx, before, said)) ctx.out(reminder);
+          for (const notice of openedNotices(ctx, before, said)) ctx.out(notice);
         }
         code = result === false ? 1 : typeof result === 'number' ? result : 0;
         // An invalid command is 2, even when it also said it failed.

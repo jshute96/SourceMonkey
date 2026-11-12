@@ -81,6 +81,11 @@ The code is in `src/harness/dialogs.ts`, with the command in
       answered.
     - Answering a file chooser while a JavaScript dialog blocks its page
       is refused, naming that dialog.
+    - A chooser's `change` handler can itself open a JavaScript dialog
+      (an import's "Overwrite?" confirm). `DOM.setFileInputFiles`
+      returns only once the handlers have run, so the chooser counts
+      as answered as soon as a dialog opens (`untilDialog`), rather
+      than waiting on the call.
 - So with one dialog waiting, which is the usual case, no id or tab is
   needed, even for a dialog on another tab.
 
@@ -96,6 +101,15 @@ All but `dialog select` take `--tab` and `--dialog`.
 | `dialog accept [value...]` | Clicks the dialog's OK button. With one or more values given, it first sets the dialog's only field to them. |
 | `dialog cancel` | Clicks the Cancel button, or closes a dialog that has no Cancel (an Alert). |
 | `dialog click <button>` | Clicks the button with that label, matched case-insensitively. |
+
+- After answering, `accept`, `cancel` and `click` wait up to 5 seconds
+  for the dialog's tab to settle (`settleTab`), as the `click` command
+  does. The command's output then includes the GM values the page's
+  scripts store and the dialogs the page opens during that wait.
+  `--nowait` skips the wait.
+  - The wait ends at once when the page opens another JavaScript
+    dialog, which stops the page.
+  - It is cut to fit in the `dialog` command's 10-second limit.
 
 - Field values are kept by sm-dev until the dialog is answered, so
   `set` can be run more than once, and `show` shows them.
@@ -354,6 +368,27 @@ Not built. What's known, from the dialogs example
 - A dialog opened during a command shows in that command's output, as
   stream events do. One opened between commands shows in the stream and
   the run's log, and the next command's reminder names it.
+- **A command ends by naming the dialogs that opened during it** and
+  still wait (`openedNotices` in `console-commands.ts`): "Alert dialog
+  T1.2 opened during the command and is waiting for an answer: ..."
+  - The dialog's `*DIALOG*` block, printed as it opened, came earlier
+    in the output, among the page's other event lines. A reader of only
+    the command's last lines would miss it.
+  - A file chooser takes one CDP call (`DOM.describeNode`, for its
+    `accept` list) between Chrome reporting it and sm-dev listing it.
+    A command that opened one waits for that before it ends, so the
+    chooser is named under that command, not the next one.
+  - Not when the command's own lines already name it: `click`'s "It
+    opened dialog T1.2", a `wait` that failed on it, `dialog show` or
+    `status`.
+  - `cdp` doesn't wait for the page. A dialog that the page opens from
+    a timer after a `cdp` input call is reported in the next command's
+    output, not in the `cdp` command's.
+    The next command's reminder names it.
+  - A connection prompt reaches sm-dev as a message from the extension,
+    so a prompt for a request made just before a command can be named
+    as opened during it. The notice says the prompt opened while the
+    command ran, not that the command made the request.
 - **The command's own message stays one line**: the "opened a dialog,
   which is waiting for an answer" messages in `page-commands.ts` name
   the dialog's id and leave the details to the block.
@@ -372,6 +407,9 @@ Later mentions are one line each, naming the dialog's id and
   `console-commands.ts`).
   - Only for a dialog that was already waiting when the command began.
     One that opened during the command just showed its block.
+  - Not for a file chooser that opened during an earlier command. It
+    doesn't stop the page, and that command's output showed it. One
+    that opened between commands still gets them.
   - Not after a command whose output said how to answer it, or showed
     it.
 - **`tabs`** lists each tab's waiting dialogs under it, and its JSON

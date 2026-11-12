@@ -375,6 +375,9 @@ $R screenshot btn.png --selector '.save'   # just one element
   [text]`, `dialog cancel`, `dialog click <button>`. Until it's
   answered the page is frozen, and most commands refuse. `dialog show`
   shows it again.
+  - `cdp` doesn't wait for the page, so a dialog the page opens a
+    moment after a `cdp` input call isn't named in its output. Use
+    `wait` after the `cdp` call to see the dialog.
 - A file chooser doesn't freeze the page. Answer it with
   `dialog accept <file>`, from the directory sm-dev runs in.
 - `showOpenFilePicker`, `showSaveFilePicker` and `showDirectoryPicker`

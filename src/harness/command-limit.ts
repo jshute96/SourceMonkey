@@ -26,7 +26,7 @@ export const COMMAND_LIMIT_MS = 60_000;
 // that times out still looks for why. Its waits keep to the given time
 // themselves (see `budgeted` in wait.ts); what isn't a wait (an
 // `eval`'s expression) is cut off here.
-const GRACE_MS = 3000;
+export const GRACE_MS = 3000;
 
 // Commands with no limit: `wait` keeps its own, which may be long, and
 // `stop` and `exit` end the run. `start` and `attach` connect to a
@@ -36,8 +36,10 @@ const UNLIMITED = new Set(['wait', 'stop', 'exit', 'start', 'attach', 'cdp']);
 
 // Commands with a shorter backstop, since they wait on nothing that
 // can be slow: answering a dialog is one CDP call or one message to the
-// extension, and `dialog` doesn't wait for what the page does after.
-const SHORT_LIMITS_MS: Record<string, number> = { dialog: 10_000 };
+// extension. The page settling after it is cut to fit within this
+// (`DIALOG_LIMIT_MS` in console-commands.ts).
+export const DIALOG_LIMIT_MS = 10_000;
+const SHORT_LIMITS_MS: Record<string, number> = { dialog: DIALOG_LIMIT_MS };
 
 /**
  * The `--timeout-seconds` given in `line`, in ms, or undefined when

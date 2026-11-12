@@ -239,9 +239,16 @@ export function withoutQuery(url: string): string {
 
 /** `Confirm dialog T1.1: "Delete 3 items?"`, for one-line mentions. */
 export function dialogSummary(d: WaitingDialog): string {
+  return ui`${dialogName(d)}${dialogMessageTail(d)}`;
+}
+
+/**
+ * `: "Delete 3 items?"`, the dialog's message shortened, or nothing for
+ * none. As markup, so the page's backticks are only text.
+ */
+export function dialogMessageTail(d: WaitingDialog): string {
   const text = d.message ? `: ${JSON.stringify(d.message.length > 80 ? `${d.message.slice(0, 77)}...` : d.message)}` : '';
-  // As markup, so the page's backticks are only text.
-  return ui`${dialogName(d)}${text}`;
+  return ui`${text}`;
 }
 
 /** `Confirm dialog T1.1`, with none of the page's text: for an Error's message. */
@@ -476,6 +483,9 @@ export class DialogTracker {
   private intercepting = false;
   // Each file chooser waiting, by its key, with its frame.
   private choosers = new Map<object, string>();
+  // File choosers Chrome reported that aren't listed yet (`chooserOpened`
+  // looks up the input first).
+  private choosersComing = new Set<Promise<void>>();
   private waiters = new Set<() => void>();
   // Dialogs open one at a time and close in order, so the nth close
   // on the protocol session is the nth dialog Playwright reported. The
@@ -538,6 +548,10 @@ export class DialogTracker {
 
   // A file chooser Chrome handed over instead of showing it.
   private async chooserOpened(cdp: CDPSession, event: ChooserEvent): Promise<void> {
+    // The command running when Chrome reported the chooser. It's read
+    // before the awaits below, since the command may end before they
+    // return.
+    const during = runningCommand;
     // No input: a File System Access picker. Chrome
     // has already failed the call with an AbortError, so nothing waits
     // to be answered.
@@ -549,13 +563,21 @@ export class DialogTracker {
     const key = {};
     const press = spec.press;
     spec.press = async (button, values) => {
-      const pressed = await press(button, values);
+      // Choosing files fires the input's `change` event, and the
+      // protocol call returns only once its handlers have run. A handler
+      // that opens a JavaScript dialog (an import's "Overwrite?"
+      // confirm) holds the call until that dialog is answered. So this
+      // stops waiting for the call once a dialog opens, and drops the
+      // chooser from the waiting list.
+      const pressing = press(button, values);
+      pressing.catch(() => undefined);
+      const pressed = await this.untilDialog(pressing);
       this.choosers.delete(key);
       this.drop(key);
       return pressed;
     };
     this.choosers.set(key, event.frameId);
-    this.add(key, spec);
+    this.add(key, spec, during);
   }
 
   // A frame that navigated or went away takes its file choosers with
@@ -611,7 +633,11 @@ export class DialogTracker {
       try {
         const cdp = await page.context().newCDPSession(page);
         cdp.on('Page.javascriptDialogClosed', () => tracker.closed());
-        cdp.on('Page.fileChooserOpened', (event) => void tracker.chooserOpened(cdp, event as ChooserEvent));
+        cdp.on('Page.fileChooserOpened', (event) => {
+          const coming = tracker.chooserOpened(cdp, event as ChooserEvent).catch(() => undefined);
+          tracker.choosersComing.add(coming);
+          void coming.finally(() => tracker.choosersComing.delete(coming));
+        });
         cdp.on('Page.frameNavigated', (event) => void tracker.frameNavigated(event.frame));
         cdp.on('Page.frameDetached', (event) => void tracker.frameNavigated({ id: event.frameId, parentId: '' }));
         await cdp.send('Page.enable');
@@ -633,6 +659,14 @@ export class DialogTracker {
     tracker.opened(waiting);
     void listening.then(() => tracker.closed());
     return tracker;
+  }
+
+  /**
+   * Once each file chooser Chrome has reported is listed, so a command
+   * that opened one ends after it shows.
+   */
+  async listed(): Promise<void> {
+    await Promise.all([...this.choosersComing]);
   }
 
   /** The tab's number, as its dialogs' ids start (`T1.`). */
@@ -715,10 +749,10 @@ export class DialogTracker {
    * Adds a dialog handed in by `key`'s owner (a connection prompt's
    * record), and tells of it. Once only for each key.
    */
-  add(key: unknown, spec: DialogSpec): WaitingDialog {
+  add(key: unknown, spec: DialogSpec, during = runningCommand): WaitingDialog {
     const known = this.keys.get(key);
     if (known) return known;
-    const entry = this.entry(spec);
+    const entry = this.entry(spec, during);
     this.keys.set(key, entry);
     this.list(entry);
     this.tell(entry);
@@ -734,8 +768,8 @@ export class DialogTracker {
     return entry;
   }
 
-  private entry(spec: DialogSpec): WaitingDialog {
-    return { ...spec, id: `T${this.tabNumber}.${++this.numbered}`, tab: this.tabNumber, openedAt: Date.now(), ...(runningCommand ? { openedDuring: runningCommand } : {}) };
+  private entry(spec: DialogSpec, during = runningCommand): WaitingDialog {
+    return { ...spec, id: `T${this.tabNumber}.${++this.numbered}`, tab: this.tabNumber, openedAt: Date.now(), ...(during ? { openedDuring: during } : {}) };
   }
 
   private list(entry: WaitingDialog): void {

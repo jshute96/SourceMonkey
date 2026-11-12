@@ -2872,7 +2872,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-11-05",
+        "date": "2026-11-10",
         "version": "2.4.1"
       },
       "notes": [
@@ -2885,6 +2885,16 @@
           "date": "2026-11-05",
           "version": "2.4.1",
           "text": "Re-tested v2.4.1: now passes, since it reads Google's new `/goto?url=` result links from their cite text. Block list seeded as `|python.org:t|wikipedia.org:t|`, query 'python programming language', in a visible Google Chrome with a new profile (headless and headed Chromium get captchas from these sites):\n- Google: 3 of 8 results collapsed to block notices (en.wikipedia.org and 2 www.python.org). The other 5 stayed visible with hosts parsed correctly.\n- DuckDuckGo: all 5 results from python.org and wikipedia.org collapsed. The other 5 stayed.\n- Startpage: 3 of 10 collapsed (www.python.org twice, en.wikipedia.org).\n- Clicking a notice then Unblock on Google set GM_setValue hideyhosts = `|python.org:t|`.\n- Script: Bing (headless) is still partly broken, as in v2.3.8. Only the 2 of 5 matching results whose cite is a bare host collapsed (www.python.org, docs.python.org). Cites like `https://en.wikipedia.org › wiki › ...` parse to the host `en.wikipedia.org › wiki › Python_(...)`, which never matches."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "2.4.1",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): its confirms, prompt and alert work. On Bing (headless temp browser), block list seeded as `|python.org:t|wikipedia.org:t|`, query 'python programming language'.\n- Opening a block notice and clicking Perma-ban showed \"Never see hits for this domain again?\". Cancel left `hideyhosts` unchanged. OK changed it to `|python.org:p|wikipedia.org:t|`, and the python.org notices went away.\n- In Manage Hiding's Options tab, the \"block\" caption button opened a prompt with the default `block`. OK with `hide-it` stored it in `textstrings`, and the result buttons read \"hide-it\" in a new run.\n- \"Restore default captions\": Cancel kept `hide-it`. OK reset `textstrings` to `block` and showed the \"Please reload to see the changes.\" alert.\n- Site: Bing showed a \"solve the challenge\" page on one reload; a new run got results again."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "2.4.1",
+          "text": "Re-tested after the dialog fixes (uncommitted, after 0181a07): OK on \"Restore default captions\" now shows the \"Please reload\" alert in `dialog accept`'s output. On Bing (headless temp browser), query 'python programming language'.\n- Manage Hiding (menu), then Options, then \"Restore default captions\" opened the confirm \"Restore default button captions?\".\n- `dialog accept` printed the \"Please reload to see the changes.\" alert as opened during the command, and `GM_setValue textstrings` (reset to defaults)."
         }
       ]
     },
@@ -8773,7 +8783,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
+        "date": "2026-11-10",
         "version": "2.3.1"
       },
       "notes": [
@@ -8781,6 +8791,11 @@
           "date": "2026-09-29",
           "version": "2.3.1",
           "text": "- Page: AO3 tag works listing (Sherlock (BBC TV 2010)), 20 blurbs, logged out, temp headless browser.\n- Script: with no stored username it `prompt()`s for one; answered `smtestuser` (stored in localStorage).\n- All 20 blurbs got \"mark/unmark as: seen / skipped\" toggles and the `new-blurb` highlight; a \"Seen works\" menu was added to the header nav; 20 ids recorded in `kudoshistory_checked`.\n- Clicked \"seen\" on the first blurb: it became `marked-seen collapsed-blurb` (summary `display:none`), id saved to `kudoshistory_seen`.\n- After reload: that blurb was still collapsed and marked seen, and no blurbs were \"new\" any more.\n- Kudos detection needs a logged-in account and was not tested."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "2.3.1",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): the username prompt and the confirm before importing lists.\n- Live AO3 answered \"Request temporarily denied\" (HTTP 418, a rate limit), so these ran on a small saved page (header nav and two work blurbs) served at archiveofourown.org/works with `--from-saved`.\n- Username prompt: Cancel stored the string \"null\" as the username (the script's own handling of prompt's null). OK with `smtestuser` stored it, and the \"Seen works\" menu was added.\n- \"Settings and import/export\": Generate export gave the lists. Entered `{\"seen\":\",222,\",\"skipped\":\",111,\"}` and clicked \"Import lists\". Cancel on \"Sure you want to replace your saved lists?\" left the lists alone. OK replaced them and showed \"Lists imported!\". After a reload, work 222 was marked seen and work 111 skipped, both collapsed."
         }
       ]
     },
@@ -11356,7 +11371,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-11-05",
+        "date": "2026-11-10",
         "version": "1.14.24.2"
       },
       "notes": [
@@ -11369,6 +11384,16 @@
           "date": "2026-11-05",
           "version": "1.14.24.2",
           "text": "Re-tested v1.14.24.2: still passes, in a headless temp browser on 4chan /g/.\n- Board page: `fourchan-x` classes on `<html>`, `#header-bar`, 15 threads. It stored its board config and fetched the archive list through GM_xmlhttpRequest (200).\n- Thread page (102 posts): 80 backlinks, `#updater` counting down, thread watcher present.\n- Hovered the first reply quotelink: the quote preview `#qp` appeared with the quoted post."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "1.14.24.2",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): settings import through the file input, on boards.4chan.org/g/ (headless).\n- Export in the settings dialog downloaded the settings JSON. Changed `Quote Previewing` and `Relative Post Dates` to false and `Index Mode` to `catalog`, then used Import.\n- The file chooser took the file, then the script's confirm \"Your current settings will be entirely overwritten, are you sure?\" opened. Cancel showed \"Import aborted.\" and left the settings unchanged.\n- OK imported the file, and the second confirm \"Import successful. Reload now?\" with OK reloaded the page. The stored values then matched the file, and post dates showed as absolute dates."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "1.14.24.2",
+          "text": "Re-tested after the dialog fixes (uncommitted, after 0181a07): settings import on boards.4chan.org/g/ (headless) with a settings file setting `Quote Previewing` and `Relative Post Dates` to false and `Index Mode` to `catalog`.\n- `click` on Import ended with \"File chooser dialog T1.1 opened during the command and is waiting for an answer\".\n- `dialog accept <file>` returned at once (no 10s hang) and ended with the \"Your current settings will be entirely overwritten, are you sure?\" confirm waiting. Cancel showed \"Import aborted.\" and stored nothing.\n- On a second import, OK on that confirm ran the import, and its output ended with the \"Import successful. Reload now?\" confirm waiting. The stored values matched the file. OK reloaded the page, and post dates showed as absolute dates."
         }
       ]
     },
@@ -23627,7 +23652,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-02",
+        "date": "2026-11-10",
         "version": "2026.07.22.1"
       },
       "notes": [
@@ -23635,6 +23660,11 @@
           "date": "2026-10-02",
           "version": "2026.07.22.1",
           "text": "On a Bandcamp album page (`sufjanstevens.bandcamp.com/album/carrie-lowell`), the menu command \"Search big size cover art\" swapped the 350px cover (`a2231815864_2.jpg`) for `a2231815864_0.jpg` at 2000x2000, with a red border, and upgraded the fan avatars too. It asks \"20 images requested. Continue?\" after 20 images; dismissed."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "2026.07.22.1",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): the \"N images requested. Continue?\" confirm, on sufjanstevens.bandcamp.com/album/carrie-lowell (headless; the first load got a \"Client Challenge\" page, a second load passed).\n- Menu command \"Search big size cover art\" swapped images to `_0.jpg` and asked \"20 images requested. Continue?\". Cancel stopped there: 20 images swapped and bordered.\n- After a reload, OK went on to \"40 images requested. Continue?\"; Cancel there left 40 swapped. The cover loaded at 2000px wide."
         }
       ]
     },
@@ -27352,7 +27382,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-02",
+        "date": "2026-11-10",
         "version": "2.3.45"
       },
       "notes": [
@@ -27360,6 +27390,11 @@
           "date": "2026-10-02",
           "version": "2.3.45",
           "text": "On www.baidu.com (headless) the script fetched Bing's image of the day over `GM_xmlhttpRequest` (both 200), set it as the body background (`global.bing.com/th?id=OHR.ChattoogaRiver...`), stored it as base64 in `bingImgObj`, and added \"Bing图\" (linking the image, with its copyright as title) and \"2026-10-02 星期五\" calendar links to the top bar.\n\n- The calendar hover popup wasn't checked. Headless: its hidden `/s?wd=日历` iframe went to Baidu's cross-origin captcha, so the script's `iframe.onload` threw on a null `contentDocument`. In the shared browser the tab stayed hidden (other runs' tabs in front), and the iframe never finished loading (readyState `interactive`), so `onload` hadn't run."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "2.3.45",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): the prompt from right-clicking the date link, on www.baidu.com (headless).\n- Right-click opened the prompt \"自定义 url\" (custom URL) with the default https://www.rili.com.cn/. Cancel left `riliurl` unset. OK with https://example.com/cal stored it; after a reload the prompt showed it as the default, and a left click opened it in a new tab.\n- This time Baidu served its classic page (`#kw`/`#su`) without `#chat-submit-button`, so the script threw at startup (`Cannot read properties of null (reading 'addEventListener')`, line 174) before fetching the Bing background; the links were already added. The script expects the newer layout; the 2026-10-02 test got that one."
         }
       ]
     },
@@ -27767,7 +27802,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-31",
+        "date": "2026-11-10",
         "version": "86"
       },
       "notes": [
@@ -27775,6 +27810,11 @@
           "date": "2026-10-31",
           "version": "86",
           "text": "On author.today's free ebook listing (`/work/genre/all/ebook?state=finished&access=free`), the script added its Like/Dislike/Mark bar to all 25 book rows and a \"Liker Options\" bar.\n\n- Like on row 1 and Dislike on row 2 colored them green (rgb 196,255,202) and red (rgb 252,176,176) and saved both to `localStorage.FFLikerAA`; the marks came back after a reload.\n- \"Hide Disliked\" saved the option and reloaded the page, as written (rows on `/work/...` paths are never hidden by design).\n- AO3 answered \"Request temporarily denied\" (HTTP 418, a rate limit on this IP) and ficbook.net showed Cloudflare's \"Just a moment...\", so those sites were not checked."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "86",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): data import through the file input, on www.fanfiction.net/book/Harry-Potter/ (headless; no Cloudflare check on the first load).\n- Liked the first story (row turned `ffn_like_fic`), then \"FFN Options\" > \"Download text file\" downloaded the database.\n- Edited it so story 1 is disliked and story 2 marked. Cancel in the file chooser left the input empty. Choosing the file and clicking Import wrote the edited database to `localStorage.FFLikerAA`, as in the file, and reloaded the page.\n- The reloaded page got Cloudflare's \"Just a moment...\" check, which didn't clear, so the new row colors were not seen."
         }
       ]
     },
@@ -31596,7 +31636,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-11-05",
+        "date": "2026-11-10",
         "version": "1.4.75"
       },
       "notes": [
@@ -31609,6 +31649,16 @@
           "date": "2026-11-05",
           "version": "1.4.75",
           "text": "Re-tested v1.4.75: still passes. Visiting `jNQXAC9IVRw` stored `watchedVideos` with that entry. On the search results its `ytd-video-renderer` got class `watched` with the green background (rgb(204, 238, 204)). Menu \"Display History Statistics\" opened an alert reporting 1 entry. No errors.\n\nNot tested: Backup and Restore menus."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "1.4.75",
+          "text": "Re-tested after 85c5609 (sm-dev answers file choosers): Backup and Restore menus work.\n- Visited youtube.com/watch?v=jNQXAC9IVRw, which stored `watchedVideos` with that entry.\n- Menu \"Backup History Data\" downloaded `MarkWatchedYouTubeVideos_<time>.json` (from a blob: link) holding exactly the stored history.\n- Visited dQw4w9WgXcQ, which added a second entry.\n- On the search results page, menu \"Restore History Data\" showed the script's overlay and opened the file chooser. With \"Merge\" unchecked, `dialog accept <backup>` chose the file, and the script's confirm (\"Selected history data file contains 1 entries\") came up. `dialog accept` answered it.\n- After that, `values` showed `watchedVideos` equal to the backup (only jNQXAC9IVRw), the overlay was gone, and that video's `ytd-video-renderer` still had class `watched`. No errors.\n- A restore done on a watch page also worked, but the script then re-adds the video being watched, as designed."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "1.4.75",
+          "text": "Re-tested after the dialog fixes (uncommitted, after 0181a07): Restore History Data on the search results page, with Merge unchecked.\n- Visited jNQXAC9IVRw, saved `watchedVideos` as the backup file, then visited dQw4w9WgXcQ (2 entries).\n- `menu Restore History Data` ended with \"File chooser dialog T1.1 opened during the command and is waiting for an answer\".\n- `dialog accept <backup>` now showed the script's confirm (\"Selected history data file contains 1 entries. Restore from this data?\") in its own output and ended with it waiting.\n- Cancel left both entries. A second restore with OK set `watchedVideos` to the backup (only jNQXAC9IVRw), removed the overlay, and that video's `ytd-video-renderer` kept class `watched`.\n- A file chooser left open got no reminder after later `eval` and `get` commands."
         }
       ]
     },
@@ -46095,7 +46145,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-11-05",
+        "date": "2026-11-10",
         "version": "10.3.6"
       },
       "notes": [
@@ -46108,6 +46158,16 @@
           "date": "2026-11-05",
           "version": "10.3.6",
           "text": "Re-tested v10.3.6: still passes. On `en.wikipedia.org/wiki/Earth` (headless), touch swipes sent over CDP (`Input.dispatchTouchEvent`) ran the script's gestures:\n- Up then down (↑↓, \"回到底部\") scrolled from 0 to the bottom (scrollY 46476 of 46476).\n- Down then up (↓↑, \"回到顶部\") scrolled back to 0.\n- No errors in the logs."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "10.3.6",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): its alerts and the delete-gesture confirm work, on `en.wikipedia.org/wiki/Earth` (headless temp browser), with touch swipes sent over CDP (`Input.dispatchTouchEvent`).\n- The ↑→↓ gesture (\"停止定时器\", stop timers) showed the alert \"已停止网页当前存在的定时器\", and OK answered it.\n- The ↑→↓← gesture opened the settings page (`#_gestureBox_`). Its \"删除\" (delete) on \"打开设置\" showed the alert \"该手势无法删除！\" (this gesture can't be deleted).\n- \"删除\" on \"前进\" (forward) asked \"确定删除\"前进\"手势\". Cancel stored nothing and kept the gesture. OK removed its row and stored `gesture` without the ←→ entry."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "10.3.6",
+          "text": "Re-tested after the dialog fixes (uncommitted, after 0181a07): the ↑→↓ gesture's alert still opens after `cdp --file` returns, since `cdp` doesn't wait for the page to settle. On `en.wikipedia.org/wiki/Earth`, headless temp browser, touch swipes sent over CDP (`Input.dispatchTouchEvent`).\n- In 4 of 4 tries, `cdp --file` printed only its results and `dialog show` right after it reported no dialogs. A second later the alert \"已停止网页当前存在的定时器\" was waiting, opened between commands. The script runs the gesture from a 199ms timer.\n- `wait` after `cdp --file` caught it: the alert showed as opened during `wait`, which then failed because the page was waiting on the dialog. `dialog accept` answered it."
         }
       ]
     },
@@ -51385,7 +51445,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-04",
+        "date": "2026-11-10",
         "version": "2.9.6.1"
       },
       "tags": [
@@ -51396,6 +51456,11 @@
           "date": "2026-10-04",
           "version": "2.9.6.1",
           "text": "On a plain HTML5 video page (`https://www.w3schools.com/html/mov_bbb.mp4`) its PotPlayer-style keys work: after clicking the video, `c c c` took `playbackRate` from 1 to 1.3, `z` reset it to 1, and `Shift+c` twice set the video's `transform` to `scale(1.2)`.\n- Script: there it also logs `unknown error` (thrown by its own player-layout search, which expects a wrapper around the `<video>`), without effect on the keys.\n- Script: on YouTube (`watch?v=aqz-KE-bpKQ`) it throws `This document requires 'TrustedHTML' assignment` from `svgFilterElm.innerHTML = ...` when the video is found, and `c` then leaves `playbackRate` at 1. Chrome enforces YouTube's Trusted Types in the isolated world for any manager.\n- The w3schools HTML5 video page itself never settled (ads), so the direct file was used."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "2.9.6.1",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): its PotPlayer confirm and unsharpen prompt work, on https://www.w3schools.com/html/mov_bbb.mp4 (headless temp browser), after clicking the video.\n- Shift+T opened the confirm \"Do you want to open it in PotPlayer?\". Cancel opened nothing. OK opened a popup (CDP showed a new page whose opener is the tab, left blank since nothing handles `potplayer://`).\n- Shift+F opened the \"Enter the unsharpen mask\" prompt. OK with `unsharpen5_10` stored `unsharpen_mask` and set the video's filter to `url(\"#_h5p_unsharpen5_10\")`. Cancel cleared both, as the script's code intends (it treats no answer as \"none\")."
         }
       ]
     },
@@ -53866,7 +53931,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-11-05",
+        "date": "2026-11-10",
         "version": "1.4.22"
       },
       "notes": [
@@ -53879,6 +53944,11 @@
           "date": "2026-11-05",
           "version": "1.4.22",
           "text": "Re-tested v1.4.22: still passes, and the Wikipedia failure is gone. Headless temp browser.\n- https://apod.nasa.gov/apod/astropix.html now redirects to https://science.nasa.gov/apod/. Hovering the day's image showed `#mpiv-popup.mpiv-show` with a larger version (natural 1280x912, shown at 1002x714).\n- Menu \"MPIV: configure\" opened the config dialog (shadow-root host).\n- https://en.wikipedia.org/wiki/Red_panda: hovering the infobox thumbnail now shows the original `upload.wikimedia.org` file (natural 9323x6215, shown 1071 wide), with no errors logged. The earlier `item.includes is not a function` no longer appears."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "1.4.22",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): the settings Import prompt and the \"Spoof hotlinking\" confirm both work, on https://en.wikipedia.org/wiki/Red_panda (headless temp browser), from menu \"MPIV: configure\".\n- Import opened a \"Paste settings:\" prompt. Answering with the stored `cfg` JSON, changed to delay 1500, night on and uiPadding 7, filled the dialog's fields with those values (delay 1.5 s, Night checked, padding 7).\n- Unchecking \"Spoof hotlinking*\" opened a confirm. Cancel left it checked; OK unchecked it.\n- OK saved `cfg` with delay 1500, night true, uiPadding 7 and xhr false."
         }
       ]
     },
@@ -58841,7 +58911,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-11-05",
+        "date": "2026-11-10",
         "version": "3.1.3.34401"
       },
       "notes": [
@@ -58854,6 +58924,11 @@
           "date": "2026-11-05",
           "version": "3.1.3.34401",
           "text": "Re-tested v3.1.3.34401: still passes. On a watch page (headless) `#masthead-container` is `absolute`. `/fix-settings` renders with all its tabs. Unticking \"Unstick header bar\" and saving showed the \"Settings saved\" alert, stored `unfix_header: false` and went back to the video, where the header was `fixed`. No thrown errors.\n- Script: saving goes back in history, so opening `/fix-settings` directly ends on `about:blank`."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "3.1.3.34401",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): the settings import through a file chooser works.\n- On `/fix-settings`, \"Export settings\" downloaded `ytfix_settings.json` (defaults, `unfix_header: true`, `hide_guide: true`).\n- In that file I set both to false. \"Import settings\" opened a file chooser; `dialog accept <file>` chose it, and the script showed its \"Settings imported\" alert.\n- After OK, the stored `settings` had `unfix_header: false` and `hide_guide: false`, and on `watch?v=jNQXAC9IVRw` `#masthead-container` was `fixed` (it is `absolute` by default)."
         }
       ]
     },
@@ -60447,7 +60522,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
+        "date": "2026-11-10",
         "version": "0.32"
       },
       "notes": [
@@ -60455,6 +60530,11 @@
           "date": "2026-09-29",
           "version": "0.32",
           "text": "Tested on github.com/jquery/jquery (headless), with navigator.language set to zh-CN by a separate CDP client holding `Emulation.setUserAgentOverride` (acceptLanguage) + `setLocaleOverride` (the script does nothing for English).\n- With zh-CN: the page UI translated (登录, 注册, 代码, 议题, 拉取请求, 分支, 标签, 自述文件, 关于 ...), and relative-time elements read \"7 小时前\" (timeago via @require). Locale JSON came from @resource via GM_getResourceText.\n- Control tab without the script (en-US): 0 CJK words.\n- Description \"翻译\" link (GM_xmlhttpRequest to gitcn.org) not tried."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "0.32",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): the script's only dialog can't be reached, so the result stays a pass.\n- Its one `alert` (\"翻译失败\", translation failed) fires only when the description \"翻译\" (translate) link's request to gitcn.org fails.\n- On https://github.com/jquery/jquery with `--lang zh-CN`, the page UI is translated (代码 and so on), but the script adds no `#translate-me` link: it looks for `.repository-content .f4`, which GitHub's About box no longer has."
         }
       ]
     },
@@ -62016,7 +62096,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-02",
+        "date": "2026-11-10",
         "version": "1.3.25"
       },
       "notes": [
@@ -62024,6 +62104,11 @@
           "date": "2026-10-02",
           "version": "1.3.25",
           "text": "On `bing.com/search?q=hello+world` (headless) the script added its left-hand search panel (`#wish_search_wrapper`) with the default engine list. Clicking its Baidu entry went to `baidu.com/s?wd=hello%20world` (Baidu then showed its captcha to headless), so the current query was carried over."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "1.3.25",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): the factory-reset confirm and the save check's alert work. On `bing.com/search?q=hello+world` in a headless temp browser, with `wish_s_searchlinklist` seeded to one engine.\n- The settings panel's \"恢复出厂设置\" opened its confirm. Cancel kept the one-line list in the textarea.\n- OK filled the textarea with the default list (47 lines). Save stored it, and after a reload the panel showed all 47 engines.\n- Saving a line without `#keyword#` showed the script's alert, and the stored list stayed unchanged.\n- Site: right after the save, Bing removes the panel's re-rendered `div`s (any `div` added to the panel later is removed, a test `span` stays), so the list shows only after a reload."
         }
       ]
     },
@@ -62357,7 +62442,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-11-05",
+        "date": "2026-11-10",
         "version": "2.6.41"
       },
       "notes": [
@@ -62375,6 +62460,11 @@
           "date": "2026-11-05",
           "version": "2.6.41",
           "text": "Re-tested v2.6.41: now passes on github.com/sharkdp/bat; the release code that failed under 2.6.39 is fixed.\n- Releases: 12 `.XIU2-RS` blocks with 72 mirror links, 6 per asset (`https://github.ednovas.xyz/https://github.com/sharkdp/bat/releases/download/...`), and no error. The script now finds the insertion point with `parentElement.parentElement.nextElementSibling`.\n- README page: 7 `.XIU2-RF` Raw mirrors. Repo home: 30 `.fileDownLink`.\n- Code dropdown: 5 clone mirrors (`.XIU2-GC`) and mirrored ZIP links.\n- The Feedback menu command opens both tabs, with no error.\n- Mirror links were checked for being added, not downloaded through."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "2.6.41",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): the \"#️⃣ 自定义加速源\" (custom mirror) menu command's chain of prompts works, on https://github.com/sharkdp/bat/blob/master/README.md.\n- The first prompt (Raw mirror) was answered with `dialog accept https://ghfast.example/https://raw.githubusercontent.com`: `custom_raw_url` was stored, and the second prompt (Git Clone mirror) opened.\n- `dialog cancel` on the second prompt stopped the chain, as the script intends: no `custom_clone_url` or `custom_download_url` was stored.\n- After a reload the README's Raw buttons start with a \"自定义\" (custom) one linking to `https://ghfast.example/https://raw.githubusercontent.com/sharkdp/bat/master/README.md`."
         }
       ]
     },
@@ -64528,7 +64618,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-11-05",
+        "date": "2026-11-10",
         "version": "2026.10.03.1"
       },
       "notes": [
@@ -64541,6 +64631,11 @@
           "date": "2026-11-05",
           "version": "2026.10.03.1",
           "text": "Re-tested v2026.10.03.1: still passes, on https://en.wikipedia.org/wiki/Red_panda in a headless temp browser.\n- Article paragraphs got the font stack (`\"Microsoft YaHei UI\", system-ui, ...`), text-shadow `rgba(124,124,124,0.867) 0 0 0.75px` and text-stroke 0.015px. A `--noscript` tab shows `sans-serif`, no shadow and 0 stroke.\n- The menu shows the settings, exclude-site and advanced commands. \"Font Rendering Settings\" opened the panel, with the same values.\n- It synced its rules from f9y4ng.github.io (200, 2427 rules logged)."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "2026.10.03.1",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): backup and restore through the file input work. On https://en.wikipedia.org/wiki/Red_panda in a headless temp browser, with downloads sent to a scratch folder over `cdp Browser.setDownloadBehavior`.\n- Settings panel, Backup, then the backup panel's Backup button downloaded `FontRendering-backup-unknown-<date>.sqlitedb` (8.6 KB).\n- Changed the stored font settings (shadow 3, stroke 0.3) and reloaded: paragraphs showed text-shadow `0 0 3px` and stroke 0.3px.\n- The \"Click here to load *.sqlitedb backup file\" link opened a file chooser for `.sqlitedb`. Cancel left the link as it was. Choosing the backup showed its name, and Restore rewrote all stored values and showed \"Backup data restored successfully!\".\n- After its Close reloaded the page, paragraphs were back to shadow 0.75px and stroke 0.015px.\n- sm-dev: the panels are in a closed shadow root, so their buttons were clicked by window point (`click --at`), with the viewport made taller over `cdp` to reach the panel's buttons."
         }
       ]
     },
@@ -66160,7 +66255,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-31",
+        "date": "2026-11-10",
         "version": "2.4.0"
       },
       "notes": [
@@ -66168,6 +66263,11 @@
           "date": "2026-10-31",
           "version": "2.4.0",
           "text": "On https://greasyfork.org/en/scripts/602798 the green download button appears next to Install. Clicking it fetches the script with `GM.xmlHttpRequest` (200 from update.greasyfork.org, no permission prompt) and saves `GitHub_ Link to github.io pages 1.0.0.user.js`, a 5228-byte copy starting with `// ==UserScript==`.\n- On the script's `/versions` page it adds \"Download all (1)\"; clicking it fetched the one version and saved `..._1979725.user.js` (a single version saves as a plain file, not a zip)."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "2.4.0",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): no dialog could be reached, so the result stays a pass.\n- All of the script's dialogs open only after a failed download: the \"Failed to download\" alerts, the bulk download's retry confirm and its \"Nothing was downloaded\" alert.\n- On https://greasyfork.org/en/scripts/602798/versions the script takes the version ids and URLs from the page when it starts, and fetches them with `GM.xmlHttpRequest`, so a test can't make one fail by editing the page or blocking the tab's requests."
         }
       ]
     },
@@ -66548,7 +66648,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-11-05",
+        "date": "2026-11-10",
         "version": "8.1.0"
       },
       "notes": [
@@ -66571,6 +66671,11 @@
           "date": "2026-11-05",
           "version": "8.1.0",
           "text": "Re-tested v8.1.0: now passes. The earlier failure from GreasyFork's API change is fixed. Headless temp browser, https://en.wikipedia.org/wiki/Red_panda, menu \"Inject Userscript+\".\n- The script now asks `https://api.greasyfork.org/scripts/by-site/wikipedia.org.json?language=all` directly (200, covered by the bare `@connect greasyfork.org`). curl gets real listings from it again with `Accept: application/json`, 88 KB for wikipedia.org.\n- The badge shows 100, and clicking it opens the wikipedia.org list with names, authors, daily installs and Install buttons.\n- The `Illegal invocation` rejection from the earlier notes no longer shows."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "8.1.0",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): the settings tab's Import Config file chooser works, on https://en.wikipedia.org/wiki/Red_panda with menu \"Inject Userscript+\".\n- The panel is in a closed shadow root, so sm-dev's `click` can't reach it. The test found the buttons through CDP (`DOM.getDocument` with `pierce`) and clicked them with real mouse events (`cdp Input.dispatchMouseEvent`).\n- Export Config downloaded `Magic_Userscript_config-<time>.json` with the default config (`time: 10000`, `autoexpand: false`).\n- Import Config opened a file chooser that accepts `.json`. `dialog accept` with a copy changed to `time: 25000` and `autoexpand: true` saved those values in the `Config` value.\n- A second Import Config answered with `dialog cancel` left the stored config alone."
         }
       ]
     },
@@ -66832,7 +66937,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-14",
+        "date": "2026-11-10",
         "version": "1.3.0"
       },
       "notes": [
@@ -66840,6 +66945,11 @@
           "date": "2026-10-14",
           "version": "1.3.0",
           "text": "Signed out, `--headed`. On an opus (picture post) page, `www.bilibili.com/opus/1258535371067621377`, the script adds a 下载 (download) tab beside the comments tab; clicking it saved the post's image (a 750x11424 PNG) and stored `blDl-<id> = true`.\n- On a video page the toolbar gets its 下载 button, but clicking it threw `Cannot read properties of null (reading 'data')`: the script's unsigned `api.bilibili.com/x/web-interface/view?bvid=` call returns 412 (the site's risk-control HTML page). A `fetch` of the same URL from the page itself also gets 412, while the signed `/x/web-interface/wbi/view` the site uses gets 200. So video download is blocked by the site for this signed-out browser, not by SourceMonkey; it may work for signed-in users.\n- SourceMonkey: `@grant GM_cookie` is unsupported (validate warns), but the script's `GM_cookie` code is commented out.\n- Script: a first-run settings dialog covers the page until its 确定 (OK) button is clicked."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "1.3.0",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): the script's only `confirm` fires only after list downloads fail and use up their retries, so the user-facing `alert` in its settings was checked instead.\n- On space.bilibili.com/2/dynamic (headless, `user_site=CN` cookie; the opus page gave a captcha headless), the first-run settings dialog appeared. Turned off video download and set the retry limit to 0, then clicked 确定 (OK).\n- The alert \"已关闭视频下载功能，将在页面刷新后生效。\" (video download off, applies after refresh) opened. OK reloaded the page, and the stored values matched (`enableVideoDownload` false, `listDownloadRetryAttempsLimit` 0).\n- The feed then came back empty for this signed-out browser on reloads (site side), so list download, and the confirm, could not be reached."
         }
       ]
     },
@@ -68706,7 +68816,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
+        "date": "2026-11-10",
         "version": "1.5.8"
       },
       "notes": [
@@ -68714,6 +68824,16 @@
           "date": "2026-09-29",
           "version": "1.5.8",
           "text": "Tested with sm-dev (headless) on https://en.wikipedia.org/wiki/Red_panda (at night local time).\n- On load the script added `style#XIU2DarkMode` and `html` computed filter was `brightness(0.5) sepia(0.5)` (mode 2).\n- Menu showed all its commands; \"click to switch mode\" changed the style live to mode 3, `filter: invert(0.9)` with images re-inverted.\n- `@sandbox JavaScript` is ignored by SM; the script runs fine in the USER_SCRIPT world."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "1.5.8",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): the menu prompts work. On https://en.wikipedia.org/wiki/Red_panda in a headless temp browser, daytime, mode 2.\n- \"#️⃣ 自定义当前模式\" opened a prompt with the default `60|40|50|50`. Cancel left `menu_customMode2` and the `html` filter (`brightness(0.6) sepia(0.4)`) unchanged.\n- OK with `70|20|50|50` stored it and changed the filter live to `brightness(0.7) sepia(0.2)`.\n- \"#️⃣ 晚上自动切换模式\" with `abc` showed the script's format-error alert and left `menu_autoSwitch` empty. With `3|1` it stored the value and switched the page to mode 3 (`invert(0.9)`)."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "1.5.8",
+          "text": "Re-tested after the dialog fixes (uncommitted, after 0181a07): the prompt's follow-up alert and GM writes now show in `dialog accept`'s output. On https://en.wikipedia.org/wiki/Red_panda, headless temp browser.\n- `menu M9` (\"#️⃣ 晚上自动切换模式\") reported the prompt as opened during the command.\n- `dialog accept abc` showed the format-error alert \"填入内容格式错误...\" as opened during that command. Answering it re-registered the menu and left `menu_autoSwitch` empty.\n- `dialog accept '3|1'` printed `GM_setValue menu_autoSwitch = \"3|1\"` and the menu's switch to mode 3. The `html` filter read `invert(0.9)`."
         }
       ]
     },
@@ -70281,7 +70401,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
+        "date": "2026-11-10",
         "version": "0.49"
       },
       "notes": [
@@ -70289,6 +70409,11 @@
           "date": "2026-09-29",
           "version": "0.49",
           "text": "Page: youtube.com/watch?v=CD2LRROpph0 (the removed original \"Friday\" video; playability ERROR \"Video unavailable\"), headless temp browser, sm-dev.\n- Script: showed the centered \"Unavailable Video ID: CD2LRROpph0\" box with a \"Check For Archives\" button, and queried the filmot API (`/api/getvideos?...&id=CD2LRROpph0`, HTTP 200).\n- Clicking \"Check For Archives\" sent GM_xmlhttpRequest to web.archive.org (@connect declared); after about 23 s (the CDX API is slow) the button turned green: \"Available: 04.05.2011\" with the archived URL.\n- Not verified: an actual title restore. filmot returned `[]` for this ID, and I found no removed video filmot knows within the time box."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "0.49",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): the \"Full Title\" prompt works, with a simulated filmot result.\n- On `watch?v=CD2LRROpph0` filmot still returned no data (`window.RecoveredIDS` stayed `{}`), so I called the script's `processJSONResultSingleVideo` through `eval` with a made-up record for that ID.\n- The script then showed the recovered title, channel and filmot thumbnail. Clicking the thumbnail opened a \"Full Title\" prompt holding the full title, special characters included. OK and Cancel each closed it, and the page stayed put.\n- Not verified: a real title restore from filmot data, as before."
         }
       ]
     },
@@ -75005,7 +75130,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
+        "date": "2026-11-10",
         "version": "1.0.5"
       },
       "notes": [
@@ -75013,6 +75138,11 @@
           "date": "2026-09-29",
           "version": "1.0.5",
           "text": "Tested with sm-dev (headless) on https://www.w3schools.com/html/html5_video.asp.\n- The `<video controls>` got the default volume 0.3 (30%); the page's second video without `controls` stayed at 1, as the script intends (it skips custom-control players).\n- Setting volume to 0.55 was stored per site (`html5_xiu_currentVolume` = 55) and restored after reload; the menu then showed \"[ 55% ]\". Clearing it returned to 30%."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "1.0.5",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): both of its `prompt` menu commands work, on https://www.w3schools.com/html/mov_bbb.mp4 (headless temp browser).\n- \"修改全局默认音量\" (set global default volume) opened a prompt with default \"30\". Cancel stored nothing. OK with 55 stored `menu_defaultVolume` = 55, set the video's volume to 0.55 and relabeled the menu \"[ 55% ]\".\n- After \"强制当前网站使用全局音量\" (force this site; it reloads the page), \"修改当前网站默认音量\" (set this site's default) prompted with the current value. OK with 20 set localStorage `html5_xiu_currentVolume` = 20 and the video's volume to 0.2."
         }
       ]
     },
@@ -81440,7 +81570,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-02",
+        "date": "2026-11-10",
         "version": "2.8.7"
       },
       "notes": [
@@ -81448,6 +81578,11 @@
           "date": "2026-10-02",
           "version": "2.8.7",
           "text": "- On https://news.sina.com.cn/ it fetched both rule lists (18491 rules, 10562 applied for the page), stored them, and registered its menu.\n- Against a `--noscript` tab: 297 vs 257 hidden elements in `body`, and 3 vs 23 visible iframes (ad frames hidden)."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "2.8.7",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): the clear-rules confirm works. On https://news.sina.com.cn/ in a headless temp browser, after it fetched its rules (18128 rules, 10 stored values).\n- The \"点击清空\" menu command opened its confirm. Cancel kept all the stored rules and styles.\n- OK deleted the rules, versions, etags and each host's saved styles (only `ajs_custom_hash` was left), and the menu changed to \"已清空，点击重新加载规则\"."
         }
       ]
     },
@@ -85764,7 +85899,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-11-05",
+        "date": "2026-11-10",
         "version": "2.5.2"
       },
       "notes": [
@@ -85777,6 +85912,11 @@
           "date": "2026-11-05",
           "version": "2.5.2",
           "text": "Re-tested v2.5.2: still passes, same as v2.5. On `watch?v=aqz-KE-bpKQ`:\n- Its tool row under the player (18 buttons) and hidden settings are built; settings and watch-time counters are stored. \"Repeat video\" set `video.loop` to true.\n- With `likeDislikeBar` on (set in `ytSettingsMDCM`, then reload), it fetched Return YouTube Dislike data and showed the bar (\"Likes: 110,000 | Dislikes: 18,658\", 85.5% / 14.5%).\n- Script: the dislike count on the Dislike button still never appears. `videoDislike` waits for `#below > ytd-watch-metadata > div`, which isn't on the page.\n- Download buttons not judged (third-party service). The script logs \"Run (v2.5.1)\" though its header says 2.5.2."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "2.5.2",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): the bookmark name prompt works, on `watch?v=jNQXAC9IVRw`.\n- With `bookmarks: true` set in `ytSettingsMDCM` and a reload, its ★ button (`#yt-bookmark-add`) showed. At 0:07 it opened \"Bookmark name (optional):\" prefilled with `0:07`.\n- OK with \"Elephant trunks\" stored `ytBookmarksMDCM = {\"jNQXAC9IVRw\":[{\"t\":7,\"label\":\"Elephant trunks\",...}]}`, and the bookmarks panel listed it.\n- Cancel at 0:12 saved a bookmark named `0:12`: the script falls back to the default name on Cancel (`prompt(...) || defaultLabel`)."
         }
       ]
     },
@@ -88234,7 +88374,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-11-05",
+        "date": "2026-11-10",
         "version": "1.0.4"
       },
       "notes": [
@@ -88247,6 +88387,11 @@
           "date": "2026-11-05",
           "version": "1.0.4",
           "text": "Re-tested v1.0.4: still passes (headless, local copy of the codeberg.org `@require`).\n- Script page: 8 heading anchors (`a.anchor`), the outline list in an aside, the Short link paragraph, and 4 config menu commands.\n- Script list: searching `youtube sort:total` navigated to `?q=youtube&sort=total_installs`.\n- That result page got Cloudflare's check, headed too, where the script throws at line 1205 (`nav.querySelector` on a null `#nav-user-info`) because the check page has no site header. Script pages and `/en/scripts` load without the check and without the error."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "1.0.4",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): the search syntax's \"Invalid search parameters\" alert works, on https://greasyfork.org/en/scripts.\n- Searching `youtube rating:2 total:abc` showed the alert listing `total: Failed to parse (abc)` and `rating: Invalid value (2)`. After OK the page stayed on `/en/scripts`.\n- Searching `youtube rating:>0.9` went to `?q=youtube&ratings_operator=gt&ratings=0.9` with no alert.\n- The result page threw the same known error as before (Cloudflare's check page has no site header)."
         }
       ]
     },
@@ -90469,7 +90614,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-11-05",
+        "date": "2026-11-10",
         "version": "3.4.1"
       },
       "notes": [
@@ -90487,6 +90632,11 @@
           "date": "2026-11-05",
           "version": "3.4.1",
           "text": "Re-tested v3.4.1: still passes, on `greasyfork.org/en/scripts` (headed temp browser).\n- 27 of the list's items got the `blacklisted` class and are `display: none`, and 100 install buttons were added. Same counts after 3 reloads, with no errors, so the earlier `documentElement.lang` error stays gone.\n- The old page, `?q=bot`, now gets Cloudflare's \"Just a moment...\" check in headless and headed temp browsers, with a `--noscript` tab too, so the unfiltered list was used instead."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "3.4.1",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): the settings window's \"settings saved\" alert works, on https://greasyfork.org/en/scripts.\n- In the Configure window, turning off \"showTotalInstalls\" and clicking Save showed the alert `Greasy Fork++: settings saved`. After OK the page reloaded, and `greasyfork-plus` stored `showTotalInstalls: false`.\n- Script: the \"Hidden scripts\" list in the same window is never stored. Saving `574417` showed the same alert, but no `hiddenList` value was written, and that script still showed after the reload.\n  - The cause is the script's ScriptCat wrapper (`makeAsyncFn`, line 1886). It wraps any `GM.*` function whose constructor isn't `AsyncFunction` as `async () => await f()`, which drops the arguments, so `GMA.setValue('hiddenList', ...)` calls `GM.setValue()` with none.\n  - The wrapper drops them in Tampermonkey and Violentmonkey too: a probe script saw `GM.setValue.constructor.name` as `Function` under all three managers."
         }
       ]
     },
@@ -96518,7 +96668,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-11",
+        "date": "2026-11-10",
         "version": "2.24.2"
       },
       "notes": [
@@ -96531,6 +96681,16 @@
           "date": "2026-10-11",
           "version": "2.24.2",
           "text": "Re-tested after c2dbb1f (granted `GM_*` on the sandbox `window`): now passes, on a /g/ thread (296 replies).\n- `platform` is now `userscript` (it was `crx`); no `chrome is not defined` errors, no errors at all.\n- It sets `4chan-settings` `disableAll: true`; after a reload `window.Config.disableAll` is true and 0 native `div.backlink#bl_*` remain (188 on the first visit, before the setting took effect, as expected in any manager).\n- `fourchan-xt` classes, 252 XT backlinks, and hovering a reply's quotelink shows `#qp` with the quoted post."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "2.24.2",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): settings import through the file input, on boards.4chan.org/g/ (headless).\n- Export opened XT's \"Export settings\" form; its Export button downloaded the settings JSON. Changed `Quote Previewing` to false and `Index Mode` to `catalog`, then used Import.\n- The file chooser took the file, then the confirm \"Your current settings will be entirely overwritten, are you sure?\" opened. Cancel showed \"Import aborted.\" and left the stored values unchanged.\n- OK imported it: the stored values matched the file. Cancel on the second confirm \"Import successful. Reload now?\" kept the page without reloading.\n- On this board index page (earlier tests used thread pages), the startup log showed `Index failure: Cannot set properties of null (setting 'disabled')` in `Index.setPage` once; it did not recur after a reload, and the page and settings dialog still worked."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "2.24.2",
+          "text": "Re-tested after the dialog fixes (uncommitted, after 0181a07): settings import on boards.4chan.org/g/ (headless) with a settings file setting `Quote Previewing` to false and `Index Mode` to `catalog`.\n- `click` on Import ended with the file chooser waiting. `dialog accept <file>` returned at once and ended with the \"entirely overwritten, are you sure?\" confirm waiting.\n- Cancel showed \"Import aborted.\" and stored nothing. On a second import, OK ended with the \"Import successful. Reload now?\" confirm waiting, and the stored values matched the file. Cancel there kept the page without reloading.\n- The startup `Index failure: Cannot set properties of null (setting 'disabled')` from the earlier note showed again on the board index page."
         }
       ]
     },
@@ -97254,7 +97414,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-31",
+        "date": "2026-11-10",
         "version": "1.3.1"
       },
       "notes": [
@@ -97262,6 +97422,11 @@
           "date": "2026-10-31",
           "version": "1.3.1",
           "text": "- On `/@mkbhd/videos` each card's metadata gains the date: `10M 2d ago · 2026-10-28` where a `--noscript` tab shows `10M 2d ago` (first 4 cards checked).\n- On that video's watch page the info line ends with `2026-10-28`."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "1.3.1",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): the settings panel's alert and confirm work, on `/@mkbhd/videos`.\n- In \"Open Settings Panel\", with the date format set to `dd.MM.yyyy`, Save showed \"Settings saved, please refresh the page to apply changes\" and stored it in `basic`. After a reload the cards read `6.1M 3d ago · 06.11.2026`.\n- Reset asked \"Reset to defaults?\". Cancel kept `basic` and the field. OK stored `basic = {\"language\":\"en\"}`, cleared the field and showed the saved alert. After a reload the dates were back to `2026-11-06`."
         }
       ]
     },
@@ -98340,7 +98505,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-13",
+        "date": "2026-11-10",
         "version": "2025.5.15.1"
       },
       "tags": [
@@ -98356,6 +98521,11 @@
           "date": "2026-10-13",
           "version": "2025.5.15.1",
           "text": "Re-tested after the @connect prompt change: the script-icon feature now works after one prompt; still a pass.\n\n- SourceMonkey: on its own info page (greasyfork.org/en/scripts/497346-...), the same-origin GET of `.../code/1.user.js` redirects (301) to `update.greasyfork.org`, which raised one permission prompt, for `update.greasyfork.org`. After `connect allow` the request loaded (200).\n- The script then showed the script's `@icon` (a `data:image/svg+xml` image) in the title and cached it in the `scriptsIcon` value under `497346`.\n- Kept `connect-undeclared` as a description: the script has no `@connect`, so users get the prompt for `update.greasyfork.org`."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "2025.5.15.1",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): the one-click spam report's confirm works, on https://greasyfork.org/en/discussions.\n- All 25 discussions got a \"Report\" button. Clicking the first showed the confirm ` Report#343638 ?`. Cancel left the page alone: no report iframe was added.\n- Not checked: what OK does. Filing a report needs an account, so the report itself wasn't tried.\n- The file input can't be tested here. The script only restyles the comment form's attachment input, and comment forms need an account.\n- The \"days to clean up\" `prompt` (line 1613) is dead code: its handler is never attached."
         }
       ]
     },
@@ -98564,7 +98734,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-09-29",
+        "date": "2026-11-10",
         "version": "6.5"
       },
       "notes": [
@@ -98577,6 +98747,16 @@
           "date": "2026-10-01",
           "version": "6.5",
           "text": "sm-dev re-checked after d19602a (`document-start` waits for `<html>`): the capture listeners are now in place on every load, but `html.lf-unlocked` is still missing on some loads, for a new reason. Headless `--temp-browser`, https://en.wikipedia.org/wiki/Tunnel and other articles.\n- sm-dev, 24 loads: a page `contextmenu` listener on `document` was suppressed every time. The class was missing on 8, all first loads in a fresh browser (12 warm loads in one browser all had it).\n- sm-dev: on those loads the script ran before Wikipedia's first inline `<head>` script (`document.scripts.length` 1, html class `client-nojs`), and that script's `document.documentElement.className = ...` wiped the class. A copy logging class changes showed this on 5 of 6 fresh starts.\n- Real extension (`--extension`), 10 fresh starts: the script always ran after those inline scripts (3 scripts, class `client-js`) and the class stayed. So the result stays pass; the missing class is an sm-dev timing difference."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "6.5",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): the site-list prompt works. On https://en.wikipedia.org/wiki/Tunnel in a headless temp browser.\n- \"Site Filter Mode\" cycled to `blacklist`. \"Edit Site Blacklist\" opened a prompt with an empty default.\n- Cancel left the values alone (no `fusion_site_blacklist`, still enabled, `html.lf-unlocked` set).\n- OK with `*.wikipedia.org` stored `fusion_site_blacklist`, set `fusion_enabled = false` and removed `lf-unlocked` from the page."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "6.5",
+          "text": "Re-tested after the dialog fixes (uncommitted, after 0181a07): `dialog accept` on \"Edit Site Blacklist\" now prints the script's GM writes. On https://en.wikipedia.org/wiki/Tunnel, headless temp browser, seeded with `fusion_site_mode = \"blacklist\"`.\n- Before: `html.lf-unlocked` set. `menu M6` reported the prompt as opened during the command.\n- `dialog accept '*.wikipedia.org'` printed `GM_setValue fusion_site_blacklist = \"*.wikipedia.org\"` and `GM_setValue fusion_enabled = false`. `lf-unlocked` was then gone."
         }
       ]
     },
@@ -100575,7 +100755,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-11-05",
+        "date": "2026-11-10",
         "version": "0.7.1"
       },
       "notes": [
@@ -100588,6 +100768,11 @@
           "date": "2026-11-05",
           "version": "0.7.1",
           "text": "Re-tested v0.7.1: now passes signed out; the `@resource` files moved to codeberg.org, so `JSON.parse(GM_getResourceText(...))` no longer stops the body. This run used the local copies.\n- `github.com/jshute96/SourceMonkey`: 17 `ghp-` styles mount and the 5 menu commands register.\n- Releases on `github.com/sharkdp/bat/releases`: expanding v0.26.0's assets marks 21 rows `.ghp-release-asset`, with uploader and download count (`@github-actions 2001 DL`).\n- With values seeded: Catppuccin Icons (Mocha) adds 48 icons on the repo home, and Extended User Info adds its rows on `github.com/sharkdp` (`Public: 123 repos, 38 gists`, Node ID).\n- Script: the Custom Menu Icon setup throws `Cannot read properties of null (reading 'children')` at line 959 on repo pages, since the signed-out header lacks that button, and also throws from the same setup (through line 372) on a user page. The other features still run; the option is empty by default.\n- Not confirmed: Extended Repo Info (off by default) added 0 rows on the README blob page, not looked into further. Signed-in features can't be judged here."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "0.7.1",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): the \"⚙️ Advanced Settings > 📈 Rate Limit\" menu action's alert works.\n- On https://github.com/sharkdp/bat/releases, before any API call, the alert showed `Rate limit: remaining -1/-1, ...`, the script's \"not fetched yet\" value.\n- After turning on Extended User Info from the menu, https://github.com/sharkdp got its rows (`Public: 123 repos, 38 gists`, Joined, Updated, Node ID) from api.github.com. The alert then showed `remaining 59/60` with that hour's reset time.\n- Script: the same Custom Menu Icon throw at line 959 as before, on both pages. The other features still ran.\n- Not tried: release asset rows (`.ghp-release-asset`) didn't appear after opening an Assets list this time, which is not a dialog feature."
         }
       ]
     },
@@ -102636,7 +102821,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-31",
+        "date": "2026-11-10",
         "version": "43"
       },
       "notes": [
@@ -102649,6 +102834,11 @@
           "date": "2026-10-31",
           "version": "43",
           "text": "Re-tested after adding the bulk value APIs (`GM_getValues` / `GM_setValues` / `GM_deleteValues`): now passes. Same setup (`user_site=CN` cookie, `space.bilibili.com/3/favlist?fid=2242824203`).\n- The script stored 31 per-video records again.\n- \"导出本地备份数据\" (export) downloaded a JSON backup with all 31 records, read through `GM_getValues(GM_listValues().sort())`.\n- \"清空本地备份数据\" (clear, under the advanced settings), confirmed in its dialog, removed all of them with `GM_deleteValues`, leaving only `settings`.\n- Import (`GM_setValues`) not exercised: its `<input type=file>` is never added to the document, and sm-dev can't answer the file chooser it opens."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "43",
+          "text": "Re-tested after 85c5609 (sm-dev answers file choosers): Import now checked too, and the whole backup round trip passes. Same setup (`user_site=CN` cookie, `space.bilibili.com/3/favlist?fid=2242824203`).\n- The script stored 31 per-video records (plus `settings`).\n- \"导出本地备份数据\" (export) downloaded a JSON backup of all 31 records.\n- \"清空本地备份数据\" (clear, under \"显示全部选项和功能\"), confirmed in its `<dialog>`, left only `settings`.\n- \"导入本地备份数据\" (import) opened a file chooser (`.json`), answered with `dialog accept <exported file>`. The script read it with `FileReader`, wrote it back with `GM_setValues` and showed \"导入完成\" (import done).\n- `values` afterwards matched the values before clearing and the exported file exactly. No errors logged."
         }
       ]
     },
@@ -103430,7 +103620,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-31",
+        "date": "2026-11-10",
         "version": "1.6.9"
       },
       "notes": [
@@ -103438,6 +103628,11 @@
           "date": "2026-10-31",
           "version": "1.6.9",
           "text": "On https://www.w3schools.com/html/mov_bbb.mp4 (outside YouTube and Bilibili it acts only on sites added with its \"enable on this site\" menu command; fired that, then reloaded):\n- `]` set playbackRate 1 -> 1.5, `P` reset it to 1, ArrowDown set volume 1 -> 0.9.\n- `=` and Shift+`=` left the rate at 1; not looked into further.\n- Script: it also starts in every ad and sync iframe on a page (over 100 on w3schools.com's video tutorial page), as `@match *://*/*` without `@noframes` allows."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "1.6.9",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): its settings prompts and the \"clear all sites\" confirm work, on https://www.w3schools.com/html/mov_bbb.mp4 (headless temp browser), after enabling the site from its menu and reloading.\n- Menu \"设置快速调速步长\" (set the `[`/`]` rate step) prompted with \"0.5\". Cancel stored nothing. OK with 0.25 stored `quickRateStep` = 0.25, and `]` then took playbackRate 1 -> 1.25 -> 1.5.\n- Menu \"查看所有临时启用的网站\" (list enabled sites), then its \"清空所有\" (clear all) button, opened a confirm. Cancel left `tempEnabledDomainGroups` holding www.w3schools.com; OK emptied it and closed the list."
         }
       ]
     },
@@ -103934,7 +104129,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-14",
+        "date": "2026-11-10",
         "version": "1.6.2"
       },
       "notes": [
@@ -103942,6 +104137,11 @@
           "date": "2026-10-14",
           "version": "1.6.2",
           "text": "On https://github.com/nazdridoy/github-commit-labels/commits/main the script labelled 35 commit messages (e.g. \"CI\", \"Docs\", \"Added\" badges with emoji). The \"Toggle Labels\" menu command hid all 35 and stored `labelsVisible: false`; firing it again showed them and stored true. No errors in the logs."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "1.6.2",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): the settings window's prompts, confirms and alerts all work, on https://github.com/nazdridoy/github-commit-labels/commits/main.\n- \"+ Add New Type\" prompt: answering `wip, workinprogress` gave the alert `The commit type \"wip\" already exists!`. Answering `zzzdemo, zzz` added that row, and Save stored both aliases in `commitLabelsConfig`.\n- Delete (🗑️) confirm on \"hotfix\": Cancel kept the row, OK removed it, and after Save the stored config had no `hotfix`.\n- Reset confirm: Cancel left the stored config alone. OK stored the default config (`hotfix` back, `zzz` gone).\n- Export/Import Config: importing the exported JSON with an added `zzzimport` type asked to confirm, then showed the success alert, and the stored config had the new type."
         }
       ]
     },
@@ -104309,7 +104509,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-31",
+        "date": "2026-11-10",
         "version": "2.3"
       },
       "notes": [
@@ -104317,6 +104517,11 @@
           "date": "2026-10-31",
           "version": "2.3",
           "text": "On a watch page (`watch?v=dQw4w9WgXcQ`) the script adds a download icon (`.ytddl-download-btn`) next to Subscribe. Clicking it opens its dialog with Video/Audio tabs, 144p to 2160p choices (1080p preselected) and a Download button. Not clicked further: the download goes through a third-party converter (`cnv.cx`), so the conversion itself wasn't tested."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "2.3",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): its alerts work, on `watch?v=jNQXAC9IVRw`.\n- The script's only alerts check the download dialog's choices. With the preselected 1080p radio unchecked (through `eval`), Download showed \"Please select a video quality\". After OK, the dialog stayed open and no conversion request was sent.\n- On the Audio tab with the 320 kbps radio unchecked, Download showed \"Please select an audio bitrate\", with the same result.\n- Not tested, as before: the conversion itself through the third-party converter."
         }
       ]
     },
@@ -105220,7 +105425,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-31",
+        "date": "2026-11-10",
         "version": "1.6"
       },
       "notes": [
@@ -105228,6 +105433,16 @@
           "date": "2026-10-31",
           "version": "1.6",
           "text": "On a channel's Videos grid (`/@mkbhd/videos`, 1280px wide) the script's default of 5 per row applies: the first rows of `ytd-rich-item-renderer` sit 5 to a row, against 3 in a `--noscript` tab. On the home page `--ytd-rich-grid-items-per-row` reads 5 (control 3), but a signed-out profile gets no home feed to see it on. Its menu commands register."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "1.6",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): its menu prompts, confirm and alerts work, on `/@mkbhd/videos` at 1280x720.\n- \"🖥️ 设置每行显示数量\" (items per row) opened a prompt prefilled with 5. Cancel changed nothing. OK with 3 showed the alert \"当前设置：每行显示 3 个视频\", stored `ytd-items-per-row = 3` in localStorage, and the grid's first row went from 5 cards to 3.\n- \"📱 竖屏显示数量\" (portrait count) prompted with default 3. OK with 2 stored `ytd-portrait-columns = 2` and showed its alert. In landscape the grid stayed at 3, as the code intends.\n- After a reload, the \"清除竖屏设置\" (clear portrait setting) menu command appeared. Its confirm on Cancel kept `ytd-portrait-columns`; on OK it removed the setting and showed \"已清除竖屏设置\"."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "1.6",
+          "text": "Re-tested after the dialog fixes (uncommitted, after 0181a07): OK on the items-per-row prompt now shows its alert in `dialog accept`'s output. On `/@mkbhd/videos`, headless temp browser.\n- `menu M1` (\"🖥️ 设置每行显示数量\") reported the prompt as opened during the command.\n- `dialog accept 3` printed the alert \"当前设置：每行显示 3 个视频\" as opened during that command. localStorage `ytd-items-per-row` read \"3\"."
         }
       ]
     },
@@ -107063,7 +107278,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-31",
+        "date": "2026-11-10",
         "version": "5.9.0"
       },
       "notes": [
@@ -107071,6 +107286,16 @@
           "date": "2026-10-31",
           "version": "5.9.0",
           "text": "On live channel chzzk.naver.com/live/c7ded8ea6b0605d3c78e18650d2df83b (~7400 viewers, signed out, not geo-blocked), compared with a `--noscript` tab:\n\n- Full Quality: the stream played at 1920x1080; the control played 1280x720.\n- Wide Mode: the player was 926px wide vs 686px in the control.\n- Chat timestamps: chat lines start with the time (`18:11솔로응애...`); the control's lines have none.\n- No errors logged."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "5.9.0",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): settings import through the file input, on chzzk.naver.com (headless).\n- The settings editor's 내보내기 (export) button downloaded the settings JSON (format 2).\n- Edited it (`tags` = DjCtag, `wideModeEnabled` false, `chatTimestampSecondsEnabled` true). Cancel in the 불러오기 (import) file chooser changed nothing.\n- Choosing the file reloaded the page with localStorage matching the file, and the editor's tag box showed DjCtag."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "5.9.0",
+          "text": "Re-tested after the dialog fixes (uncommitted, after 0181a07): settings import on chzzk.naver.com (headless).\n- 내보내기 (export) downloaded the settings JSON. Edited it (`tags` = DkAtag, `wideModeEnabled` false).\n- `click #better-chzzk-import` now ends with \"File chooser dialog T1.1 opened during the command and is waiting for an answer\" (it used to end with a plain \"Clicked ...\"). Cancel changed nothing.\n- `dialog accept <file>` waited for the reload, and its output included \"Better Chzzk started\". localStorage then matched the file."
         }
       ]
     },
@@ -108661,7 +108886,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-11-05",
+        "date": "2026-11-10",
         "version": "26.4.1"
       },
       "notes": [
@@ -108674,6 +108899,16 @@
           "date": "2026-11-05",
           "version": "26.4.1",
           "text": "Re-tested v26.4.1: still passes. On https://gemini.google.com/app (logged out) it started, registered `⚙️ Settings` and `🔔 Notifications`, fetched its fonts and notification gist (200), and showed two notifications, which had to be closed since they covered the composer.\n- It added its prompt buttons (`button[data-testid=\"composer-button-prompts\"]`); the main one opened its menu (\"No saved prompts.\").\n- Adding a prompt (title \"Greeting\", text \"Translate this sentence into French\") stored `Prompts`. Picking it from the menu put the text into Gemini's editor (`div.ql-editor`). Nothing was sent.\n- Script: on https://chatgpt.com/ logged out it still adds no button: its selectors (`div#prompt-textarea`, ProseMirror) don't exist there; the logged-out composer is `textarea#mobile-composer-prompt`."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "26.4.1",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): backup export and import through the file input work. On https://gemini.google.com/app (logged out) in a headless temp browser, with `Prompts` set to one prompt (\"Greeting\") and downloads sent to a scratch folder.\n- Settings, then Export/Import, then Export File downloaded `Backup_MyPrompt_<date>.mp.backup.json` holding that prompt.\n- Set `Prompts` to `{}` and reloaded. Import's Select File opened a file chooser for `.mp.backup.json` (from an input not in the page). Cancel left `Prompts` empty.\n- Choosing the backup showed the script's own \"replace your current settings ... (1 items)\" confirm. Confirm stored the prompt again and reloaded, and the prompts menu listed \"Greeting\"."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "26.4.1",
+          "text": "Re-tested after the dialog fixes (uncommitted, after 0181a07): backup import on https://gemini.google.com/app (logged out, headless), with `Prompts` seeded to one prompt (\"Greeting\").\n- Export File downloaded the `.mp.backup.json` holding that prompt. Set `Prompts` to `{}` and reloaded.\n- `click #__ap_do_import_backup` (Select File, an input not in the page) now ends with \"File chooser dialog T1.1 opened during the command and is waiting for an answer\". Cancel left `Prompts` empty.\n- Choosing the backup showed the script's own confirm (an in-page modal, not a native `confirm`). Its Confirm button stored the prompt again and reloaded."
         }
       ]
     },
@@ -110026,7 +110261,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-31",
+        "date": "2026-11-10",
         "version": "2.1.0"
       },
       "notes": [
@@ -110034,6 +110269,11 @@
           "date": "2026-10-31",
           "version": "2.1.0",
           "text": "- Control: in 3 fresh temp browsers without this script, the first watch of `watch?v=2reQut8WNGc` got a pre-roll ad (49s, 50s, 128s; `#movie_player.ad-showing`).\n- With the script, the first watch in a fresh temp browser went straight to the 654s video: the player's `<video>` never had an ad duration or `ad-showing`, and the content played (6.2s in, not paused).\n- Script: logs `Failed to fetch` once on the watch page, likely an ad request it blocks; no other errors."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "2.1.0",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): import, prompt and confirm all work, on `watch?v=jNQXAC9IVRw` through its gear button's settings panel.\n- Import: Advanced > Export downloaded `vBlockTube-settings.vbt`. With `add_shorts_upload_date: \"off\"` and `cobalt_api_instance` set in that file, Import opened a file chooser (`.vbt`). After `dialog accept <file>` it showed \"Settings imported successfully...\" and reloaded, and the stored `default` row had both values.\n- Prompt: Watch Page > cobalt API instance > Set URL opened a prompt prefilled with the current URL. Cancel left the value alone; OK with `https://cobalt.example.org///` stored `https://cobalt.example.org`.\n- Confirm: Advanced > Reset asked \"Are you sure you want to delete all configuration settings?\". Cancel left all values; OK deleted them and reloaded, and the script recreated its defaults (new `uuid`, `cobalt_api_instance` empty, `add_shorts_upload_date: \"on\"`)."
         }
       ]
     },
@@ -116303,7 +116543,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-31",
+        "date": "2026-11-10",
         "version": "0.0.3"
       },
       "notes": [
@@ -116311,6 +116551,11 @@
           "date": "2026-10-31",
           "version": "0.0.3",
           "text": "On a paywalled Nikkei Asia article the floating \"Bypass Paywall by Wenhao\" button appeared with its 6-option dropdown, and each option opened the article URL in a new tab on the named service.\n- Archive.ph opened an existing snapshot with the full article text (about 20 paragraphs; a `--noscript` tab of the live page shows 2).\n- UnWall showed only the same 2 paragraphs, and RemovePaywall a near-empty page (100 chars). Those are the services' results, not the script's.\n- Script: no `@noframes`, so it also starts (and registers its menu commands) in ad iframes."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "0.0.3",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): the floating-button toggle's alert works. On https://arstechnica.com/ in a headless temp browser.\n- \"Hide Floating Button\" showed the alert \"Floating button disabled. ...\" and stored `showFloatingButton = false`. After OK the page reloaded with no `#bypassContainer`, and the menu read \"Show Floating Button\".\n- \"Show Floating Button\" showed the \"enabled\" alert, and after OK and the reload the button was back."
         }
       ]
     },
@@ -118076,7 +118321,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-11-05",
+        "date": "2026-11-10",
         "version": "28.50"
       },
       "notes": [
@@ -118089,6 +118334,11 @@
           "date": "2026-11-05",
           "version": "28.50",
           "text": "Re-tested v28.50: still passes, on `en.wikipedia.org/wiki/Cat` in a headless temp browser.\n- `Alt+Shift+H` turned on selection mode. Clicking the article's first paragraph opened the picker, and its Hide button saved `hider_site_en.wikipedia.org = [\"#mwGg\"]`.\n- The paragraph is gone in a screenshot and stayed gone after a reload, with the next paragraph moved up. It hides by collapsing the element with `max-height: 0` and `position: absolute`, not `display: none`, so `offsetHeight` isn't a test for it.\n- No errors logged.\n- sm-dev: the picker is in a shadow root `snapshot --find` doesn't reach, so its Hide button was clicked at a point over `cdp`."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "28.50",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): backup import through the file input, its replace confirm, and Anti Exit-Intent all work. On https://en.wikipedia.org/wiki/Cat in a headless temp browser, with `hider_site_en.wikipedia.org = [\"#siteSub\"]` and downloads sent to a scratch folder.\n- Logs & Backup, then Export, then Save downloaded `hider_backup_2026-11-10.json` with the site rule.\n- Set the site rule to `[]`, added `hider_site_example.org = [\"div.ad\"]` and reloaded (`#siteSub` showed). Import's \"Choose file...\" opened a file chooser for `.json`. Cancel did nothing. Choosing the backup listed what it holds.\n- In Replace mode, Apply showed \"Replace the ticked categories with the contents of this backup? ...\". Cancel changed nothing. OK restored `[\"#siteSub\"]` and deleted the example.org rule, and after a reload `#siteSub` was collapsed again.\n- With a page `beforeunload` handler that calls `preventDefault`, clicking an article link showed Chrome's \"Leave site?\" dialog while Anti Exit-Intent was off (Cancel stayed on the page). After the panel's Anti Exit-Intent switch stored `hider_anti_exit = true`, the same click left with no dialog.\n- sm-dev: the panel is in a closed shadow root. Its controls were found over `cdp` (`DOM.describeNode` with `pierce`, then `Runtime.callFunctionOn` on the root) and clicked by window point."
         }
       ]
     },
@@ -121762,7 +122012,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-10-31",
+        "date": "2026-11-10",
         "version": "1.17.0"
       },
       "notes": [
@@ -121770,6 +122020,11 @@
           "date": "2026-10-31",
           "version": "1.17.0",
           "text": "On live channel player.angelthump.com/?channel=vitaci9067 (22 viewers), the player bar showed the script's badges: `Stream delay: 3.8s`, `720p`, `H.264`, `Bitrate: 3600 kbps` and `Server selector (may fix lag) · NYC1 · 106 ms`, matching the video (1280x720). Picking `AMS1 · Amsterdam` in its menu reloaded the player, which then loaded media from `ams1.angelthump.com` and kept playing."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "1.17.0",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): its only dialogs are alerts shown when localStorage can't be written, and the server-choice one works. Tested on live channel player.angelthump.com/?channel=ppkkkp (headless temp browser).\n- Filled the origin's localStorage to its quota, then picked \"NYC1 · New York\" in the server selector. The alert \"Cannot save the server choice in this browser.\" opened, and after OK the player stayed on ams1 with nothing stored.\n- After clearing the filler, picking NYC1 again stored `angelthump-edge-picker:host` = nyc1.angelthump.com and the selector showed nyc1.\n- The player bar hides its controls when the mouse is still, so each click needs mouse moves just before it (`hover --at ...` chained with `--`)."
         }
       ]
     },
@@ -125040,7 +125295,7 @@
       },
       "test": {
         "status": "pass",
-        "date": "2026-11-05",
+        "date": "2026-11-10",
         "version": "2.14.6"
       },
       "notes": [
@@ -125053,6 +125308,11 @@
           "date": "2026-11-05",
           "version": "2.14.6",
           "text": "Re-tested v2.14.6: still passes on https://github.com/jshute96/userscripts (headless).\n- UI in Chinese: header menus 产品/开发者, repo tabs 代码/议题/拉取请求, 关于, file times 3 天前. 7 menu commands register.\n- README translation is now off by default (`translateReadme: false`), behind an added \"翻译 README\" button. Clicking it translated the README (\"我的用户脚本存储库\", \"这些是我的一些用户脚本...\").\n- Script: of its online sources Google (translate.googleapis.com, 200) worked; Tencent transmart was unreachable, Bing's auth gave 404 and Youdao returned HTML, and it fell through to Google. No permission prompts and no errors."
+        },
+        {
+          "date": "2026-11-10",
+          "version": "2.14.6",
+          "text": "Re-tested the dialog features after 85c5609 (sm-dev `dialog` command): the menu commands' prompts and alerts work, on https://github.com/jshute96/userscripts.\n- \"③ 清空翻译缓存\" (clear cache) showed its alert and stored `gh-zh-cache-v1` as `\"\"`.\n- \"④ 设置百度翻译\" (Baidu credentials): answering the APPID prompt and cancelling the key prompt stored nothing. Answering both prompts stored `{\"baidu\":{\"appid\":\"testappid\",\"key\":\"testsecret\"}}` in `ghzh_creds_v1`, then showed the saved alert.\n- \"⑦ 清空所有自定义翻译密钥\" (clear all keys) showed its alert and stored null for all three providers.\n- Real Baidu, Tencent Cloud or AI keys need an account, so translation through them was not tried."
         }
       ]
     },

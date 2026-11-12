@@ -2,6 +2,8 @@
 // - A click on an `<input type=file>`, in the document or not, is
 //   caught before Chrome shows its chooser, shown as a dialog, and
 //   answered with files given from where the command ran.
+// - A chooser whose `change` handler opens a confirm is answered
+//   without waiting for the confirm's answer.
 // - Multiple dialogs at once get their own ids, a dialog that blocks
 //   the page is the default, and a chooser it blocks is refused.
 // - The last test answers the dialogs example's dialogs
@@ -124,6 +126,45 @@ test('a file chooser is caught, shown as a dialog, and answered with files', asy
   await expect.poll(() => dialogs.waiting.length).toBe(0);
 });
 
+// An import like 4chan X's: the input's change handler asks with a
+// confirm before going on.
+const CONFIRMING_PAGE = `
+  <button id="import">Import</button>
+  <script>
+    window.chosen = [];
+    document.querySelector('#import').onclick = () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.addEventListener('change', () => window.chosen.push(confirm('Overwrite?') ? input.files[0].name : 'kept'));
+      input.click();
+    };
+  </script>`;
+
+test('a chooser whose change handler opens a confirm is answered without waiting for the confirm', async ({ page, fixtureServer, host, attachment }) => {
+  const lines: string[] = [];
+  const dialogs = await DialogTracker.attach(page, (t) => lines.push(plainLine(`[sm-dev] ${t}`)), { visible: false, commandsComing: true });
+  await page.route('**/confirming.html', (route) => route.fulfill({ contentType: 'text/html', body: CONFIRMING_PAGE }));
+  await page.goto(`${fixtureServer.baseUrl}/confirming.html`);
+  const tabs = [{ n: 1, page, link: attachment, dialogs }];
+  const ctx: ConsoleContext = { host, tabs: () => tabs, scripts: [], out: (l) => lines.push(plainLine(l)), stop: () => undefined };
+  const run = async (line: string) => {
+    lines.length = 0;
+    await runConsoleCommand(line, ctx, { cwd: dir });
+    return [...lines];
+  };
+
+  await run('click #import');
+  await expect.poll(() => dialogs.waiting.length).toBe(1);
+  // The answer returns once the confirm opens, rather than waiting for
+  // the confirm's answer.
+  const answered = await run('dialog accept a.json');
+  expect(answered).toContain('[sm-dev] Clicked Open on File chooser dialog T1.1');
+  expect(dialogs.waiting.map((d) => d.title)).toEqual(['Confirm']);
+  expect(await run('dialog accept')).toEqual(['[sm-dev] Clicked OK on Confirm dialog T1.2']);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { chosen: string[] }).chosen)).toEqual(['a.json']);
+  expect(dialogs.waiting).toEqual([]);
+});
+
 test('without commands to answer it, Chrome keeps its own file chooser', async ({ page, fixtureServer, host, attachment }) => {
   const dialogs = await DialogTracker.attach(page, () => undefined, { visible: false, commandsComing: false });
   await page.route('**/chooser.html', (route) => route.fulfill({ contentType: 'text/html', body: PAGE }));
@@ -156,7 +197,10 @@ test('two dialogs in a row, and two at once, each get their own id', async ({ pa
   // waiting, not the first.
   page.evaluate(() => { (window as unknown as { second?: boolean }).second = confirm('first') && confirm('second'); }).catch(() => undefined);
   await expect.poll(() => dialogs.waiting.map((d) => d.id)).toEqual(['T1.1']);
-  expect(await run('dialog accept')).toEqual(['[sm-dev] Clicked OK on Confirm dialog T1.1']);
+  // The answer's wait shows the next confirm as it opens.
+  const first = await run('dialog accept');
+  expect(first[0]).toBe('[sm-dev] Clicked OK on Confirm dialog T1.1');
+  expect(first.slice(1).join('\n')).toContain('*DIALOG* T1.2  Confirm');
   await expect.poll(() => dialogs.waiting.map((d) => d.id)).toEqual(['T1.2']);
   expect((await run('dialog show')).slice(0, 3)).toEqual(['T1 has 1 dialog waiting.', '', 'T1.2  Confirm (default for `dialog` commands)']);
   expect(await run('dialog accept')).toEqual(['[sm-dev] Clicked OK on Confirm dialog T1.2']);
@@ -229,7 +273,9 @@ test('the dialogs example: its dialogs answered with `dialog`, and its pickers r
   await expect(result('prompt')).toHaveAttribute('data-result', 'Ann Lee Jr');
 
   await run('click #btn-two-confirms');
-  expect(await run('dialog accept')).toEqual(['[sm-dev] Clicked OK on Confirm dialog T1.3']);
+  const answered = await run('dialog accept');
+  expect(answered[0]).toBe('[sm-dev] Clicked OK on Confirm dialog T1.3');
+  expect(answered.slice(1).join('\n')).toContain('*DIALOG* T1.4  Confirm');
   await expect.poll(() => dialogs.waiting.map((d) => d.id)).toEqual(['T1.4']);
   await run('dialog cancel');
   await expect(result('two-confirms')).toHaveAttribute('data-result', 'true,false');

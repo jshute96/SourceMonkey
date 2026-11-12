@@ -1673,8 +1673,20 @@ opens, rather than answering it automatically. The design is in
   ahead too.
 - A command that opens a dialog returns once the dialog is up, and says
   so.
+- Each command ends by naming each dialog that opened during it and is
+  still waiting.
+- After answering, `dialog accept`, `dialog cancel` and `dialog click`
+  wait up to 5 seconds for the page to settle, as `click` does (see
+  [When a tab has settled](#when-a-tab-has-settled)). The command's
+  output then includes the GM values the page's scripts store and the
+  dialogs the page opens during that wait.
+  `--nowait` skips the wait.
+- `cdp` doesn't wait for the page. After a `cdp` call that sends input,
+  use `wait`, so that a dialog the page opens from a timer is reported
+  in the `wait` command's output.
 - Each command ends with a reminder of each dialog still waiting from
-  before it began.
+  before it began. A file chooser that an earlier command opened gets
+  none, as it doesn't stop the page.
 - A dialog in a tab the run doesn't use stays open, for you to
   answer.
 - A tab one of the run's tabs opens can show a dialog before the run
@@ -2034,6 +2046,8 @@ Limits of the heuristic:
   returning). `start --nowait` skips that.
 - `click`, `hover`, `type`, `key`, `reload`, `open` and `newtab` settle
   the tabs they touch before returning. Each takes `--nowait`.
+- `dialog accept`, `dialog cancel` and `dialog click` settle the
+  dialog's tab after answering, and take `--nowait`.
 - `load`, `update` and `--watch` saves settle the tabs they reload.
 
 ### Giving up

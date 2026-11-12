@@ -148,7 +148,7 @@ const WORDS: ArgSyntax = { args: 'words' };
 // hold spaces.
 const TEXT: ArgSyntax = { args: 'text' };
 const TAB_LOADS = ['newtab', 'open', 'reload'];
-const SETTLING = ['start', ...TAB_LOADS, 'click', 'hover', 'type', 'key'];
+const SETTLING = ['start', ...TAB_LOADS, 'click', 'hover', 'type', 'key', 'dialog accept', 'dialog cancel', 'dialog click'];
 // The commands that wait on the page, so take --timeout-seconds. Those
 // whose help lists it themselves (its default differs) aren't here.
 const TIMED = ['start', 'click', 'hover', 'type', 'key', 'eval', 'snapshot', 'probe', 'screenshot', 'closetab', 'load', 'update'];
@@ -750,6 +750,8 @@ export const HELP_SECTIONS: HelpSection[] = [
           'Each dialog has an id: its tab and a number (`T1.2`). `dialog` commands apply to the default dialog: the one `dialog select` picked, else one on the current tab, else one in the run. A dialog that blocks its page comes first, then the oldest.',
           '',
           'File chooser dialogs take file paths relative to the directory sm-dev ran in. For example, `dialog accept data.json` chooses `data.json` from there.',
+          '',
+          'After answering, `dialog accept`, `dialog cancel` and `dialog click` wait for the page to settle, as `click` does. Their output then includes the GM values the page\'s scripts store and the dialogs the page opens during that wait. Use `--nowait` to skip the wait.',
         ],
         commands: [
           { usage: 'dialog show', syntax: { args: 'none', tab: 'flag' }, about: 'Show the dialogs waiting on a tab: what each asks, its fields and buttons, and the commands to answer it.' },
