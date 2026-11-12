@@ -1,6 +1,6 @@
 {
   "name": "sm-dev",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "Runs the sm-dev command from the sourcemonkey package, so `npx sm-dev` works",
   "license": "MIT",
   "homepage": "https://github.com/jshute96/SourceMonkey",
